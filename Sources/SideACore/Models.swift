@@ -90,7 +90,7 @@ public struct AccountUsage: Codable, Equatable, Sendable {
     public var modelLimits: [UsageWindow] { windows.filter { $0.id.hasPrefix("model:") } }
 }
 
-public struct TokenRow: Codable, Equatable, Sendable {
+public struct TokenRow: Codable, Hashable, Sendable {
     public var date: String?
     public var project: String?
     public var model: String?
@@ -118,8 +118,10 @@ public struct UsageReport: Codable, Equatable, Sendable {
     public var projects: [TokenRow]
     public var models: [TokenRow]
     public var activity: [ActivitySpan]
-    public init(days: [TokenRow], projects: [TokenRow], models: [TokenRow], activity: [ActivitySpan]) {
-        self.days = days; self.projects = projects; self.models = models; self.activity = activity
+    /// Each day split by model; absent in reports cached by older versions.
+    public var dayModels: [TokenRow]?
+    public init(days: [TokenRow], projects: [TokenRow], models: [TokenRow], activity: [ActivitySpan], dayModels: [TokenRow]? = nil) {
+        self.days = days; self.projects = projects; self.models = models; self.activity = activity; self.dayModels = dayModels
     }
 }
 

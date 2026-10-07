@@ -103,7 +103,15 @@ final class AccountStore {
                                             row("/Users/you/code/mobile", project: true, 3_800_000_000), row("/Users/you/code/docs", project: true, 900_000_000)],
                                  models: [row("claude-opus-5-5", project: false, 14_200_000_000), row("claude-sonnet-5-5", project: false, 5_300_000_000),
                                           row("claude-haiku-4-5", project: false, 700_000_000)],
-                                 activity: (0..<14).map { ActivitySpan(date: "d\($0)", hours: (0..<24).map { (9...18).contains($0) ? 40 : 1 }) })
+                                 activity: (0..<14).map { ActivitySpan(date: "d\($0)", hours: (0..<24).map { (9...18).contains($0) ? 40 : 1 }) },
+                                 dayModels: days.flatMap { day in
+                                     [("claude-opus-5-5", 0.7), ("claude-sonnet-5-5", 0.26), ("claude-haiku-4-5", 0.04)].map { model, share in
+                                         var split = day; split.model = model
+                                         split.input = Int(Double(day.input) * share); split.output = Int(Double(day.output) * share)
+                                         split.cacheWrite = Int(Double(day.cacheWrite) * share); split.cacheRead = Int(Double(day.cacheRead) * share)
+                                         return split
+                                     }
+                                 })
         } else if FileManager.default.fileExists(atPath: configURL.path) {
             do { config = try PrivateFile.read(Configuration.self, from: configURL).validated() }
             catch { self.error = error.localizedDescription; startupError = true }

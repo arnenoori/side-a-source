@@ -193,6 +193,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual([(r['project'],r['input'],r['output']) for r in result['projects']],[('/work/app',2,12)])
         self.assertEqual(len(result['activity']),1)
         self.assertEqual(sum(result['activity'][0]['hours']),2)
+        self.assertEqual([(r['date'],r['model'],r['output']) for r in result['dayModels']],[('2026-10-01','m',12)])
         # A live session appends: only new bytes are read, a response split across the seam
         # counts once, and a half-written last line waits for the next scan.
         with open(folder/'s.jsonl','a') as stream:

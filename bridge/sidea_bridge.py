@@ -506,18 +506,21 @@ def report(root, days=30):
                     bucket[index] += value
     atomic_json(cache_path, fresh)
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
-    by_day, by_project, by_model = {}, {}, {}
+    by_day, by_project, by_model, by_day_model = {}, {}, {}, {}
     for key, (inp, out, write, read) in merged.items():
         day, project, model = key.split("\t")
         if day < since:
             continue
-        for table, name in ((by_day, day), (by_project, project), (by_model, model)):
+        for table, name in ((by_day, day), (by_project, project), (by_model, model), (by_day_model, (day, model))):
             row = table.setdefault(name, {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0})
             row["input"] += inp; row["output"] += out; row["cacheWrite"] += write; row["cacheRead"] += read
     rows = lambda table, label: sorted(({label: name, **value} for name, value in table.items() if name),
                                        key=lambda row: -(row["input"] + row["output"] + row["cacheWrite"] + row["cacheRead"]))
     return {"days": sorted(rows(by_day, "date"), key=lambda row: row["date"]),
             "projects": rows(by_project, "project"), "models": rows(by_model, "model"),
+            # Each day split by model, for the stacked daily chart.
+            "dayModels": sorted(({"date": day, "model": model, **value} for (day, model), value in by_day_model.items() if model),
+                                key=lambda row: (row["date"], row["model"])),
             "activity": [{"date": day, "hours": counts} for day, counts in sorted(hours.items()) if day >= since]}
 
 

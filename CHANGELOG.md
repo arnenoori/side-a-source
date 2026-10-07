@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.7 — 2026-10-07
+
+Accounts tab grouped by provider with an In use label and live limits; Usage tab with weekly pace per account, period comparisons, per-model daily chart and an hourly activity strip.
+
 ## 0.5.6 — 2026-10-07
 
 Reads per-model weekly caps from the usage endpoint's scoped limits and shows them once used. The 3D player is opt-in. Easter eggs on the site and in notifications.
