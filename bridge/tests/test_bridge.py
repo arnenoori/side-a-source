@@ -24,6 +24,8 @@ class BridgeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        # Never touch the real ~/.claude refresh lock.
+        env=patch.dict(os.environ,{'CLAUDE_CONFIG_DIR':str(self.root/'claude-home')}); env.start(); self.addCleanup(env.stop)
     def tearDown(self):
         self.temp.cleanup()
     def test_corrupt_config_is_not_treated_as_empty(self):
@@ -307,5 +309,16 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         billing={'spend':{'used':{'amount_minor':320,'currency':'USD','exponent':2},'limit':None,'enabled':True}}
         self.assertEqual(bridge.extra_usage(billing),{'enabled':True,'used':3.2,'limit':None,'currency':'USD'})
         self.assertEqual(bridge.extra_usage({'extra_usage':{'is_enabled':True,'used_credits':250,'monthly_limit':None}})['used'],2.5)
+
+    def test_side_a_waits_for_claude_codes_refresh_lock_and_releases_it(self):
+        # A wake refreshing at the same moment as an open session can get a login revoked.
+        lock=self.root/'claude-home/.oauth_refresh.lock'; lock.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError,'refreshing a login'):
+            with bridge.claude_refresh_lock(timeout=1): pass
+        self.assertTrue(lock.exists())  # someone else's live lock is left alone
+        old=time.time()-120; os.utime(lock,(old,old))
+        with bridge.claude_refresh_lock(timeout=1):
+            self.assertTrue(lock.exists())  # a stale lock is taken over, and held while claude runs
+        self.assertFalse(lock.exists())
 
 if __name__ == '__main__': unittest.main()

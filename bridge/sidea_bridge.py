@@ -23,6 +23,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -383,6 +384,16 @@ def adopt(root, account):
 SHELL_MARK = "# side-a shell integration"
 
 
+def login_stamps(root, config):
+    """When each Claude account's stored login expires. A new value means a sign-in or refresh
+    happened, so the app re-reads that account at once instead of waiting out a back-off."""
+    stamps = {}
+    for account in config.get("accounts", []):
+        if provider_of(account) == "claude" and account.get("ready"):
+            stamps[account["id"]] = ((read_secret(home_service(root, account)) or {}).get("claudeAiOauth") or {}).get("expiresAt") or 0
+    return stamps
+
+
 def pins_path(root):
     return root / "runtime" / "accounts"
 
@@ -470,6 +481,56 @@ def shell_installed(root):
     return SHELL_MARK in text
 
 
+@contextlib.contextmanager
+def claude_refresh_lock(timeout=30):
+    """Holds Claude Code's own refresh lock while Side A runs claude for an account. Claude Code
+    lets one process refresh a login at a time through this lock, in its config folder; a profile
+    run uses another folder, so without it a wake could refresh a login at the same moment as an
+    open session, and the server revokes a login whose refresh token is used twice.
+    Same format as Claude Code's lock library: a directory, stale after 60 s without an update."""
+    path = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".oauth_refresh.lock"
+    deadline = time.time() + timeout
+    while True:
+        try:
+            path.mkdir()
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > 60:
+                    path.rmdir()
+                    continue
+            except OSError:
+                pass
+            if time.time() > deadline:
+                raise ValueError("Claude Code is refreshing a login right now; Side A will try again shortly.")
+            time.sleep(0.5)
+        except FileNotFoundError:
+            path.parent.mkdir(parents=True, exist_ok=True)
+    stop = threading.Event()
+    def keep_fresh():
+        while not stop.wait(5):
+            with contextlib.suppress(OSError):
+                os.utime(path)
+    threading.Thread(target=keep_fresh, daemon=True).start()
+    try:
+        yield
+    finally:
+        stop.set()
+        with contextlib.suppress(OSError):
+            path.rmdir()
+
+
+def run_as(root, account, args, timeout):
+    """Runs claude as the account's own login with clean settings, under the shared refresh lock."""
+    env = clean_environment(prepare_profile(root, account["id"]))
+    # The profile's clean settings keep the user's hooks and CLAUDE.md out; the selector
+    # picks the account's own login, which the CLI refreshes itself if needed.
+    env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = selector_for(root, account)
+    with claude_refresh_lock():
+        return subprocess.run([claude_binary(), *args], env=env, cwd=root, capture_output=True,
+                              text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+
+
 def prime(root, config, account):
     """Send one tiny message so the account's 5-hour window starts now instead of at first real use."""
     if provider_of(account) == "codex":
@@ -481,12 +542,7 @@ def prime(root, config, account):
         # Until then the CLI's own record of who signed in must name this account.
         if auth_status(root, account).get("email", "").casefold() != account.get("email", "").casefold() or not account.get("email"):
             raise ValueError(f"Sign in to {account['name']} again.")
-    env = clean_environment(prepare_profile(root, account["id"]))
-    # The profile's clean settings keep the user's hooks and CLAUDE.md out; the selector
-    # picks the account's own login, which the CLI refreshes itself if needed.
-    env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = selector_for(root, account)
-    result = subprocess.run([claude_binary(), "-p", "Reply with OK.", "--model", "haiku", "--max-turns", "1"],
-                            env=env, cwd=root, capture_output=True, timeout=120, stdin=subprocess.DEVNULL)
+    result = run_as(root, account, ["-p", "Reply with OK.", "--model", "haiku", "--max-turns", "1"], 120)
     if result.returncode != 0:
         raise ValueError(f"{account['name']} could not start its 5-hour window.")
 
@@ -835,7 +891,8 @@ def main():
         print(json.dumps({"accountID": (repair_selection(root, config) or {}).get("id"),
                           "email": "" if account_for_email(config, mac) else mac,
                           "codexAccountID": (codex_bridge.global_account(config) or {}).get("id"),
-                          "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model()}))
+                          "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),
+                          "logins": login_stamps(root, config)}))
         return
     account = account_by_id(config, args.account)
     if args.command == "usage":

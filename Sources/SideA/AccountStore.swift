@@ -55,6 +55,9 @@ final class AccountStore {
     @ObservationIgnored private var exhaustedNotified = false
     /// Per account: the window reset already warned about, so each limit warns once.
     @ObservationIgnored private var paidWarned: [String: Double] = [:]
+    @ObservationIgnored private var loginStamps: [String: Double] = [:]
+    /// When each account was last read successfully, for marking old readings.
+    var readAt: [String: Date] = [:]
     var lidOpen = false
     /// The player only stays open when asked for; macOS would otherwise restore it at launch.
     var playerRequested = false
@@ -131,6 +134,8 @@ final class AccountStore {
             usage = cache.usage; usageAt = cache.at
             backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []).intersection(config.accounts.map(\.id))
             issues = (cache.issues ?? [:]).filter { id, _ in config.accounts.contains { $0.id == id } }
+            // Caches from before readAt existed only know when a read was last attempted.
+            readAt = cache.readAt ?? cache.at
             activeIDs = (cache.active ?? [:]).reduce(into: [:]) { ids, item in AgentProvider(rawValue: item.key).map { ids[$0] = item.value } }
         }
         if !isDemo {
@@ -400,6 +405,7 @@ final class AccountStore {
             let value = try JSONDecoder().decode(AccountUsage.self, from: try await bridgeOutput(["usage", id]))
             warnAboutPaidUsage(id, before: usage[id], after: value)
             usage[id] = value
+            readAt[id] = Date()
             failing.remove(id)
             issues[id] = nil
             let now = Date().timeIntervalSince1970
@@ -455,8 +461,11 @@ final class AccountStore {
     func issueText(_ id: String) -> String? {
         switch issues[id] {
         case "signIn": "Sign in again"
-        case "idle": usage[id] == nil ? "Idle · wake it to read its limits" : nil
+        case "idle": usage[id] == nil ? "Idle · wake it to read its limits"
+            : "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened)) · idle"
         case "verify": "Checking whose login this is · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
+        case nil where usage[id] != nil && Date().timeIntervalSince(readAt[id] ?? .distantPast) > 900:
+            "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened))"
         case "offline": "Couldn't connect · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
         default: nil
         }
@@ -488,14 +497,14 @@ final class AccountStore {
     private struct UsageCache: Codable {
         var usage: [String: AccountUsage]; var at: [String: Date]
         var backoff: [String: Date]?; var primed: [String: Date]?
-        var active: [String: String]?; var failing: [String]?; var issues: [String: String]?
+        var active: [String: String]?; var failing: [String]?; var issues: [String: String]?; var readAt: [String: Date]?
     }
     private var reportURL: URL { root.appendingPathComponent("runtime/report.json") }
     private var usageCacheURL: URL { root.appendingPathComponent("runtime/usage-cache.json") }
     private func saveUsageCache() {
         try? PrivateFile.write(UsageCache(usage: usage, at: usageAt, backoff: backoffUntil, primed: primedAt,
                                           active: Dictionary(uniqueKeysWithValues: activeIDs.map { ($0.key.rawValue, $0.value) }),
-                                          failing: Array(failing), issues: issues),
+                                          failing: Array(failing), issues: issues, readAt: readAt),
                                to: usageCacheURL)
     }
     /// Active accounts change fastest. An idle account at a limit cannot change until that
@@ -527,11 +536,19 @@ final class AccountStore {
     }
     @discardableResult private func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String? }
+        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]? }
         guard let data = try? await bridgeOutput(["active"]), let value = try? JSONDecoder().decode(Active.self, from: data) else { return false }
         guard generation == selectionGeneration else { return false }
         activeIDs = [.claude: value.accountID, .codex: value.codexAccountID].compactMapValues { $0 }
         claudeModel = value.claudeModel
+        // A login that changed (signed in again, or refreshed by Claude Code) is read now:
+        // the back-off and any old reading belonged to the previous login.
+        for (id, stamp) in value.logins ?? [:] {
+            if let seen = loginStamps[id], seen != stamp {
+                backoffUntil[id] = nil; usageAt[id] = nil; issues[id] = nil; failing.remove(id)
+            }
+            loginStamps[id] = stamp
+        }
         unknownLogins = [.claude: value.accountID == nil ? value.email : "", .codex: value.codexAccountID == nil ? value.codexEmail : ""]
             .filter { !$0.value.isEmpty }
         return true

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.16 — 2026-10-07
+
+A new sign-in or a refresh is read at once instead of after a back-off; readings older than 15 minutes say when they are from. Side A takes Claude Code's own refresh lock while it runs claude for an account, so it never refreshes a login at the same moment as an open session.
+
 ## 0.5.15 — 2026-10-07
 
 Countdowns move while the menu is open, and a limit estimate from stale readings is dropped. A login whose owner can't be checked yet no longer reads as Couldn't connect. Switch notifications explain that running sessions keep their account. Sign in again is in each account's menu.
