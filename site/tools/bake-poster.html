@@ -1,0 +1,22 @@
+<!doctype html><html><head><title>Side A poster baker</title><style>body{margin:0;background:transparent}#stage{position:relative}canvas{width:100%;height:100%;display:block}</style></head>
+<body><div id="stage" style="width:600px;height:560px"><canvas id="player"></canvas><p id="preview-status"></p><p id="model-hint"></p></div>
+<script type="module">
+import { startPlayer } from '/src/player.ts';
+const height = 560;
+const { renderer, scene, camera, fitPlayer } = await startPlayer();
+// The framing adds the same margin on whichever side limits it; measuring both extremes
+// gives the model's own aspect, so the poster scales with object-fit: contain exactly like
+// the live canvas at any stage size.
+fitPlayer(1000); const fullHeight = camera.top - camera.bottom;
+fitPlayer(0.001); const fullWidth = camera.right - camera.left;
+const aspect = fullWidth / fullHeight;
+const width = Math.round(height * aspect);
+document.getElementById('stage').style.width = width + 'px';
+renderer.setPixelRatio(4);
+renderer.setSize(width, height, false);
+fitPlayer(width / height);
+renderer.render(scene, camera);
+const blob = await new Promise(resolve => renderer.domElement.toBlob(resolve, 'image/png'));
+const response = await fetch('/save-poster', { method: 'POST', body: blob, headers: { 'x-width': String(width), 'x-height': String(height) } });
+document.title = response.ok ? 'saved ' + width + 'x' + height : 'failed';
+</script></body></html>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Side A</string>
+	<key>CFBundleExecutable</key>
+	<string>SideA</string>
+	<key>CFBundleIconFile</key>
+	<string>SideA</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.arnenoori.sidea</string>
+	<key>CFBundleName</key>
+	<string>Side A</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.5.4</string>
+	<key>CFBundleVersion</key>
+	<string>12</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Arne Noori. MIT License.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://getsidea.com/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>dimAjJmkTwAD/fUh9szFrWkDPUcU2k+/LAuDUh91GIA=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUSendProfileInfo</key>
+	<false/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SideAPostHogToken</key>
+	<string>phc_CFUnCbSRwdjiYHdnPd7sV4DFpaKPBFuFifGEGjR9pALg</string>
+</dict>
+</plist>

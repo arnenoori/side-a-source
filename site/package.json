@@ -1,0 +1,22 @@
+{
+  "name": "side-a-download",
+  "version": "0.5.4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:model": "node scripts/prepare-model.mjs && node scripts/prepare-discovery.mjs",
+    "dev": "npm run prepare:model && vite --host 127.0.0.1",
+    "build": "npm run prepare:model && tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/release.test.mjs tests/framing.test.mjs tests/discovery.test.mjs tests/analytics.test.mjs"
+  },
+  "dependencies": {
+    "three": "0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.185.4",
+    "sharp": "0.35.4",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  }
+}

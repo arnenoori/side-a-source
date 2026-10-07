@@ -1,0 +1,39 @@
+.how main { display: block; width: min(720px, 100%); margin: 0 auto; padding: 56px 0 24px; }
+.how section { padding: 0 0 72px; }
+.how h1 { font-size: clamp(36px, 5vw, 56px); line-height: 1.04; letter-spacing: -.04em; font-weight: 600; margin: 0 0 20px; }
+.how h2 { font-size: 28px; letter-spacing: -.025em; font-weight: 600; margin: 0 0 22px; }
+.how p { font-size: 17px; line-height: 1.55; color: #4c5550; margin: 0 0 18px; }
+.how code { font: 14px ui-monospace, "SF Mono", Menlo, monospace; background: #eceeec; padding: 2px 5px; border-radius: 5px; }
+.lead p { font-size: 19px; }
+.shots { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 520px); justify-content: center; gap: 24px; align-items: start; width: min(1000px, calc(100vw - 96px)); position: relative; left: 50%; transform: translateX(-50%); }
+.shots figure { margin: 0; }
+.shots img { width: 100%; height: auto; display: block; border-radius: 14px; box-shadow: 0 1px 0 var(--line), 0 20px 50px #20282018; background: #fff; }
+.shots figcaption { font-size: 13px; color: var(--muted); margin-top: 12px; text-align: center; }
+.features { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 40px; margin: 0; }
+.features dt, .rules dt { font-size: 15px; font-weight: 600; letter-spacing: -.01em; margin: 0 0 6px; }
+.features dd, .rules dd { margin: 0; font-size: 15px; line-height: 1.5; color: #4c5550; }
+.rules { margin: 28px 0 0; border-top: 1px solid var(--line); }
+.rules div { display: grid; grid-template-columns: 120px 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.rules dt { margin: 0; }
+.paper { margin: 26px 0 8px; padding: 34px 32px 28px; border-radius: 18px; background: #fffef8 repeating-linear-gradient(transparent 0 33px, #e6ebf3 33px 34px); box-shadow: 0 1px 0 var(--line), 0 18px 44px #2028200f; }
+/* Handwriting from the system: Noteworthy and Bradley Hand ship with macOS and iOS. */
+.hand { font-family: "Noteworthy", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive; color: #1d3f8f; }
+.formula { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 14px; font-size: clamp(20px, 3vw, 27px); }
+.frac { display: inline-flex; flex-direction: column; align-items: center; text-align: center; }
+.frac span:first-child { border-bottom: 2px solid currentColor; padding: 0 6px 2px; }
+.frac span:last-child { padding-top: 2px; }
+.worked { margin-top: 26px; }
+.how .worked p { font-family: inherit; color: inherit; font-size: clamp(16px, 2.2vw, 20px); line-height: 1.7; margin: 0; }
+.worked .who { display: inline-block; min-width: 108px; color: #6b7fa8; }
+.worked .arrow { color: #b7432a; padding: 0 4px; }
+.worked b { color: #b7432a; font-weight: 700; }
+.how .worked .note { color: #b7432a; margin-top: 8px; transform: rotate(-1.2deg); transform-origin: left; }
+.fine { font-size: 13px !important; color: var(--muted) !important; margin-top: 22px !important; }
+.how .download-area { padding: 0 0 40px; }
+@media(max-width:700px) {
+  .how main { padding-top: 36px; }
+  .shots { grid-template-columns: minmax(0, 520px); width: 100%; left: 0; transform: none; }
+  .features { grid-template-columns: 1fr; }
+  .rules div { grid-template-columns: 1fr; gap: 4px; }
+  .paper { padding: 26px 20px 22px; }
+}

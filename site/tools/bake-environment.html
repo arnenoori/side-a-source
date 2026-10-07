@@ -1,0 +1,15 @@
+<!doctype html><html><head><title>Side A environment baker</title></head><body><button id="bake">Bake studio reflections</button><p id="status">Ready</p><canvas id="canvas"></canvas><script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+import {RoomEnvironment} from '/node_modules/three/examples/jsm/environments/RoomEnvironment.js';
+document.querySelector('#bake').onclick=async()=>{
+ document.querySelector('#status').textContent='Baking';
+ const renderer=new THREE.WebGLRenderer({canvas:document.querySelector('#canvas')});renderer.setSize(128,128);
+ const room=new RoomEnvironment(),pmrem=new THREE.PMREMGenerator(renderer);
+ const target=pmrem.fromScene(room,.04,.1,100,{size:64});
+ const pixels=new Uint16Array(target.width*target.height*4);
+ await renderer.readRenderTargetPixelsAsync(target,0,0,target.width,target.height,pixels);
+ const result=await fetch('/save-environment',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Width':String(target.width),'X-Height':String(target.height)},body:pixels});
+ document.querySelector('#status').textContent=result.ok?`Saved ${target.width} × ${target.height} reflections`:'Save failed';
+ target.dispose();room.dispose();pmrem.dispose();renderer.dispose();
+};
+</script></body></html>

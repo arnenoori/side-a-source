@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://us.i.posthog.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta name="theme-color" content="#f7f8f7" />
+  <meta name="description" content="How Side A tracks your Claude Code and Codex limits and decides which account to use." />
+  <link rel="canonical" href="https://getsidea.com/how/" />
+  <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+  <title>How Side A works</title>
+</head>
+<body>
+  <div class="page how">
+    <header>
+      <a class="wordmark" href="../" aria-label="Side A home"><span class="disc-mark" aria-hidden="true"></span>Side A</a>
+      <nav><a class="quiet-button" href="https://github.com/arnenoori/side-a-source">GitHub</a><a class="quiet-button" href="../">Download</a></nav>
+    </header>
+    <main>
+      <section class="lead">
+        <h1>How Side A works</h1>
+        <p>Claude Code and Codex plans come with a 5-hour and a weekly limit. Whatever you haven't used when a window resets is gone. With several accounts, one runs dry while another's quota quietly expires. Side A watches all of them and keeps you on the one about to lose the most.</p>
+      </section>
+
+      <section class="shots" aria-label="The app">
+        <figure><img src="../app-menu.webp" width="320" height="374" alt="Side A in the menu bar, showing each account's 5-hour and weekly limits" loading="lazy" decoding="async" /><figcaption>Every account, one click away.</figcaption></figure>
+        <figure><img src="../app-usage.webp" width="520" height="648" alt="Usage by day and project" loading="lazy" decoding="async" /><figcaption>Tokens by day, project and model.</figcaption></figure>
+      </section>
+
+      <section>
+        <h2>What it does</h2>
+        <dl class="features">
+          <div><dt>Every limit, at a glance</dt><dd>5-hour and weekly usage for each account, with reset times. The menu bar shows the active account as a percentage.</dd></div>
+          <div><dt>Switches for you</dt><dd>New <code>claude</code> commands in any terminal use the account Side A picks. Running sessions are never interrupted.</dd></div>
+          <div><dt>Moves before the limit</dt><dd>It switches before an account runs out, and rechecks the moment a rate limit hits.</dd></div>
+          <div><dt>Starts windows early</dt><dd>Before your usual start, it opens idle 5-hour windows with one tiny message, so they reset sooner.</dd></div>
+          <div><dt>Shows where tokens go</dt><dd>Usage per day, project and model, read from your local transcripts.</dd></div>
+          <div><dt>Stays out of the way</dt><dd>It lives in the menu bar and runs in the background.</dd></div>
+        </dl>
+      </section>
+
+      <section>
+        <h2>How it decides</h2>
+        <p>It reads the same numbers as <code>/usage</code>, then scores every account:</p>
+        <div class="paper" role="img" aria-label="Priority equals weekly percent left divided by hours until the weekly reset, times plan size">
+          <div class="hand formula">
+            <span>priority</span><span>=</span>
+            <span class="frac"><span>weekly % left</span><span>hours until it resets</span></span>
+            <span>&times; plan size</span>
+          </div>
+          <div class="hand worked">
+            <p><span class="who">Account A</span> 60% left, resets in 24 h <span class="arrow">&rarr;</span> 60 &divide; 24 = <b>2.5</b></p>
+            <p><span class="who">Account B</span> 90% left, resets in 144 h <span class="arrow">&rarr;</span> 90 &divide; 144 = <b>0.6</b></p>
+            <p class="note">A goes first. Its quota expires sooner.</p>
+          </div>
+        </div>
+        <dl class="rules">
+          <div><dt>Plan size</dt><dd>Max 20x counts 20, Max 5x counts 5, Pro counts 1.</dd></div>
+          <div><dt>Ties</dt><dd>Use the 5-hour window that resets soonest.</dd></div>
+          <div><dt>Limits</dt><dd>Leaves an account at 97%; only moves to one under 90%.</dd></div>
+          <div><dt>Calm</dt><dd>Stays put unless another account is 1.5 times more urgent.</dd></div>
+        </dl>
+      </section>
+
+      <section>
+        <h2>What it touches</h2>
+        <dl class="rules">
+          <div><dt>Reads</dt><dd>Each account's own login, where its CLI keeps it, and transcripts in <code>~/.claude/projects</code>.</dd></div>
+          <div><dt>Writes</dt><dd>One marked line in <code>~/.zshrc</code> if you turn on switching, and its own folder in Application Support.</dd></div>
+          <div><dt>Never</dt><dd>Copies, logs or uploads a login. Edits your Claude or Codex settings. Sends analytics unless you opt in.</dd></div>
+        </dl>
+        <p class="fine">Open source under the MIT license. <a href="https://github.com/arnenoori/side-a-source">The source for every release</a> is public, tagged by version. Uses endpoints the CLIs use but don't document. Doesn't raise any limit. Starting a window costs a few tokens. Codex is tracked and warmed up, not switched. Not affiliated with Anthropic or OpenAI.</p>
+      </section>
+
+      <div class="download-area"><a class="download" href="../">Get Side A</a></div>
+    </main>
+    <footer><a href="https://arne.ai">Made with love by Arne Noori</a></footer>
+  </div>
+  <script type="module" src="/src/how.ts"></script>
+</body>
+</html>

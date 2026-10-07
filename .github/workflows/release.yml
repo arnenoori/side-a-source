@@ -1,0 +1,120 @@
+name: Signed public release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: public-release
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a version tag on main
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          test "$REF_TYPE" = tag
+          git merge-base --is-ancestor HEAD origin/main
+          python3 scripts/check-release.py "$REF_NAME"
+      - name: Require release credentials
+        env:
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          PUBLIC_RELEASE_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          for name in SIGNING_CERTIFICATE_BASE64 SIGNING_CERTIFICATE_PASSWORD NOTARY_PRIVATE_KEY NOTARY_KEY_ID PUBLIC_RELEASE_TOKEN SPARKLE_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then echo "Missing GitHub secret: $name" >&2; exit 1; fi
+          done
+  build:
+    needs: preflight
+    uses: ./.github/workflows/ci.yml
+  notarize:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: SideA-*
+          path: artifacts
+          merge-multiple: true
+      - name: Assemble tested universal app
+        run: |
+          for architecture in arm64 x86_64; do
+            mkdir -p "dist/$architecture"
+            ditto -x -k "artifacts/SideA-$architecture.zip" "dist/$architecture"
+          done
+          ./scripts/assemble-universal.sh
+          python3 -m venv .build/dmg-tools
+          .build/dmg-tools/bin/pip install -r scripts/requirements-dmg.txt
+      - name: Sign, notarize, staple, and verify signed updates
+        env:
+          SIGNING_IDENTITY: 'Developer ID Application: Arne Noori (NV46KL65S9)'
+          APPLE_TEAM_ID: NV46KL65S9
+          SIGNING_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE_BASE64 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: ./scripts/sign-release.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Signed-public-release
+          path: |
+            dist/SideA-*-macOS-universal.zip
+            dist/SideA-*-macOS-universal.dmg
+            dist/SHA256SUMS.txt
+            dist/appcast.xml
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    needs: notarize
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: Signed-public-release
+          path: dist
+      - name: Publish public binaries
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          ./scripts/publish-release.sh "$RELEASE_TAG"
+          python3 scripts/publish-appcast.py
+  source:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Publish this release's source
+        env:
+          SOURCE_DEPLOY_KEY: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          key="$RUNNER_TEMP/source-key"
+          printf '%s\n' "$SOURCE_DEPLOY_KEY" > "$key"
+          chmod 600 "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          ./scripts/publish-source.sh "$RELEASE_TAG"

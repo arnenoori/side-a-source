@@ -1,0 +1,121 @@
+name: macOS checks
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  tooling:
+    name: Release safeguards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate workflows and packaging scripts
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          shellcheck scripts/*.sh
+          python3 -m unittest discover -s scripts/tests -v
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Test and build download page
+        run: |
+          npm --prefix site ci
+          npm --prefix site test
+          npm --prefix site run build
+  verify:
+    name: Test and build (${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Confirm native runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.architecture }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Use the newest installed Xcode
+        # Runner images default to an older Xcode; build with the toolchain developers use.
+        run: |
+          newest=$(printf '%s\n' /Applications/Xcode_*.app | grep -viE 'beta|_rc' | sort -V | tail -1)
+          sudo xcode-select -s "$newest"
+          swift --version
+      - name: Bridge unit and PTY integration tests
+        run: python3 -m unittest discover -s bridge/tests -v
+      - name: Prepare app bridge resources
+        run: cp bridge/*.py Sources/SideA/Resources/
+      - name: Swift tests
+        run: swift test
+      - name: Build and validate application
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          ./scripts/build-app.sh release "$ARCHITECTURE"
+          python3 scripts/verify-bundle.py "dist/$ARCHITECTURE/Side A.app" --architectures "$ARCHITECTURE"
+          ditto -c -k --keepParent "dist/$ARCHITECTURE/Side A.app" "dist/SideA-$ARCHITECTURE.zip"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SideA-${{ matrix.architecture }}
+          path: dist/SideA-${{ matrix.architecture }}.zip
+          if-no-files-found: error
+          retention-days: 14
+  package:
+    name: Universal installer
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: SideA-*
+          path: artifacts
+          merge-multiple: true
+      - name: Build and validate custom installer
+        run: |
+          for architecture in arm64 x86_64; do
+            mkdir -p "dist/$architecture"
+            ditto -x -k "artifacts/SideA-$architecture.zip" "dist/$architecture"
+          done
+          ./scripts/assemble-universal.sh
+          python3 -m venv .build/dmg-tools
+          .build/dmg-tools/bin/pip install -r scripts/requirements-dmg.txt
+          ./scripts/build-dmg.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Installer-preview
+          path: dist/SideA-*-macOS-universal.dmg
+          if-no-files-found: error
+          retention-days: 14
+  checks:
+    name: Required checks
+    if: always()
+    needs: [verify, tooling, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every architecture to pass
+        env:
+          BUILD_RESULT: ${{ needs.verify.result }}
+          TOOLING_RESULT: ${{ needs.tooling.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+        run: test "$BUILD_RESULT" = success && test "$TOOLING_RESULT" = success && test "$PACKAGE_RESULT" = success

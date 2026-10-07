@@ -1,0 +1,13 @@
+# Side A
+
+> A Mac menu bar app that shows the 5-hour and weekly limits of all your Claude Code and Codex accounts and keeps the Mac-wide login on the account whose quota is most at risk of going unused.
+
+The signed and Apple-notarized public preview is available. The website player uses demo accounts. Codex accounts are tracked, not switched (experimental).
+
+## Product
+
+- [Product and setup guide](https://getsidea.com/index.md): What it does, how it decides, what it touches, setup, and privacy.
+- [Official releases](https://github.com/arnenoori/side-a-releases/releases): Published downloads and checksums.
+- [Product data](https://getsidea.com/product.json): Public read-only product information.
+- [Setup skill](https://getsidea.com/.well-known/agent-skills/side-a-setup/SKILL.md): Help users check availability and set up the app.
+- [Creator](https://arne.ai): Arne Noori.

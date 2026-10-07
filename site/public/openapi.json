@@ -1,0 +1,51 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Side A product information",
+    "version": "1.0.0",
+    "description": "Public, read-only product metadata. No account access or authentication."
+  },
+  "servers": [
+    {
+      "url": "https://getsidea.com"
+    }
+  ],
+  "paths": {
+    "/product.json": {
+      "get": {
+        "operationId": "getSideAProduct",
+        "summary": "Read Side A features, requirements and release status",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Product information",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "releaseStatus",
+                    "releasesURL"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "releaseStatus": {
+                      "type": "string"
+                    },
+                    "releasesURL": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

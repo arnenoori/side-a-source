@@ -1,0 +1,19 @@
+{
+  "linkset": [
+    {
+      "anchor": "https://getsidea.com/product.json",
+      "service-desc": [
+        {
+          "href": "https://getsidea.com/openapi.json",
+          "type": "application/vnd.oai.openapi+json"
+        }
+      ],
+      "service-doc": [
+        {
+          "href": "https://getsidea.com/index.md",
+          "type": "text/markdown"
+        }
+      ]
+    }
+  ]
+}

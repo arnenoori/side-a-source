@@ -1,0 +1,3 @@
+# Left out of the public source snapshot (scripts/publish-source.sh uses git archive).
+docs/domain-shortlist.md export-ignore
+.github/workflows/local-release.yml export-ignore

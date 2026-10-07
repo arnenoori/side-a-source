@@ -1,0 +1,32 @@
+{
+  "name": "Side A",
+  "url": "https://getsidea.com/",
+  "description": "A Mac menu bar app that shows the 5-hour and weekly limits of all your Claude Code and Codex accounts and keeps the Mac-wide login on the account whose quota is most at risk of going unused.",
+  "platform": "macOS 14+",
+  "architectures": [
+    "Apple Silicon",
+    "Intel"
+  ],
+  "requirements": [
+    "Python 3.9+",
+    "Claude Code or Codex CLI",
+    "An account with Claude Code or Codex access enabled"
+  ],
+  "providers": [
+    "Claude Code",
+    "Codex"
+  ],
+  "releaseStatus": "public-preview",
+  "version": "0.5.4",
+  "releasesURL": "https://github.com/arnenoori/side-a-releases/releases",
+  "limitations": [
+    "Relies on usage and login endpoints the CLIs use but do not document; CLI updates can change them",
+    "Does not raise provider limits",
+    "Codex accounts are tracked, not switched (experimental)"
+  ],
+  "guideURL": "https://getsidea.com/index.md",
+  "author": {
+    "name": "Arne Noori",
+    "url": "https://arne.ai"
+  }
+}

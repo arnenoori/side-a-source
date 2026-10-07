@@ -1,0 +1,20 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "Side A",
+    "url": "https://getsidea.com"
+  },
+  "entries": [
+    {
+      "identifier": "urn:air:getsidea.com:skill:side-a-setup",
+      "displayName": "Side A setup",
+      "type": "text/markdown",
+      "url": "https://getsidea.com/.well-known/agent-skills/side-a-setup/SKILL.md",
+      "description": "Requirements, official download checks, and account setup guidance for Side A.",
+      "representativeQueries": [
+        "How do I set up Side A on my Mac?",
+        "Is Side A available to download for Claude Code or Codex?"
+      ]
+    }
+  ]
+}
