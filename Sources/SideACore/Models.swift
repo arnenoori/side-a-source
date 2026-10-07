@@ -86,6 +86,8 @@ public struct AccountUsage: Codable, Equatable, Sendable {
     }
     public var fiveHour: UsageWindow? { windows.first { $0.id == "five_hour" } }
     public var weekly: UsageWindow? { windows.first { $0.id == "seven_day" } }
+    /// Weekly caps that apply to one model only, such as "Weekly Fable".
+    public var modelLimits: [UsageWindow] { windows.filter { $0.id.hasPrefix("model:") } }
 }
 
 public struct TokenRow: Codable, Equatable, Sendable {

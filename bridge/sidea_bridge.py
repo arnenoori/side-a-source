@@ -315,6 +315,12 @@ def claude_usage(root, config, account):
     windows = [{"id": key, "label": label, "percent": float(data[key].get("utilization") or 0),
                 "resetsAt": epoch(data[key].get("resets_at"))}
                for key, label in WINDOW_LABELS.items() if isinstance(data.get(key), dict)]
+    # Per-model weekly caps now arrive as scoped entries in `limits`, e.g. {"model": {"display_name": "Fable"}}.
+    for limit in data.get("limits") or []:
+        model = ((limit.get("scope") or {}).get("model") or {}).get("display_name") if isinstance(limit, dict) else None
+        if limit.get("kind") == "weekly_scoped" and model:
+            windows.append({"id": "model:" + model.casefold(), "label": "Weekly " + model,
+                            "percent": float(limit.get("percent") or 0), "resetsAt": epoch(limit.get("resets_at"))})
     return {"windows": windows, "stale": False, "capacity": plan_capacity(oauth)}
 
 

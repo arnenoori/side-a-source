@@ -3,6 +3,7 @@ import { analytics } from './analytics';
 import { latestDownloadableRelease, releaseAPI, releasesURL } from './release.mjs';
 
 analytics.capture('$pageview');
+console.log('%cSide A%c  Read the source: https://github.com/arnenoori/side-a-source  (and try the Konami code)', 'font-weight:600', 'color:#657069');
 const analyticsToggle = document.querySelector<HTMLInputElement>('#analytics-enabled')!;
 analyticsToggle.checked = analytics.isEnabled();
 analyticsToggle.disabled = analytics.privacySignal();

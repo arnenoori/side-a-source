@@ -78,7 +78,7 @@ export async function startPlayer() {
   controls.push(lcd);
   const fitPlayer = createPlayerFraming(camera, player);
   const accounts = [{ name: 'PERSONAL', provider: 'CLAUDE' }, { name: 'STUDIO', provider: 'CLAUDE' }, { name: 'SIDE PROJECT', provider: 'CODEX' }];
-  let track = 0, open = false, playing = false, auto = false, held = false;
+  let track = 0, open = false, playing = false, auto = false, held = false, sideB = false;
   let targetRotation = -0.12, frame = 0, previousTime = 0;
   let down: { x: number; y: number; rotation: number } | null = null;
   const ray = new THREE.Raycaster();
@@ -87,8 +87,8 @@ export async function startPlayer() {
     ctx.fillStyle = '#a6b887'; ctx.fillRect(0, 0, 820, 295);
     ctx.fillStyle = '#2c412b';
     ctx.font = '24px monospace';
-    ctx.fillText(`${accounts[track].provider}    ${auto ? 'AUTO' : 'SIDE A'}`, 40, 49);
-    ctx.font = 'bold 60px monospace'; ctx.fillText(accounts[track].name, 40, 143);
+    ctx.fillText(`${sideB ? 'BONUS' : accounts[track].provider}    ${sideB ? 'SIDE B' : auto ? 'AUTO' : 'SIDE A'}`, 40, 49);
+    ctx.font = 'bold 60px monospace'; ctx.fillText(sideB ? 'HIDDEN TRACK' : accounts[track].name, 40, 143);
     ctx.font = '23px monospace'; ctx.fillText(`${held ? 'HOLD' : playing ? 'PLAY' : 'READY'}                       0${track + 1} / 03`, 40, 241);
     lcdTexture.needsUpdate = true;
     liveStatus.textContent = `Preview account: ${accounts[track].name}, ${accounts[track].provider}. ${playing ? 'Playing' : 'Ready'}. ${open ? 'Lid open.' : ''}`;
@@ -144,6 +144,15 @@ export async function startPlayer() {
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   });
   canvas.addEventListener('pointercancel', () => { down = null; });
+  // Easter egg: the Konami code anywhere on the page flips the player to Side B.
+  const code = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+  let progress = 0;
+  addEventListener('keydown', event => {
+    progress = event.key === code[progress] ? progress + 1 : event.key === code[0] ? 1 : 0;
+    if (progress < code.length) return;
+    progress = 0; sideB = !sideB; open = sideB; playing = sideB; held = false;
+    lcdUpdate(); schedule();
+  });
   canvas.addEventListener('keydown', event => {
     const action = { ArrowLeft: 'previous', ArrowRight: 'next', Enter: 'open', ' ': 'play', Escape: 'stop' }[event.key];
     if (action) { event.preventDefault(); activate(action); }

@@ -12,6 +12,7 @@ struct MenuPlayer: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     @AppStorage("tourSeen") private var tourSeen = false
+    @AppStorage("playerEnabled") private var playerEnabled = false
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -83,7 +84,7 @@ struct MenuPlayer: View {
             HStack(spacing: 14) {
                 Button { store.openLibrary() } label: { Label("Add account", systemImage: "plus") }.tourAnchor(.add)
                 Spacer()
-                Button { openPlayer() } label: { Image(systemName: "opticaldisc") }.help("Show the player")
+                if playerEnabled { Button { openPlayer() } label: { Image(systemName: "opticaldisc") }.help("Show the player") }
                 Button { store.settingsTab = .general; store.openSettings() } label: { Image(systemName: "gearshape") }.help("Settings")
                 Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Side A")
             }.buttonStyle(.borderless).font(.system(size: 12))
@@ -154,6 +155,11 @@ struct AccountUsageRow: View {
             if let usage {
                 MiniBar(label: "5h", window: usage.fiveHour)
                 MiniBar(label: "wk", window: usage.weekly)
+                // A model's own weekly cap only earns space once that model has been used.
+                ForEach(usage.modelLimits.filter { $0.percent >= 1 }, id: \.id) { limit in
+                    MiniBar(label: String(limit.label.dropFirst("Weekly ".count).prefix(2)).lowercased(), window: limit)
+                        .help(limit.label)
+                }
             }
             Group {
                 if !account.ready {

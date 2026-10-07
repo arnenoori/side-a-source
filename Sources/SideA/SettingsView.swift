@@ -222,12 +222,17 @@ struct GeneralSettings: View {
     @ObservedObject var updates: Updates
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("tourSeen") private var tourSeen = false
+    @AppStorage("playerEnabled") private var playerEnabled = false
     var body: some View {
         Form {
             Section {
                 Toggle("Open at login", isOn: Binding(get: { launchAtLogin }, set: { store.setLaunchAtLogin($0); launchAtLogin = SMAppService.mainApp.status == .enabled }))
                 Toggle("Show only in the menu bar", isOn: Binding(get: { store.config.menuBarOnly }, set: { store.setMenuBarOnly($0) }))
                 LabeledContent("Guided tour") { Button("Show again") { tourSeen = false } }
+                Toggle(isOn: $playerEnabled) {
+                    Text("3D player")
+                    Text("A pocket disc player for your accounts, from the menu.")
+                }
             }
             Section("Tools") {
                 DependencyStatusView(store: store, provider: .claude)

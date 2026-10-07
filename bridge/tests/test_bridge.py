@@ -125,12 +125,15 @@ class BridgeTests(unittest.TestCase):
         vault={bridge.GLOBAL_SERVICE:login('alpha'), bridge.profile_service(self.root,b['id']):login('beta',expires=-5000)}
         owners={'alpha':a['email'],'beta':b['email']}
         config={'accounts':[a,b]}
-        usage={'five_hour':{'utilization':40,'resets_at':'2026-10-06T20:00:00Z'},'seven_day':{'utilization':10,'resets_at':None}}
+        # Shape of the live response: legacy per-model keys are null; model caps arrive as scoped limits.
+        usage={'five_hour':{'utilization':40,'resets_at':'2026-10-06T20:00:00Z'},'seven_day':{'utilization':10,'resets_at':None},
+               'seven_day_opus':None,'limits':[{'kind':'session','percent':40,'scope':None},
+               {'kind':'weekly_scoped','percent':3,'resets_at':'2026-10-11T00:00:00Z','scope':{'model':{'id':None,'display_name':'Fable'},'surface':None}}]}
         with contextlib.ExitStack() as stack:
             for item in self.vault_patches(home,vault,owners): stack.enter_context(item)
             post=stack.enter_context(patch.object(bridge,'post_json',return_value=usage))
             result=bridge.claude_usage(self.root,config,a)
-            self.assertEqual([w['percent'] for w in result['windows']],[40.0,10.0])
+            self.assertEqual([(w['id'],w['percent']) for w in result['windows']],[('five_hour',40.0),('seven_day',10.0),('model:fable',3.0)])
             # An expired login has not been used since it expired; it is never refreshed.
             with self.assertRaisesRegex(ValueError,'idle'): bridge.claude_usage(self.root,config,b)
             self.assertEqual(post.call_count,1)

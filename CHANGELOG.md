@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6 — 2026-10-07
+
+Reads per-model weekly caps from the usage endpoint's scoped limits and shows them once used. The 3D player is opt-in. Easter eggs on the site and in notifications.
+
 ## 0.5.5 — 2026-10-07
 
 The disc is visible with the lid open: the lid seam was a solid cylinder that covered it.

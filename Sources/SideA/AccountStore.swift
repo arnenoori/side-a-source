@@ -496,13 +496,13 @@ final class AccountStore {
                 let from = config.accounts.first { $0.id == current }?.name
                 await activate(best)
                 if activeIDs[provider] == best, let name = config.accounts.first(where: { $0.id == best })?.name {
-                    notify("Switched to \(name)", from.map { "\($0) is near its limit or has less quota at risk." } ?? "Autopilot picked the account with the most quota at risk.")
+                    notify("Now playing: \(name)", from.map { "\($0) is near its limit or has less quota at risk." } ?? "Autopilot picked the account with the most quota at risk.")
                 }
             }
             if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, active: nil, now: now) == nil {
                 if !exhaustedNotified {
                     exhaustedNotified = true
-                    notify("All Claude accounts are limited", "\(next.0.name) is back \(UsageBar.format(next.1)).")
+                    notify("All tracks played", "\(next.0.name) is back \(UsageBar.format(next.1)).")
                 }
             } else if provider == .claude { exhaustedNotified = false }
         }
