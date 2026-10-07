@@ -197,6 +197,8 @@ struct AccountUsageRow: View {
 struct MiniBar: View {
     let label: String
     let window: UsageWindow?
+    /// Shows when the window resets under the bar instead of only in the tooltip.
+    var showsReset = false
     var body: some View {
         let percent = min(max(window?.percent ?? 0, 0), 100)
         VStack(alignment: .trailing, spacing: 2) {
@@ -207,6 +209,10 @@ struct MiniBar: View {
                     Capsule().fill(percent >= Planner.full ? Color.red : percent >= 75 ? .orange : .accentColor)
                         .frame(width: 46 * percent / 100, height: 4)
                 }
+            if showsReset {
+                Text(window?.resetsAt.flatMap { $0 > Date().timeIntervalSince1970 ? UsageBar.format($0).replacingOccurrences(of: "in ", with: "") : nil } ?? " ")
+                    .font(.system(size: 9).monospacedDigit()).foregroundStyle(.tertiary).lineLimit(1)
+            }
         }
         .help(window?.resetsAt.map { "\(window?.label ?? label) resets \(UsageBar.format($0))" } ?? "")
         .accessibilityElement(children: .combine)

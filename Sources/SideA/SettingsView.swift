@@ -123,8 +123,9 @@ struct AccountSettingsRow: View {
             }
             Spacer()
             if account.ready, let usage = store.usage[account.id] {
-                MiniBar(label: "5h", window: usage.fiveHour)
-                MiniBar(label: "wk", window: usage.weekly)
+                MiniBar(label: "5h", window: usage.fiveHour, showsReset: true)
+                MiniBar(label: "wk", window: usage.weekly, showsReset: true)
+                ForEach(usage.modelLimits, id: \.id) { MiniBar(label: LimitText.name($0), window: $0, showsReset: true) }
             }
             Group {
                 if store.signingIn.contains(account.id) || store.waking.contains(account.id) {
@@ -182,7 +183,7 @@ struct UsageSettings: View {
             if !weekly.isEmpty {
                 let rhythm = store.report.flatMap { WeekRhythm($0.activity) }
                 Section {
-                    ForEach(weekly) { PaceRow(account: $0, window: store.usage[$0.id]!.weekly!, rhythm: rhythm) }
+                    ForEach(weekly) { PaceRow(account: $0, usage: store.usage[$0.id]!, rhythm: rhythm) }
                 } header: {
                     Text("This week")
                 } footer: {
@@ -194,7 +195,9 @@ struct UsageSettings: View {
                     HStack(spacing: 10) {
                         let days = Dictionary(report.days.map { ($0.date ?? "", $0.total) }, uniquingKeysWith: +)
                         let sum = { (range: ClosedRange<Int>) in range.reduce(0) { $0 + (days[MenuPlayer.day(-$1)] ?? 0) } }
-                        StatTile(title: "Today", value: sum(0...0), baseline: Double(sum(1...29)) / 29, comparison: "daily average")
+                        // Early in the day, compare with what is usually used by this hour, not a whole day.
+                        StatTile(title: "Today", value: sum(0...0), baseline: Double(sum(1...29)) / 29 * Self.shareOfDayByNow(report.activity),
+                                 comparison: "usual by \(Date().formatted(.dateTime.hour()))")
                         StatTile(title: "7 days", value: sum(0...6), baseline: Double(sum(7...13)), comparison: "the week before")
                         StatTile(title: "30 days", value: sum(0...29))
                     }
@@ -266,6 +269,18 @@ struct UsageSettings: View {
         let pace = share >= 99.5 ? "on pace to use all of your combined Claude limits before they reset" : "on pace to use \(Int(share))% of your combined Claude limits"
         return "Week ahead: \(pace), \(basis). The tick on each bar is where you would usually be by now."
     }
+    /// Share of a typical day's activity that happens before this moment, from past days' hourly counts.
+    static func shareOfDayByNow(_ activity: [ActivitySpan]) -> Double {
+        let now = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let hour = now.hour ?? 0, part = Double(now.minute ?? 0) / 60
+        let past = activity.filter { $0.date != MenuPlayer.day(0) }
+        let total = past.reduce(0.0) { $0 + Double($1.hours.reduce(0, +)) }
+        guard total > 0 else { return 1 }
+        let done = past.reduce(0.0) { sum, span in
+            sum + Double(span.hours.prefix(hour).reduce(0, +)) + (span.hours.indices.contains(hour) ? Double(span.hours[hour]) * part : 0)
+        }
+        return max(done / total, 0.02)
+    }
     static func day(_ text: String?) -> Date {
         (try? Date(text ?? "", strategy: .iso8601.year().month().day())) ?? .distantPast
     }
@@ -285,8 +300,9 @@ struct UsageSettings: View {
 /// Weekly use against how much of the week has passed, with what that pace means.
 struct PaceRow: View {
     let account: Account
-    let window: UsageWindow
+    let usage: AccountUsage
     let rhythm: WeekRhythm?
+    private var window: UsageWindow { usage.weekly! }
     var body: some View {
         let used = min(max(window.percent, 0), 100)
         let forecast = WeekForecast(window, rhythm: rhythm, now: Date().timeIntervalSince1970)
@@ -305,6 +321,8 @@ struct PaceRow: View {
                     Rectangle().fill(.primary.opacity(0.55)).frame(width: 1.5, height: 10).offset(x: proxy.size.width * (forecast?.expectedNow ?? 0) - 0.75)
                 }
             }.frame(height: 6)
+            Text(LimitText.resets(usage)).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
@@ -315,6 +333,28 @@ struct PaceRow: View {
         guard let forecast, forecast.projected > used else { return "\(Int(used))% used, resets \(UsageBar.format(reset))" }
         if let out = forecast.runsOut { return "Runs out \(UsageBar.format(out))" }
         return "On pace for \(Int(forecast.projected))% by \(UsageBar.format(reset))"
+    }
+}
+
+/// Plain-words limit summaries shared by the Usage and Accounts tabs.
+enum LimitText {
+    /// "Fable" for "Weekly Fable".
+    static func name(_ window: UsageWindow) -> String {
+        window.label.hasPrefix("Weekly ") ? String(window.label.dropFirst("Weekly ".count)) : window.label
+    }
+    /// Every window's reset, e.g. "5-hour 24%, resets in 2h 10m · Fable 0%, resets Sat 5 PM".
+    static func resets(_ usage: AccountUsage) -> String {
+        let now = Date().timeIntervalSince1970
+        let live = { (window: UsageWindow?) in window.flatMap { ($0.resetsAt ?? 0) > now ? $0 : nil } }
+        var parts: [String] = []
+        if let five = live(usage.fiveHour) { parts.append("5-hour \(Int(five.percent))%, resets \(UsageBar.format(five.resetsAt!))") }
+        else if usage.fiveHour != nil { parts.append("5-hour idle") }
+        let weekly = live(usage.weekly).map { "week resets \(UsageBar.format($0.resetsAt!))" }
+        if let weekly { parts.append(weekly) }
+        for limit in usage.modelLimits {
+            parts.append("\(name(limit)) \(Int(limit.percent))%\(live(limit).map { ", resets \(UsageBar.format($0.resetsAt!))" } ?? "")")
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

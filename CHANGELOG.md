@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.13 — 2026-10-07
+
+Usage rows list every limit with its reset (5-hour, weekly, Fable); Accounts shows Fable bars and each reset under its bar; Today compares with what you usually use by this hour.
+
 ## 0.5.12 — 2026-10-07
 
 Paid usage warnings: Side A reads each Claude account's usage-credit spend, warns before the account in use starts billing credits with nowhere to move, notifies when spend grows, and shows spend in Usage.
