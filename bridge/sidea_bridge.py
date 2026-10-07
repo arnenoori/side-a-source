@@ -422,7 +422,12 @@ def prime(root, config, account):
     if provider_of(account) == "codex":
         from codex_bridge import prime as codex_prime
         return codex_prime(root, account)
-    owned_login(root, account)
+    blob = owned_login(root, account, idle_ok=True)
+    if not token_email(root, blob):
+        # An expired login can't be looked up until the CLI refreshes it, which this message does.
+        # Until then the CLI's own record of who signed in must name this account.
+        if auth_status(root, account).get("email", "").casefold() != account.get("email", "").casefold() or not account.get("email"):
+            raise ValueError(f"Sign in to {account['name']} again.")
     env = clean_environment(prepare_profile(root, account["id"]))
     # The profile's clean settings keep the user's hooks and CLAUDE.md out; the selector
     # picks the account's own login, which the CLI refreshes itself if needed.

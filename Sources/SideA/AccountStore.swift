@@ -38,6 +38,9 @@ final class AccountStore {
     @ObservationIgnored private var limitMarkerDate: Date?
     var usage: [String: AccountUsage] = [:]
     var signingIn: Set<String> = []
+    /// Why an account's numbers are not current: "idle", "signIn" or "offline". Absent when they are.
+    var issues: [String: String] = [:]
+    var waking: Set<String> = []
     @ObservationIgnored private var primedAt: [String: Date] = [:]
     @ObservationIgnored private var usageAt: [String: Date] = [:]
     @ObservationIgnored private var backoffUntil: [String: Date] = [:]
@@ -124,7 +127,7 @@ final class AccountStore {
         if !isDemo, let cache = try? PrivateFile.read(UsageCache.self, from: usageCacheURL) {
             // Show the last numbers at once and keep each account on its normal polling schedule.
             usage = cache.usage; usageAt = cache.at
-            backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? [])
+            backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []); issues = cache.issues ?? [:]
             activeIDs = (cache.active ?? [:]).reduce(into: [:]) { ids, item in AgentProvider(rawValue: item.key).map { ids[$0] = item.value } }
         }
         if !isDemo {
@@ -368,6 +371,7 @@ final class AccountStore {
             let value = try JSONDecoder().decode(AccountUsage.self, from: try await bridgeOutput(["usage", id]))
             usage[id] = value
             failing.remove(id)
+            issues[id] = nil
             let now = Date().timeIntervalSince1970
             if let five = value.fiveHour {
                 // A drop means the window reset; the old pace no longer applies.
@@ -380,9 +384,11 @@ final class AccountStore {
             // Idle: nobody has used the login since it expired, so the last reading still holds.
             if message.contains("idle") {
                 backoffUntil[id] = Date().addingTimeInterval(1800)
+                issues[id] = "idle"
             } else {
                 // The usage endpoint rate-limits frequent reads; back off rather than retry.
                 let signIn = message.contains("Sign in")
+                issues[id] = signIn ? "signIn" : "offline"
                 backoffUntil[id] = Date().addingTimeInterval(signIn ? 1800 : message.contains("429") ? 600 : 300)
                 failing.insert(id)
                 if signIn { usage[id]?.stale = true }
@@ -397,6 +403,26 @@ final class AccountStore {
         Task { await refreshReport() }
         await refresh(config.accounts.filter { $0.ready
             && (dueForRead($0) || (force && Date().timeIntervalSince(usageAt[$0.id] ?? .distantPast) > 60)) }.map(\.id))
+    }
+    /// Why an account shows no current numbers, in words; nil when its reading is current.
+    func issueText(_ id: String) -> String? {
+        switch issues[id] {
+        case "signIn": "Sign in again"
+        case "idle": usage[id] == nil ? "Idle · wake it to read its limits" : nil
+        case "offline": "Couldn't connect · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
+        default: nil
+        }
+    }
+    /// An idle Claude login has expired from disuse; one tiny message makes the CLI refresh it.
+    func wake(_ id: String) async {
+        guard !waking.contains(id) else { return }
+        waking.insert(id); defer { waking.remove(id) }
+        primedAt[id] = Date()
+        // A limited account rejects the message, but the CLI has still refreshed its login by then.
+        _ = try? await bridgeOutput(["prime", id], timeout: 200)
+        backoffUntil[id] = nil
+        await refreshUsage(id)
+        if issues[id] == "idle" { self.error = "\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be woken. Sign in to it again." }
     }
     /// What Autopilot may act on: accounts with a trustworthy latest reading.
     private var plannable: [String: AccountUsage] { usage.filter { !failing.contains($0.key) } }
@@ -414,14 +440,14 @@ final class AccountStore {
     private struct UsageCache: Codable {
         var usage: [String: AccountUsage]; var at: [String: Date]
         var backoff: [String: Date]?; var primed: [String: Date]?
-        var active: [String: String]?; var failing: [String]?
+        var active: [String: String]?; var failing: [String]?; var issues: [String: String]?
     }
     private var reportURL: URL { root.appendingPathComponent("runtime/report.json") }
     private var usageCacheURL: URL { root.appendingPathComponent("runtime/usage-cache.json") }
     private func saveUsageCache() {
         try? PrivateFile.write(UsageCache(usage: usage, at: usageAt, backoff: backoffUntil, primed: primedAt,
                                           active: Dictionary(uniqueKeysWithValues: activeIDs.map { ($0.key.rawValue, $0.value) }),
-                                          failing: Array(failing)),
+                                          failing: Array(failing), issues: issues),
                                to: usageCacheURL)
     }
     /// Active accounts change fastest. An idle account at a limit cannot change until that
@@ -534,11 +560,15 @@ final class AccountStore {
         let minute = Calendar.current.component(.hour, from: Date()) * 60 + Calendar.current.component(.minute, from: Date())
         // Until the report has loaded, the schedule is unknown, not absent: wait for it.
         guard let report, WorkSchedule(report.activity)?.allowsPriming(atMinute: minute) ?? true else { return }
-        for account in config.accounts where Planner.shouldPrime(account, usage: plannable[account.id], now: now)
+        // An idle login with no reading yet can only be read after it is woken.
+        for account in config.accounts where (Planner.shouldPrime(account, usage: plannable[account.id], now: now)
+            || (account.ready && account.allowAuto && issues[account.id] == "idle" && usage[account.id] == nil))
             && Date().timeIntervalSince(primedAt[account.id] ?? .distantPast) > 1800 {
             primedAt[account.id] = Date()
             saveUsageCache()
-            if (try? await bridgeOutput(["prime", account.id], timeout: 200)) != nil { await refreshUsage(account.id) }
+            _ = try? await bridgeOutput(["prime", account.id], timeout: 200)
+            backoffUntil[account.id] = nil
+            await refreshUsage(account.id)
         }
     }
     func setMenuBarOnly(_ value: Bool) {

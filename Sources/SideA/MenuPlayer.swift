@@ -44,10 +44,15 @@ struct MenuPlayer: View {
             .frame(maxHeight: 440)
             .fixedSize(horizontal: false, vertical: true)
             if !store.shellSwitching && !store.isDemo && store.config.accounts.contains(where: { $0.provider == .claude }) {
-                HStack {
-                    Text("Switching is off in Terminal").font(.system(size: 11))
+                // Without the one-line shell hook, Use and Autopilot cannot change which account claude runs as.
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Let Side A choose your Claude account").font(.system(size: 11, weight: .medium))
+                        Text("New claude commands in Terminal will run as the account you pick, or the one Autopilot picks. Adds one line to ~/.zshrc.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     Spacer()
-                    Button("Turn on") { Task { await store.setShellSwitching(true) } }.controlSize(.small)
+                    Button("Set up") { Task { await store.setShellSwitching(true) } }.controlSize(.small)
                 }
             }
             if store.unknownLogins[.claude] == nil, let next = Planner.nextAvailable(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, now: Date().timeIntervalSince1970),
@@ -162,9 +167,13 @@ struct AccountUsageRow: View {
                 }
             }
             Group {
-                if !account.ready {
+                if !account.ready || (store.issues[account.id] == "signIn" && !isActive) {
                     Button("Sign in") { Task { await store.signIn(account.id) } }
                         .disabled(store.signingIn.contains(account.id))
+                } else if store.issues[account.id] == "idle" && usage == nil && account.provider == .claude {
+                    Button("Wake") { Task { await store.wake(account.id) } }
+                        .disabled(store.waking.contains(account.id))
+                        .help("Sends one tiny message so Claude refreshes this login")
                 } else if !isActive && account.provider == .claude {
                     Button("Use") { Task { await store.activate(account.id) } }.tourAnchor(.use)
                         .help("New claude commands use this account")
@@ -182,6 +191,7 @@ struct AccountUsageRow: View {
 
     private var caption: String? {
         guard account.ready else { return "Not signed in" }
+        if let issue = store.issueText(account.id) { return issue }
         guard let usage = store.usage[account.id] else { return "Reading…" }
         if usage.stale { return "Sign in again" }
         if let minutes = store.minutesToLimit(account.id), minutes < 300 { return "Limit in ~\(Self.duration(minutes))" }

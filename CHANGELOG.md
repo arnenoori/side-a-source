@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.10 — 2026-10-07
+
+Accounts no longer sit on Reading forever: revoked Codex logins ask for sign-in instead of backing off as a rate limit, idle Claude logins can be woken (automatically during work hours, or with Wake), and failed reads say why with a retry time. Clearer Terminal setup prompt.
+
 ## 0.5.9 — 2026-10-07
 
 Sync across Macs through iCloud Drive: combined usage, per-Mac totals, shared working hours and accounts from other Macs to sign in to. Follow Fable: while Claude Code runs Fable, Autopilot ranks accounts by Fable headroom and skips plans that bill Fable as extra usage.

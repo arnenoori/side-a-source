@@ -127,10 +127,13 @@ struct AccountSettingsRow: View {
                 MiniBar(label: "wk", window: usage.weekly)
             }
             Group {
-                if store.signingIn.contains(account.id) {
+                if store.signingIn.contains(account.id) || store.waking.contains(account.id) {
                     ProgressView().controlSize(.small)
-                } else if !account.ready {
+                } else if !account.ready || (store.issues[account.id] == "signIn" && !isActive) {
                     Button("Sign in") { Task { await store.signIn(account.id) } }
+                } else if store.issues[account.id] == "idle" && store.usage[account.id] == nil && account.provider == .claude {
+                    Button("Wake") { Task { await store.wake(account.id) } }
+                        .help("Sends one tiny message so Claude refreshes this login")
                 } else if isActive {
                     // Which login new commands use; every signed-in account is healthy.
                     Text("In use").font(.caption.weight(.medium)).foregroundStyle(.green)
@@ -160,6 +163,7 @@ struct AccountSettingsRow: View {
     private var subtitle: String {
         guard account.ready else { return "Not signed in" }
         let identity = account.email.isEmpty ? "Connected" : account.email
+        if let issue = store.issueText(account.id) { return "\(identity) · \(issue)" }
         return account.allowAuto ? identity : "\(identity) · Autopilot skips it"
     }
     private func commit() {

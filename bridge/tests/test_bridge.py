@@ -258,4 +258,19 @@ class BridgeTests(unittest.TestCase):
             os.utime(folder/'s.jsonl',(time.time()-7200,time.time()-7200))
             self.assertIsNone(bridge.recent_model())
 
+    def test_an_idle_unverified_login_can_be_woken_but_only_as_its_own_account(self):
+        # An expired login can't be looked up, so requiring a lookup before waking it deadlocked:
+        # it never refreshed and the account read "Reading..." forever.
+        a=account('Alpha'); blob={'claudeAiOauth':{'accessToken':'t','expiresAt':1}}
+        ran=[]
+        with patch.object(bridge,'read_secret',return_value=blob), patch.object(bridge,'mac_email',return_value=''), \
+             patch.object(bridge,'claude_binary',return_value='claude'), \
+             patch.object(bridge.subprocess,'run',side_effect=lambda *x,**k: ran.append(x[0]) or subprocess.CompletedProcess(x[0],0)):
+            with patch.object(bridge,'auth_status',return_value={'email':'ALPHA@example.com'}):
+                bridge.prime(self.root,{'accounts':[a]},a)
+            self.assertEqual(len(ran),1)
+            with patch.object(bridge,'auth_status',return_value={'email':'other@example.com'}):
+                with self.assertRaisesRegex(ValueError,'Sign in to Alpha'): bridge.prime(self.root,{'accounts':[a]},a)
+            self.assertEqual(len(ran),1)
+
 if __name__ == '__main__': unittest.main()
