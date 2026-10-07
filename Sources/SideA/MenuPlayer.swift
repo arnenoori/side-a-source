@@ -186,6 +186,7 @@ struct AccountUsageRow: View {
         if let minutes = store.minutesToLimit(account.id), minutes < 300 { return "Limit in ~\(Self.duration(minutes))" }
         let now = Date().timeIntervalSince1970
         if let blocked = [usage.fiveHour, usage.weekly].compactMap({ $0 }).filter({ $0.percent >= Planner.full && ($0.resetsAt ?? 0) > now }).compactMap(\.resetsAt).max() {
+            if let extra = usage.extra, extra.enabled { return "Charging paid credits · \(extra.money(extra.used)) this month" }
             return "Back \(UsageBar.format(blocked))"
         }
         return nil

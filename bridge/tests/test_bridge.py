@@ -292,4 +292,13 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         # Pinned, back to Side A's choice, an unknown name changes nothing, a removed account falls back.
         self.assertEqual(out,[pinned,'/profiles/default','/profiles/default','/profiles/default'])
 
+    def test_paid_usage_reads_in_dollars_from_the_live_shape(self):
+        # Shapes as the usage endpoint returned them: spend in minor units, extra_usage in cents.
+        capped={'extra_usage':{'is_enabled':False,'monthly_limit':1000,'used_credits':0.0,'currency':'USD'},
+                'spend':{'used':{'amount_minor':0,'currency':'USD','exponent':2},'limit':{'amount_minor':1000,'currency':'USD','exponent':2},'enabled':False}}
+        self.assertEqual(bridge.extra_usage(capped),{'enabled':False,'used':0.0,'limit':10.0,'currency':'USD'})
+        billing={'spend':{'used':{'amount_minor':320,'currency':'USD','exponent':2},'limit':None,'enabled':True}}
+        self.assertEqual(bridge.extra_usage(billing),{'enabled':True,'used':3.2,'limit':None,'currency':'USD'})
+        self.assertEqual(bridge.extra_usage({'extra_usage':{'is_enabled':True,'used_credits':250,'monthly_limit':None}})['used'],2.5)
+
 if __name__ == '__main__': unittest.main()

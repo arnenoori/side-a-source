@@ -80,9 +80,25 @@ public struct UsageWindow: Codable, Equatable, Sendable {
     }
 }
 
+/// Paid usage past the plan's limits ("usage credits"), this month.
+public struct ExtraUsage: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    public var used: Double
+    public var limit: Double?
+    public var currency: String
+    public init(enabled: Bool, used: Double, limit: Double?, currency: String = "USD") {
+        self.enabled = enabled; self.used = used; self.limit = limit; self.currency = currency
+    }
+    public func money(_ value: Double) -> String { value.formatted(.currency(code: currency)) }
+    /// "$3.20 of $10 this month".
+    public var summary: String { "\(money(used))\(limit.map { " of \(money($0))" } ?? "") this month" }
+}
+
 public struct AccountUsage: Codable, Equatable, Sendable {
     public var windows: [UsageWindow]
     public var stale: Bool
+    /// Paid usage, Claude only; absent in readings from older versions.
+    public var extra: ExtraUsage?
     /// Relative plan size (Pro 1, Max 5x 5, Max 20x 20). Missing means unknown, treated as 1.
     public var capacity: Double?
     public init(windows: [UsageWindow], stale: Bool = false, capacity: Double? = nil) {

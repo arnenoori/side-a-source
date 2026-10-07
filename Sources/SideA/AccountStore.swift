@@ -53,6 +53,8 @@ final class AccountStore {
     /// Recent (time, 5-hour percent) samples per account for the burn-rate forecast.
     @ObservationIgnored private var samples: [String: [(Double, Double)]] = [:]
     @ObservationIgnored private var exhaustedNotified = false
+    /// Per account: the window reset already warned about, so each limit warns once.
+    @ObservationIgnored private var paidWarned: [String: Double] = [:]
     var lidOpen = false
     /// The player only stays open when asked for; macOS would otherwise restore it at launch.
     var playerRequested = false
@@ -395,6 +397,7 @@ final class AccountStore {
         usageAt[id] = Date()
         do {
             let value = try JSONDecoder().decode(AccountUsage.self, from: try await bridgeOutput(["usage", id]))
+            warnAboutPaidUsage(id, before: usage[id], after: value)
             usage[id] = value
             failing.remove(id)
             issues[id] = nil
@@ -429,6 +432,23 @@ final class AccountStore {
         Task { await refreshReport() }
         await refresh(config.accounts.filter { $0.ready
             && (dueForRead($0) || (force && Date().timeIntervalSince(usageAt[$0.id] ?? .distantPast) > 60)) }.map(\.id))
+    }
+    /// Paid usage starts silently once a plan limit is hit. Warns when this month's spend grows,
+    /// and once per limit when the account in use nears a limit with nowhere to move.
+    private func warnAboutPaidUsage(_ id: String, before: AccountUsage?, after: AccountUsage) {
+        guard let extra = after.extra, let name = config.accounts.first(where: { $0.id == id })?.name else { return }
+        if let previous = before?.extra?.used, extra.used > previous + 0.004 {
+            notify("\(name) is using paid credits", "\(extra.money(extra.used - previous)) more since the last check; \(extra.summary).")
+            return
+        }
+        guard extra.enabled, activeIDs[.claude] == id else { return }
+        let now = Date().timeIntervalSince1970
+        guard let near = [after.fiveHour, after.weekly].compactMap({ $0 }).first(where: { $0.percent >= 90 && ($0.resetsAt ?? 0) > now }),
+              paidWarned[id] != near.resetsAt else { return }
+        let others = config.accounts.filter { $0.provider == .claude && $0.id != id }
+        guard Planner.best(others, usage: planning(usage), active: nil, now: now) == nil else { return }
+        paidWarned[id] = near.resetsAt
+        notify("\(name) will start charging soon", "It is at \(Int(near.percent))% of its \(near.label.lowercased()) limit and no other account has room. Past the limit, Claude bills paid credits (\(extra.summary)).")
     }
     /// Why an account shows no current numbers, in words; nil when its reading is current.
     func issueText(_ id: String) -> String? {

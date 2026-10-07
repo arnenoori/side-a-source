@@ -214,6 +214,21 @@ struct UsageSettings: View {
                         }
                     }
                 }
+                let paying = store.config.accounts.filter { ($0.provider == .claude) && (store.usage[$0.id]?.extra.map { $0.enabled || $0.used > 0 } ?? false) }
+                if !paying.isEmpty {
+                    Section {
+                        ForEach(paying) { account in
+                            let extra = store.usage[account.id]!.extra!
+                            LabeledContent(account.name) {
+                                Text(extra.enabled ? extra.summary : "Off · \(extra.summary)").monospacedDigit()
+                            }
+                        }
+                    } header: {
+                        Text("Paid usage")
+                    } footer: {
+                        Text("Past a plan limit, accounts with usage credits on keep working and bill them. Side A warns before that happens and when it does.")
+                    }
+                }
                 Section("Tokens per day") {
                     Chart(report.dayModels ?? report.days, id: \.self) { row in
                         BarMark(x: .value("Day", Self.day(row.date), unit: .day), y: .value("Tokens", row.total))

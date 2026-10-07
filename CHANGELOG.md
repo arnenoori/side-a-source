@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.12 — 2026-10-07
+
+Paid usage warnings: Side A reads each Claude account's usage-credit spend, warns before the account in use starts billing credits with nowhere to move, notifies when spend grows, and shows spend in Usage.
+
 ## 0.5.11 — 2026-10-07
 
 Run accounts side by side: sidea use <name> or Open Terminal on an account keeps one terminal on it while Autopilot moves the rest. Weekly forecasts follow your usual rhythm, with a week-ahead summary. The Terminal prompt leaves the menu; Use and turning on Autopilot set it up.

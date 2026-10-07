@@ -322,7 +322,23 @@ def claude_usage(root, config, account):
         if limit.get("kind") == "weekly_scoped" and model:
             windows.append({"id": "model:" + model.casefold(), "label": "Weekly " + model,
                             "percent": float(limit.get("percent") or 0), "resetsAt": epoch(limit.get("resets_at"))})
-    return {"windows": windows, "stale": False, "capacity": plan_capacity(oauth)}
+    return {"windows": windows, "stale": False, "capacity": plan_capacity(oauth), "extra": extra_usage(data)}
+
+
+def extra_usage(data):
+    """Paid usage past the plan limits: whether it is on and what this month has cost, in dollars."""
+    spend = data.get("spend") if isinstance(data.get("spend"), dict) else {}
+    money = lambda value: (value.get("amount_minor") or 0) / 10 ** (value.get("exponent") or 0) if isinstance(value, dict) else None
+    legacy = data.get("extra_usage") if isinstance(data.get("extra_usage"), dict) else {}
+    enabled = bool(spend.get("enabled", legacy.get("is_enabled")))
+    used = money(spend.get("used"))
+    if used is None:
+        used = float(legacy.get("used_credits") or 0) / 100
+    limit = money(spend.get("limit"))
+    if limit is None and legacy.get("monthly_limit") is not None:
+        limit = float(legacy["monthly_limit"]) / 100
+    return {"enabled": enabled, "used": used, "limit": limit,
+            "currency": (spend.get("used") or {}).get("currency") or legacy.get("currency") or "USD"}
 
 
 def plan_capacity(oauth):
