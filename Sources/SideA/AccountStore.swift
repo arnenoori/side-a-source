@@ -207,7 +207,31 @@ final class AccountStore {
         guard !held else { return }
         config.step(offset); persist()
     }
-    func toggleSmart() { config.smartMode.toggle(); persist() }
+    func toggleSmart() {
+        config.smartMode.toggle(); persist()
+        // Autopilot moves Terminal's account, which needs the shell line; turning it on is the consent.
+        if config.smartMode && !shellSwitching && !isDemo { Task { await setShellSwitching(true) } }
+    }
+    /// Opens a Terminal window that stays on this account, whatever Autopilot does elsewhere.
+    func openTerminal(_ id: String) async {
+        guard let account = config.accounts.first(where: { $0.id == id }), !isDemo else { return }
+        if !shellSwitching { await setShellSwitching(true) }
+        await refreshActive()  // writes the per-account pins
+        let pin = Self.pinName(account.name)
+        let url = root.appendingPathComponent("runtime/open-\(pin).command")
+        let script = "#!/bin/zsh\nexport SIDE_A_PIN=\(Shell.quote(pin))\nclear\necho \(Shell.quote("This terminal stays on \(account.name). Run claude as usual; sidea auto follows Side A again."))\nexec zsh -l\n"
+        do {
+            try script.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+            NSWorkspace.shared.open(url)
+        } catch { self.error = "Terminal could not be opened: \(error.localizedDescription)" }
+    }
+    /// Matches the bridge's pin_name: lowercased, anything else becomes a dash.
+    static func pinName(_ name: String) -> String {
+        let slug = name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? String($0) : "-" }.joined()
+            .split(separator: "-").joined(separator: "-")
+        return slug.isEmpty ? "account" : slug
+    }
     func setAuto(_ id: String, _ allowed: Bool) {
         guard let index = config.accounts.firstIndex(where: { $0.id == id }) else { return }
         config.accounts[index].allowAuto = allowed; persist()
@@ -340,6 +364,8 @@ final class AccountStore {
     func activate(_ id: String) async {
         guard let account = config.accounts.first(where: { $0.id == id }), !isActive(account) else { return }
         guard !isDemo else { activeIDs[account.provider] = id; return }
+        // Use means "run claude as this account", which only the shell line makes true.
+        if account.provider == .claude && !shellSwitching { await setShellSwitching(true) }
         do {
             _ = try await bridgeOutput(["activate", id])
             selectionGeneration += 1

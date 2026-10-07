@@ -43,18 +43,6 @@ struct MenuPlayer: View {
             .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: 440)
             .fixedSize(horizontal: false, vertical: true)
-            if !store.shellSwitching && !store.isDemo && store.config.accounts.contains(where: { $0.provider == .claude }) {
-                // Without the one-line shell hook, Use and Autopilot cannot change which account claude runs as.
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Let Side A choose your Claude account").font(.system(size: 11, weight: .medium))
-                        Text("New claude commands in Terminal will run as the account you pick, or the one Autopilot picks. Adds one line to ~/.zshrc.")
-                            .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Button("Set up") { Task { await store.setShellSwitching(true) } }.controlSize(.small)
-                }
-            }
             if store.unknownLogins[.claude] == nil, let next = Planner.nextAvailable(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, now: Date().timeIntervalSince1970),
                Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, active: nil, now: Date().timeIntervalSince1970) == nil {
                 Text("All limited. \(next.0.name) is back \(UsageBar.format(next.1)).")
@@ -185,6 +173,7 @@ struct AccountUsageRow: View {
         .frame(minHeight: 28)
         .contextMenu {
             if !isActive && account.ready && account.provider == .claude { Button("Use") { Task { await store.activate(account.id) } } }
+            if account.ready && account.provider == .claude { Button("Open Terminal on \(account.name)") { Task { await store.openTerminal(account.id) } } }
             Button("Settings…") { store.settingsTab = .accounts; store.openSettings() }
         }
     }

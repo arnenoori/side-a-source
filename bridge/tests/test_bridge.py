@@ -273,4 +273,23 @@ class BridgeTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'Sign in to Alpha'): bridge.prime(self.root,{'accounts':[a]},a)
             self.assertEqual(len(ran),1)
 
+    def test_one_terminal_can_stay_on_an_account_while_the_rest_follow_side_a(self):
+        root=self.root/'Side A'; (root/'runtime').mkdir(parents=True)
+        (root/'runtime/claude-selector').write_text('/profiles/default\n')
+        a=account('Long Jobs'); b=account('Studio')
+        with patch.object(bridge,'read_secret',return_value=None), patch.object(bridge,'mac_email',return_value=''):
+            bridge.write_pins(root,{'accounts':[a,b]})
+        self.assertEqual(sorted(p.name for p in bridge.pins_path(root).iterdir()),['long-jobs','studio'])
+        script=bridge.shell_snippet(root).split('\n',1)[1]+'''
+show() { _side_a_select; echo "${CLAUDE_SECURESTORAGE_CONFIG_DIR:-unset}"; }
+sidea use Long-Jobs >/dev/null; show
+sidea auto >/dev/null; show
+sidea use nobody >/dev/null; show
+export SIDE_A_PIN=studio; rm '%s'/studio; show
+''' % bridge.pins_path(root)
+        out=subprocess.run(['zsh','-fc',script],capture_output=True,text=True,check=True).stdout.splitlines()
+        pinned=str(bridge.profile_dir(root,a['id']))
+        # Pinned, back to Side A's choice, an unknown name changes nothing, a removed account falls back.
+        self.assertEqual(out,[pinned,'/profiles/default','/profiles/default','/profiles/default'])
+
 if __name__ == '__main__': unittest.main()

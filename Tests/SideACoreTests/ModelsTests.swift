@@ -137,3 +137,28 @@ import Testing
     #expect(all[pro.id]!.forFable == nil)
     #expect(Planner.best(accounts, usage: all.compactMapValues(\.forFable), active: spent.id, now: now) == room.id)
 }
+
+@Test func weekForecastFollowsAWeekdayRhythmNotAStraightLine() throws {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    // Four weeks of weekday 9:00-17:00 work, nothing on weekends. 2026-09-07 is a Monday.
+    let monday = try Date("2026-09-07T00:00:00Z", strategy: .iso8601).timeIntervalSince1970
+    let activity = (0..<28).map { day -> ActivitySpan in
+        let date = Date(timeIntervalSince1970: monday + Double(day) * 86_400)
+        let weekend = [1, 7].contains(calendar.component(.weekday, from: date))
+        return ActivitySpan(date: Date.ISO8601FormatStyle(timeZone: calendar.timeZone).year().month().day().format(date),
+                            hours: (0..<24).map { !weekend && (9..<17).contains($0) ? 10 : 0 })
+    }
+    let rhythm = try #require(WeekRhythm(activity, calendar: calendar))
+    let reset = monday + 35 * 86_400  // the next Monday 00:00
+    // Friday 17:00: the work week is over, so half the limit used means about half by the reset,
+    // where a straight line would have projected 70%.
+    let friday = reset - 7 * 86_400 + 4 * 86_400 + 17 * 3600
+    let calm = try #require(WeekForecast(UsageWindow(id: "seven_day", label: "Weekly", percent: 50, resetsAt: reset), rhythm: rhythm, now: friday))
+    #expect(calm.projected < 55 && calm.expectedNow > 0.9 && calm.runsOut == nil)
+    // Wednesday 12:00 at 80% after 19 of 40 working hours: the last 20% lasts about 5 more working hours.
+    let wednesday = reset - 7 * 86_400 + 2 * 86_400 + 12 * 3600
+    let busy = try #require(WeekForecast(UsageWindow(id: "seven_day", label: "Weekly", percent: 80, resetsAt: reset), rhythm: rhythm, now: wednesday))
+    let out = Date(timeIntervalSince1970: try #require(busy.runsOut))
+    #expect(calendar.component(.weekday, from: out) == 4 && (16..<17).contains(calendar.component(.hour, from: out)))
+}

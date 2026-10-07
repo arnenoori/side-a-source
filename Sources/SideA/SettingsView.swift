@@ -147,6 +147,9 @@ struct AccountSettingsRow: View {
             Menu {
                 Button("Rename") { editing = true }
                 Toggle("Include in Autopilot", isOn: Binding(get: { account.allowAuto }, set: { store.setAuto(account.id, $0) }))
+                if account.provider == .claude && account.ready {
+                    Button("Open Terminal on \(account.name)") { Task { await store.openTerminal(account.id) } }
+                }
                 Divider()
                 Button("Sign in again") { Task { await store.signIn(account.id) } }.disabled(isActive)
                 Button("Sign out") { store.signOut(account.id) }.disabled(isActive || !account.ready)
@@ -177,8 +180,13 @@ struct UsageSettings: View {
         Form {
             let weekly = store.config.accounts.filter { $0.ready && store.usage[$0.id]?.weekly != nil }
             if !weekly.isEmpty {
-                Section("This week") {
-                    ForEach(weekly) { PaceRow(account: $0, window: store.usage[$0.id]!.weekly!) }
+                let rhythm = store.report.flatMap { WeekRhythm($0.activity) }
+                Section {
+                    ForEach(weekly) { PaceRow(account: $0, window: store.usage[$0.id]!.weekly!, rhythm: rhythm) }
+                } header: {
+                    Text("This week")
+                } footer: {
+                    Text(outlook(weekly, rhythm: rhythm))
                 }
             }
             if let report = store.report {
@@ -228,6 +236,21 @@ struct UsageSettings: View {
         .formStyle(.grouped)
         .task { await store.refreshReport() }
     }
+    /// The week ahead across Claude accounts, each weighted by plan size and projected to its own reset.
+    private func outlook(_ accounts: [Account], rhythm: WeekRhythm?) -> String {
+        let now = Date().timeIntervalSince1970
+        let claude = accounts.filter { $0.provider == .claude }.compactMap { account -> (Double, Double)? in
+            guard let usage = store.usage[account.id], let weekly = usage.weekly else { return nil }
+            let projected = WeekForecast(weekly, rhythm: rhythm, now: now)?.projected ?? weekly.percent
+            return (min(projected, 100), usage.capacity ?? 1)
+        }
+        let capacity = claude.reduce(0) { $0 + $1.1 }
+        guard capacity > 0 else { return "" }
+        let share = claude.reduce(0) { $0 + $1.0 * $1.1 } / capacity
+        let basis = rhythm == nil ? "at this week's pace" : "at your usual weekly rhythm"
+        let pace = share >= 99.5 ? "on pace to use all of your combined Claude limits before they reset" : "on pace to use \(Int(share))% of your combined Claude limits"
+        return "Week ahead: \(pace), \(basis). The tick on each bar is where you would usually be by now."
+    }
     static func day(_ text: String?) -> Date {
         (try? Date(text ?? "", strategy: .iso8601.year().month().day())) ?? .distantPast
     }
@@ -248,44 +271,35 @@ struct UsageSettings: View {
 struct PaceRow: View {
     let account: Account
     let window: UsageWindow
+    let rhythm: WeekRhythm?
     var body: some View {
         let used = min(max(window.percent, 0), 100)
-        let elapsed = elapsedShare
+        let forecast = WeekForecast(window, rhythm: rhythm, now: Date().timeIntervalSince1970)
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(account.name).font(.body.weight(.medium))
                 Text(account.provider.title).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text(verdict(used: used, elapsed: elapsed)).font(.caption).foregroundStyle(.secondary)
+                Text(verdict(used: used, forecast: forecast)).font(.caption).foregroundStyle(.secondary)
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
                     Capsule().fill(used >= Planner.full ? Color.red : .accentColor).frame(width: proxy.size.width * used / 100)
-                    // Where usage would be if spread evenly over the week.
-                    Rectangle().fill(.primary.opacity(0.55)).frame(width: 1.5, height: 10).offset(x: proxy.size.width * elapsed - 0.75)
+                    // Where usage would be by now if this week follows your usual rhythm.
+                    Rectangle().fill(.primary.opacity(0.55)).frame(width: 1.5, height: 10).offset(x: proxy.size.width * (forecast?.expectedNow ?? 0) - 0.75)
                 }
             }.frame(height: 6)
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
     }
-    private var elapsedShare: Double {
-        guard let reset = window.resetsAt else { return 0 }
-        let week = 7 * 86_400.0
-        return min(max((Date().timeIntervalSince1970 - (reset - week)) / week, 0), 1)
-    }
-    private func verdict(used: Double, elapsed: Double) -> String {
+    private func verdict(used: Double, forecast: WeekForecast?) -> String {
         guard let reset = window.resetsAt else { return "\(Int(used))% used" }
-        if used >= Planner.full { return "Limited until \(UsageBar.format(reset))" }
-        guard elapsed > 0.05, used > 0 else { return "\(Int(used))% used, resets \(UsageBar.format(reset))" }
-        let projected = used / elapsed
-        if projected >= 100 {
-            // When the limit is reached if use continues at this week's rate.
-            let start = reset - 7 * 86_400
-            return "Runs out around \(UsageBar.format(start + (Date().timeIntervalSince1970 - start) * 100 / used))"
-        }
-        return "On pace for \(Int(projected))% by \(UsageBar.format(reset))"
+        if used >= Planner.full { return "Limited, back \(UsageBar.format(reset))" }
+        guard let forecast, forecast.projected > used else { return "\(Int(used))% used, resets \(UsageBar.format(reset))" }
+        if let out = forecast.runsOut { return "Runs out \(UsageBar.format(out))" }
+        return "On pace for \(Int(forecast.projected))% by \(UsageBar.format(reset))"
     }
 }
 
@@ -386,7 +400,7 @@ struct AutopilotSettings: View {
             Section {
                 Toggle(isOn: Binding(get: { store.shellSwitching }, set: { value in Task { await store.setShellSwitching(value) } })) {
                     Text("Switch in Terminal")
-                    Text("New claude commands use the account Autopilot picks. Adds one line to ~/.zshrc.")
+                    Text("New claude commands use the account Autopilot picks, and sidea use <name> keeps one terminal on one account. Adds one line to ~/.zshrc.")
                 }
                 Toggle(isOn: Binding(get: { store.limitHook }, set: { value in Task { await store.setLimitHook(value) } })) {
                     Text("React the moment a limit hits")
@@ -400,6 +414,7 @@ struct AutopilotSettings: View {
 
     private var status: String {
         guard store.config.smartMode else { return "Off. Side A only shows your limits." }
+        guard store.shellSwitching else { return "On, but it can't move Terminal to another account until Switch in Terminal is on." }
         let using = store.active.map { "Using \($0.name)\(store.fableMode ? " for Fable" : "")" } ?? "Watching your accounts"
         guard let schedule = store.schedule else { return "\(using). Learning your hours." }
         return "\(using). Warms up idle windows from \(TokenCount.clock(schedule.start - WorkSchedule.lead))."

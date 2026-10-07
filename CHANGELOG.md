@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.11 — 2026-10-07
+
+Run accounts side by side: sidea use <name> or Open Terminal on an account keeps one terminal on it while Autopilot moves the rest. Weekly forecasts follow your usual rhythm, with a week-ahead summary. The Terminal prompt leaves the menu; Use and turning on Autopilot set it up.
+
 ## 0.5.10 — 2026-10-07
 
 Accounts no longer sit on Reading forever: revoked Codex logins ask for sign-in instead of backing off as a rate limit, idle Claude logins can be woken (automatically during work hours, or with Wake), and failed reads say why with a retry time. Clearer Terminal setup prompt.

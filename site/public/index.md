@@ -11,6 +11,9 @@ Quota you don't use before a window resets is gone. With more than one account, 
 - **Every limit.** 5-hour and weekly usage for each account, with reset times.
 - **Switching.** New `claude` commands use the chosen account. Logins never move.
 - **Autopilot.** Switches before you hit a limit, not after.
+- **Two accounts at once.** `sidea use <name>` keeps one terminal on an account for a long task while Autopilot moves the rest.
+- **Fable aware.** While you use Fable, ranks accounts by the Fable share they have left.
+- **Across your Macs.** Optional iCloud Drive sync combines usage; logins never sync.
 - **Early windows.** Starts idle 5-hour windows before your usual start, so they reset sooner.
 - **Usage by project.** Tokens per project and per day, from your local transcripts.
 - **Instant on limits.** An optional hook rechecks the moment a rate limit hits, so Autopilot moves right away.
@@ -23,6 +26,7 @@ It reads the same numbers as `/usage` (and Codex's rate-limit call), then ranks 
 - **Tie-break:** the 5-hour window that resets soonest.
 - **Thresholds:** leaves an account at 97%; only switches to one under 90%.
 - **Stability:** stays put unless another account is 1.5 times more urgent.
+- **Forecasts:** weekly pace follows when you usually work, learned from your activity over the last four weeks.
 
 Example: 60% left, resets in a day: 2.5 per hour. 90% left, resets in six days: 0.6 per hour. The first one goes first.
 

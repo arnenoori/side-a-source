@@ -205,6 +205,82 @@ public struct WorkSchedule: Equatable, Sendable {
     }
 }
 
+/// When in the week the user works, from hourly activity over the last four weeks, so a
+/// weekly forecast follows their rhythm (quiet weekends, busy afternoons) rather than a straight line.
+public struct WeekRhythm: Sendable {
+    /// Average responses per [weekday 0...6, Sunday first][hour].
+    var weights: [[Double]]
+    let calendar: Calendar
+    var total: Double { weights.joined().reduce(0, +) }
+
+    public init?(_ activity: [ActivitySpan], calendar: Calendar = .current) {
+        let recent = activity.suffix(28)
+        guard recent.count >= 7 else { return nil }
+        var weights = Array(repeating: Array(repeating: 0.0, count: 24), count: 7)
+        let parse = Date.ISO8601FormatStyle(timeZone: calendar.timeZone).year().month().day()
+        var days = Array(repeating: 0.0, count: 7)
+        for span in recent {
+            guard let date = try? parse.parse(span.date) else { continue }
+            let weekday = calendar.component(.weekday, from: date) - 1
+            days[weekday] += 1
+            for (hour, count) in span.hours.prefix(24).enumerated() { weights[weekday][hour] += Double(count) }
+        }
+        // Days without a span count as idle; every hour keeps a small floor so a rare hour is unlikely, not impossible.
+        let weeks = max(days.max() ?? 1, 1)
+        let sum = weights.joined().reduce(0, +) / weeks
+        guard sum > 0 else { return nil }
+        self.weights = weights.map { $0.map { $0 / weeks + sum / 168 * 0.05 } }
+        self.calendar = calendar
+    }
+
+    /// Expected share of a week's activity between two moments, at most one week apart.
+    public func share(from start: Double, to end: Double) -> Double {
+        var moment = start, sum = 0.0
+        while moment < end {
+            let date = Date(timeIntervalSince1970: moment)
+            let parts = calendar.dateComponents([.weekday, .hour, .minute, .second], from: date)
+            let next = min(end, moment + 3600 - Double((parts.minute ?? 0) * 60 + (parts.second ?? 0)))
+            sum += weights[(parts.weekday ?? 1) - 1][parts.hour ?? 0] * (next - moment) / 3600
+            moment = next
+        }
+        return sum / total
+    }
+
+    /// When cumulative activity from `start` reaches `fraction` of a week, searching up to `limit`.
+    public func moment(reaching fraction: Double, from start: Double, limit: Double) -> Double? {
+        var moment = start, sum = 0.0
+        while moment < limit {
+            let piece = share(from: moment, to: moment + 3600)
+            if sum + piece >= fraction { return moment + 3600 * (fraction - sum) / piece }
+            sum += piece; moment += 3600
+        }
+        return nil
+    }
+}
+
+/// A weekly window projected to its reset at the user's rhythm.
+public struct WeekForecast: Equatable, Sendable {
+    /// Expected percent used by the reset, uncapped.
+    public var projected: Double
+    /// Where usage would be now if the week followed the rhythm exactly, 0 to 1.
+    public var expectedNow: Double
+    /// When the limit is reached at this pace, if before the reset.
+    public var runsOut: Double?
+
+    public init?(_ window: UsageWindow, rhythm: WeekRhythm?, now: Double) {
+        guard let reset = window.resetsAt, reset > now else { return nil }
+        let start = reset - 7 * 86_400, used = min(max(window.percent, 0), 100)
+        let elapsed = rhythm?.share(from: start, to: now) ?? min(max((now - start) / (7 * 86_400), 0), 1)
+        expectedNow = elapsed
+        // Too early in the week to say anything about pace.
+        guard elapsed > 0.05, used > 0 else { projected = used; runsOut = nil; return }
+        projected = used / elapsed
+        guard projected >= 100 else { runsOut = nil; return }
+        let needed = (100 - used) / projected
+        runsOut = rhythm?.moment(reaching: needed, from: now, limit: reset) ?? (start + (now - start) * 100 / used)
+    }
+}
+
 /// Decides which account should hold the Mac-wide login, and which idle windows to start.
 /// Weekly quota is what expires unused, so the account that must burn quota fastest
 /// before its weekly reset goes first; among near-ties, the 5-hour window that resets

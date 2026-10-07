@@ -16,6 +16,7 @@ import fcntl
 import functools
 import hashlib
 import json
+import re
 import os
 from pathlib import Path
 import shlex
@@ -366,13 +367,49 @@ def adopt(root, account):
 SHELL_MARK = "# side-a shell integration"
 
 
+def pins_path(root):
+    return root / "runtime" / "accounts"
+
+
+def pin_name(name):
+    """What `sidea use <name>` accepts for an account: its name, lowercased, dashes for the rest."""
+    # ponytail: two accounts whose names slug alike share one pin; rename one if that ever matters.
+    return re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-") or "account"
+
+
+def write_pins(root, config):
+    """One file per Claude account holding its selector, so a terminal can stay on one account
+    with `sidea use <name>` while Autopilot moves the rest. A slot holding another account's
+    login gets no pin."""
+    folder = pins_path(root)
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    wanted = {}
+    for account in config.get("accounts", []):
+        if provider_of(account) != "claude" or not account.get("ready"):
+            continue
+        if token_email(root, read_secret(home_service(root, account))) in ("", account.get("email", "").casefold()):
+            wanted[pin_name(account["name"])] = selector_for(root, account)
+    for path in folder.iterdir():
+        if path.name not in wanted:
+            path.unlink(missing_ok=True)
+    for name, value in wanted.items():
+        path = folder / name
+        if not path.exists() or path.read_text().strip() != value:
+            path.write_text(value + "\n")
+
+
 def shell_snippet(root):
     selector = shlex.quote(str(root / "runtime" / "claude-selector"))
+    pins = shlex.quote(str(pins_path(root)))
     # A preexec hook, not a `claude` function: an alias to a path (claude=~/.claude/local/claude)
     # would skip a function, but every command runs after preexec. One line, so removal stays simple.
+    # SIDE_A_PIN, set by `sidea use`, keeps one terminal on one account.
     return (f"{SHELL_MARK}\n"
-            f"_side_a_select() {{ local d; d=\"$(cat {selector} 2>/dev/null)\"; "
-            f"[ -f {selector} ] && export CLAUDE_SECURESTORAGE_CONFIG_DIR=\"$d\" || unset CLAUDE_SECURESTORAGE_CONFIG_DIR; }}; "
+            f"_side_a_select() {{ local f={selector}; [ -n \"$SIDE_A_PIN\" ] && [ -f {pins}/\"$SIDE_A_PIN\" ] && f={pins}/\"$SIDE_A_PIN\"; "
+            f"[ -f \"$f\" ] && export CLAUDE_SECURESTORAGE_CONFIG_DIR=\"$(cat \"$f\" 2>/dev/null)\" || unset CLAUDE_SECURESTORAGE_CONFIG_DIR; }}; "
+            f"sidea() {{ local p=\"${{${{2:l}}// /-}}\"; if [ \"$1\" = use ] && [ -f {pins}/\"$p\" ]; then export SIDE_A_PIN=\"$p\"; echo \"This terminal now uses $p.\"; "
+            f"elif [ \"$1\" = auto ]; then unset SIDE_A_PIN; echo \"This terminal follows Side A again.\"; "
+            f"else echo \"sidea use <account> keeps this terminal on one account; sidea auto follows Side A. Accounts: $(ls {pins} 2>/dev/null | tr '\\n' ' ')\"; fi; }}; "
             f"autoload -Uz add-zsh-hook && add-zsh-hook preexec _side_a_select\n")
 
 
@@ -768,6 +805,7 @@ def main():
     config = read_json(root / "config.json")
     if args.command == "active":
         import codex_bridge
+        write_pins(root, config)
         mac = mac_email(root)
         print(json.dumps({"accountID": (repair_selection(root, config) or {}).get("id"),
                           "email": "" if account_for_email(config, mac) else mac,
