@@ -120,4 +120,4 @@ inspired by portable CD players, not a Sony product or an exact model replica.
 See [architecture](docs/architecture.md), [security](SECURITY.md),
 [design decisions](docs/design.md), and [validation](docs/validation.md).
 
-MIT License. Copyright © 2026 Arne Noori. See [LICENSE](LICENSE).
+MIT License. Copyright © 2026 Arne Noori. See [LICENSE](LICENSE). Claude, Codex and other third-party names belong to their owners.

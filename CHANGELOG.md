@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.5 — 2026-10-07
+
+The disc is visible with the lid open: the lid seam was a solid cylinder that covered it.
+
 ## 0.5.4 — 2026-10-06
 
 Open source under MIT; each release's source is published to arnenoori/side-a-source. Optional manual update installs.
