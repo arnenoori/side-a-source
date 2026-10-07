@@ -204,4 +204,15 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual([(r['input'],r['output']) for r in result['projects']],[(3,21)])
         self.assertEqual(sum(1 for c in spy.loads.call_args_list if 'usage' in str(c)),2)
 
+    def test_codex_sessions_count_each_turn_once(self):
+        # Codex logs a running total per token_count event, sometimes repeated; only the growth counts.
+        folder=Path(self.temp.name)/'home/.codex/sessions/2026/10/01'; folder.mkdir(parents=True)
+        tc=lambda ts,inp,cached,out:json.dumps({'timestamp':ts,'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':inp,'cached_input_tokens':cached,'output_tokens':out}}}})
+        lines=[json.dumps({'timestamp':'2026-10-01T15:00:00Z','type':'turn_context','payload':{'model':'gpt-6.1-sol','cwd':'/work/app'}}),
+               tc('2026-10-01T15:00:05Z',100,40,10),tc('2026-10-01T15:00:05Z',100,40,10),tc('2026-10-01T15:01:00Z',250,140,30)]
+        (folder/'rollout.jsonl').write_text('\n'.join(lines)+'\n')
+        with patch.object(Path,'home',return_value=Path(self.temp.name)/'home'), patch.object(bridge.time,'time',return_value=(folder/'rollout.jsonl').stat().st_mtime):
+            result=bridge.report(self.root,days=10000)
+        self.assertEqual([(r['model'],r['input'],r['cacheRead'],r['output']) for r in result['models']],[('gpt-6.1-sol',110,140,30)])
+
 if __name__ == '__main__': unittest.main()

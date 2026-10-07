@@ -243,13 +243,16 @@ struct PaceRow: View {
         return min(max((Date().timeIntervalSince1970 - (reset - week)) / week, 0), 1)
     }
     private func verdict(used: Double, elapsed: Double) -> String {
-        let resets = window.resetsAt.map { "resets \(UsageBar.format($0))" } ?? ""
-        if used >= Planner.full { return "Limited, \(resets)" }
-        guard elapsed > 0.05 else { return "\(Int(used))% used, \(resets)" }
+        guard let reset = window.resetsAt else { return "\(Int(used))% used" }
+        if used >= Planner.full { return "Limited until \(UsageBar.format(reset))" }
+        guard elapsed > 0.05, used > 0 else { return "\(Int(used))% used, resets \(UsageBar.format(reset))" }
         let projected = used / elapsed
-        if projected >= 100 { return "Runs out before it \(resets)" }
-        let unused = Int(100 - projected)
-        return unused > 10 ? "About \(unused)% will go unused" : "On pace, \(resets)"
+        if projected >= 100 {
+            // When the limit is reached if use continues at this week's rate.
+            let start = reset - 7 * 86_400
+            return "Runs out around \(UsageBar.format(start + (Date().timeIntervalSince1970 - start) * 100 / used))"
+        }
+        return "On pace for \(Int(projected))% by \(UsageBar.format(reset))"
     }
 }
 
@@ -305,6 +308,11 @@ enum ModelName {
     /// "claude-opus-5-5-20260101" reads as "Opus 5.5".
     static func short(_ id: String?) -> String {
         guard let id, !id.isEmpty else { return "Other" }
+        if id.hasPrefix("gpt-") {
+            // "gpt-6.1-sol" reads as "GPT-6.1 Sol".
+            let parts = id.dropFirst(4).split(separator: "-").map(String.init)
+            return "GPT-" + (parts.first ?? "") + parts.dropFirst().map { " " + $0.capitalized }.joined()
+        }
         let parts = id.replacingOccurrences(of: "claude-", with: "").split(separator: "-").map(String.init).filter { $0.count < 8 }
         guard let name = parts.first else { return id }
         let version = parts.dropFirst().joined(separator: ".")
@@ -318,35 +326,140 @@ struct AutopilotSettings: View {
         Form {
             Section {
                 Toggle(isOn: Binding(get: { store.config.smartMode }, set: { _ in store.toggleSmart() })) {
-                    Text("Autopilot")
+                    Text("Autopilot").font(.headline)
+                    Text(status)
                 }
-                Toggle(isOn: Binding(get: { store.shellSwitching }, set: { value in Task { await store.setShellSwitching(value) } })) {
-                    Text("Switch in Terminal")
-                    Text("Adds one line to ~/.zshrc.")
-                }
-                Toggle(isOn: Binding(get: { store.limitHook }, set: { value in Task { await store.setLimitHook(value) } })) {
-                    Text("Switch instantly on a limit")
-                    Text("Adds a silent Claude Code hook.")
-                }
-            }
-            Section("Schedule") {
-                if let schedule = store.schedule {
-                    LabeledContent("Your hours", value: "\(TokenCount.clock(schedule.start))–\(TokenCount.clock(schedule.end))")
-                    LabeledContent("Warm-up from", value: TokenCount.clock(schedule.start - WorkSchedule.lead))
-                } else {
-                    Text("Learning your hours").foregroundStyle(.secondary)
-                }
-            }
-            Section("How it decides") {
-                LabeledContent("Picks", value: "Quota closest to expiring, by plan size")
-                LabeledContent("Switches at", value: "\(Int(Planner.full))%")
-                LabeledContent("Warm-up", value: "One tiny Haiku message")
             }
             Section {
-                LabeledContent("Claude", value: "New terminal commands")
-                LabeledContent("Codex", value: "Tracked; switch with codex login")
+                UpNext(store: store)
+            } header: {
+                Text("Up next")
+            } footer: {
+                Text("weekly % left ÷ hours until it resets × plan size")
+                    .font(.custom("Noteworthy-Bold", size: 13)).foregroundStyle(.secondary)
+            }
+            Section("Your day") {
+                DayTimeline(store: store)
+                HStack(spacing: 8) {
+                    RuleChip(value: "\(Int(Planner.full))%", text: "leaves an account")
+                    RuleChip(value: "<\(Int(Planner.switchTarget))%", text: "moves only to one")
+                    RuleChip(value: "1.5×", text: "more urgent to switch")
+                }
+            }
+            Section {
+                Toggle(isOn: Binding(get: { store.shellSwitching }, set: { value in Task { await store.setShellSwitching(value) } })) {
+                    Text("Switch in Terminal")
+                    Text("New claude commands use the account Autopilot picks. Adds one line to ~/.zshrc.")
+                }
+                Toggle(isOn: Binding(get: { store.limitHook }, set: { value in Task { await store.setLimitHook(value) } })) {
+                    Text("React the moment a limit hits")
+                    Text("A silent Claude Code hook that rechecks right away.")
+                }
+            } footer: {
+                Text("Codex accounts are tracked and warmed up; switch Codex itself with codex login.")
             }
         }.formStyle(.grouped)
+    }
+
+    private var status: String {
+        guard store.config.smartMode else { return "Off. Side A only shows your limits." }
+        let using = store.active.map { "Using \($0.name)" } ?? "Watching your accounts"
+        guard let schedule = store.schedule else { return "\(using). Learning your hours." }
+        return "\(using). Warms up idle windows from \(TokenCount.clock(schedule.start - WorkSchedule.lead))."
+    }
+}
+
+/// Claude accounts ranked the way Autopilot ranks them, with the score that decides.
+struct UpNext: View {
+    @Bindable var store: AccountStore
+    var body: some View {
+        let now = Date().timeIntervalSince1970
+        let ranked = store.config.accounts.filter { $0.provider == .claude && $0.ready && $0.allowAuto }
+            .compactMap { account in store.usage[account.id].map { (account, $0, Planner.urgency($0, now: now)) } }
+            .sorted { $0.2 > $1.2 }
+        let top = max(ranked.first?.2 ?? 1, 0.01)
+        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, active: store.activeIDs[.claude], now: now)
+        if ranked.isEmpty {
+            Text("Add Claude accounts to see how Autopilot ranks them.").foregroundStyle(.secondary)
+        }
+        ForEach(ranked, id: \.0.id) { account, usage, score in
+            HStack(spacing: 10) {
+                Text(account.name).font(.body.weight(account.id == pick ? .semibold : .regular)).frame(width: 110, alignment: .leading).lineLimit(1)
+                GeometryReader { proxy in
+                    Capsule().fill(account.id == pick ? Color.accentColor : Color.secondary.opacity(0.35))
+                        .frame(width: max(proxy.size.width * score / top, 4))
+                }.frame(height: 8)
+                Text(score < 0.05 ? "–" : String(format: "%.1f/h", score)).font(.custom("Noteworthy-Bold", size: 13)).monospacedDigit().frame(width: 52, alignment: .trailing)
+                Text(account.id == pick ? (store.activeIDs[.claude] == account.id ? "In use" : "Next") : Planner.hasHeadroom(usage, now: now) ? "" : "Limited")
+                    .font(.caption.weight(.medium)).foregroundStyle(account.id == pick ? .green : .secondary).frame(width: 48, alignment: .trailing)
+            }
+        }
+    }
+}
+
+/// The learned working day on a 24-hour strip: activity, working hours, warm-up start and now.
+struct DayTimeline: View {
+    @Bindable var store: AccountStore
+    var body: some View {
+        let activity = store.report?.activity ?? []
+        let hours = (0..<24).map { hour in activity.reduce(0) { $0 + ($1.hours.indices.contains(hour) ? $1.hours[hour] : 0) } }
+        let peak = Double(max(hours.max() ?? 0, 1))
+        let schedule = store.schedule
+        let calendar = Calendar.current
+        let nowMinute = calendar.component(.hour, from: Date()) * 60 + calendar.component(.minute, from: Date())
+        VStack(alignment: .leading, spacing: 6) {
+            GeometryReader { proxy in
+                let x = { (minute: Int) in proxy.size.width * CGFloat(((minute % 1440) + 1440) % 1440) / 1440 }
+                ZStack(alignment: .topLeading) {
+                    HStack(spacing: 1.5) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            RoundedRectangle(cornerRadius: 2).fill(Color.accentColor.opacity(0.08 + 0.7 * Double(hours[hour]) / peak))
+                        }
+                    }
+                    if let schedule {
+                        // Working hours, outlined; may wrap past midnight.
+                        let start = x(schedule.start), end = x(schedule.end)
+                        Group {
+                            if end > start {
+                                RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 1.5).frame(width: end - start).offset(x: start)
+                            } else {
+                                RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 1.5).frame(width: proxy.size.width - start).offset(x: start)
+                                RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 1.5).frame(width: end)
+                            }
+                        }
+                        Image(systemName: "sunrise.fill").font(.system(size: 11)).foregroundStyle(.orange)
+                            .position(x: x(schedule.start - WorkSchedule.lead), y: -9)
+                    }
+                    Rectangle().fill(.primary).frame(width: 1.5, height: proxy.size.height + 6).offset(x: x(nowMinute), y: -3)
+                }
+            }
+            .frame(height: 26).padding(.top, 14)
+            HStack {
+                ForEach([0, 6, 12, 18], id: \.self) { hour in
+                    Text(TokenCount.clock(hour * 60)).font(.caption2).foregroundStyle(.secondary)
+                    if hour != 18 { Spacer() }
+                }
+                Spacer()
+            }
+            Text(schedule.map { "You usually work \(TokenCount.clock($0.start))–\(TokenCount.clock($0.end)). Idle 5-hour windows start from \(TokenCount.clock($0.start - WorkSchedule.lead)), so they reset sooner." }
+                 ?? "Learning your hours from a week of activity.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct RuleChip: View {
+    let value: String
+    let text: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value).font(.custom("Noteworthy-Bold", size: 17))
+            Text(text).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 7)
+        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 9))
     }
 }
 
@@ -375,7 +488,9 @@ struct GeneralSettings: View {
                 Toggle("Automatically check for updates", isOn: $updates.automaticallyChecks)
                 Toggle("Install updates automatically", isOn: $updates.automaticallyInstalls)
                     .disabled(!updates.automaticallyChecks)
-                LabeledContent { UpdateButton(updates: updates) } label: { Text("Signed, notarized updates") }
+                LabeledContent { UpdateButton(updates: updates) } label: {
+                    Text("Side A \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                }
             }
             Section("Privacy") {
                 UsagePreference(analytics: store.analytics)

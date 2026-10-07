@@ -476,15 +476,61 @@ def scan_transcript(path, previous=None):
     return {"totals": totals, "hours": hours, "offset": offset, "tail": recent}
 
 
+def scan_codex(path, previous=None):
+    """Token totals for one Codex session log, in the same shape as scan_transcript.
+    Each token_count event carries the session's running total; counting the change
+    between events keeps a repeated event from being counted twice."""
+    previous = previous if previous and previous.get("offset", 0) <= path.stat().st_size else None
+    totals = {key: list(values) for key, values in (previous or {}).get("totals", {}).items()}
+    hours = {day: list(counts) for day, counts in (previous or {}).get("hours", {}).items()}
+    state = dict((previous or {}).get("codex") or {"model": "", "cwd": "", "last": [0, 0, 0, 0]})
+    offset = (previous or {}).get("offset", 0)
+    with open(path, "rb") as stream:
+        stream.seek(offset)
+        for line in stream:
+            if not line.endswith(b"\n"):
+                break
+            offset += len(line)
+            if b'"turn_context"' not in line and b'"session_meta"' not in line and b'"token_count"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            payload = entry.get("payload") or {}
+            if entry.get("type") in ("turn_context", "session_meta"):
+                state["model"] = payload.get("model") or state["model"]
+                state["cwd"] = payload.get("cwd") or state["cwd"]
+                continue
+            usage = ((payload.get("info") or {}).get("total_token_usage") or {}) if payload.get("type") == "token_count" else {}
+            if not usage or not entry.get("timestamp"):
+                continue
+            cached = int(usage.get("cached_input_tokens") or 0)
+            now = [int(usage.get("input_tokens") or 0) - cached, int(usage.get("output_tokens") or 0),
+                   int(usage.get("cache_write_input_tokens") or 0), cached]
+            delta = [max(a - b, 0) for a, b in zip(now, state["last"])]
+            state["last"] = now
+            if not any(delta):
+                continue
+            moment = datetime.datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00")).astimezone()
+            day = moment.date().isoformat()
+            hours.setdefault(day, [0] * 24)[moment.hour] += 1
+            bucket = totals.setdefault(f"{day}\t{state['cwd']}\t{state['model']}", [0, 0, 0, 0])
+            for index, value in enumerate(delta):
+                bucket[index] += value
+    return {"totals": totals, "hours": hours, "offset": offset, "codex": state}
+
+
 def report(root, days=30):
     """Per-day and per-project token use from local Claude Code transcripts."""
     cutoff = time.time() - days * 86400
     cache_path = root / "runtime" / "report-cache.json"
     cache = read_json(cache_path, {}) or {}
     fresh, merged, hours = {}, {}, {}
-    folders = [Path.home() / ".claude" / "projects", root / "conversations"]
-    for folder in folders:
-        for path in folder.glob("*/**/*.jsonl") if folder.is_dir() else []:
+    folders = [(Path.home() / ".claude" / "projects", "*/**/*.jsonl", scan_transcript), (root / "conversations", "*/**/*.jsonl", scan_transcript),
+               (Path.home() / ".codex" / "sessions", "**/*.jsonl", scan_codex)]
+    for folder, pattern, scan in folders:
+        for path in folder.glob(pattern) if folder.is_dir() else []:
             try:
                 stat = path.stat()
             except OSError:
@@ -494,7 +540,7 @@ def report(root, days=30):
             signature = f"{stat.st_size}:{int(stat.st_mtime)}"
             entry = cache.get(str(path))
             if not entry or entry["signature"] != signature or "offset" not in entry:
-                entry = {"signature": signature, **scan_transcript(path, entry if entry and "offset" in entry else None)}
+                entry = {"signature": signature, **scan(path, entry if entry and "offset" in entry else None)}
             fresh[str(path)] = entry
             for day, counts in entry["hours"].items():
                 total = hours.setdefault(day, [0] * 24)
@@ -509,7 +555,7 @@ def report(root, days=30):
     by_day, by_project, by_model, by_day_model = {}, {}, {}, {}
     for key, (inp, out, write, read) in merged.items():
         day, project, model = key.split("\t")
-        if day < since:
+        if day < since or model.startswith("<"):
             continue
         for table, name in ((by_day, day), (by_project, project), (by_model, model), (by_day_model, (day, model))):
             row = table.setdefault(name, {"input": 0, "output": 0, "cacheWrite": 0, "cacheRead": 0})

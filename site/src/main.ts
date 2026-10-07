@@ -84,3 +84,14 @@ if (modelContext?.registerTool) {
     try { void Promise.resolve(modelContext.registerTool(tool)).catch(() => {}); } catch { /* Early implementations may differ. */ }
   }
 }
+
+// Easter egg: the logo disc turns with each tap; five quick taps shuffle the player's tracks.
+const mark = document.querySelector<HTMLElement>('.disc-mark');
+let turns = 0, taps = 0, lastTap = 0;
+mark?.addEventListener('click', event => {
+  event.preventDefault();
+  mark.style.transform = `rotate(${++turns * 180}deg)`;
+  taps = performance.now() - lastTap < 600 ? taps + 1 : 1;
+  lastTap = performance.now();
+  if (taps === 5) { taps = 0; dispatchEvent(new Event('sidea:shuffle')); }
+});

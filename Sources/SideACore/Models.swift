@@ -167,7 +167,7 @@ public struct WorkSchedule: Equatable, Sendable {
 /// soonest is used before it refills.
 public enum Planner {
     public static let full = 97.0
-    static let switchTarget = 90.0
+    public static let switchTarget = 90.0
     static let week = 7 * 24 * 3600.0
 
     static func live(_ window: UsageWindow?, _ now: Double) -> UsageWindow? {

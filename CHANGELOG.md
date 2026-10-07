@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.8 — 2026-10-07
+
+Redesigned Autopilot tab: live ranking with the scoring rule, a 24-hour day strip and rule chips. Pace verdicts predict when a limit runs out. Codex sessions count in Usage; GPT model names read cleanly; placeholder rows filtered. More site Easter eggs.
+
 ## 0.5.7 — 2026-10-07
 
 Accounts tab grouped by provider with an In use label and live limits; Usage tab with weekly pace per account, period comparisons, per-model daily chart and an hourly activity strip.
