@@ -560,14 +560,23 @@ def scan_codex(path, previous=None):
                 state["model"] = payload.get("model") or state["model"]
                 state["cwd"] = payload.get("cwd") or state["cwd"]
                 continue
-            usage = ((payload.get("info") or {}).get("total_token_usage") or {}) if payload.get("type") == "token_count" else {}
-            if not usage or not entry.get("timestamp"):
+            info = (payload.get("info") or {}) if payload.get("type") == "token_count" else {}
+            total, last = info.get("total_token_usage") or {}, info.get("last_token_usage") or {}
+            if not (total or last) or not entry.get("timestamp"):
                 continue
-            cached = int(usage.get("cached_input_tokens") or 0)
-            now = [int(usage.get("input_tokens") or 0) - cached, int(usage.get("output_tokens") or 0),
-                   int(usage.get("cache_write_input_tokens") or 0), cached]
-            delta = [max(a - b, 0) for a, b in zip(now, state["last"])]
-            state["last"] = now
+            # Input includes cached input; split it so cached reads count as cache reads.
+            vector = lambda usage: [int(usage.get("input_tokens") or 0) - int(usage.get("cached_input_tokens") or 0),
+                                    int(usage.get("output_tokens") or 0), int(usage.get("cache_write_input_tokens") or 0),
+                                    int(usage.get("cached_input_tokens") or 0)]
+            now = vector(total) if total else None
+            # Like ccusage: the turn's own usage when the running total moved (it can restart after
+            # compaction), else the growth of the total. A repeated event moves nothing.
+            if last and (now is None or now != state["last"]):
+                delta = vector(last)
+            else:
+                delta = [max(a - b, 0) for a, b in zip(now or state["last"], state["last"])]
+            if now is not None:
+                state["last"] = now
             if not any(delta):
                 continue
             moment = datetime.datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00")).astimezone()

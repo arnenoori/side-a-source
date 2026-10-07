@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.14 — 2026-10-07
+
+Usage lists Claude and Codex models in separate sections, so Codex is not crowded out. Codex turns count the way ccusage counts them, so a session total that restarts after compaction is no longer missed.
+
 ## 0.5.13 — 2026-10-07
 
 Usage rows list every limit with its reset (5-hour, weekly, Fable); Accounts shows Fable bars and each reset under its bar; Today compares with what you usually use by this hour.

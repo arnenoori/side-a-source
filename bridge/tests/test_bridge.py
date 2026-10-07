@@ -214,6 +214,13 @@ class BridgeTests(unittest.TestCase):
         with patch.object(Path,'home',return_value=Path(self.temp.name)/'home'), patch.object(bridge.time,'time',return_value=(folder/'rollout.jsonl').stat().st_mtime):
             result=bridge.report(self.root,days=10000)
         self.assertEqual([(r['model'],r['input'],r['cacheRead'],r['output']) for r in result['models']],[('gpt-6.1-sol',110,140,30)])
+        # After compaction the running total restarts lower; each turn's own usage still counts.
+        tl=lambda ts,total,last:json.dumps({'timestamp':ts,'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':total,'last_token_usage':last}}})
+        with open(folder/'rollout.jsonl','a') as stream:
+            stream.write(tl('2026-10-01T15:02:00Z',{'input_tokens':50,'output_tokens':5},{'input_tokens':50,'output_tokens':5})+'\n')
+        with patch.object(Path,'home',return_value=Path(self.temp.name)/'home'), patch.object(bridge.time,'time',return_value=(folder/'rollout.jsonl').stat().st_mtime):
+            result=bridge.report(self.root,days=10000)
+        self.assertEqual([(r['input'],r['output']) for r in result['models']],[(160,35)])
 
     def test_two_macs_share_totals_through_sync_folder_without_logins(self):
         sync=Path(self.temp.name)/'icloud'

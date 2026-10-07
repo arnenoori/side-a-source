@@ -244,7 +244,13 @@ struct UsageSettings: View {
                 }
                 Section("When you work") { HourStrip(activity: report.activity) }
                 Section("Projects") { shares(report.projects.prefix(6).map { (URL(fileURLWithPath: $0.project ?? "").lastPathComponent, $0.total) }) }
-                Section("Models") { shares(report.models.prefix(5).map { (ModelName.short($0.model), $0.total) }) }
+                // Per agent, so a smaller Codex share is not crowded out by Claude.
+                ForEach(AgentProvider.allCases) { provider in
+                    let models = report.models.filter { ModelName.provider($0.model) == provider }
+                    if !models.isEmpty {
+                        Section("\(provider.title) models") { shares(models.prefix(5).map { (ModelName.short($0.model), $0.total) }) }
+                    }
+                }
             } else {
                 Section {
                     HStack { ProgressView().controlSize(.small); Text("Reading transcripts…") }
@@ -407,6 +413,11 @@ struct HourStrip: View {
 }
 
 enum ModelName {
+    /// Which agent produced a model id: Claude ids name Claude or a Claude family, anything else is Codex.
+    static func provider(_ id: String?) -> AgentProvider {
+        let id = (id ?? "").lowercased()
+        return ["claude", "opus", "sonnet", "haiku", "fable"].contains(where: id.contains) ? .claude : .codex
+    }
     /// "claude-opus-5-5-20260101" reads as "Opus 5.5".
     static func short(_ id: String?) -> String {
         guard let id, !id.isEmpty else { return "Other" }
