@@ -101,6 +101,9 @@ import Testing
     // Forecast needs at least five minutes of rising samples.
     #expect(Planner.minutesToLimit([(0, 50), (600, 60)]) == 37)
     #expect(Planner.minutesToLimit([(0, 50), (120, 60)]) == nil)
+    // The estimate counts down between readings, and stale readings give none.
+    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], now: 600 + 7 * 60) == 30)
+    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], now: 600 + 11 * 60) == nil)
     let blocked = [soon.id: usage(99, now + hour, 40, now + 24 * hour), full.id: usage(10, now + hour, 99, now + 3 * hour)]
     #expect(Planner.nextAvailable([soon, full], usage: blocked, now: now)?.0.id == soon.id)
     // A 5-hour window above the switch target blocks until it resets, even below the hard limit.

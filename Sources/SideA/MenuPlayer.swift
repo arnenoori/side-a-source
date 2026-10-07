@@ -135,9 +135,13 @@ struct AccountUsageRow: View {
     @Bindable var store: AccountStore
     let account: Account
     var body: some View {
+        // Redraws every 30 seconds so countdowns move while the menu stays open.
+        TimelineView(.periodic(from: .now, by: 30)) { _ in row }
+    }
+    private var row: some View {
         let isActive = store.isActive(account)
         let usage = store.usage[account.id]
-        HStack(spacing: 8) {
+        return HStack(spacing: 8) {
             Circle().fill(isActive ? Color.green : Color.secondary.opacity(0.35)).frame(width: 7, height: 7)
                 .accessibilityLabel(isActive ? "Active on this Mac" : "Not active")
             VStack(alignment: .leading, spacing: 1) {
@@ -174,6 +178,7 @@ struct AccountUsageRow: View {
         .contextMenu {
             if !isActive && account.ready && account.provider == .claude { Button("Use") { Task { await store.activate(account.id) } } }
             if account.ready && account.provider == .claude { Button("Open Terminal on \(account.name)") { Task { await store.openTerminal(account.id) } } }
+            if !isActive { Button("Sign in again") { Task { await store.signIn(account.id) } } }
             Button("Settings…") { store.settingsTab = .accounts; store.openSettings() }
         }
     }

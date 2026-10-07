@@ -336,11 +336,14 @@ public enum Planner {
     }
 
     /// Minutes until a window reaches the limit at the observed pace, from (time, percent) samples.
-    public static func minutesToLimit(_ samples: [(Double, Double)]) -> Double? {
+    /// Counts down from the last sample; samples older than ten minutes say nothing about the pace now.
+    public static func minutesToLimit(_ samples: [(Double, Double)], now: Double? = nil) -> Double? {
         guard let first = samples.first, let last = samples.last, last.0 - first.0 >= 300,
               last.1 > first.1, last.1 < full else { return nil }
+        let since = ((now ?? last.0) - last.0) / 60
+        guard since < 10 else { return nil }
         let perMinute = (last.1 - first.1) / ((last.0 - first.0) / 60)
-        return (full - last.1) / perMinute
+        return max((full - last.1) / perMinute - since, 0)
     }
 
     public static func best(_ candidates: [Account], usage: [String: AccountUsage], active: String?, now: Double) -> String? {

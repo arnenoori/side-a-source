@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.15 — 2026-10-07
+
+Countdowns move while the menu is open, and a limit estimate from stale readings is dropped. A login whose owner can't be checked yet no longer reads as Couldn't connect. Switch notifications explain that running sessions keep their account. Sign in again is in each account's menu.
+
 ## 0.5.14 — 2026-10-07
 
 Usage lists Claude and Codex models in separate sections, so Codex is not crowded out. Codex turns count the way ccusage counts them, so a session total that restarts after compaction is no longer missed.

@@ -129,7 +129,8 @@ final class AccountStore {
         if !isDemo, let cache = try? PrivateFile.read(UsageCache.self, from: usageCacheURL) {
             // Show the last numbers at once and keep each account on its normal polling schedule.
             usage = cache.usage; usageAt = cache.at
-            backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []); issues = cache.issues ?? [:]
+            backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []).intersection(config.accounts.map(\.id))
+            issues = (cache.issues ?? [:]).filter { id, _ in config.accounts.contains { $0.id == id } }
             activeIDs = (cache.active ?? [:]).reduce(into: [:]) { ids, item in AgentProvider(rawValue: item.key).map { ids[$0] = item.value } }
         }
         if !isDemo {
@@ -417,7 +418,7 @@ final class AccountStore {
             } else {
                 // The usage endpoint rate-limits frequent reads; back off rather than retry.
                 let signIn = message.contains("Sign in")
-                issues[id] = signIn ? "signIn" : "offline"
+                issues[id] = signIn ? "signIn" : message.contains("confirm whose login") ? "verify" : "offline"
                 backoffUntil[id] = Date().addingTimeInterval(signIn ? 1800 : message.contains("429") ? 600 : 300)
                 failing.insert(id)
                 if signIn { usage[id]?.stale = true }
@@ -455,6 +456,7 @@ final class AccountStore {
         switch issues[id] {
         case "signIn": "Sign in again"
         case "idle": usage[id] == nil ? "Idle · wake it to read its limits" : nil
+        case "verify": "Checking whose login this is · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
         case "offline": "Couldn't connect · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
         default: nil
         }
@@ -509,7 +511,7 @@ final class AccountStore {
         return Date().timeIntervalSince(usageAt[account.id] ?? .distantPast) >= interval - 1
     }
     /// Minutes until the account's 5-hour limit at its recent pace.
-    func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(samples[id] ?? []) }
+    func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(samples[id] ?? [], now: Date().timeIntervalSince1970) }
     private func nearLimit(_ id: String) -> Bool {
         (usage[id]?.fiveHour?.percent ?? 0) >= 85 || (minutesToLimit(id) ?? .infinity) < 15
     }
@@ -591,7 +593,9 @@ final class AccountStore {
                 let from = config.accounts.first { $0.id == current }?.name
                 await activate(best)
                 if activeIDs[provider] == best, let name = config.accounts.first(where: { $0.id == best })?.name {
-                    notify("Now playing: \(name)", from.map { "\($0) is near its limit or has less quota at risk." } ?? "Autopilot picked the account with the most quota at risk.")
+                    // A running claude keeps the account it started with; only new commands follow.
+                    notify("Now playing: \(name)", (from.map { "\($0) is near its limit. " } ?? "")
+                           + "New claude commands use \(name). To move a session that is already running, quit it and run claude --continue.")
                 }
             }
             if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, active: current, now: now) == nil {
