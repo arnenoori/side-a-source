@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.9 — 2026-10-07
+
+Sync across Macs through iCloud Drive: combined usage, per-Mac totals, shared working hours and accounts from other Macs to sign in to. Follow Fable: while Claude Code runs Fable, Autopilot ranks accounts by Fable headroom and skips plans that bill Fable as extra usage.
+
 ## 0.5.8 — 2026-10-07
 
 Redesigned Autopilot tab: live ranking with the scoring rule, a 24-hour day strip and rule chips. Pace verdicts predict when a limit runs out. Codex sessions count in Usage; GPT model names read cleanly; placeholder rows filtered. More site Easter eggs.

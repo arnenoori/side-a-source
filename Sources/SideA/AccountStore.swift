@@ -29,6 +29,8 @@ final class AccountStore {
     /// Mac-wide login emails that are not in the library yet.
     var unknownLogins: [AgentProvider: String] = [:]
     var report: UsageReport?
+    /// Model of the newest Claude Code response in the last half hour.
+    var claudeModel: String?
     var limitHook = false
     /// The `claude` shell function that makes new commands use the chosen account.
     var shellSwitching = false
@@ -398,6 +400,17 @@ final class AccountStore {
     }
     /// What Autopilot may act on: accounts with a trustworthy latest reading.
     private var plannable: [String: AccountUsage] { usage.filter { !failing.contains($0.key) } }
+    /// True while Claude Code is running Fable and Autopilot follows it.
+    var fableMode: Bool { config.followFable != false && claudeModel?.localizedCaseInsensitiveContains("fable") == true }
+    /// Usage as Autopilot ranks Claude accounts: through the Fable cap while Fable is in use.
+    func planning(_ values: [String: AccountUsage]) -> [String: AccountUsage] { fableMode ? values.compactMapValues(\.forFable) : values }
+    func setFollowFable(_ value: Bool) { config.followFable = value; persist() }
+    func setSync(_ value: Bool) { config.sync = value; persist(); reportAt = .distantPast; Task { await refreshReport() } }
+    /// iCloud Drive's Side A folder, when iCloud Drive is on.
+    var syncFolder: URL? {
+        let drive = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
+        return FileManager.default.fileExists(atPath: drive.path) ? drive.appendingPathComponent("Side A") : nil
+    }
     private struct UsageCache: Codable {
         var usage: [String: AccountUsage]; var at: [String: Date]
         var backoff: [String: Date]?; var primed: [String: Date]?
@@ -440,10 +453,11 @@ final class AccountStore {
     }
     @discardableResult private func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String }
+        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String? }
         guard let data = try? await bridgeOutput(["active"]), let value = try? JSONDecoder().decode(Active.self, from: data) else { return false }
         guard generation == selectionGeneration else { return false }
         activeIDs = [.claude: value.accountID, .codex: value.codexAccountID].compactMapValues { $0 }
+        claudeModel = value.claudeModel
         unknownLogins = [.claude: value.accountID == nil ? value.email : "", .codex: value.codexAccountID == nil ? value.codexEmail : ""]
             .filter { !$0.value.isEmpty }
         return true
@@ -453,7 +467,7 @@ final class AccountStore {
         guard !isDemo, Date().timeIntervalSince(reportAt) > maxAge else { return }
         reportAt = Date()
         // The first scan reads every transcript from the last 30 days; later scans use a cache.
-        if let data = try? await bridgeOutput(["report"], timeout: 900), let value = try? JSONDecoder().decode(UsageReport.self, from: data) {
+        if let data = try? await bridgeOutput(["report"] + (config.sync == true ? syncFolder.map { ["--sync", $0.path] } ?? [] : []), timeout: 900), let value = try? JSONDecoder().decode(UsageReport.self, from: data) {
             if value != report { report = value; try? PrivateFile.write(value, to: reportURL) }
         }
     }
@@ -496,6 +510,7 @@ final class AccountStore {
         for provider in [AgentProvider.claude] where unknownLogins[provider] == nil && shellSwitching {
             let accounts = config.accounts.filter { $0.provider == provider }
             let current = activeIDs[provider]
+            let plannable = planning(self.plannable)
             // A failed read is not evidence of a limit; only a signed-out active account moves.
             if let current, failing.contains(current), usage[current]?.stale != true { continue }
             // An account with Autopilot off is never switched away from automatically.
@@ -507,10 +522,12 @@ final class AccountStore {
                     notify("Now playing: \(name)", from.map { "\($0) is near its limit or has less quota at risk." } ?? "Autopilot picked the account with the most quota at risk.")
                 }
             }
-            if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, active: nil, now: now) == nil {
+            if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, active: current, now: now) == nil {
                 if !exhaustedNotified {
                     exhaustedNotified = true
-                    notify("All tracks played", "\(next.0.name) is back \(UsageBar.format(next.1)).")
+                    notify(fableMode ? "Fable is used up" : "All tracks played",
+                           fableMode ? "Every account has spent its Fable share. Switch to another model, or wait until \(UsageBar.format(next.1))."
+                                     : "\(next.0.name) is back \(UsageBar.format(next.1)).")
                 }
             } else if provider == .claude { exhaustedNotified = false }
         }

@@ -215,4 +215,47 @@ class BridgeTests(unittest.TestCase):
             result=bridge.report(self.root,days=10000)
         self.assertEqual([(r['model'],r['input'],r['cacheRead'],r['output']) for r in result['models']],[('gpt-6.1-sol',110,140,30)])
 
+    def test_two_macs_share_totals_through_sync_folder_without_logins(self):
+        sync=Path(self.temp.name)/'icloud'
+        line=lambda mid,out:json.dumps({'timestamp':'2026-10-01T15:00:00Z','cwd':'/w','requestId':mid,'message':{'id':mid,'model':'claude-fable-5-1','usage':{'output_tokens':out}}})
+        macs=[]
+        for name,out,email in (('a',5,'a@example.com'),('b',7,'b@example.com')):
+            home=Path(self.temp.name)/name; folder=home/'.claude/projects/p'; folder.mkdir(parents=True)
+            (folder/'s.jsonl').write_text(line(name,out)+'\n')
+            root=home/'support'; root.mkdir()
+            (root/'config.json').write_text(json.dumps({'accounts':[dict(account('Shared'),email='shared@example.com'),dict(account(name),email=email)]}))
+            macs.append((home,root,folder/'s.jsonl'))
+        def run(home,root,path):
+            with patch.object(Path,'home',return_value=home), patch.object(bridge.time,'time',return_value=path.stat().st_mtime), \
+                 patch.object(bridge,'machine_identity',return_value=(home.name,home.name)):
+                return bridge.report(root,days=10000,sync=sync)
+        run(*macs[0])
+        # A broken or hostile file from the shared folder is skipped or bounded, never fatal.
+        (sync/'machines/bad.json').write_text('{broken')
+        (sync/'machines/odd.json').write_text(json.dumps({'updated':macs[0][2].stat().st_mtime,'totals':[1],'hours':{}}))
+        (sync/'machines/huge.json').write_text(json.dumps({'updated':macs[0][2].stat().st_mtime,'totals':{},'hours':{'2026-10-01':[10**30]*24}}))
+        result=run(*macs[1])
+        self.assertEqual([r['output'] for r in result['days']],[12])
+        self.assertEqual(result['activity'][0]['hours'][0],10**6)
+        self.assertEqual(sorted(m['current'] for m in result['machines']),[False,False,True])
+        # Only the account this Mac lacks is offered; the shared one is already here.
+        self.assertEqual([(a['email'],a['provider']) for a in result['elsewhere']],[('a@example.com','claude')])
+        for path in (sync/'machines').glob('[ab].json'):
+            self.assertEqual(set(bridge.read_json(path)),{'name','updated','totals','hours','accounts'})
+            self.assertNotIn('claudeAiOauth',path.read_text())
+
+    def test_recent_model_is_the_newest_sessions_last_response(self):
+        folder=Path(self.temp.name)/'home/.claude/projects/p'; folder.mkdir(parents=True)
+        now=time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())
+        msg=lambda model,ts=now:json.dumps({'type':'assistant','timestamp':ts,'message':{'model':model}})
+        # A large tool result after the last response still leaves the response findable.
+        (folder/'s.jsonl').write_text('\n'.join([msg('claude-opus-5-5'),msg('claude-fable-5-1'),msg('<synthetic>'),json.dumps({'type':'user','x':'y'*600000})])+'\n')
+        with patch.object(Path,'home',return_value=Path(self.temp.name)/'home'):
+            self.assertEqual(bridge.recent_model(),'claude-fable-5-1')
+            # A recently touched file whose last response is old does not count.
+            (folder/'s.jsonl').write_text(msg('claude-fable-5-1','2026-01-01T00:00:00Z')+'\n')
+            self.assertIsNone(bridge.recent_model())
+            os.utime(folder/'s.jsonl',(time.time()-7200,time.time()-7200))
+            self.assertIsNone(bridge.recent_model())
+
 if __name__ == '__main__': unittest.main()

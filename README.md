@@ -34,6 +34,8 @@ Side A checks for signed, notarized updates and waits for your coding session to
 
 Anonymous app statistics are **off by default**. Opt in during setup or in Settings to send coarse setup and handoff events. No account details, code, project paths, recordings, or persistent identifiers are collected. See [analytics](docs/analytics.md).
 
+Optional sync shares token totals, working hours, project paths and account names and emails with your other Macs through your iCloud Drive. Logins are never synced; sign in once on each Mac.
+
 A local diagnostic summary is available from Settings or Help. It contains only app/tool versions and coarse session state; nothing is uploaded. See [recovery](docs/recovery.md).
 
 ## Run

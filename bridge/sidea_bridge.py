@@ -521,8 +521,119 @@ def scan_codex(path, previous=None):
     return {"totals": totals, "hours": hours, "offset": offset, "codex": state}
 
 
-def report(root, days=30):
-    """Per-day and per-project token use from local Claude Code transcripts."""
+def recent_model(within=1800):
+    """Model of the newest Claude Code response in the last half hour, so Autopilot can plan
+    around a model-specific cap. Only the newest session counts."""
+    # ponytail: newest session wins; per-terminal models would need the shell hook to report them.
+    cutoff, newest = time.time() - within, None
+    folder = Path.home() / ".claude" / "projects"
+    for path in folder.glob("*/*.jsonl") if folder.is_dir() else []:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        if stat.st_mtime > cutoff and (newest is None or stat.st_mtime > newest[0]):
+            newest = (stat.st_mtime, path, stat.st_size)
+    if not newest:
+        return None
+    # Read backwards in chunks: a large tool result can follow the last response.
+    end, carry = newest[2], b""
+    with open(newest[1], "rb") as stream:
+        while end > 0 and newest[2] - end < 8 * 262144:
+            start = max(end - 262144, 0)
+            stream.seek(start)
+            lines = (stream.read(end - start) + carry).split(b"\n")
+            carry, end = (lines.pop(0) if start else b""), start
+            for line in reversed(lines):
+                if b'"assistant"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    model = (entry.get("message") or {}).get("model")
+                    moment = epoch(entry.get("timestamp"))
+                except (ValueError, AttributeError, TypeError):
+                    continue
+                if model and not model.startswith("<"):
+                    return model if moment and moment > cutoff else None
+    return None
+
+
+def machine_identity(root):
+    """A stable id per Mac, so reinstalling never leaves an old copy of this Mac's totals counted twice."""
+    try:
+        hardware = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True, timeout=5).stdout
+        hardware = next(line.split('"')[-2] for line in hardware.splitlines() if "IOPlatformUUID" in line)
+    except (OSError, subprocess.TimeoutExpired, StopIteration, IndexError):
+        hardware = ""
+    path = root / "machine-id"
+    if hardware:
+        path.write_text(hashlib.sha256(("side-a:" + hardware).encode()).hexdigest()[:32])
+    elif not path.exists():
+        path.write_text(str(uuid.uuid4()))
+    try:
+        name = subprocess.run(["scutil", "--get", "ComputerName"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        name = ""
+    return path.read_text().strip(), name or "This Mac"
+
+
+def sync_machines(root, folder, merged, hours, since, days):
+    """Shares this Mac's token totals and activity through a synced folder and adds every
+    other Mac's. Only counts, project paths, account names and emails are written; logins never are."""
+    folder = Path(folder) / "machines"
+    own, name = machine_identity(root)
+    config = read_json(root / "config.json", {}) or {}
+    accounts = [{"name": a["name"], "email": a.get("email", ""), "provider": provider_of(a)} for a in config.get("accounts", [])]
+    mine = {"name": name, "totals": merged, "hours": hours, "accounts": accounts}
+    previous = read_json(folder / f"{own}.json", None) if (folder / f"{own}.json").exists() else None
+    # Unchanged totals are not rewritten, so iCloud uploads only real changes plus a daily heartbeat.
+    if not isinstance(previous, dict) or time.time() - float(previous.get("updated") or 0) > 86400 \
+            or {k: v for k, v in previous.items() if k != "updated"} != mine:
+        atomic_json(folder / f"{own}.json", {**mine, "updated": time.time()})
+    week = (datetime.date.today() - datetime.timedelta(days=6)).isoformat()
+    tokens = lambda totals: sum(sum(v) for k, v in totals.items() if k.split("\t", 1)[0] >= week)
+    machines = [{"name": name, "tokens": tokens(merged), "updated": time.time(), "current": True}]
+    known = {(a["provider"], a["email"].casefold()) for a in accounts if a["email"]}
+    elsewhere = {}
+    merged = {key: list(values) for key, values in merged.items()}
+    hours = {day: list(counts) for day, counts in hours.items()}
+    for path in sorted(folder.glob("*.json")):
+        if path.stem == own:
+            continue
+        # ponytail: an iCloud file evicted to a placeholder is skipped until macOS downloads it again.
+        # Shared files are untrusted: a malformed one is skipped and every count is bounded.
+        try:
+            data = read_json(path, None)
+            if not isinstance(data, dict) or time.time() - float(data.get("updated") or 0) > days * 86400:
+                continue
+            bound = lambda value, top: min(max(int(value), 0), top)
+            totals = {str(k): [bound(v, 10**13) for v in values[:4]] + [0] * (4 - len(values[:4]))
+                      for k, values in dict(data.get("totals") or {}).items() if str(k).count("\t") == 2 and str(k)[:10] >= since}
+            counts = {str(day): [bound(c, 10**6) for c in list(values)[:24]] for day, values in dict(data.get("hours") or {}).items() if str(day) >= since}
+            remote = [a for a in list(data.get("accounts") or []) if isinstance(a, dict)]
+            updated = float(data["updated"])
+        except (ValueError, TypeError, AttributeError, KeyError, OSError):
+            continue
+        for key, values in totals.items():
+            bucket = merged.setdefault(key, [0, 0, 0, 0])
+            for index, value in enumerate(values):
+                bucket[index] += value
+        for day, values in counts.items():
+            total = hours.setdefault(day, [0] * 24)
+            for hour, count in enumerate(values):
+                total[hour] += count
+        machines.append({"name": str(data.get("name") or "Another Mac")[:60], "tokens": tokens(totals), "updated": updated, "current": False})
+        for account in remote:
+            key = (account.get("provider"), str(account.get("email", "")).casefold())
+            if key[1] and key[0] in ("claude", "codex") and key not in known:
+                elsewhere.setdefault(key, {"name": str(account.get("name") or key[1]), "email": account["email"],
+                                           "provider": key[0], "machine": machines[-1]["name"]})
+    return merged, hours, machines, list(elsewhere.values())
+
+
+def report(root, days=30, sync=None):
+    """Per-day and per-project token use from local Claude Code and Codex logs, plus other Macs'
+    totals when a sync folder is set."""
     cutoff = time.time() - days * 86400
     cache_path = root / "runtime" / "report-cache.json"
     cache = read_json(cache_path, {}) or {}
@@ -552,6 +663,11 @@ def report(root, days=30):
                     bucket[index] += value
     atomic_json(cache_path, fresh)
     since = (datetime.date.today() - datetime.timedelta(days=days - 1)).isoformat()
+    merged = {key: values for key, values in merged.items() if key.split("\t", 1)[0] >= since}
+    hours = {day: counts for day, counts in hours.items() if day >= since}
+    machines, elsewhere = [], []
+    if sync:
+        merged, hours, machines, elsewhere = sync_machines(root, sync, merged, hours, since, days)
     by_day, by_project, by_model, by_day_model = {}, {}, {}, {}
     for key, (inp, out, write, read) in merged.items():
         day, project, model = key.split("\t")
@@ -567,7 +683,8 @@ def report(root, days=30):
             # Each day split by model, for the stacked daily chart.
             "dayModels": sorted(({"date": day, "model": model, **value} for (day, model), value in by_day_model.items() if model),
                                 key=lambda row: (row["date"], row["model"])),
-            "activity": [{"date": day, "hours": counts} for day, counts in sorted(hours.items()) if day >= since]}
+            "activity": [{"date": day, "hours": counts} for day, counts in sorted(hours.items()) if day >= since],
+            "machines": machines, "elsewhere": elsewhere}
 
 
 HOOK_MARK = "side-a-limit"
@@ -624,14 +741,14 @@ def main():
     for name in ["login", "status", "logout", "usage", "activate", "adopt", "prime"]:
         commands.add_parser(name).add_argument("account")
     commands.add_parser("active")
-    commands.add_parser("report")
+    commands.add_parser("report").add_argument("--sync", type=Path)
     commands.add_parser("hook").add_argument("state", choices=["on", "off", "status"])
     commands.add_parser("shell").add_argument("state", choices=["on", "off", "status"])
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     os.umask(0o077)
     if args.command == "report":
-        print(json.dumps(report(root)))
+        print(json.dumps(report(root, sync=args.sync)))
         return
     if args.command == "hook":
         if args.state != "status":
@@ -650,7 +767,7 @@ def main():
         print(json.dumps({"accountID": (repair_selection(root, config) or {}).get("id"),
                           "email": "" if account_for_email(config, mac) else mac,
                           "codexAccountID": (codex_bridge.global_account(config) or {}).get("id"),
-                          "codexEmail": codex_bridge.global_email()}))
+                          "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model()}))
         return
     account = account_by_id(config, args.account)
     if args.command == "usage":

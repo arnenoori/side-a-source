@@ -43,6 +43,10 @@ public struct Configuration: Codable, Equatable, Sendable {
     /// Autopilot: switch the Mac-wide account and start idle 5-hour windows.
     public var smartMode = true
     public var menuBarOnly = true
+    /// Shares token totals with the user's other Macs through iCloud Drive. Nil means off.
+    public var sync: Bool?
+    /// While Claude Code runs Fable, Autopilot ranks accounts by Fable headroom. Nil means on.
+    public var followFable: Bool?
     public init() {}
 
     public var selected: Account? { accounts.first { $0.id == selectedID } }
@@ -88,6 +92,22 @@ public struct AccountUsage: Codable, Equatable, Sendable {
     public var weekly: UsageWindow? { windows.first { $0.id == "seven_day" } }
     /// Weekly caps that apply to one model only, such as "Weekly Fable".
     public var modelLimits: [UsageWindow] { windows.filter { $0.id.hasPrefix("model:") } }
+
+    /// The account as Fable sees it. Fable may use half of the weekly limit, so its room is the
+    /// smaller of what is left of the Fable cap and twice what is left of the weekly limit.
+    /// Nil for a plan without a Fable cap, where Fable is billed as extra usage.
+    public var forFable: AccountUsage? {
+        // ponytail: assumes the Fable percent is of the Fable cap (100 = limited), like every other window.
+        let fable = windows.first { $0.id == "model:fable" }
+        // A Max plan whose usage lists no Fable cap yet has its whole Fable share left.
+        guard fable != nil || (capacity ?? 1) >= 5 else { return nil }
+        let room = min(100 - (fable?.percent ?? 0), 2 * (100 - (weekly?.percent ?? 0)))
+        var copy = self
+        copy.windows = windows.filter { $0.id != "seven_day" }
+            + [UsageWindow(id: "seven_day", label: "Weekly Fable", percent: max(100 - room, 0), resetsAt: fable?.resetsAt ?? weekly?.resetsAt)]
+        copy.capacity = (capacity ?? 1) / 2
+        return copy
+    }
 }
 
 public struct TokenRow: Codable, Hashable, Sendable {
@@ -120,9 +140,33 @@ public struct UsageReport: Codable, Equatable, Sendable {
     public var activity: [ActivitySpan]
     /// Each day split by model; absent in reports cached by older versions.
     public var dayModels: [TokenRow]?
-    public init(days: [TokenRow], projects: [TokenRow], models: [TokenRow], activity: [ActivitySpan], dayModels: [TokenRow]? = nil) {
+    /// Macs sharing totals through sync, this one included; empty or absent without sync.
+    public var machines: [Machine]?
+    /// Accounts set up on another Mac but not on this one.
+    public var elsewhere: [RemoteAccount]?
+    public init(days: [TokenRow], projects: [TokenRow], models: [TokenRow], activity: [ActivitySpan], dayModels: [TokenRow]? = nil,
+                machines: [Machine]? = nil, elsewhere: [RemoteAccount]? = nil) {
         self.days = days; self.projects = projects; self.models = models; self.activity = activity; self.dayModels = dayModels
+        self.machines = machines; self.elsewhere = elsewhere
     }
+}
+
+public struct Machine: Codable, Hashable, Sendable {
+    public var name: String
+    /// Tokens in the last seven days.
+    public var tokens: Int
+    public var updated: Double
+    public var current: Bool
+    public init(name: String, tokens: Int, updated: Double, current: Bool) {
+        self.name = name; self.tokens = tokens; self.updated = updated; self.current = current
+    }
+}
+
+public struct RemoteAccount: Codable, Hashable, Sendable {
+    public var name: String
+    public var email: String
+    public var provider: AgentProvider
+    public var machine: String
 }
 
 /// The user's usual working hours, learned from when transcripts show activity.

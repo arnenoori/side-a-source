@@ -115,3 +115,25 @@ import Testing
     let schedule = WorkSchedule(Array(repeating: ActivitySpan(date: "d", hours: hours), count: 14))!
     #expect(schedule.start == 480 && schedule.end == 1320)
 }
+
+@Test func fablePlanningSkipsSpentFableCapsAndPlansWithoutFable() {
+    let now = Date().timeIntervalSince1970
+    func usage(weekly: Double, fable: Double?, capacity: Double) -> AccountUsage {
+        AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 10, resetsAt: now + 3600),
+                               UsageWindow(id: "seven_day", label: "Weekly", percent: weekly, resetsAt: now + 86_400)]
+                     + (fable.map { [UsageWindow(id: "model:fable", label: "Weekly Fable", percent: $0, resetsAt: now + 86_400)] } ?? []),
+                     capacity: capacity)
+    }
+    let spent = Account(name: "Spent", ready: true, allowAuto: true), room = Account(name: "Room", ready: true, allowAuto: true)
+    let pro = Account(name: "Pro", ready: true, allowAuto: true), almost = Account(name: "Almost", ready: true, allowAuto: true)
+    let all = [spent.id: usage(weekly: 40, fable: 100, capacity: 20), room.id: usage(weekly: 60, fable: 20, capacity: 5),
+               pro.id: usage(weekly: 0, fable: nil, capacity: 1), almost.id: usage(weekly: 99, fable: 0, capacity: 20)]
+    let accounts = [spent, room, pro, almost]
+    #expect(Planner.best(accounts, usage: all, active: spent.id, now: now) == spent.id)
+    // Weekly room caps Fable room: an account 99% through its week has almost no Fable left.
+    #expect(all[almost.id]!.forFable!.weekly!.percent == 98)
+    // A Max plan with no Fable cap listed yet still has its Fable share; a Pro plan has none.
+    #expect(usage(weekly: 10, fable: nil, capacity: 20).forFable?.weekly?.percent == 0)
+    #expect(all[pro.id]!.forFable == nil)
+    #expect(Planner.best(accounts, usage: all.compactMapValues(\.forFable), active: spent.id, now: now) == room.id)
+}

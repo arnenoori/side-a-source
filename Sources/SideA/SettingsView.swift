@@ -44,6 +44,20 @@ struct AccountsSettings: View {
                     }
                 }
             }
+            if let elsewhere = store.report?.elsewhere, !elsewhere.isEmpty {
+                Section("On your other Macs") {
+                    ForEach(elsewhere, id: \.self) { remote in
+                        LabeledContent {
+                            Button("Sign in here") {
+                                if let id = store.addAccount(name: remote.name, email: remote.email, provider: remote.provider) { Task { await store.signIn(id) } }
+                            }.disabled(!store.isInstalled(remote.provider) || store.python == nil)
+                        } label: {
+                            Text(remote.name)
+                            Text("\(remote.provider.title) · \(remote.email) · on \(remote.machine)")
+                        }
+                    }
+                }
+            }
             if store.config.accounts.isEmpty {
                 Section { Text("No accounts yet. Add one below.").foregroundStyle(.secondary) }
             }
@@ -171,6 +185,21 @@ struct UsageSettings: View {
                         StatTile(title: "Today", value: sum(0...0), baseline: Double(sum(1...29)) / 29, comparison: "daily average")
                         StatTile(title: "7 days", value: sum(0...6), baseline: Double(sum(7...13)), comparison: "the week before")
                         StatTile(title: "30 days", value: sum(0...29))
+                    }
+                }
+                if let machines = report.machines, machines.count > 1 {
+                    Section("Your Macs, last 7 days") {
+                        let top = Double(max(machines.map(\.tokens).max() ?? 1, 1))
+                        ForEach(machines, id: \.self) { machine in
+                            HStack(spacing: 10) {
+                                Text(machine.name + (machine.current ? " (this Mac)" : "")).lineLimit(1).frame(width: 170, alignment: .leading)
+                                GeometryReader { proxy in
+                                    Capsule().fill(machine.current ? Color.accentColor : Color.secondary.opacity(0.35))
+                                        .frame(width: max(proxy.size.width * Double(machine.tokens) / top, 4))
+                                }.frame(height: 8)
+                                Text(TokenCount.short(machine.tokens)).monospacedDigit().frame(width: 56, alignment: .trailing)
+                            }
+                        }
                     }
                 }
                 Section("Tokens per day") {
@@ -329,13 +358,17 @@ struct AutopilotSettings: View {
                     Text("Autopilot").font(.headline)
                     Text(status)
                 }
+                Toggle(isOn: Binding(get: { store.config.followFable != false }, set: { store.setFollowFable($0) })) {
+                    Text("Follow Fable")
+                    Text("While you use Fable, pick the account with the most Fable left. Fable can use up to half of each weekly limit, and Pro plans bill it as extra usage.")
+                }
             }
             Section {
                 UpNext(store: store)
             } header: {
-                Text("Up next")
+                Text(store.fableMode ? "Up next for Fable" : "Up next")
             } footer: {
-                Text("weekly % left ÷ hours until it resets × plan size")
+                Text("\(store.fableMode ? "Fable" : "weekly") % left ÷ hours until it resets × plan size")
                     .font(.custom("Noteworthy-Bold", size: 13)).foregroundStyle(.secondary)
             }
             Section("Your day") {
@@ -363,7 +396,7 @@ struct AutopilotSettings: View {
 
     private var status: String {
         guard store.config.smartMode else { return "Off. Side A only shows your limits." }
-        let using = store.active.map { "Using \($0.name)" } ?? "Watching your accounts"
+        let using = store.active.map { "Using \($0.name)\(store.fableMode ? " for Fable" : "")" } ?? "Watching your accounts"
         guard let schedule = store.schedule else { return "\(using). Learning your hours." }
         return "\(using). Warms up idle windows from \(TokenCount.clock(schedule.start - WorkSchedule.lead))."
     }
@@ -374,11 +407,12 @@ struct UpNext: View {
     @Bindable var store: AccountStore
     var body: some View {
         let now = Date().timeIntervalSince1970
+        let usage = store.planning(store.usage)
         let ranked = store.config.accounts.filter { $0.provider == .claude && $0.ready && $0.allowAuto }
-            .compactMap { account in store.usage[account.id].map { (account, $0, Planner.urgency($0, now: now)) } }
+            .compactMap { account in usage[account.id].map { (account, $0, Planner.urgency($0, now: now)) } }
             .sorted { $0.2 > $1.2 }
         let top = max(ranked.first?.2 ?? 1, 0.01)
-        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, active: store.activeIDs[.claude], now: now)
+        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: usage, active: store.activeIDs[.claude], now: now)
         if ranked.isEmpty {
             Text("Add Claude accounts to see how Autopilot ranks them.").foregroundStyle(.secondary)
         }
@@ -479,6 +513,13 @@ struct GeneralSettings: View {
                     Text("3D player")
                     Text("A pocket disc player for your accounts, from the menu.")
                 }
+            }
+            Section {
+                Toggle(isOn: Binding(get: { store.config.sync == true }, set: { store.setSync($0) })) {
+                    Text("Sync with your other Macs")
+                    Text(store.syncFolder == nil ? "Turn on iCloud Drive to combine usage across your Macs."
+                         : "Combines usage, working hours and your account list through iCloud Drive. Logins stay on each Mac; sign in once per Mac.")
+                }.disabled(store.syncFolder == nil && store.config.sync != true)
             }
             Section("Tools") {
                 DependencyStatusView(store: store, provider: .claude)
