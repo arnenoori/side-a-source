@@ -468,6 +468,10 @@ struct AutopilotSettings: View {
                     Text("Switch in Terminal")
                     Text("New claude commands use the account Autopilot picks, and sidea use <name> keeps one terminal on one account. Adds one line to ~/.zshrc.")
                 }
+                Toggle(isOn: Binding(get: { store.liveLimits }, set: { value in Task { await store.setLiveLimits(value) } })) {
+                    Text("Live limits from Claude Code")
+                    Text("Each reply updates the numbers, and your own statusline keeps working unchanged.")
+                }
                 Toggle(isOn: Binding(get: { store.limitHook }, set: { value in Task { await store.setLimitHook(value) } })) {
                     Text("React the moment a limit hits")
                     Text("A silent Claude Code hook that rechecks right away.")

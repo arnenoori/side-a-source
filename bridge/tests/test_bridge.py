@@ -187,6 +187,41 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(bridge.limit_marker(self.root).exists())
             bridge.set_limit_hook(self.root,False)
             self.assertEqual(bridge.read_json(home/'.claude/settings.json'),{'model':'opus','hooks':{'StopFailure':[mine]}})
+    def test_live_statusline_keeps_the_users_line_and_saves_each_accounts_limits(self):
+        home=self.root/'home'; (home/'.claude').mkdir(parents=True)
+        mine={'type':'command','command':"printf 'mine:'; cat",'padding':2}
+        bridge.atomic_json(home/'.claude/settings.json',{'model':'opus','statusLine':mine})
+        other=account('Other'); config={'accounts':[other]}
+        payload='{"model":{"id":"x"},"rate_limits":{"five_hour":{"used_percentage":12,"resets_at":2000000000},"seven_day":{"used_percentage":40,"resets_at":2000500000}}}\n\n'
+        with patch.object(Path,'home',return_value=home):
+            bridge.set_live(self.root,True); bridge.set_live(self.root,True)
+            line=bridge.read_json(home/'.claude/settings.json')['statusLine']
+            self.assertEqual(line['padding'],2)
+            run=lambda env: subprocess.run(['/bin/zsh','-c',line['command']],input=payload,capture_output=True,text=True,
+                                           env={**os.environ,**env}).stdout
+            # The user's statusline sees the input byte for byte.
+            self.assertEqual(run({'CLAUDE_SECURESTORAGE_CONFIG_DIR':str(self.root/'profiles'/other['id'])+'/'}),'mine:'+payload)
+            with patch.object(bridge,'mac_email',return_value=None):
+                live=bridge.live_limits(self.root,config)
+            self.assertEqual(live[other['id']]['windows'][0],{'id':'five_hour','label':'5-hour','percent':12.0,'resetsAt':2000000000.0})
+            self.assertEqual(live[other['id']]['windows'][1]['percent'],40.0)
+            # A session with no limits yet (or a broken file) adds nothing.
+            run({'CLAUDE_SECURESTORAGE_CONFIG_DIR':''}); (bridge.live_dir(self.root)/'junk.json').write_text('[')
+            with patch.object(bridge,'mac_email',return_value=None):
+                self.assertEqual(set(bridge.live_limits(self.root,config)),{other['id']})
+            bridge.set_live(self.root,False)
+            self.assertEqual(bridge.read_json(home/'.claude/settings.json'),{'model':'opus','statusLine':mine})
+            bridge.atomic_json(home/'.claude/settings.json',{})
+            bridge.set_live(self.root,True)
+            self.assertEqual(subprocess.run(['/bin/sh','-c',bridge.read_json(home/'.claude/settings.json')['statusLine']['command']],
+                                            input=payload,capture_output=True,text=True).stdout,'')
+            bridge.set_live(self.root,False)
+            self.assertEqual(bridge.read_json(home/'.claude/settings.json'),{})
+            # A statusline that only mentions the marker is the user's, never unwrapped or dropped.
+            theirs={'type':'command','command':"printf '%s' 'printf EXECUTED # side-a-live'"}
+            bridge.atomic_json(home/'.claude/settings.json',{'statusLine':theirs})
+            bridge.set_live(self.root,True); bridge.set_live(self.root,False)
+            self.assertEqual(bridge.read_json(home/'.claude/settings.json'),{'statusLine':theirs})
     def test_report_counts_each_response_once_per_day_and_project(self):
         folder=Path(self.temp.name)/'home/.claude/projects/p'; folder.mkdir(parents=True)
         line=lambda mid,ts,out:json.dumps({'timestamp':ts,'cwd':'/work/app','requestId':'r'+mid,'message':{'id':mid,'model':'m','usage':{'input_tokens':1,'output_tokens':out}}})

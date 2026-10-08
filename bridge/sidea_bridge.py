@@ -904,6 +904,11 @@ def hook_command(root):
 
 def set_limit_hook(root, enabled):
     """Opt-in StopFailure hook (matcher rate_limit) in ~/.claude/settings.json for instant switching."""
+    with selection_lock(root, "settings.lock"):
+        _set_limit_hook(root, enabled)
+
+
+def _set_limit_hook(root, enabled):
     path = Path.home() / ".claude" / "settings.json"
     settings = read_json(path, {}) or {}
     hooks = settings.setdefault("hooks", {})
@@ -917,6 +922,11 @@ def set_limit_hook(root, enabled):
         hooks.pop("StopFailure", None)
     if not hooks:
         settings.pop("hooks")
+    write_settings(settings)
+
+
+def write_settings(settings):
+    path = Path.home() / ".claude" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path = path.resolve()  # a symlinked settings file stays a symlink
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, prefix=".side-a-") as stream:
@@ -925,6 +935,108 @@ def set_limit_hook(root, enabled):
     if path.exists():
         os.chmod(stream.name, path.stat().st_mode & 0o777)
     os.replace(stream.name, path)
+
+
+LIVE_MARK = "side-a-live"
+# Every Claude Code reply hands the statusline the account's limits from the response
+# headers, so saving them gives a live reading without calling the rate-limited usage endpoint.
+# $(cat; echo x) keeps the input byte for byte, so the user's own statusline sees it unchanged.
+LIVE_SCRIPT = """#!/bin/sh
+# side-a-live: saves each session's limits for Side A, then runs the original statusline.
+umask 077
+input=$(cat; echo x); input=${input%x}
+case $input in *'"rate_limits"'*)
+  name=${CLAUDE_SECURESTORAGE_CONFIG_DIR%/}; name=${name##*/}; name=${name:-mac}
+  dir=LIVE_DIR
+  printf '%s' "$input" > "$dir/.$name.$$" && mv -f "$dir/.$name.$$" "$dir/$name.json" ;;
+esac
+[ -n "$1" ] || exit 0
+printf '%s' "$input" | /bin/sh -c "$1"
+"""
+
+
+def live_dir(root):
+    return root / "runtime" / "live"
+
+
+def live_wrapped(command):
+    """The user's command inside Side A's wrapper, or None when the command is not the wrapper."""
+    if not (isinstance(command, str) and command.startswith("/bin/sh ") and command.endswith(f" # {LIVE_MARK}")):
+        return None
+    words = shlex.split(command, comments=True)
+    if len(words) not in (2, 3) or not words[1].endswith("/runtime/statusline.sh"):
+        return None
+    return words[2] if len(words) == 3 else ""
+
+
+def set_live(root, enabled):
+    """Wraps the statusLine command; the user's own command is kept as the wrapper's argument."""
+    with selection_lock(root, "settings.lock"):
+        _set_live(root, enabled)
+
+
+def _set_live(root, enabled):
+    settings = read_json(Path.home() / ".claude" / "settings.json", {}) or {}
+    line = settings.get("statusLine")
+    # Only a command statusline (or none) is wrapped; anything else is left exactly as it is.
+    if line is not None and not (isinstance(line, dict) and line.get("type", "command") == "command"):
+        return
+    line = line or {}
+    inner = live_wrapped(line.get("command"))
+    command = (line.get("command") or "") if inner is None else inner
+    if not isinstance(command, str):
+        return
+    if enabled:
+        live_dir(root).mkdir(parents=True, exist_ok=True, mode=0o700)
+        script = root / "runtime" / "statusline.sh"
+        script.write_text(LIVE_SCRIPT.replace("LIVE_DIR", shlex.quote(str(live_dir(root)))))
+        wrapped = f"/bin/sh {shlex.quote(str(script))}" + (f" {shlex.quote(command)}" if command else "")
+        settings["statusLine"] = {**line, "type": "command", "command": f"{wrapped} # {LIVE_MARK}"}
+    elif inner is None:
+        return
+    elif command:
+        settings["statusLine"] = {**line, "command": command}
+    else:
+        settings.pop("statusLine")
+    write_settings(settings)
+
+
+def live_installed():
+    settings = read_json(Path.home() / ".claude" / "settings.json", {}) or {}
+    line = settings.get("statusLine") if isinstance(settings.get("statusLine"), dict) else {}
+    return live_wrapped(line.get("command")) is not None
+
+
+def live_limits(root, config):
+    """Each Claude account's limits as its newest session last saw them, by account id."""
+    found = {}
+    mac = mac_email(root)
+    # A file from Mac-login sessions belongs to whoever held the Mac login then; a sign-in
+    # as someone else drops it rather than credit their limits to the new account.
+    seen = live_dir(root) / "mac.email"
+    try:
+        if mac and seen.read_text() != mac:
+            (live_dir(root) / "mac.json").unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+    if mac and live_dir(root).is_dir():
+        seen.write_text(mac)
+    for path in live_dir(root).glob("*.json"):
+        try:
+            name = path.stem
+            account = (account_for_email(config, mac) if name == "mac"
+                       else next((a for a in config.get("accounts", []) if a.get("id") == name), None))
+            with open(path) as stream:
+                at = os.fstat(stream.fileno()).st_mtime
+                limits = json.load(stream).get("rate_limits") or {}
+            windows = [{"id": key, "label": label, "percent": float(limits[key]["used_percentage"]),
+                        "resetsAt": epoch(limits[key].get("resets_at"))}
+                       for key, label in WINDOW_LABELS.items() if isinstance(limits.get(key), dict)]
+            if account and windows and at > found.get(account["id"], {}).get("at", 0):
+                found[account["id"]] = {"at": at, "windows": windows}
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            continue
+    return found
 
 
 def limit_hook_installed():
@@ -947,6 +1059,7 @@ def main():
     commands.add_parser("report").add_argument("--sync", type=Path)
     commands.add_parser("hook").add_argument("state", choices=["on", "off", "status"])
     commands.add_parser("shell").add_argument("state", choices=["on", "off", "status"])
+    commands.add_parser("live").add_argument("state", choices=["on", "off", "status"])
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     os.umask(0o077)
@@ -957,6 +1070,11 @@ def main():
         if args.state != "status":
             set_limit_hook(root, args.state == "on")
         print(json.dumps({"installed": limit_hook_installed()}))
+        return
+    if args.command == "live":
+        if args.state != "status":
+            set_live(root, args.state == "on")
+        print(json.dumps({"installed": live_installed()}))
         return
     if args.command == "shell":
         if args.state != "status":
@@ -972,7 +1090,8 @@ def main():
                           "email": "" if account_for_email(config, mac) else mac,
                           "codexAccountID": (codex_bridge.global_account(config) or {}).get("id"),
                           "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),
-                          "logins": login_stamps(root, config), "loginEnds": login_ends(root, config)}))
+                          "logins": login_stamps(root, config), "loginEnds": login_ends(root, config),
+                          "live": live_limits(root, config)}))
         return
     account = account_by_id(config, args.account)
     if args.command == "usage":

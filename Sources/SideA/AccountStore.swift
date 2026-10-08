@@ -34,6 +34,9 @@ final class AccountStore {
     var limitHook = false
     /// The `claude` shell function that makes new commands use the chosen account.
     var shellSwitching = false
+    var liveLimits = false
+    /// When a Claude Code session last reported each account's limits.
+    private var liveAt: [String: Double] = [:]
     @ObservationIgnored private var reportAt = Date.distantPast
     @ObservationIgnored private var limitMarkerDate: Date?
     var usage: [String: AccountUsage] = [:]
@@ -179,8 +182,10 @@ final class AccountStore {
         struct State: Decodable { let installed: Bool }
         async let hook = try? bridgeOutput(["hook", "status"])
         async let shell = try? bridgeOutput(["shell", "status"])
+        async let live = try? bridgeOutput(["live", config.liveLimits == false ? "status" : "on"])
         if let data = await hook { limitHook = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
         if let data = await shell { shellSwitching = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
+        if let data = await live { liveLimits = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
     }
     /// Reads accounts side by side; each Codex read starts its own app-server, so serial reads add up.
     private func refresh(_ ids: [String]) async {
@@ -404,21 +409,22 @@ final class AccountStore {
     func refreshUsage(_ id: String) async {
         guard Date() >= (backoffUntil[id] ?? .distantPast), !reading.contains(id) else { return }
         reading.insert(id); defer { reading.remove(id) }
-        usageAt[id] = Date()
+        let started = Date()
+        usageAt[id] = started
         do {
-            let value = try JSONDecoder().decode(AccountUsage.self, from: try await bridgeOutput(["usage", id]))
+            var value = try JSONDecoder().decode(AccountUsage.self, from: try await bridgeOutput(["usage", id]))
+            // A session reply that landed while this read was in flight is newer than its answer.
+            if (liveAt[id] ?? 0) > started.timeIntervalSince1970, let current = usage[id] {
+                for window in current.windows where ["five_hour", "seven_day"].contains(window.id) {
+                    if let index = value.windows.firstIndex(where: { $0.id == window.id }) { value.windows[index] = window }
+                }
+            }
             warnAboutPaidUsage(id, before: usage[id], after: value)
             usage[id] = value
-            readAt[id] = Date()
+            readAt[id] = max(started, readAt[id] ?? started)
             failing.remove(id)
             issues[id] = nil
-            let now = Date().timeIntervalSince1970
-            if let five = value.fiveHour {
-                // A drop means the window reset; the old pace no longer applies.
-                if let last = samples[id]?.last, five.percent < last.1 { samples[id] = [] }
-                samples[id, default: []].append((now, five.percent))
-                samples[id]?.removeAll { now - $0.0 > 1200 }
-            }
+            sample(id, value.fiveHour, at: started.timeIntervalSince1970)
         } catch {
             let message = error.localizedDescription
             // Idle: nobody has used the login since it expired, so the last reading still holds.
@@ -438,6 +444,13 @@ final class AccountStore {
             }
         }
         saveUsageCache()
+    }
+    private func sample(_ id: String, _ five: UsageWindow?, at now: Double) {
+        guard let five else { return }
+        // A drop means the window reset; the old pace no longer applies.
+        if let last = samples[id]?.last, five.percent < last.1 { samples[id] = [] }
+        samples[id, default: []].append((now, five.percent))
+        samples[id]?.removeAll { now - $0.0 > 1200 }
     }
     /// Refreshes what is due (menu open). The refresh button passes `force` but still
     /// respects backoff and never re-reads an account checked in the last minute.
@@ -534,7 +547,10 @@ final class AccountStore {
             return false
         }
         // The usage endpoint rate-limits a login read every minute or two; three minutes stays clear.
-        let interval: TimeInterval = isActive(account) ? (nearLimit(account.id) ? 90 : 180) : 600
+        // While sessions report live limits, the endpoint is only needed for what they can't see
+        // (Fable, paid usage, use on other devices).
+        let live = now - (liveAt[account.id] ?? 0) < 600
+        let interval: TimeInterval = live ? 900 : isActive(account) ? (nearLimit(account.id) ? 90 : 180) : 600
         return Date().timeIntervalSince(usageAt[account.id] ?? .distantPast) >= interval - 1
     }
     /// Minutes until the account's 5-hour limit at its recent pace.
@@ -554,7 +570,8 @@ final class AccountStore {
     }
     @discardableResult private func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]? }
+        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]? }
+        struct Live: Decodable { let at: Double; let windows: [UsageWindow] }
         guard let data = try? await bridgeOutput(["active"]), let value = try? JSONDecoder().decode(Active.self, from: data) else { return false }
         guard generation == selectionGeneration else { return false }
         activeIDs = [.claude: value.accountID, .codex: value.codexAccountID].compactMapValues { $0 }
@@ -568,6 +585,22 @@ final class AccountStore {
             loginStamps[id] = stamp
         }
         loginEnds = (value.loginEnds ?? [:]).mapValues { $0 / 1000 }
+        // Each reply's limits, as a session saw them: newer than the last endpoint read wins.
+        var changed = false
+        for (id, live) in value.live ?? [:] { liveAt[id] = live.at }
+        for (id, live) in value.live ?? [:] where live.at > (readAt[id]?.timeIntervalSince1970 ?? 0) {
+            var merged = usage[id] ?? AccountUsage(windows: [])
+            for window in live.windows {
+                if let index = merged.windows.firstIndex(where: { $0.id == window.id }) { merged.windows[index] = window } else { merged.windows.append(window) }
+            }
+            merged.stale = false
+            usage[id] = merged
+            readAt[id] = Date(timeIntervalSince1970: live.at)
+            if issues[id] == "offline" || issues[id] == "idle" { issues[id] = nil; failing.remove(id) }
+            sample(id, live.windows.first { $0.id == "five_hour" }, at: live.at)
+            changed = true
+        }
+        if changed { saveUsageCache() }
         for (id, end) in loginEnds where end - Date().timeIntervalSince1970 < 3 * 86_400 && endWarned[id] != end {
             endWarned[id] = end
             if let name = config.accounts.first(where: { $0.id == id })?.name {
@@ -592,6 +625,14 @@ final class AccountStore {
         do {
             let data = try await bridgeOutput(["shell", enabled ? "on" : "off"])
             shellSwitching = try JSONDecoder().decode(State.self, from: data).installed
+        } catch { self.error = error.localizedDescription }
+    }
+    func setLiveLimits(_ enabled: Bool) async {
+        struct State: Decodable { let installed: Bool }
+        config.liveLimits = enabled; persist()
+        do {
+            let data = try await bridgeOutput(["live", enabled ? "on" : "off"])
+            liveLimits = try JSONDecoder().decode(State.self, from: data).installed
         } catch { self.error = error.localizedDescription }
     }
     func setLimitHook(_ enabled: Bool) async {

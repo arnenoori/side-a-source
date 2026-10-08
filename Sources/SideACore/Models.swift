@@ -47,6 +47,8 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var sync: Bool?
     /// While Claude Code runs Fable, Autopilot ranks accounts by Fable headroom. Nil means on.
     public var followFable: Bool?
+    /// Live limits from Claude Code's statusline; nil means not yet decided (on by default).
+    public var liveLimits: Bool?
     public init() {}
 
     public var selected: Account? { accounts.first { $0.id == selectedID } }

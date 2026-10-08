@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.18 — 2026-10-07
+
+Live limits: Side A wraps the Claude Code statusline so every reply saves that account's 5-hour and weekly numbers (from the response itself), then runs your own statusline with the same input. The usage endpoint is only read every 15 minutes while sessions report, for Fable, paid usage and use elsewhere, which ends its rate limits. On by default; Settings > Autopilot turns it off and restores your statusline exactly.
+
 ## 0.5.17 — 2026-10-07
 
 Always-current readings: Side A renews expired Claude logins the way Claude Code does (its endpoint, client id, refresh lock and Keychain format), so idle accounts stay readable around the clock at no cost. Warns three days before a sign-in ends. A rate limit keeps the last reading instead of showing Couldn't connect, and the account in use is read every three minutes. Fixes 0.5.16 holding the Mac login's refresh lock while waking it.

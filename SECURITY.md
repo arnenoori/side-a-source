@@ -9,6 +9,9 @@ Claude Code does, so every account's limits stay readable.
   same request to the same endpoint with Claude Code's client id, and saves the result the way
   Claude Code does. Only the Claude login is replaced; MCP logins in the same item are kept. A
   refresh token is never spent twice.
+- **Live limits.** Side A wraps the Claude Code statusline command. The wrapper saves the
+  statusline input (limits, model, working folder) to `~/Library/Application Support/SideA/runtime/live`,
+  readable only by you, then runs your own command with the same input. No login passes through it.
 
 - **Logins stay where their CLI keeps them.** The Mac's own Claude login is Claude Code's
   default Keychain item; other accounts use their own profile item. Codex logins stay in
