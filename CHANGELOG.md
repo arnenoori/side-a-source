@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.19 — 2026-10-08
+
+Running sessions switch: when an account with running sessions nears its limit, Autopilot trades its login with an account no session is using, and the sessions continue as that account within about 30 seconds, nothing to restart. Logins are never copied; both refresh locks are held and a failed write is undone. The move point is a setting (default 95%, was a fixed 97%). Autopilot reacts between replies instead of once a minute, and stale statusline temp files are cleaned up.
+
 ## 0.5.18 — 2026-10-07
 
 Live limits: Side A wraps the Claude Code statusline so every reply saves that account's 5-hour and weekly numbers (from the response itself), then runs your own statusline with the same input. The usage endpoint is only read every 15 minutes while sessions report, for Fable, paid usage and use elsewhere, which ends its rate limits. On by default; Settings > Autopilot turns it off and restores your statusline exactly.

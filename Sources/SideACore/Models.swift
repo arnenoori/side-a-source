@@ -49,6 +49,8 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var followFable: Bool?
     /// Live limits from Claude Code's statusline; nil means not yet decided (on by default).
     public var liveLimits: Bool?
+    /// The 5-hour or weekly percentage at which Autopilot moves off an account. Nil means 95.
+    public var swapAt: Double?
     public init() {}
 
     public var selected: Account? { accounts.first { $0.id == selectedID } }
@@ -304,8 +306,12 @@ public struct WeekForecast: Equatable, Sendable {
 /// before its weekly reset goes first; among near-ties, the 5-hour window that resets
 /// soonest is used before it refills.
 public enum Planner {
-    public static let full = 97.0
-    public static let switchTarget = 90.0
+    /// Where Autopilot leaves an account; the app sets it from Settings.
+    nonisolated(unsafe) public static var full = 97.0
+    /// Where an account shows as limited.
+    public static let limited = 97.0
+    /// Autopilot moves only to an account below this; it follows a lower Move at setting.
+    public static var switchTarget: Double { min(90, full - 5) }
     static let week = 7 * 24 * 3600.0
 
     static func live(_ window: UsageWindow?, _ now: Double) -> UsageWindow? {

@@ -100,7 +100,7 @@ struct ProviderSection: View {
         let accounts = store.config.accounts.filter { $0.provider == provider }
         let now = Date().timeIntervalSince1970
         let limited = accounts.filter { account in
-            !store.isActive(account) && (store.usage[account.id]?.weekly).map { $0.percent >= Planner.full && ($0.resetsAt ?? 0) > now } == true
+            !store.isActive(account) && (store.usage[account.id]?.weekly).map { $0.percent >= Planner.limited && ($0.resetsAt ?? 0) > now } == true
         }
         if !accounts.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
@@ -190,7 +190,7 @@ struct AccountUsageRow: View {
         if usage.stale { return "Sign in again" }
         if let minutes = store.minutesToLimit(account.id), minutes < 300 { return "Limit in ~\(Self.duration(minutes))" }
         let now = Date().timeIntervalSince1970
-        if let blocked = [usage.fiveHour, usage.weekly].compactMap({ $0 }).filter({ $0.percent >= Planner.full && ($0.resetsAt ?? 0) > now }).compactMap(\.resetsAt).max() {
+        if let blocked = [usage.fiveHour, usage.weekly].compactMap({ $0 }).filter({ $0.percent >= Planner.limited && ($0.resetsAt ?? 0) > now }).compactMap(\.resetsAt).max() {
             if let extra = usage.extra, extra.enabled { return "Charging paid credits · \(extra.money(extra.used)) this month" }
             return "Back \(UsageBar.format(blocked))"
         }
@@ -211,7 +211,7 @@ struct MiniBar: View {
                 .font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
             Capsule().fill(.quaternary).frame(width: 46, height: 4)
                 .overlay(alignment: .leading) {
-                    Capsule().fill(percent >= Planner.full ? Color.red : percent >= 75 ? .orange : .accentColor)
+                    Capsule().fill(percent >= Planner.limited ? Color.red : percent >= 75 ? .orange : .accentColor)
                         .frame(width: 46 * percent / 100, height: 4)
                 }
             if showsReset {
@@ -245,7 +245,7 @@ struct UsageBar: View {
                 }
             }
             ProgressView(value: percent, total: 100).progressViewStyle(.linear)
-                .tint(percent >= Planner.full ? .red : percent >= 75 ? .orange : .accentColor)
+                .tint(percent >= Planner.limited ? .red : percent >= 75 ? .orange : .accentColor)
         }.accessibilityElement(children: .combine)
     }
     static func format(_ reset: Double) -> String {

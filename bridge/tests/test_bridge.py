@@ -5,10 +5,11 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import uuid
 
 SPEC = importlib.util.spec_from_file_location('bridge', Path(__file__).parents[1] / 'sidea_bridge.py')
@@ -357,6 +358,121 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
             self.assertTrue(lock.exists())  # a stale lock is taken over, and held while claude runs
         self.assertFalse(lock.exists())
 
+    def test_swapping_moves_logins_between_items_and_a_crash_finishes_forward(self):
+        a=account('Alpha'); b=account('Beta'); config={'accounts':[a,b]}
+        login=lambda who,n=1,exp=3600: {'claudeAiOauth':{'accessToken':f'{who}-at{n}','refreshToken':f'{who}-rt{n}','expiresAt':(time.time()+exp)*1000},'organizationUuid':who+'-org'}
+        mac=bridge.GLOBAL_SERVICE; beta=bridge.profile_service(self.root,b['id'])
+        keychain={mac:{**login('alpha'),'mcpOAuth':{'srv':'mac-mcp'}}, beta:login('beta')}
+        owner=lambda root,blob: ((blob or {}).get('claudeAiOauth') or {}).get('accessToken','').split('-')[0]+'@example.com' if blob else ''
+        reader=MagicMock(side_effect=lambda svc: keychain.get(svc)); reader.cache_clear=lambda: None
+        writes=[]; fail=[False]
+        def write(svc,blob):
+            writes.append(svc)
+            if fail[0] and svc==beta: raise ValueError('keychain refused')
+            keychain[svc]=blob
+        real_run=subprocess.run
+        def run(args,*rest,**kw):
+            if args[:2]==['security','delete-generic-password']: keychain.pop(args[-1],None); return subprocess.CompletedProcess(args,0)
+            return real_run(args,*rest,**kw)
+        home=self.root/'home'; (home/'.claude').mkdir(parents=True)
+        tokens=lambda: sorted(x['claudeAiOauth']['refreshToken'] for k,x in keychain.items() if k!=bridge.SWAP_JOURNAL)
+        with patch.object(bridge,'read_secret',reader), patch.object(bridge,'write_secret',side_effect=write), \
+             patch.object(bridge,'token_email',side_effect=owner), patch.object(bridge,'mac_email',side_effect=lambda root: owner(root,keychain[mac])), \
+             patch.object(bridge.subprocess,'run',side_effect=run), patch.object(Path,'home',return_value=home), \
+             patch.object(bridge,'busy_slots',return_value=set()):
+            # The keychain fails after the Mac item took Beta's login: the journal still holds Alpha.
+            fail[0]=True
+            with self.assertRaises(ValueError): bridge.swap(self.root,config,'mac',b)
+            self.assertIn(bridge.SWAP_JOURNAL,keychain)
+            # Meanwhile a session renews Beta in its old item; finishing uses that newest copy, never the spent one.
+            keychain[beta]={'claudeAiOauth':{'accessToken':'nobody','refreshToken':'beta-rt2','expiresAt':(time.time()+7200)*1000}}
+            fail[0]=False
+            with bridge.selection_lock(self.root), bridge.selection_lock(self.root,'renew.lock'): bridge.finish_swap(self.root)
+            self.assertNotIn(bridge.SWAP_JOURNAL,keychain)
+            self.assertEqual(keychain[mac]['claudeAiOauth']['refreshToken'],'beta-rt2')
+            self.assertEqual(keychain[mac]['mcpOAuth'],{'srv':'mac-mcp'})
+            self.assertEqual(keychain[beta]['claudeAiOauth']['refreshToken'],'alpha-rt1'); self.assertNotIn('mcpOAuth',keychain[beta])
+            self.assertEqual(tokens(),['alpha-rt1','beta-rt2'])
+            keychain[mac]['claudeAiOauth']['accessToken']='beta-at2'  # its owner is looked up later
+            self.assertEqual((bridge.home_service(self.root,a),bridge.home_service(self.root,b)),(beta,mac))
+            self.assertEqual(bridge.selector_for(self.root,b),'')
+            self.assertEqual(bridge.owned_login(self.root,a)['claudeAiOauth']['accessToken'],'alpha-at1')
+            self.assertFalse((home/'.claude/.oauth_refresh.lock').exists())
+            # A statusline that was mid-write during the trade keeps its old time and is not credited to Beta.
+            bridge.live_dir(self.root).mkdir(parents=True,exist_ok=True)
+            stale=bridge.live_dir(self.root)/'mac.json'; stale.write_text(json.dumps({'rate_limits':{'five_hour':{'used_percentage':99,'resets_at':2000000000}}}))
+            os.utime(stale,(time.time()-5,time.time()-5))
+            self.assertEqual(bridge.live_limits(self.root,config),{})
+            # Trading back restores the first layout with no map left behind.
+            bridge.swap(self.root,config,'mac',a)
+            self.assertEqual((keychain[mac]['claudeAiOauth']['refreshToken'],keychain[beta]['claudeAiOauth']['refreshToken']),('alpha-rt1','beta-rt2'))
+            self.assertEqual(bridge.read_json(bridge.homes_path(self.root)),{})
+            # The Mac item signed in to someone else: Beta's own profile holds Alpha, so Beta takes Alpha's empty slot.
+            bridge.swap(self.root,config,'mac',b); keychain[mac]=login('carol')
+            self.assertEqual((bridge.home_slot(self.root,a),bridge.home_slot(self.root,b)),(b['id'],a['id']))
+    def test_busy_slots_follow_claude_codes_storage_rule(self):
+        a=account('Alpha'); b=account('Beta'); config={'accounts':[a,b]}
+        prof=lambda acct: str(bridge.profile_dir(self.root,acct['id']))
+        listing='11 /usr/local/bin/claude\n12 /Users/x/.local/share/claude/versions/2.1.294\n13 /usr/bin/node\n14 claude\n'
+        envs={11:('claude',{'CLAUDE_SECURESTORAGE_CONFIG_DIR':prof(b)}),
+              # A prompt mentioning the variable is argv, not environment: only the real value counts.
+              12:('claude',{'CLAUDE_SECURESTORAGE_CONFIG_DIR':''}),
+              13:('node',{'CLAUDE_SECURESTORAGE_CONFIG_DIR':prof(a)}), 14:None}
+        with patch.object(bridge.subprocess,'run',return_value=subprocess.CompletedProcess([],0,listing,'')), \
+             patch.object(bridge,'process_environment',side_effect=lambda pid: envs[pid]):
+            self.assertEqual(bridge.busy_slots(self.root,config),{b['id'],'mac'})
+        with patch.object(bridge.subprocess,'run',side_effect=OSError):
+            self.assertIsNone(bridge.busy_slots(self.root,config))
+        # The real kernel read: a child's environment comes back exactly, even with argv that mimics it.
+        child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)','CLAUDE_SECURESTORAGE_CONFIG_DIR=/fake'],env={'CLAUDE_SECURESTORAGE_CONFIG_DIR':'/real dir'})
+        try:
+            time.sleep(0.2)
+            self.assertEqual(bridge.process_environment(child.pid)[1].get('CLAUDE_SECURESTORAGE_CONFIG_DIR'),'/real dir')
+        finally:
+            child.kill(); child.wait()
+    def test_recovery_keeps_a_login_renewed_before_any_write(self):
+        a=account('Alpha'); b=account('Beta')
+        mac=bridge.GLOBAL_SERVICE; beta=bridge.profile_service(self.root,b['id'])
+        login=lambda who,n,exp: {'claudeAiOauth':{'accessToken':f'{who}-at{n}','refreshToken':f'{who}-rt{n}','expiresAt':(time.time()+exp)*1000}}
+        journal={'slots':['mac',b['id']],'moves':{b['id']:'mac',a['id']:b['id']},'logins':[login('alpha',1,60),login('beta',1,60)]}
+        # Alpha renewed in the Mac item after the journal was saved; its new token's owner is unknown.
+        keychain={bridge.SWAP_JOURNAL:journal, mac:{'claudeAiOauth':{'accessToken':'nobody','refreshToken':'alpha-rt2','expiresAt':(time.time()+9000)*1000}}, beta:login('beta',1,60)}
+        owner=lambda root,blob: ((blob or {}).get('claudeAiOauth') or {}).get('accessToken','').split('-')[0]+'@example.com' if blob else ''
+        reader=MagicMock(side_effect=lambda svc: keychain.get(svc)); reader.cache_clear=lambda: None
+        def run(args,*rest,**kw):
+            keychain.pop(args[-1],None); return subprocess.CompletedProcess(args,0)
+        home=self.root/'home'; (home/'.claude').mkdir(parents=True)
+        with patch.object(bridge,'read_secret',reader), patch.object(bridge,'write_secret',side_effect=lambda svc,blob: keychain.__setitem__(svc,blob)), \
+             patch.object(bridge,'token_email',side_effect=owner), patch.object(bridge.subprocess,'run',side_effect=run), patch.object(Path,'home',return_value=home):
+            with bridge.selection_lock(self.root), bridge.selection_lock(self.root,'renew.lock'): bridge.finish_swap(self.root)
+        self.assertEqual((keychain[mac]['claudeAiOauth']['refreshToken'],keychain[beta]['claudeAiOauth']['refreshToken']),('beta-rt1','alpha-rt2'))
+    def test_a_second_sign_in_moves_without_becoming_the_accounts_home(self):
+        a=account('Alpha'); b=account('Beta'); config={'accounts':[a,b]}
+        login=lambda who,n: {'claudeAiOauth':{'accessToken':f'{who}-at{n}','refreshToken':f'{who}-rt{n}','expiresAt':(time.time()+3600)*1000}}
+        mac=bridge.GLOBAL_SERVICE; alpha=bridge.profile_service(self.root,a['id']); beta=bridge.profile_service(self.root,b['id'])
+        # Alpha is the Mac login and also signed in separately in its own profile, where sessions run.
+        keychain={mac:login('alpha',1), alpha:login('alpha',2), beta:login('beta',1)}
+        owner=lambda root,blob: ((blob or {}).get('claudeAiOauth') or {}).get('accessToken','').split('-')[0]+'@example.com' if blob else ''
+        reader=MagicMock(side_effect=lambda svc: keychain.get(svc)); reader.cache_clear=lambda: None
+        def run(args,*rest,**kw):
+            keychain.pop(args[-1],None); return subprocess.CompletedProcess(args,0)
+        home=self.root/'home'; (home/'.claude').mkdir(parents=True)
+        with patch.object(bridge,'read_secret',reader), patch.object(bridge,'write_secret',side_effect=lambda svc,blob: keychain.__setitem__(svc,blob)), \
+             patch.object(bridge,'token_email',side_effect=owner), patch.object(bridge,'mac_email',side_effect=lambda root: owner(root,keychain[mac])), \
+             patch.object(bridge.subprocess,'run',side_effect=run), patch.object(Path,'home',return_value=home), \
+             patch.object(bridge,'busy_slots',return_value=set()):
+            # A session started on Beta, or Beta signing in, blocks the trade: nothing lands on them.
+            with patch.object(bridge,'busy_slots',return_value={b['id']}):
+                with self.assertRaisesRegex(ValueError,'using that account'): bridge.swap(self.root,config,a['id'],b)
+            bridge.signing_in_path(self.root,b['id']).write_text(str(os.getpid()))
+            with self.assertRaisesRegex(ValueError,'signing in'): bridge.swap(self.root,config,a['id'],b)
+            bridge.signing_in_path(self.root,b['id']).unlink()
+            self.assertEqual(keychain[alpha]['claudeAiOauth']['refreshToken'],'alpha-rt2')
+            bridge.swap(self.root,config,a['id'],b)
+            self.assertEqual((keychain[alpha]['claudeAiOauth']['refreshToken'],keychain[beta]['claudeAiOauth']['refreshToken']),('beta-rt1','alpha-rt2'))
+            # Alpha stays the Mac login; Beta now lives in Alpha's profile.
+            self.assertEqual((bridge.home_slot(self.root,a),bridge.home_slot(self.root,b)),('mac',a['id']))
+            self.assertEqual(keychain[mac]['claudeAiOauth']['refreshToken'],'alpha-rt1')
     def test_renewing_an_expired_login_spends_its_refresh_token_once_and_keeps_the_rest(self):
         a=account('Alpha'); login=lambda: {'claudeAiOauth':{'accessToken':'old','refreshToken':'r1','expiresAt':1,'scopes':['user:inference','user:profile'],'subscriptionType':'max'}}
         old=login()

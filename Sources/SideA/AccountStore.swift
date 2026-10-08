@@ -19,7 +19,7 @@ struct BridgeFailure: LocalizedError, Sendable {
 
 @MainActor @Observable
 final class AccountStore {
-    var config = Configuration()
+    var config = Configuration() { didSet { Planner.full = config.swapAt ?? 95 } }
     var dependencies = DependencyReport()
     var checkingDependencies = false
     let analytics: AppAnalytics
@@ -37,6 +37,10 @@ final class AccountStore {
     var liveLimits = false
     /// When a Claude Code session last reported each account's limits.
     private var liveAt: [String: Double] = [:]
+    private var liveSeen = Date.distantPast
+    /// Keychain slots running claude processes read, with the account whose login is in each;
+    /// nil when processes can't be listed.
+    private var busyLogins: [String: String]?
     @ObservationIgnored private var reportAt = Date.distantPast
     @ObservationIgnored private var limitMarkerDate: Date?
     var usage: [String: AccountUsage] = [:]
@@ -171,7 +175,7 @@ final class AccountStore {
                 await self?.tick()
                 // Wake early when the rate-limit hook fires, otherwise once a minute.
                 for _ in 0..<30 {
-                    if self?.limitHit() == true { break }
+                    if self?.limitHit() == true || self?.liveChanged() == true { break }
                     try? await Task.sleep(for: .seconds(2))
                 }
             }
@@ -390,6 +394,13 @@ final class AccountStore {
             analytics.capture(.handoffReady, provider: account.provider)
         } catch { self.error = error.localizedDescription }
     }
+    /// Trades the login in `slot` with `to`'s, so every session reading it continues as `to`; see bridge swap().
+    private func swap(_ slot: String, _ to: String) async -> Bool {
+        guard (try? await bridgeOutput(["swap", slot, to], timeout: 90)) != nil else { return false }
+        selectionGeneration += 1
+        _ = await refreshActive()
+        return true
+    }
     /// Keeps the Mac's existing login as a library account so switching never loses it.
     func adoptMacLogin(_ provider: AgentProvider) async {
         guard let email = unknownLogins[provider], !isDemo else { return }
@@ -518,6 +529,7 @@ final class AccountStore {
     /// Usage as Autopilot ranks Claude accounts: through the Fable cap while Fable is in use.
     func planning(_ values: [String: AccountUsage]) -> [String: AccountUsage] { fableMode ? values.compactMapValues(\.forFable) : values }
     func setFollowFable(_ value: Bool) { config.followFable = value; persist() }
+    func setSwapAt(_ value: Double) { config.swapAt = value; persist() }
     func setSync(_ value: Bool) { config.sync = value; persist(); reportAt = .distantPast; Task { await refreshReport() } }
     /// iCloud Drive's Side A folder, when iCloud Drive is on.
     var syncFolder: URL? {
@@ -542,7 +554,7 @@ final class AccountStore {
     private func dueForRead(_ account: Account) -> Bool {
         let now = Date().timeIntervalSince1970
         if !isActive(account), let value = usage[account.id], !value.stale,
-           let reset = [value.fiveHour, value.weekly].compactMap({ $0 }).filter({ $0.percent >= Planner.full }).compactMap(\.resetsAt).max(),
+           let reset = [value.fiveHour, value.weekly].compactMap({ $0 }).filter({ $0.percent >= Planner.limited }).compactMap(\.resetsAt).max(),
            reset > now {
             return false
         }
@@ -570,7 +582,8 @@ final class AccountStore {
     }
     @discardableResult private func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]? }
+        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]?; let busy: [Busy]? }
+        struct Busy: Decodable { let slot: String; let account: String? }
         struct Live: Decodable { let at: Double; let windows: [UsageWindow] }
         guard let data = try? await bridgeOutput(["active"]), let value = try? JSONDecoder().decode(Active.self, from: data) else { return false }
         guard generation == selectionGeneration else { return false }
@@ -585,6 +598,7 @@ final class AccountStore {
             loginStamps[id] = stamp
         }
         loginEnds = (value.loginEnds ?? [:]).mapValues { $0 / 1000 }
+        busyLogins = value.busy.map { Dictionary($0.compactMap { busy in busy.account.map { (busy.slot, $0) } }, uniquingKeysWith: { a, _ in a }) }
         // Each reply's limits, as a session saw them: newer than the last endpoint read wins.
         var changed = false
         for (id, live) in value.live ?? [:] { liveAt[id] = live.at }
@@ -642,6 +656,15 @@ final class AccountStore {
             limitHook = try JSONDecoder().decode(State.self, from: data).installed
         } catch { self.error = error.localizedDescription }
     }
+    /// True when a session reported new limits, at most every 15 s, so a trade happens
+    /// between replies rather than up to a minute later.
+    private func liveChanged() -> Bool {
+        let url = root.appendingPathComponent("runtime/live")
+        guard let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+              date > liveSeen, Date().timeIntervalSince(liveSeen) > 15 else { return false }
+        liveSeen = Date()
+        return true
+    }
     /// True once per touch of the marker the opt-in StopFailure hook writes on a rate limit.
     private func limitHit() -> Bool {
         let url = root.appendingPathComponent("runtime/limit-hit")
@@ -664,22 +687,43 @@ final class AccountStore {
         let now = Date().timeIntervalSince1970
         // Codex: the desktop app keeps its own copy of the login, and OpenAI revokes a login
         // whose refresh token is used twice, so Codex is never switched automatically.
-        for provider in [AgentProvider.claude] where unknownLogins[provider] == nil && shellSwitching {
+        for provider in [AgentProvider.claude] where unknownLogins[provider] == nil {
             let accounts = config.accounts.filter { $0.provider == provider }
             let current = activeIDs[provider]
             let plannable = planning(self.plannable)
-            // A failed read is not evidence of a limit; only a signed-out active account moves.
-            if let current, failing.contains(current), usage[current]?.stale != true { continue }
-            // An account with Autopilot off is never switched away from automatically.
-            if let current, config.accounts.first(where: { $0.id == current })?.allowAuto == false { continue }
-            if let best = Planner.best(accounts, usage: plannable, active: current, now: now), best != current {
-                let from = config.accounts.first { $0.id == current }?.name
-                await activate(best)
-                if activeIDs[provider] == best, let name = config.accounts.first(where: { $0.id == best })?.name {
-                    // A running claude keeps the account it started with; only new commands follow.
-                    notify("Now playing: \(name)", (from.map { "\($0) is near its limit. " } ?? "")
-                           + "New claude commands use \(name). To move a session that is already running, quit it and run claude --continue.")
+            let name = { (id: String) in self.config.accounts.first { $0.id == id }?.name ?? "" }
+            // Logins running sessions read, by slot. Unknown (processes can't be listed) means no
+            // trades; only new commands move.
+            var slots = busyLogins ?? [:]
+            let busy = { Set(slots.values).union([current].compactMap { $0 }) }
+            for slot in slots.keys.sorted(by: { slots[$0] == current && slots[$1] != current }) {
+                // Settings may have changed during the last trade.
+                guard config.smartMode, let id = slots[slot], let account = config.accounts.first(where: { $0.id == id }) else { continue }
+                // A failed read is not evidence of a limit; only a signed-out account moves.
+                if failing.contains(id), usage[id]?.stale != true { continue }
+                // An account with Autopilot off, or mid sign-in, is never moved automatically.
+                if !account.allowAuto || signingIn.contains(id) { continue }
+                // Trade only with an account no session is using, so no session lands on the full one.
+                let free = config.accounts.filter { $0.provider == provider && ($0.id == id || (!busy().contains($0.id) && !signingIn.contains($0.id))) }
+                guard let best = Planner.best(free, usage: plannable, active: id, now: now), best != id else { continue }
+                if await swap(slot, best) {
+                    slots[slot] = best
+                    notify("Now playing: \(name(best))", "\(name(id)) is near its limit. Its running sessions continue as \(name(best)) within a minute, nothing to restart.")
                 }
+            }
+            // New commands: if the account they use is still full (no trade, or no sessions on it), point them elsewhere.
+            if config.smartMode, shellSwitching, let current = activeIDs[provider], !signingIn.contains(current),
+               config.accounts.first(where: { $0.id == current })?.allowAuto != false,
+               !(failing.contains(current) && usage[current]?.stale != true),
+               let best = Planner.best(config.accounts.filter { $0.provider == provider && ($0.id == current || !busy().contains($0.id)) },
+                                       usage: plannable, active: current, now: now), best != current {
+                await activate(best)
+                if activeIDs[provider] == best {
+                    notify("Now playing: \(name(best))", "\(name(current)) is near its limit. New claude commands use \(name(best)).")
+                }
+            }
+            if config.smartMode, activeIDs[provider] == nil, shellSwitching, let best = Planner.best(accounts, usage: plannable, active: nil, now: now) {
+                await activate(best)
             }
             if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, active: current, now: now) == nil {
                 if !exhaustedNotified {

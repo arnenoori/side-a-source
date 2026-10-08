@@ -75,21 +75,24 @@ Preview mode does not authenticate or launch coding sessions.
 
 ## How switching works
 
-Every login lives in exactly one place: the account this Mac is signed in to keeps
-Claude Code's default Keychain item, and every other account keeps its own profile
-slot. Side A never copies a login. Refresh tokens rotate, so two copies of one login
-eventually invalidate each other (Codex revokes the login outright).
+Every login lives in exactly one place: Claude Code's default Keychain item (the Mac
+login) or a profile slot. Side A never copies a login. Refresh tokens rotate, so two
+copies of one login eventually invalidate each other (Codex revokes the login outright).
+
+Running sessions move too. A session re-reads its Keychain item about every 30 seconds,
+so when an account with running sessions nears its limit, Autopilot trades its login with
+an account no session is using (under both logins' refresh locks). The sessions continue
+as the fresh account; `runtime/homes.json` records which slot holds which account.
 
 Choosing an account writes its profile path (empty for the Mac login) to
 `runtime/claude-selector`. With switching turned on,
 one marked line in `~/.zshrc` reads that choice before each command (so aliases work) and sets
 `CLAUDE_SECURESTORAGE_CONFIG_DIR`, so the command uses that account's own Keychain item
-while settings, history and hooks stay in `~/.claude`. Sessions already running keep
-their account. Apps that start `claude` outside your shell use the Mac login.
+while settings, history and hooks stay in `~/.claude`. Apps that start `claude` outside your shell use the Mac login.
 
 Side A identifies every login by its token (profile endpoint, cached per token) and
-refuses a slot that holds another account's login or one it cannot verify yet. It never
-refreshes a login: an expired one is idle and its last reading still applies. Starting a
+refuses a slot that holds another account's login or one it cannot verify yet. An expired
+login is renewed the way Claude Code does it, under Claude Code's refresh lock. Starting a
 5-hour window runs the CLI, which refreshes that account's login itself.
 Codex accounts are tracked and primed; switch Codex itself with `codex login`.
 

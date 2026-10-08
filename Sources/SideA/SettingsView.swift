@@ -322,7 +322,7 @@ struct PaceRow: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
-                    Capsule().fill(used >= Planner.full ? Color.red : .accentColor).frame(width: proxy.size.width * used / 100)
+                    Capsule().fill(used >= Planner.limited ? Color.red : .accentColor).frame(width: proxy.size.width * used / 100)
                     // Where usage would be by now if this week follows your usual rhythm.
                     Rectangle().fill(.primary.opacity(0.55)).frame(width: 1.5, height: 10).offset(x: proxy.size.width * (forecast?.expectedNow ?? 0) - 0.75)
                 }
@@ -335,7 +335,7 @@ struct PaceRow: View {
     }
     private func verdict(used: Double, forecast: WeekForecast?) -> String {
         guard let reset = window.resetsAt else { return "\(Int(used))% used" }
-        if used >= Planner.full { return "Limited, back \(UsageBar.format(reset))" }
+        if used >= Planner.limited { return "Limited, back \(UsageBar.format(reset))" }
         guard let forecast, forecast.projected > used else { return "\(Int(used))% used, resets \(UsageBar.format(reset))" }
         if let out = forecast.runsOut { return "Runs out \(UsageBar.format(out))" }
         return "On pace for \(Int(forecast.projected))% by \(UsageBar.format(reset))"
@@ -441,6 +441,12 @@ struct AutopilotSettings: View {
                 Toggle(isOn: Binding(get: { store.config.smartMode }, set: { _ in store.toggleSmart() })) {
                     Text("Autopilot").font(.headline)
                     Text(status)
+                }
+                Picker(selection: Binding(get: { store.config.swapAt ?? 95 }, set: { store.setSwapAt($0) })) {
+                    ForEach([80.0, 85, 90, 95, 97, 99], id: \.self) { Text("\(Int($0))%").tag($0) }
+                } label: {
+                    Text("Move at")
+                    Text("When an account reaches this much of its 5-hour or weekly limit, Autopilot moves your sessions to another. Lower leaves room for a burst of use; higher uses more of each account.")
                 }
                 Toggle(isOn: Binding(get: { store.config.followFable != false }, set: { store.setFollowFable($0) })) {
                     Text("Follow Fable")

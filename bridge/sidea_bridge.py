@@ -16,15 +16,16 @@ import fcntl
 import functools
 import hashlib
 import json
-import re
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
@@ -140,7 +141,6 @@ def auth_status(root, account, binary=None):
 def profile_service(root, identifier):
     # Mirrors the CLI: suffix = sha256 of the NFC config-dir path, first 8 hex chars.
     path = str(profile_dir(root, identifier))
-    import unicodedata
     return f"{GLOBAL_SERVICE}-{hashlib.sha256(unicodedata.normalize('NFC', path).encode()).hexdigest()[:8]}"
 
 
@@ -217,12 +217,44 @@ def account_for_email(config, email, provider="claude"):
                  and email and a.get("email", "").casefold() == email), None)
 
 
+def homes_path(root):
+    return root / "runtime" / "homes.json"
+
+
+def home_slot(root, account):
+    """Where the account's login lives: "mac" for the Mac login, else a profile id. A swap moves
+    logins between slots, so an account's slot can be another account's profile."""
+    email = account.get("email", "").casefold()
+    if email and mac_email(root) == email:
+        return "mac"
+    homes = read_json(homes_path(root), {}) or {}
+    slot = homes.get(account["id"])
+    if slot and slot != "mac":
+        profile_dir(root, slot)  # validates the id
+        return slot
+    # Its own profile may hold a login another account moved in (say its login was in the Mac
+    # item, which was then signed in to someone else); it then takes the slot that account left.
+    slot, seen = account["id"], set()
+    while slot not in seen:
+        seen.add(slot)
+        mover = next((other for other, held in homes.items() if held == slot and other != account["id"]), None)
+        if not mover:
+            return slot
+        slot = mover
+    raise ValueError(f"Sign in to {account['name']} again.")
+
+
+def slot_service(root, slot):
+    return GLOBAL_SERVICE if slot == "mac" else profile_service(root, slot)
+
+
+def slot_selector(root, slot):
+    return "" if slot == "mac" else str(profile_dir(root, slot))
+
+
 def home_service(root, account):
     """The one Keychain item that holds this account's login."""
-    mac = mac_email(root)
-    if mac and mac == account.get("email", "").casefold():
-        return GLOBAL_SERVICE
-    return profile_service(root, account["id"])
+    return slot_service(root, home_slot(root, account))
 
 
 def owned_login(root, account, idle_ok=False):
@@ -247,7 +279,7 @@ def selection_path(root):
 
 def selector_for(root, account):
     """CLAUDE_SECURESTORAGE_CONFIG_DIR for an account: empty selects the Mac login."""
-    return "" if home_service(root, account) == GLOBAL_SERVICE else str(profile_dir(root, account["id"]))
+    return slot_selector(root, home_slot(root, account))
 
 
 def write_selector(root, value):
@@ -267,8 +299,8 @@ def global_account(config, root):
     chosen = path.read_text().strip() if path.exists() else ""
     if not chosen:
         return mac
-    account = next((a for a in config.get("accounts", []) if a["id"] == Path(chosen).name and provider_of(a) == "claude"), None)
-    if account and selector_for(root, account) == chosen and token_email(root, read_secret(profile_service(root, account["id"]))) in ("", account["email"].casefold()):
+    account = next((a for a in config.get("accounts", []) if provider_of(a) == "claude" and selector_for(root, a) == chosen), None)
+    if account and token_email(root, read_secret(home_service(root, account))) in ("", account["email"].casefold()):
         # An unknown owner (lookup failing) keeps the choice; reads still refuse it until verified.
         return account
     return mac
@@ -277,6 +309,9 @@ def global_account(config, root):
 def repair_selection(root, config):
     """Points the selector at what global_account reports, e.g. after the Mac login changed."""
     with selection_lock(root):
+        # Fresh reads: a trade may have just moved logins.
+        read_secret.cache_clear()
+        write_pins(root, config)
         account = global_account(config, root)
         wanted = selector_for(root, account) if account else ""
         path = selection_path(root)
@@ -547,6 +582,230 @@ TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 
+SWAP_JOURNAL = "Side A swap journal"
+
+
+def swapped_path(root):
+    return root / "runtime" / "swapped.json"
+
+
+def trade(login, item):
+    """`login` placed in `item`: MCP logins belong to the item's sessions, so they stay."""
+    moved = {k: v for k, v in login.items() if k != "mcpOAuth"}
+    if item and "mcpOAuth" in item:
+        moved["mcpOAuth"] = item["mcpOAuth"]
+    return moved
+
+
+def same_login(root, blob, login):
+    """`blob` is `login`'s account: the same tokens, or, once a session renewed it, the same owner."""
+    mine, theirs = (blob or {}).get("claudeAiOauth") or {}, (login or {}).get("claudeAiOauth") or {}
+    if not mine or not theirs:
+        return False
+    if mine.get("refreshToken") and mine.get("refreshToken") == theirs.get("refreshToken"):
+        return True
+    owner = token_email(root, blob)
+    return bool(owner) and owner == token_email(root, login)
+
+
+def swap_locks(root, slots):
+    stack = contextlib.ExitStack()
+    for slot in slots:
+        stack.enter_context(claude_refresh_lock(slot_selector(root, slot) or str(Path.home() / ".claude")))
+    return stack
+
+
+def slot_owner(root, config, slot):
+    """The library account whose verified login is in `slot`, if any."""
+    return account_for_email(config, token_email(root, read_secret(slot_service(root, slot))))
+
+
+def swap(root, config, slot, other):
+    """Moves every session reading `slot` to `other`'s login: the login in `slot` and `other`'s
+    trade Keychain items. Running sessions re-read their item within about 30 s. Nothing is
+    copied: a journal is saved first, and finish_swap() completes the trade from it, now or
+    after a crash."""
+    if provider_of(other) != "claude":
+        raise ValueError("Only Claude accounts trade logins.")
+    if slot != "mac":
+        profile_dir(root, slot)  # validates the id
+    with selection_lock(root), selection_lock(root, "renew.lock"):
+        read_secret.cache_clear()
+        finish_swap(root)
+        # Resolved under the locks, so a trade that just finished is seen.
+        account = slot_owner(root, config, slot)
+        target = home_slot(root, other)
+        if not account or account["id"] == other["id"] or target == slot:
+            raise ValueError("These two logins can't trade places.")
+        slots = [slot, target]
+        if any(signing_in(root, s) for s in slots):
+            raise ValueError("An account is signing in; trading later.")
+        with swap_locks(root, slots):
+            # Checked last, right before the writes, not from the app's last look: a session started
+            # meanwhile must not get the full login.
+            busy = busy_slots(root, config)
+            if busy is None or target in busy:
+                raise ValueError("A session is using that account now.")
+            read_secret.cache_clear()
+            logins = [read_secret(slot_service(root, slot)), owned_login(root, other)]
+            if token_email(root, logins[0]) != account.get("email", "").casefold():
+                raise ValueError("Can't confirm whose login this is yet; retrying later.")
+            # Where each account's own login ends up. A second sign-in of the same account
+            # (not its home) is moved without becoming its home.
+            moves = {other["id"]: slot}
+            if home_slot(root, account) == slot:
+                moves[account["id"]] = target
+            write_secret(SWAP_JOURNAL, {"slots": slots, "moves": moves,
+                                        "logins": [trade(login, None) for login in logins]})
+            # Finished while the refresh locks still hold, so no session refreshes a login that is
+            # briefly in both items; a failure that outlasts this is finished by the next bridge run.
+            for attempt in range(3):
+                try:
+                    finish_swap(root, locked=True)
+                    break
+                except (ValueError, OSError, subprocess.TimeoutExpired):
+                    if attempt == 2:
+                        raise
+                    time.sleep(1)
+
+
+def finish_swap(root, locked=False):
+    """Completes a trade from its journal. Always forward, never back, using the newest copy of each
+    login (a session may have renewed one), so each login ends in exactly one item. Callers hold
+    selection.lock and renew.lock; the refresh locks are taken here unless `locked`."""
+    read_secret.cache_clear()  # a journal read before the locks may already be finished
+    journal = read_secret(SWAP_JOURNAL)
+    if not journal:
+        return
+    slots, moves, logins = journal["slots"], journal["moves"], journal["logins"]
+    with contextlib.ExitStack() as stack:
+        if not locked:
+            stack.enter_context(swap_locks(root, slots))
+        services = [slot_service(root, slot) for slot in slots]
+        read_secret.cache_clear()
+        items = [read_secret(service) for service in services]
+        # Only the two journaled logins are in these slots. What the trade wrote carries the journal's
+        # tokens, so an item matching neither was never written: it is that slot's original login,
+        # renewed by a session (its owner may not be looked up yet).
+        def which(index, item):
+            if same_login(root, item, logins[0]):
+                return 0
+            if same_login(root, item, logins[1]):
+                return 1
+            return index if item and item.get("claudeAiOauth") else None
+        firsts = [item for i, item in enumerate(items) if which(i, item) == 0]
+        seconds = [item for i, item in enumerate(items) if which(i, item) == 1]
+        newest = lambda copies: max(copies, key=lambda blob: blob["claudeAiOauth"].get("expiresAt") or 0)
+        wanted = [trade(newest([logins[1]] + seconds), items[0]), trade(newest([logins[0]] + firsts), items[1])]
+        for service, item, blob in zip(services, items, wanted):
+            if item != blob:
+                write_secret(service, blob)
+        homes = read_json(homes_path(root), {}) or {}
+        homes.update(moves)
+        # The Mac login is found by its owner, so only moves into other profiles are recorded.
+        atomic_json(homes_path(root), {k: v for k, v in homes.items() if v not in (k, "mac")})
+        # A statusline that was mid-write keeps its old file time, so readings from before are dropped.
+        swapped = read_json(swapped_path(root), {}) or {}
+        atomic_json(swapped_path(root), {**swapped, **{slot: time.time() for slot in slots}})
+        for slot in slots:
+            (live_dir(root) / f"{slot}.json").unlink(missing_ok=True)
+        deleted = subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", SWAP_JOURNAL],
+                                 capture_output=True, timeout=15)
+        read_secret.cache_clear()
+        if deleted.returncode != 0 and read_secret(SWAP_JOURNAL):
+            raise ValueError("The trade finished but its journal could not be removed; retrying.")
+
+
+def process_environment(pid):
+    """A process's argv[0] and environment, exactly as the kernel holds them (what ps -E prints,
+    without the ambiguity of argv text that looks like an environment variable)."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        return None
+    buffer = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+        return None
+    raw = buffer.raw[:size.value]
+    argc = int.from_bytes(raw[:4], "little")
+    parts = [part for part in raw[4:].split(b"\0") if part]
+    # parts: executable path, argv[0..argc-1], then environment entries.
+    if len(parts) < argc + 1:
+        return None
+    env = dict(entry.decode(errors="replace").split("=", 1) for entry in parts[argc + 1:] if b"=" in entry)
+    return parts[1].decode(errors="replace") if argc else parts[0].decode(errors="replace"), env
+
+
+def busy_slots(root, config):
+    """The slots running claude processes read their login from, from each process's environment
+    (Claude Code's own rule: CLAUDE_SECURESTORAGE_CONFIG_DIR, else CLAUDE_CONFIG_DIR, empty is the
+    Mac login). None when processes can't be listed, so nothing is traded blind."""
+    try:
+        listing = subprocess.run(["ps", "-o", "pid=,comm=", "-U", keychain_user()], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if listing.returncode != 0:
+        return None
+    # Every profile on disk, not only listed accounts: a removed account's profile may hold a moved login.
+    profiles = [p.name for p in (root / "profiles").glob("*") if p.is_dir()]
+    services = {profile_service(root, slot): slot for slot in profiles + [a["id"] for a in config.get("accounts", [])]
+                if is_uuid(slot)}
+    services[GLOBAL_SERVICE] = "mac"
+    busy = set()
+    for line in listing.stdout.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        program = Path(command.strip())
+        if program.name != "claude" and program.parent.name != "versions":
+            continue
+        found = process_environment(int(pid))
+        if found is None:
+            try:
+                os.kill(int(pid), 0)
+            except OSError:
+                continue  # exited meanwhile
+            return None  # running but unreadable: unknown, so nothing is traded
+        env = found[1]
+        store = env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR")
+        if store is None:
+            store = env.get("CLAUDE_CONFIG_DIR") or ""
+        service = GLOBAL_SERVICE if not store else \
+            f"{GLOBAL_SERVICE}-{hashlib.sha256(unicodedata.normalize('NFC', store).encode()).hexdigest()[:8]}"
+        if service in services:
+            busy.add(services[service])
+    return busy
+
+
+def is_uuid(value):
+    try:
+        uuid.UUID(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def signing_in_path(root, slot):
+    return root / "runtime" / f"signing-in-{slot}"
+
+
+def signing_in(root, slot):
+    """A sign-in child is writing this slot; its pid is in the marker."""
+    try:
+        os.kill(int(signing_in_path(root, slot).read_text()), 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def busy_logins(root, config):
+    """Each slot a running claude reads, with the library account whose login is in it."""
+    slots = busy_slots(root, config)
+    if slots is None:
+        return None
+    return [{"slot": slot, "account": (slot_owner(root, config, slot) or {}).get("id")} for slot in sorted(slots)]
+
+
 def verify_idle_owner(root, account, blob):
     """An expired login can't be looked up until it is renewed; until then the CLI's own
     record of who signed in must name this account."""
@@ -585,35 +844,43 @@ def renew(root, config, account):
     if not expired(read_secret(service)):
         return
     verify_idle_owner(root, account, owned_login(root, account, idle_ok=True))
-    folder = selector_for(root, account) or str(Path.home() / ".claude")
-    # One Side A renewal at a time, then Claude Code's own lock for this login.
-    with selection_lock(root, "renew.lock"), claude_refresh_lock(folder):
-        # Fresh from the Keychain, not this run's cache: a session may have renewed it meanwhile.
+    # One Side A renewal or trade at a time; a trade in between moves the login, so re-resolve.
+    with selection_lock(root, "renew.lock"):
         read_secret.cache_clear()
-        blob = read_secret(service)
-        if not expired(blob):
+        if home_service(root, account) != service:
             return
-        oauth = (blob or {}).get("claudeAiOauth") or {}
-        if not oauth.get("refreshToken"):
-            raise ValueError(f"Sign in to {account['name']} again; its login ended.")
-        body = {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": CLIENT_ID}
-        if oauth.get("scopes"):
-            body["scope"] = " ".join(oauth["scopes"])
-        try:
-            data = post_json(TOKEN_URL, body)
-        except urllib.error.HTTPError as error:
-            if error.code in (400, 401, 403):
-                raise ValueError(f"Sign in to {account['name']} again; its login ended.") from None
-            raise ValueError(f"Renewing the login failed (HTTP {error.code}); retrying later.") from None
-        if not data.get("access_token") or not data.get("expires_in"):
-            raise ValueError("Renewing the login returned an unexpected answer; retrying later.")
-        oauth.update(accessToken=data["access_token"], refreshToken=data.get("refresh_token") or oauth["refreshToken"],
-                     expiresAt=int((time.time() + float(data["expires_in"])) * 1000))
-        if data.get("refresh_token_expires_in"):
-            oauth["refreshTokenExpiresAt"] = int((time.time() + float(data["refresh_token_expires_in"])) * 1000)
-        # Only the Claude login is replaced: MCP logins a session saved meanwhile are kept.
-        read_secret.cache_clear()
-        write_secret(service, {**(read_secret(service) or blob), "claudeAiOauth": oauth})
+        folder = selector_for(root, account) or str(Path.home() / ".claude")
+        with claude_refresh_lock(folder):
+            _renew(root, account, service)
+
+
+def _renew(root, account, service):
+    # Fresh from the Keychain, not this run's cache: a session may have renewed it meanwhile.
+    read_secret.cache_clear()
+    blob = read_secret(service)
+    if not expired(blob):
+        return
+    oauth = (blob or {}).get("claudeAiOauth") or {}
+    if not oauth.get("refreshToken"):
+        raise ValueError(f"Sign in to {account['name']} again; its login ended.")
+    body = {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": CLIENT_ID}
+    if oauth.get("scopes"):
+        body["scope"] = " ".join(oauth["scopes"])
+    try:
+        data = post_json(TOKEN_URL, body)
+    except urllib.error.HTTPError as error:
+        if error.code in (400, 401, 403):
+            raise ValueError(f"Sign in to {account['name']} again; its login ended.") from None
+        raise ValueError(f"Renewing the login failed (HTTP {error.code}); retrying later.") from None
+    if not data.get("access_token") or not data.get("expires_in"):
+        raise ValueError("Renewing the login returned an unexpected answer; retrying later.")
+    oauth.update(accessToken=data["access_token"], refreshToken=data.get("refresh_token") or oauth["refreshToken"],
+                 expiresAt=int((time.time() + float(data["expires_in"])) * 1000))
+    if data.get("refresh_token_expires_in"):
+        oauth["refreshTokenExpiresAt"] = int((time.time() + float(data["refresh_token_expires_in"])) * 1000)
+    # Only the Claude login is replaced: MCP logins a session saved meanwhile are kept.
+    read_secret.cache_clear()
+    write_secret(service, {**(read_secret(service) or blob), "claudeAiOauth": oauth})
 
 
 def prime(root, config, account):
@@ -1021,18 +1288,25 @@ def live_limits(root, config):
         pass
     if mac and live_dir(root).is_dir():
         seen.write_text(mac)
+    # A statusline Claude Code stopped mid-write leaves its temporary file behind.
+    for path in live_dir(root).glob(".*.*"):
+        with contextlib.suppress(OSError):
+            if time.time() - path.stat().st_mtime > 60:
+                path.unlink()
+    swapped = read_json(swapped_path(root), {}) or {}
     for path in live_dir(root).glob("*.json"):
         try:
             name = path.stem
-            account = (account_for_email(config, mac) if name == "mac"
-                       else next((a for a in config.get("accounts", []) if a.get("id") == name), None))
+            account = next((a for a in config.get("accounts", []) if provider_of(a) == "claude" and home_slot(root, a) == name), None)
             with open(path) as stream:
                 at = os.fstat(stream.fileno()).st_mtime
                 limits = json.load(stream).get("rate_limits") or {}
             windows = [{"id": key, "label": label, "percent": float(limits[key]["used_percentage"]),
                         "resetsAt": epoch(limits[key].get("resets_at"))}
                        for key, label in WINDOW_LABELS.items() if isinstance(limits.get(key), dict)]
-            if account and windows and at > found.get(account["id"], {}).get("at", 0):
+            # ponytail: a fixed 2-minute quiet period after a trade covers replies in flight and Claude
+            # Code's 30 s login cache; a reply streaming longer than that can still report the old account.
+            if account and windows and at > swapped.get(name, 0) + 120 and at > found.get(account["id"], {}).get("at", 0):
                 found[account["id"]] = {"at": at, "windows": windows}
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             continue
@@ -1055,6 +1329,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ["login", "status", "logout", "usage", "activate", "adopt", "prime", "renew"]:
         commands.add_parser(name).add_argument("account")
+    swap_command = commands.add_parser("swap")
+    swap_command.add_argument("slot")
+    swap_command.add_argument("account")
     commands.add_parser("active")
     commands.add_parser("report").add_argument("--sync", type=Path)
     commands.add_parser("hook").add_argument("state", choices=["on", "off", "status"])
@@ -1082,16 +1359,23 @@ def main():
         print(json.dumps({"installed": shell_installed(root)}))
         return
     config = read_json(root / "config.json")
+    # A trade interrupted by a crash is completed before any login is read or written.
+    if read_secret(SWAP_JOURNAL):
+        read_secret.cache_clear()
+        with selection_lock(root), selection_lock(root, "renew.lock"):
+            finish_swap(root)
     if args.command == "active":
         import codex_bridge
-        write_pins(root, config)
         mac = mac_email(root)
         print(json.dumps({"accountID": (repair_selection(root, config) or {}).get("id"),
                           "email": "" if account_for_email(config, mac) else mac,
                           "codexAccountID": (codex_bridge.global_account(config) or {}).get("id"),
                           "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),
                           "logins": login_stamps(root, config), "loginEnds": login_ends(root, config),
-                          "live": live_limits(root, config)}))
+                          "live": live_limits(root, config), "busy": busy_logins(root, config)}))
+        return
+    if args.command == "swap":
+        swap(root, config, args.slot, account_by_id(config, args.account))
         return
     account = account_by_id(config, args.account)
     if args.command == "usage":
@@ -1119,8 +1403,22 @@ def main():
             command.append("--claudeai")
             if account.get("email"):
                 command += ["--email", account["email"]]
-        sys.exit(subprocess.call(command, env=clean_environment(prepare_profile(root, account["id"])),
-                                 cwd=root, stdin=subprocess.DEVNULL))
+        env = clean_environment(prepare_profile(root, account["id"]))
+        # Into the account's own slot: its profile may hold another account's login after a swap.
+        # The slot is marked under selection.lock, so no trade moves a login into it meanwhile.
+        with selection_lock(root):
+            read_secret.cache_clear()
+            held = token_email(root, read_secret(home_service(root, account)))
+            if held and held != account.get("email", "").casefold() and account_for_email(config, held):
+                raise ValueError(f"{account['name']}'s slot holds another account's login; sign in again after Side A frees it.")
+            slot = home_slot(root, account)
+            env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = slot_selector(root, slot)
+            signing_in_path(root, slot).write_text(str(os.getpid()))
+        try:
+            code = subprocess.call(command, env=env, cwd=root, stdin=subprocess.DEVNULL)
+        finally:
+            signing_in_path(root, slot).unlink(missing_ok=True)
+        sys.exit(code)
 
 
 if __name__ == "__main__":
