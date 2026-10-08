@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.17 — 2026-10-07
+
+Always-current readings: Side A renews expired Claude logins the way Claude Code does (its endpoint, client id, refresh lock and Keychain format), so idle accounts stay readable around the clock at no cost. Warns three days before a sign-in ends. A rate limit keeps the last reading instead of showing Couldn't connect, and the account in use is read every three minutes. Fixes 0.5.16 holding the Mac login's refresh lock while waking it.
+
 ## 0.5.16 — 2026-10-07
 
 A new sign-in or a refresh is read at once instead of after a back-off; readings older than 15 minutes say when they are from. Side A takes Claude Code's own refresh lock while it runs claude for an account, so it never refreshes a login at the same moment as an open session.

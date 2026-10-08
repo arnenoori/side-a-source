@@ -1,6 +1,14 @@
 # Security and privacy
 
-Side A only reads logins. It never writes, copies or refreshes one.
+Side A never copies a login or moves one between accounts. The one thing it writes is a
+renewal: when a Claude login's short-lived access token has expired, Side A renews it exactly as
+Claude Code does, so every account's limits stay readable.
+
+- **How renewal stays safe.** It takes Claude Code's own refresh lock for that login, re-reads
+  the stored login inside the lock (if a session renewed it first, that one is used), sends the
+  same request to the same endpoint with Claude Code's client id, and saves the result the way
+  Claude Code does. Only the Claude login is replaced; MCP logins in the same item are kept. A
+  refresh token is never spent twice.
 
 - **Logins stay where their CLI keeps them.** The Mac's own Claude login is Claude Code's
   default Keychain item; other accounts use their own profile item. Codex logins stay in

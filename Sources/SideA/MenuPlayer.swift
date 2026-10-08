@@ -163,9 +163,9 @@ struct AccountUsageRow: View {
                     Button("Sign in") { Task { await store.signIn(account.id) } }
                         .disabled(store.signingIn.contains(account.id))
                 } else if store.issues[account.id] == "idle" && usage == nil && account.provider == .claude {
-                    Button("Wake") { Task { await store.wake(account.id) } }
+                    Button("Renew") { Task { await store.wake(account.id) } }
                         .disabled(store.waking.contains(account.id))
-                        .help("Sends one tiny message so Claude refreshes this login")
+                        .help("Has Claude Code renew this login; no model runs and no quota is used")
                 } else if !isActive && account.provider == .claude {
                     Button("Use") { Task { await store.activate(account.id) } }.tourAnchor(.use)
                         .help("New claude commands use this account")

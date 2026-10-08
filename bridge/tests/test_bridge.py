@@ -134,15 +134,16 @@ class BridgeTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             for item in self.vault_patches(home,vault,owners): stack.enter_context(item)
             post=stack.enter_context(patch.object(bridge,'post_json',return_value=usage))
+            writer=stack.enter_context(patch.object(bridge,'write_secret'))
             result=bridge.claude_usage(self.root,config,a)
             self.assertEqual([(w['id'],w['percent']) for w in result['windows']],[('five_hour',40.0),('seven_day',10.0),('model:fable',3.0)])
-            # An expired login has not been used since it expired; it is never refreshed.
+            # Reading never renews: an expired login reports idle, and renewal is a separate, locked step.
             with self.assertRaisesRegex(ValueError,'idle'): bridge.claude_usage(self.root,config,b)
             self.assertEqual(post.call_count,1)
             # Review: a 401 returned empty windows, wiping the last reading with no backoff.
             post.side_effect=bridge.urllib.error.HTTPError(bridge.USAGE_URL,401,'',{},None)
             with self.assertRaisesRegex(ValueError,'Sign in to Alpha'): bridge.claude_usage(self.root,config,a)
-        self.assertFalse(hasattr(bridge,'write_secret'))
+            writer.assert_not_called()
     def test_shell_switch_survives_path_aliases_and_upgrades_the_old_function(self):
         home=self.root/'home'; home.mkdir(); rc=home/'.zshrc'
         fake=self.root/'bin'; fake.mkdir(); (fake/'claude').write_text('#!/bin/sh\necho "${CLAUDE_SECURESTORAGE_CONFIG_DIR-unset}|$*"\n'); (fake/'claude').chmod(0o755)
@@ -314,11 +315,38 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         # A wake refreshing at the same moment as an open session can get a login revoked.
         lock=self.root/'claude-home/.oauth_refresh.lock'; lock.mkdir(parents=True)
         with self.assertRaisesRegex(ValueError,'refreshing a login'):
-            with bridge.claude_refresh_lock(timeout=1): pass
+            with bridge.claude_refresh_lock(self.root/'claude-home',timeout=1): pass
         self.assertTrue(lock.exists())  # someone else's live lock is left alone
         old=time.time()-120; os.utime(lock,(old,old))
-        with bridge.claude_refresh_lock(timeout=1):
+        with bridge.claude_refresh_lock(self.root/'claude-home',timeout=1):
             self.assertTrue(lock.exists())  # a stale lock is taken over, and held while claude runs
         self.assertFalse(lock.exists())
+
+    def test_renewing_an_expired_login_spends_its_refresh_token_once_and_keeps_the_rest(self):
+        a=account('Alpha'); login=lambda: {'claudeAiOauth':{'accessToken':'old','refreshToken':'r1','expiresAt':1,'scopes':['user:inference','user:profile'],'subscriptionType':'max'}}
+        old=login()
+        store={'blob':old}; posts=[]; fresh=lambda: {'claudeAiOauth':{**old['claudeAiOauth'],'accessToken':'session','expiresAt':(time.time()+3600)*1000}}
+        def post(url,body,headers=None,method='POST'):
+            posts.append(body); return {'access_token':'new','refresh_token':'r2','expires_in':28800}
+        with patch.object(bridge,'mac_email',return_value=''), patch.object(bridge,'auth_status',return_value={'email':'alpha@example.com'}), \
+             patch.object(bridge,'read_secret',side_effect=lambda svc: store['blob']) as reader, \
+             patch.object(bridge,'write_secret',side_effect=lambda svc,blob: store.update(blob=blob)), patch.object(bridge,'post_json',side_effect=post):
+            reader.cache_clear=lambda: None
+            bridge.renew(self.root,{'accounts':[a]},a)
+            self.assertEqual(posts[0]['refresh_token'],'r1'); self.assertEqual(posts[0]['client_id'],bridge.CLIENT_ID)
+            renewed=store['blob']['claudeAiOauth']
+            self.assertEqual((renewed['accessToken'],renewed['refreshToken'],renewed['subscriptionType']),('new','r2','max'))
+            # A session that renewed it while Side A waited for the lock wins: nothing is spent twice.
+            store['blob']=login(); seen=iter([login(),login(),fresh()])  # before the lock, then inside it
+            with patch.object(bridge,'read_secret',side_effect=lambda svc: next(seen,store['blob'])) as again:
+                again.cache_clear=lambda: None
+                bridge.renew(self.root,{'accounts':[a]},a)
+            self.assertEqual(len(posts),1)
+        dead=bridge.urllib.error.HTTPError(bridge.TOKEN_URL,400,'invalid_grant',{},None)
+        with patch.object(bridge,'mac_email',return_value=''), patch.object(bridge,'auth_status',return_value={'email':'alpha@example.com'}), \
+             patch.object(bridge,'read_secret',return_value=login()) as reader, patch.object(bridge,'post_json',side_effect=dead), patch.object(bridge,'write_secret') as writer:
+            reader.cache_clear=lambda: None
+            with self.assertRaisesRegex(ValueError,'Sign in to Alpha again'): bridge.renew(self.root,{'accounts':[a]},a)
+            writer.assert_not_called()
 
 if __name__ == '__main__': unittest.main()

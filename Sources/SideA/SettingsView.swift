@@ -133,8 +133,8 @@ struct AccountSettingsRow: View {
                 } else if !account.ready || (store.issues[account.id] == "signIn" && !isActive) {
                     Button("Sign in") { Task { await store.signIn(account.id) } }
                 } else if store.issues[account.id] == "idle" && store.usage[account.id] == nil && account.provider == .claude {
-                    Button("Wake") { Task { await store.wake(account.id) } }
-                        .help("Sends one tiny message so Claude refreshes this login")
+                    Button("Renew") { Task { await store.wake(account.id) } }
+                        .help("Has Claude Code renew this login; no model runs and no quota is used")
                 } else if isActive {
                     // Which login new commands use; every signed-in account is healthy.
                     Text("In use").font(.caption.weight(.medium)).foregroundStyle(.green)

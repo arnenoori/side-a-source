@@ -150,7 +150,7 @@ def keychain_user():
 
 @functools.lru_cache(maxsize=None)
 def read_secret(service):
-    # One read per item per bridge run; the bridge never writes a login.
+    # Logins are only written by renew(), under Claude Code's refresh lock.
     result = subprocess.run(["security", "find-generic-password", "-a", keychain_user(), "-s", service, "-w"],
                             capture_output=True, text=True, timeout=15)
     if result.returncode != 0:
@@ -356,7 +356,7 @@ def usage(root, config, account):
 
 
 def activate(root, config, account):
-    """Point new `claude` commands at `account`'s own login. Nothing is copied or written."""
+    """Point new `claude` commands at `account`'s own login. No login is copied or written."""
     if provider_of(account) == "codex":
         raise ValueError("Codex accounts are tracked here; switch Codex with `codex login`.")
     blob = owned_login(root, account)
@@ -392,6 +392,18 @@ def login_stamps(root, config):
         if provider_of(account) == "claude" and account.get("ready"):
             stamps[account["id"]] = ((read_secret(home_service(root, account)) or {}).get("claudeAiOauth") or {}).get("expiresAt") or 0
     return stamps
+
+
+def login_ends(root, config):
+    """When each Claude sign-in stops renewing (ms). Refreshes do not move it, so a new sign-in
+    is needed about monthly; the app warns ahead of it."""
+    ends = {}
+    for account in config.get("accounts", []):
+        if provider_of(account) == "claude" and account.get("ready"):
+            end = ((read_secret(home_service(root, account)) or {}).get("claudeAiOauth") or {}).get("refreshTokenExpiresAt")
+            if end:
+                ends[account["id"]] = end
+    return ends
 
 
 def pins_path(root):
@@ -482,13 +494,12 @@ def shell_installed(root):
 
 
 @contextlib.contextmanager
-def claude_refresh_lock(timeout=30):
-    """Holds Claude Code's own refresh lock while Side A runs claude for an account. Claude Code
-    lets one process refresh a login at a time through this lock, in its config folder; a profile
-    run uses another folder, so without it a wake could refresh a login at the same moment as an
-    open session, and the server revokes a login whose refresh token is used twice.
-    Same format as Claude Code's lock library: a directory, stale after 60 s without an update."""
-    path = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / ".oauth_refresh.lock"
+def claude_refresh_lock(folder, timeout=30):
+    """Holds Claude Code's own refresh lock for one login while Side A renews it. Claude Code keeps
+    it in the login's storage folder (CLAUDE_SECURESTORAGE_CONFIG_DIR, or ~/.claude for the Mac
+    login), so every session on that login waits for it, and the server never sees a refresh token
+    used twice. Same format as Claude Code's lock library: a directory, stale after 60 s idle."""
+    path = Path(folder) / ".oauth_refresh.lock"
     deadline = time.time() + timeout
     while True:
         try:
@@ -521,14 +532,88 @@ def claude_refresh_lock(timeout=30):
 
 
 def run_as(root, account, args, timeout):
-    """Runs claude as the account's own login with clean settings, under the shared refresh lock."""
+    """Runs claude as the account's own login with clean settings. The child takes the login's
+    refresh lock itself, so Side A must not hold it here."""
     env = clean_environment(prepare_profile(root, account["id"]))
     # The profile's clean settings keep the user's hooks and CLAUDE.md out; the selector
     # picks the account's own login, which the CLI refreshes itself if needed.
     env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = selector_for(root, account)
-    with claude_refresh_lock():
-        return subprocess.run([claude_binary(), *args], env=env, cwd=root, capture_output=True,
-                              text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+    return subprocess.run([claude_binary(), *args], env=env, cwd=root, capture_output=True,
+                          text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+
+
+# Claude Code's own OAuth client and token endpoint: renewing here is the same request Claude Code makes.
+TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+
+def verify_idle_owner(root, account, blob):
+    """An expired login can't be looked up until it is renewed; until then the CLI's own
+    record of who signed in must name this account."""
+    if not token_email(root, blob) and (not account.get("email") or
+            auth_status(root, account).get("email", "").casefold() != account["email"].casefold()):
+        raise ValueError(f"Sign in to {account['name']} again.")
+
+
+# security -i reads commands in chunks; Claude Code writes through stdin up to this length, argv beyond.
+STDIN_LIMIT = 4032
+
+
+def write_secret(service, blob):
+    """Replaces a stored login exactly as Claude Code writes it: hex through stdin when it fits,
+    so the token stays out of process lists, else as an argument like Claude Code does."""
+    hexed = json.dumps(blob, separators=(",", ":")).encode().hex()
+    command = f'add-generic-password -U -a "{keychain_user()}" -s "{service}" -X "{hexed}" '
+    for _ in range(3):
+        if len(command) <= STDIN_LIMIT:
+            result = subprocess.run(["security", "-i"], input=command + "\n", capture_output=True, text=True, timeout=15)
+        else:
+            result = subprocess.run(["security", "add-generic-password", "-U", "-a", keychain_user(), "-s", service, "-X", hexed],
+                                    capture_output=True, text=True, timeout=15)
+        read_secret.cache_clear()
+        if result.returncode == 0 and "error" not in result.stderr.lower() and read_secret(service) == blob:
+            return
+        time.sleep(0.5)
+    raise ValueError("The renewed login could not be saved. Sign in to this account again.")
+
+
+def renew(root, config, account):
+    """Renews an expired login exactly as Claude Code does, so its limits stay readable around the
+    clock at no cost. Under Claude Code's refresh lock, and re-read inside it: if a session renewed
+    the login first, that one is used, so a refresh token is never spent twice."""
+    service = home_service(root, account)
+    if not expired(read_secret(service)):
+        return
+    verify_idle_owner(root, account, owned_login(root, account, idle_ok=True))
+    folder = selector_for(root, account) or str(Path.home() / ".claude")
+    # One Side A renewal at a time, then Claude Code's own lock for this login.
+    with selection_lock(root, "renew.lock"), claude_refresh_lock(folder):
+        # Fresh from the Keychain, not this run's cache: a session may have renewed it meanwhile.
+        read_secret.cache_clear()
+        blob = read_secret(service)
+        if not expired(blob):
+            return
+        oauth = (blob or {}).get("claudeAiOauth") or {}
+        if not oauth.get("refreshToken"):
+            raise ValueError(f"Sign in to {account['name']} again; its login ended.")
+        body = {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": CLIENT_ID}
+        if oauth.get("scopes"):
+            body["scope"] = " ".join(oauth["scopes"])
+        try:
+            data = post_json(TOKEN_URL, body)
+        except urllib.error.HTTPError as error:
+            if error.code in (400, 401, 403):
+                raise ValueError(f"Sign in to {account['name']} again; its login ended.") from None
+            raise ValueError(f"Renewing the login failed (HTTP {error.code}); retrying later.") from None
+        if not data.get("access_token") or not data.get("expires_in"):
+            raise ValueError("Renewing the login returned an unexpected answer; retrying later.")
+        oauth.update(accessToken=data["access_token"], refreshToken=data.get("refresh_token") or oauth["refreshToken"],
+                     expiresAt=int((time.time() + float(data["expires_in"])) * 1000))
+        if data.get("refresh_token_expires_in"):
+            oauth["refreshTokenExpiresAt"] = int((time.time() + float(data["refresh_token_expires_in"])) * 1000)
+        # Only the Claude login is replaced: MCP logins a session saved meanwhile are kept.
+        read_secret.cache_clear()
+        write_secret(service, {**(read_secret(service) or blob), "claudeAiOauth": oauth})
 
 
 def prime(root, config, account):
@@ -536,12 +621,7 @@ def prime(root, config, account):
     if provider_of(account) == "codex":
         from codex_bridge import prime as codex_prime
         return codex_prime(root, account)
-    blob = owned_login(root, account, idle_ok=True)
-    if not token_email(root, blob):
-        # An expired login can't be looked up until the CLI refreshes it, which this message does.
-        # Until then the CLI's own record of who signed in must name this account.
-        if auth_status(root, account).get("email", "").casefold() != account.get("email", "").casefold() or not account.get("email"):
-            raise ValueError(f"Sign in to {account['name']} again.")
+    verify_idle_owner(root, account, owned_login(root, account, idle_ok=True))
     result = run_as(root, account, ["-p", "Reply with OK.", "--model", "haiku", "--max-turns", "1"], 120)
     if result.returncode != 0:
         raise ValueError(f"{account['name']} could not start its 5-hour window.")
@@ -861,7 +941,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ["login", "status", "logout", "usage", "activate", "adopt", "prime"]:
+    for name in ["login", "status", "logout", "usage", "activate", "adopt", "prime", "renew"]:
         commands.add_parser(name).add_argument("account")
     commands.add_parser("active")
     commands.add_parser("report").add_argument("--sync", type=Path)
@@ -892,7 +972,7 @@ def main():
                           "email": "" if account_for_email(config, mac) else mac,
                           "codexAccountID": (codex_bridge.global_account(config) or {}).get("id"),
                           "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),
-                          "logins": login_stamps(root, config)}))
+                          "logins": login_stamps(root, config), "loginEnds": login_ends(root, config)}))
         return
     account = account_by_id(config, args.account)
     if args.command == "usage":
@@ -901,6 +981,8 @@ def main():
         activate(root, config, account)
     elif args.command == "adopt":
         print(json.dumps(adopt(root, account)))
+    elif args.command == "renew":
+        renew(root, config, account)
     elif args.command == "prime":
         prime(root, config, account)
     elif provider_of(account) == "codex":

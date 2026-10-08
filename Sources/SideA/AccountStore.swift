@@ -56,6 +56,10 @@ final class AccountStore {
     /// Per account: the window reset already warned about, so each limit warns once.
     @ObservationIgnored private var paidWarned: [String: Double] = [:]
     @ObservationIgnored private var loginStamps: [String: Double] = [:]
+    @ObservationIgnored private var endWarned: [String: Double] = [:]
+    @ObservationIgnored private var renewedAt: [String: Date] = [:]
+    /// When each Claude sign-in stops renewing; about a month after signing in.
+    var loginEnds: [String: Double] = [:]
     /// When each account was last read successfully, for marking old readings.
     var readAt: [String: Date] = [:]
     var lidOpen = false
@@ -421,12 +425,15 @@ final class AccountStore {
             if message.contains("idle") {
                 backoffUntil[id] = Date().addingTimeInterval(1800)
                 issues[id] = "idle"
+                // Free: Claude Code renews the login without running a model, then it is read again.
+                if Date().timeIntervalSince(renewedAt[id] ?? .distantPast) > 600 { Task { await renew(id) } }
             } else {
                 // The usage endpoint rate-limits frequent reads; back off rather than retry.
                 let signIn = message.contains("Sign in")
-                issues[id] = signIn ? "signIn" : message.contains("confirm whose login") ? "verify" : "offline"
+                // A rate limit is not a fault: the last reading stays, marked with its time once it ages.
+                issues[id] = signIn ? "signIn" : message.contains("confirm whose login") ? "verify" : message.contains("429") ? nil : "offline"
                 backoffUntil[id] = Date().addingTimeInterval(signIn ? 1800 : message.contains("429") ? 600 : 300)
-                failing.insert(id)
+                if !message.contains("429") { failing.insert(id) }
                 if signIn { usage[id]?.stale = true }
             }
         }
@@ -461,8 +468,10 @@ final class AccountStore {
     func issueText(_ id: String) -> String? {
         switch issues[id] {
         case "signIn": "Sign in again"
-        case "idle": usage[id] == nil ? "Idle · wake it to read its limits"
-            : "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened)) · idle"
+        case "idle": usage[id] == nil ? "Renewing its login…"
+            : "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened)) · renewing"
+        case nil where (loginEnds[id] ?? .infinity) - Date().timeIntervalSince1970 < 3 * 86_400:
+            "Sign-in ends \(UsageBar.format(loginEnds[id]!)) · sign in again"
         case "verify": "Checking whose login this is · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
         case nil where usage[id] != nil && Date().timeIntervalSince(readAt[id] ?? .distantPast) > 900:
             "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened))"
@@ -470,16 +479,24 @@ final class AccountStore {
         default: nil
         }
     }
-    /// An idle Claude login has expired from disuse; one tiny message makes the CLI refresh it.
-    func wake(_ id: String) async {
+    /// Has Claude Code renew an idle login (no model runs, no quota), then reads it again.
+    func renew(_ id: String) async {
         guard !waking.contains(id) else { return }
         waking.insert(id); defer { waking.remove(id) }
-        primedAt[id] = Date()
-        // A limited account rejects the message, but the CLI has still refreshed its login by then.
-        _ = try? await bridgeOutput(["prime", id], timeout: 200)
-        backoffUntil[id] = nil
-        await refreshUsage(id)
-        if issues[id] == "idle" { self.error = "\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be woken. Sign in to it again." }
+        renewedAt[id] = Date()
+        do {
+            _ = try await bridgeOutput(["renew", id], timeout: 120)
+            backoffUntil[id] = nil
+            await refreshUsage(id)
+        } catch {
+            let message = error.localizedDescription
+            if message.contains("Sign in") { issues[id] = "signIn"; usage[id]?.stale = true; saveUsageCache() }
+        }
+    }
+    func wake(_ id: String) async {
+        renewedAt[id] = nil
+        await renew(id)
+        if issues[id] == "idle" { self.error = "\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be renewed. Sign in to it again." }
     }
     /// What Autopilot may act on: accounts with a trustworthy latest reading.
     private var plannable: [String: AccountUsage] { usage.filter { !failing.contains($0.key) } }
@@ -516,7 +533,8 @@ final class AccountStore {
            reset > now {
             return false
         }
-        let interval: TimeInterval = isActive(account) ? (nearLimit(account.id) ? 60 : 120) : 600
+        // The usage endpoint rate-limits a login read every minute or two; three minutes stays clear.
+        let interval: TimeInterval = isActive(account) ? (nearLimit(account.id) ? 90 : 180) : 600
         return Date().timeIntervalSince(usageAt[account.id] ?? .distantPast) >= interval - 1
     }
     /// Minutes until the account's 5-hour limit at its recent pace.
@@ -536,7 +554,7 @@ final class AccountStore {
     }
     @discardableResult private func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]? }
+        struct Active: Decodable { let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]? }
         guard let data = try? await bridgeOutput(["active"]), let value = try? JSONDecoder().decode(Active.self, from: data) else { return false }
         guard generation == selectionGeneration else { return false }
         activeIDs = [.claude: value.accountID, .codex: value.codexAccountID].compactMapValues { $0 }
@@ -548,6 +566,13 @@ final class AccountStore {
                 backoffUntil[id] = nil; usageAt[id] = nil; issues[id] = nil; failing.remove(id)
             }
             loginStamps[id] = stamp
+        }
+        loginEnds = (value.loginEnds ?? [:]).mapValues { $0 / 1000 }
+        for (id, end) in loginEnds where end - Date().timeIntervalSince1970 < 3 * 86_400 && endWarned[id] != end {
+            endWarned[id] = end
+            if let name = config.accounts.first(where: { $0.id == id })?.name {
+                notify("Sign in to \(name) again soon", "Its sign-in ends \(UsageBar.format(end)). Signing in again keeps its limits readable and Autopilot using it.")
+            }
         }
         unknownLogins = [.claude: value.accountID == nil ? value.email : "", .codex: value.codexAccountID == nil ? value.codexEmail : ""]
             .filter { !$0.value.isEmpty }
@@ -627,9 +652,7 @@ final class AccountStore {
         let minute = Calendar.current.component(.hour, from: Date()) * 60 + Calendar.current.component(.minute, from: Date())
         // Until the report has loaded, the schedule is unknown, not absent: wait for it.
         guard let report, WorkSchedule(report.activity)?.allowsPriming(atMinute: minute) ?? true else { return }
-        // An idle login with no reading yet can only be read after it is woken.
-        for account in config.accounts where (Planner.shouldPrime(account, usage: plannable[account.id], now: now)
-            || (account.ready && account.allowAuto && issues[account.id] == "idle" && usage[account.id] == nil))
+        for account in config.accounts where Planner.shouldPrime(account, usage: plannable[account.id], now: now)
             && Date().timeIntervalSince(primedAt[account.id] ?? .distantPast) > 1800 {
             primedAt[account.id] = Date()
             saveUsageCache()
