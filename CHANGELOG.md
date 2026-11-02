@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.46 — 2026-11-02
+
+Pair iPhone works on a Mac that has a developer certificate in its Keychain, and Make New Key can no longer delete one. Side A's search for its security key could return another certificate, such as an Apple Distribution one, which left Remote stuck on "Side A can't use its security key"; Make New Key would then have deleted that certificate. Side A now only ever uses and removes its own key. Update before pressing Make New Key on 0.5.45 or earlier.
+
 ## 0.5.45 — 2026-11-01
 
 Logins are harder to lose, and "sign in again" now means it. A Keychain that doesn't answer no longer reads as an empty slot, which could put an old backup over a live login or say a login ended without asking Anthropic. A renewed login survives a slow Keychain and Side A being stopped midway. Only Anthropic saying `invalid_grant` ends a login, and first Side A looks for a newer copy it holds and tries that once; a 403 or anything else is retried later. When an account is full and the only free one needs a sign-in, one notification says so, with a Sign In button. `autopilot.log` records each renewal's status, error code, slot, age and whether a session was running, never a token. Autopilot no longer stops over a session that is exiting, reads a slow process list twice, and logs why when it still can't tell which logins are in use. Time limits for Side A's helper stretch when the Mac is under heavy load.

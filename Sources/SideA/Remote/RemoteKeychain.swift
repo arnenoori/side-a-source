@@ -162,15 +162,29 @@ struct RemoteKeychain: @unchecked Sendable {
 
     func deleteIdentity() {
         guard memory == nil else { return }
-        var result: CFTypeRef?
-        if SecItemCopyMatching(scoped([kSecClass: kSecClassIdentity, kSecAttrApplicationTag: tag, kSecReturnRef: true,
-                                       kSecMatchLimit: kSecMatchLimitOne]), &result) == errSecSuccess, let result {
-            var certificate: SecCertificate?
-            if SecIdentityCopyCertificate(result as! SecIdentity, &certificate) == errSecSuccess, let certificate {
-                SecItemDelete(scoped([kSecClass: kSecClassCertificate, kSecValueRef: certificate]))
-            }
+        if let certificate = try? certificate() {
+            SecItemDelete(scoped([kSecClass: kSecClassCertificate, kSecValueRef: certificate]))
         }
         SecItemDelete(scoped([kSecClass: kSecClassKey, kSecAttrApplicationTag: tag]))
+    }
+
+    /// The certificate for the key this service tagged, matched by the key's hash. An identity search ignores
+    /// `kSecAttrApplicationTag` and returns any identity in the keychain, such as the user's Apple Distribution one.
+    private func certificate() throws -> SecCertificate? {
+        var attributes: CFTypeRef?
+        let status = SecItemCopyMatching(scoped([kSecClass: kSecClassKey, kSecAttrApplicationTag: tag, kSecAttrKeyClass: kSecAttrKeyClassPrivate,
+                                                 kSecReturnAttributes: true, kSecMatchLimit: kSecMatchLimitOne]), &attributes)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let hash = (attributes as? [CFString: Any])?[kSecAttrApplicationLabel] as? Data else {
+            throw Failure(status: status, what: "Side A's security key couldn't be read")
+        }
+        var result: CFTypeRef?
+        let found = SecItemCopyMatching(scoped([kSecClass: kSecClassCertificate, kSecAttrPublicKeyHash: hash, kSecReturnRef: true,
+                                                kSecMatchLimit: kSecMatchLimitOne]), &result)
+        guard found == errSecSuccess, let result, CFGetTypeID(result) == SecCertificateGetTypeID() else {
+            throw Failure(status: found, what: "Side A's security key has no certificate")
+        }
+        return (result as! SecCertificate)
     }
 
     /// What the TLS key's use is tied to, for Copy Diagnostics: "any app" (a named keychain), or the partitions macOS
@@ -210,20 +224,13 @@ struct RemoteKeychain: @unchecked Sendable {
         return SecKeyCreateSignature(key, .ecdsaSignatureMessageX962SHA256, Data("Side A".utf8) as CFData, nil) != nil
     }
 
-    /// Found by the key's tag: the Keychain names a certificate after its subject, whatever label it was added with.
     private func find() throws -> Identity? {
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(scoped([kSecClass: kSecClassIdentity, kSecAttrApplicationTag: tag, kSecReturnRef: true,
-                                                 kSecMatchLimit: kSecMatchLimitOne]), &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let result, CFGetTypeID(result) == SecIdentityGetTypeID() else {
-            throw Failure(status: status, what: "Side A's security key couldn't be read")
-        }
-        let identity = result as! SecIdentity
-        var certificate: SecCertificate?
-        guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess, let certificate, let key = SecCertificateCopyKey(certificate),
+        guard let certificate = try certificate() else { return nil }
+        var identity: SecIdentity?
+        let status = SecIdentityCreateWithCertificate(keychain, certificate, &identity)
+        guard status == errSecSuccess, let identity, let key = SecCertificateCopyKey(certificate),
               let point = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
-            throw Failure(status: errSecInvalidKeyRef, what: "Side A's security key couldn't be read")
+            throw Failure(status: status == errSecSuccess ? errSecInvalidKeyRef : status, what: "Side A's security key couldn't be read")
         }
         return Identity(identity: identity, spkiHash: SelfSignedCertificate.spkiHash(publicKey: point))
     }
