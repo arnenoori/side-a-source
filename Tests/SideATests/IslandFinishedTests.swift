@@ -166,8 +166,8 @@ import Testing
         #expect(heard.queued.map(\.1).contains(.dropped(.outranked)) && heard.queued.map(\.0).contains("unlocked") && !heard.queued.contains { $0.0 == "unlocked" && $0.1 == .delivered })
     }
 
-    /// A file from before follow-ups said who sent them can't say who authorized them, so none of it is sent.
-    @Test func anOldQueueFileIsDropped() throws {
+    /// A file from before follow-ups said who sent them can't say who authorized them, so none of it is sent, and the user hears.
+    @Test func anOldQueueFileIsSetAsideAndSaidOutLoud() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidea-queue-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -177,6 +177,50 @@ import Testing
         island.queuedFile = file
         island.loadQueued()
         #expect(island.queued.isEmpty && !FileManager.default.fileExists(atPath: file.path))
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("queued-followups.unread.json").path))
+        let kept = island.droppedForPhones()
+        #expect(kept.map(\.sessionID) == ["s1"] && kept[0].reason == .oldQueue && kept[0].text == nil && kept[0].device == nil)
+        let aside = folder.appendingPathComponent("queued-followups.unread.json")
+        try FileManager.default.setAttributes([.modificationDate: Date() - Island.droppedKept - 60], ofItemAtPath: aside.path)
+        island.loadQueued()
+        #expect(!FileManager.default.fileExists(atPath: aside.path))
+        if Island.on { #expect(island.event?.title == "A queued reply wasn't sent" && island.event?.detail.contains("after this") == true) }
+    }
+
+    /// The phone is told live only if it's listening, so what was given up on stays for the next snapshot, across a relaunch,
+    /// for as long as a phone has to come back; a removed phone's goes with it.
+    @Test func whatWasGivenUpOnSurvivesARelaunchForPhonesToFetch() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidea-queue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("queued-followups.json")
+        let phone = Island.QueuedFollowUp.Origin(device: "d1", proven: .unlock), gone = Island.QueuedFollowUp.Origin(device: "d2", proven: .unlock)
+        let before = AccountStore(demo: true).island
+        before.queuedFile = file
+        #expect(before.queue("s1", "from the phone", from: phone))
+        #expect(before.queue("s1", "from the Mac"))
+        #expect(before.queue("s2", "from the other", from: gone))
+        let start = Date()
+        before.liveSessions(["s2"], now: start)
+        before.liveSessions(["s2"], now: start + Island.queuedGrace)
+        #expect(before.droppedForPhones().map(\.text) == ["from the phone"])
+        #expect(before.droppedForPhones().first?.device == "d1" && before.droppedForPhones().first?.reason == .sessionEnded)
+
+        let after = AccountStore(demo: true).island
+        after.queuedFile = file
+        after.loadQueued()
+        #expect(after.droppedForPhones() == before.droppedForPhones())
+        let onDisk = folder.appendingPathComponent("dropped-followups.json")
+        #expect(try FileManager.default.attributesOfItem(atPath: onDisk.path)[.posixPermissions] as? Int == 0o600)
+        after.dropQueued(device: "nobody")
+        #expect(FileManager.default.fileExists(atPath: onDisk.path))
+        let later = AccountStore(demo: true).island
+        later.queuedFile = file
+        later.loadQueued()
+        #expect(later.droppedForPhones(now: start + Island.droppedKept + 60).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: onDisk.path), "past its time it leaves the disk")
+        after.dropQueued(device: "d1")
+        after.dropQueued(device: "d2")
+        #expect(after.droppedForPhones().isEmpty, "a phone removed with one queued gets nothing back")
     }
 
     /// The Stop hook outlasts the app, so what's queued does too, only readable by this user, and gone once settled.

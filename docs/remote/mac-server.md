@@ -565,7 +565,7 @@ For phones without Tailscale. Off by default, under an "Also on this network" sw
 
 - More listeners, one per LAN interface address, on the same port with the **same TLS identity,
   router, auth, Host checks and rate limits**: it is the same code bound to another address.
-  Advertised over Bonjour as `_sidea._tcp` with TXT `v=1, m=<MacInfo.id>`.
+  Not advertised: phones get addresses from the QR code.
 - The QR code adds `l=<LAN address:port>`; the phone pins the same `fp`, so the key is the same on
   both paths and a phone paired over Tailscale also trusts the LAN address.
 - Pairing over LAN needs the same comparison code and Mac click.

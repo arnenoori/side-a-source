@@ -308,6 +308,11 @@ public struct WeekForecast: Equatable, Sendable {
 /// before its weekly reset goes first; among near-ties, the 5-hour window that resets
 /// soonest is used before it refills.
 public enum Planner {
+    /// Accounts Autopilot could use if they were signed in.
+    public static func signedOut(_ accounts: [Account], except id: String, health: [String: LoginHealth]) -> [Account] {
+        accounts.filter { $0.id != id && $0.allowAuto && (!$0.ready || health[$0.id]?.takesWork == false) }
+    }
+
     /// Where Autopilot leaves an account; the app sets it from Settings.
     nonisolated(unsafe) public static var full = 97.0
     /// Where an account shows as limited.
@@ -503,8 +508,15 @@ public enum PrivateFile {
     public static func write(data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try data.write(to: url, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        // Never readable by others, not even for a moment, and replaced whole.
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
+        guard rename(temporary.path, url.path) == 0 else {
+            try? FileManager.default.removeItem(at: temporary)
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
     }
     /// Text that is never readable by others, not even for a moment (a prompt, a session's last screen).
     public static func writeText(_ text: String, to url: URL) throws {

@@ -36,3 +36,9 @@ xcrun simctl launch booted com.arnenoori.sidea.remote.dev --demo
 ## Transport
 
 Every connection to the Mac goes through `NWTransport` (SideARemoteKit): HTTP/1.1 and WebSocket on Network.framework, with the SPKI pin in `sec_protocol_options_set_verify_block`. ATS doesn't govern it, so no target needs an ATS exception, even though the Mac's certificate is self-signed and reached by IP. `Paths` picks a LAN, tailnet or relay path on the fly (docs/remote/tunnel.md). The relay itself is ordinary HTTPS on `URLSession`, under ATS.
+
+## Classes declare `nonisolated deinit {}`
+
+The app builds with `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor`, and Xcode 27 then gives a class without an explicit deinit an isolated one. On the iOS 26.3 runtime, an isolated deinit that runs on the main thread, outside a task, with a task-local bound by `withValue`, aborts in `swift_task_deinitOnExecutor` (`malloc: pointer being freed was not allocated`). XCTest binds one, so the tests crash without this, and any framework that binds one on the main thread would crash the app. A new class needs the line too, unless its deinit really must run on the main actor.
+
+`scripts/check.sh` picks its simulator from `SIDEA_IOS_SIMULATOR` when set. iOS 26.x simulators are the ones that show this crash.

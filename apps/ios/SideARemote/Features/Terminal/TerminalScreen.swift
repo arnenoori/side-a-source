@@ -246,6 +246,8 @@ private struct TerminalHost: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, TerminalViewDelegate, KeyBarKeys {
+        nonisolated deinit {}
+
         var parent: TerminalHost
         weak var view: TerminalView?
         var bar: UIHostingController<KeyBar>?

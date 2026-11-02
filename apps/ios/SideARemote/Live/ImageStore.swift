@@ -7,6 +7,8 @@ import UIKit
 /// the Mac. One fetch per id at a time, however many views ask.
 @MainActor
 final class ImageStore {
+    nonisolated deinit {}
+
     typealias Fetch = @Sendable (_ id: String, _ thumbnail: Bool) async throws -> Data
 
     /// Nil in the demo, which draws its images instead.
@@ -38,7 +40,7 @@ final class ImageStore {
             if let data, let image = await Self.decode(data) { return image }
             guard let fetch, let fresh = try? await fetch(id, thumbnail) else { return nil }
             guard let image = await Self.decode(fresh) else { return nil }
-            Task.detached(priority: .utility) { disk.store(fresh, id, thumbnail: thumbnail) }
+            await Task.detached(priority: .utility) { disk.store(fresh, id, thumbnail: thumbnail) }.value
             return image
         }
         loading[key as String] = task

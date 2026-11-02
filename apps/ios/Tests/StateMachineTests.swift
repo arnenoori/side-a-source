@@ -285,6 +285,60 @@ final class StateMachineTests: XCTestCase {
         XCTAssertFalse(PushRegistrar.endsWhenOff(macID: NotificationAnswer.demoMac, enabled: false))
     }
 
+    /// After a relaunch there's no Queued turn left to fail: the phone that sent it still gets its words back, once.
+    func testADroppedReplyComesBackWithOrWithoutItsTurnAndOnlyOnce() {
+        let store = TranscriptStore([:])
+        let sent = store.send("one", to: "s", at: Date(timeIntervalSince1970: 10))
+        store.mark(sent.id, in: "s", .queued)
+        let records = [DroppedReply(id: "a", sessionID: "s", text: "one", at: 20, device: "d1", reason: .sessionEnded),
+                       DroppedReply(id: "b", sessionID: "s", text: "two", at: 21, device: "d1", reason: .sessionEnded),
+                       DroppedReply(id: "c", sessionID: "t", text: nil, at: 22, device: nil, reason: .sessionEnded),
+                       DroppedReply(id: "d", sessionID: "u", text: nil, at: 23, device: nil, reason: .oldQueue)]
+        let kept = store.send("kept", to: "u", at: Date(timeIntervalSince1970: 10))
+        store.mark(kept.id, in: "u", .queued)
+        let settled = store.settle(records, device: "d1", settled: [])
+        XCTAssertEqual(settled, ["a", "b", "c", "d"])
+        XCTAssertEqual(store.drafts["s"], "one\n\ntwo")
+        XCTAssertEqual(store.unsent["s"]?.text, "one\n\ntwo")
+        XCTAssertEqual(store.outgoing["s"]?.count, 0)
+        XCTAssertNil(store.drafts["t"], "another phone's reply isn't this one's to send")
+        XCTAssertEqual(store.drafts["u"], "kept")
+        XCTAssertEqual(store.unsent["u"]?.reason, "Side A updated before it could be sent.")
+
+        store.clearUnsent("s")
+        store.drafts["s"] = ""
+        XCTAssertEqual(store.settle(records, device: "d1", settled: settled), settled)
+        XCTAssertNil(store.unsent["s"], "seen before a relaunch, not seen again")
+        XCTAssertEqual(store.settle([], device: "d1", settled: settled), [], "forgotten once the Mac has")
+    }
+
+    /// The same words queued again after the drop are a new promise.
+    func testADroppedReplyLeavesALaterTurnWithTheSameWordsAlone() {
+        let store = TranscriptStore([:])
+        let again = store.send("same", to: "s", at: Date(timeIntervalSince1970: 100))
+        store.mark(again.id, in: "s", .queued)
+        _ = store.settle([DroppedReply(id: "a", sessionID: "s", text: "same", at: 50, device: "d1", reason: .sessionEnded)], device: "d1", settled: [])
+        XCTAssertEqual(store.outgoing["s"]?.map(\.id), [again.id])
+    }
+
+    /// The Mac at this pairing's address answers to another id, so nothing this pairing signs can verify.
+    func testAPairingForAnIdTheMacNoLongerAnswersToAsksToPairAgain() async throws {
+        let tools = MacTools()
+        tools.paired = PairedMac(endpoint: Endpoint(macID: "old", baseURL: URL(string: "https://100.64.0.1:47800")!, serverKeyHash: "k", name: "Studio"),
+                                 deviceID: "d", deviceName: "iPhone")
+        func answering(_ id: String) -> RemoteState {
+            var state = RemoteState()
+            state.hello = Hello(app: "1", build: 1, mac: MacInfo(id: id, name: "Studio"), capabilities: [.confirmSigned], epoch: "e", serverTime: 0,
+                                endpoints: Endpoints(tailnet: "x"), keyID: "k")
+            return state
+        }
+        tools.apply(answering("old"))
+        XCTAssertNil(tools.answersAs)
+        tools.apply(answering("new"))
+        XCTAssertEqual(tools.answersAs, "new")
+        XCTAssertTrue(tools.needsKeys)
+    }
+
     func testAQueueTheMacGaveUpOnPutsTheReplyBackInTheField() {
         let store = TranscriptStore([:])
         let sent = store.send("try again", to: "s")
@@ -293,5 +347,6 @@ final class StateMachineTests: XCTestCase {
         store.failQueued(in: "s", reason: "This session ended before it could be sent.")
         XCTAssertFalse(store.outgoing["s"]?.contains { $0.id == sent.id } ?? false)
         XCTAssertTrue(store.outgoing["s"]?.contains { $0.id == other.id } ?? false)
+        XCTAssertEqual(store.drafts["s"], "try again")
     }
 }

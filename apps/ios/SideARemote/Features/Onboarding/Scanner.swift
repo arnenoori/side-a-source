@@ -229,6 +229,8 @@ private struct QRScanner: UIViewControllerRepresentable {
     }
 
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        nonisolated deinit {}
+
         var found: (String) -> Void
         init(found: @escaping (String) -> Void) { self.found = found }
 

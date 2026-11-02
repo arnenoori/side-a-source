@@ -39,6 +39,17 @@ final class RemotePush {
     }
 
     private var checked: Date?
+    private(set) var tokenWarned: [String: Date] = [:]
+    /// Two phones reporting in turn flip the token at each launch; once an hour says all there is to say.
+    static let tokenWarnEvery: TimeInterval = 3_600
+
+    /// This route takes the token alone, so a phone can report from the background. A stolen token could send pushes
+    /// elsewhere with it; an address that really moves is rare (a restore, a reinstall), so moving is worth saying, and a
+    /// first report isn't.
+    static func warns(from previous: String?, to next: String, warned: Date?, now: Date) -> Bool {
+        guard let previous, previous != next else { return false }
+        return warned.map { now.timeIntervalSince($0) >= tokenWarnEvery } ?? true
+    }
 
     // MARK: Devices
 
@@ -46,6 +57,12 @@ final class RemotePush {
     func register(_ device: String, _ registration: PushRegistration) async -> Bool {
         guard let controller, let record = controller.devices.devices.first(where: { $0.id == device }) else { return false }
         try? controller.devices.update(device) { $0.push = registration }
+        let now = Date()
+        if Self.warns(from: record.push?.apnsToken, to: registration.apnsToken, warned: tokenWarned[device], now: now) {
+            tokenWarned[device] = now
+            RemoteLog.shared("device \(device) reported a new push token")
+            NotificationRouter.deviceMoved(device, name: record.name)
+        }
         perform(activities.reported(device, activities: Array(registration.activityTokens.keys), now: Date().timeIntervalSince1970), state: activities.state)
         // The phone's Live Activity switch comes with this report, and a card it turned off ends now.
         defer { activity(activities.state) }

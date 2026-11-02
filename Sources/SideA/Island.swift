@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Observation
 import SideACore
+import SideAProtocol
 import UserNotifications
 
 @MainActor @Observable
@@ -47,6 +48,15 @@ final class Island {
             case revoked
             /// The session asks more now than was proven when it was sent.
             case outranked
+
+            var wire: DroppedReply.Reason? {
+                switch self {
+                case .sessionEnded: .sessionEnded
+                case .cannotWait: .cannotWait
+                case .outranked: .outranked
+                case .revoked: nil
+                }
+            }
         }
         /// Who queued it, and what they proved. Nil from the Mac itself, whoever is at it being its owner.
         struct Origin: Sendable, Equatable {
@@ -137,6 +147,13 @@ final class Island {
     @ObservationIgnored var keepsFinished: () -> Bool = { Island.keepsWaiters }
     /// How long a session must stay off the live list before what's queued for it counts as lost.
     static let queuedGrace: TimeInterval = 60
+    /// How long a phone has to come back and learn what became of a reply it was told is Queued.
+    static let droppedKept: TimeInterval = 3 * 86_400
+    static let droppedLimit = 20
+    /// What was given up on, kept on disk for phones that weren't listening when it happened.
+    @ObservationIgnored private var dropped: [DroppedReply] = []
+    private var droppedFile: URL? { queuedFile?.deletingLastPathComponent().appendingPathComponent("dropped-followups.json") }
+    private var unreadQueueFile: URL? { queuedFile?.deletingLastPathComponent().appendingPathComponent("queued-followups.unread.json") }
     /// Answers for requests that didn't come through the hook socket: Codex's app server asks every client it has.
     @ObservationIgnored private var responders: [Pending.ID: (IslandAnswer) -> Void] = [:]
     /// When each request that has a recommended answer gets it, while that's on; an answer from anywhere removes it.
@@ -574,7 +591,7 @@ final class Island {
             queued[session] = next.isEmpty ? nil : next
             saveQueued()
             if let origin, origin.proven < queuedNeeds(session) {
-                reportDropped(session, text, .outranked)
+                reportDropped(session, text, .outranked, from: origin)
                 continue
             }
             server?.reply(waiter, IslandFollowUp.line(text))
@@ -597,21 +614,27 @@ final class Island {
         guard let lost = queued.removeValue(forKey: session) else { return }
         queuedGoneSince[session] = nil
         saveQueued()
-        for case .waiting(let text, _) in lost { reportDropped(session, text, why) }
+        for case .waiting(let text, let origin) in lost { reportDropped(session, text, why, from: origin) }
     }
 
     /// What a removed phone left queued: its authority went with it.
     func dropQueued(device: String) {
+        if dropped.contains(where: { $0.device == device }) {
+            dropped.removeAll { $0.device == device }
+            saveDropped()
+        }
         for (session, items) in queued {
             let kept = items.filter { if case .waiting(_, let origin?) = $0 { origin.device != device } else { true } }
             guard kept.count != items.count else { continue }
             queued[session] = kept.isEmpty ? nil : kept
             saveQueued()
-            for case .waiting(let text, let origin?) in items where origin.device == device { reportDropped(session, text, .revoked) }
+            for case .waiting(let text, let origin?) in items where origin.device == device { reportDropped(session, text, .revoked, from: origin) }
         }
     }
 
-    private func reportDropped(_ session: String, _ text: String, _ why: QueuedFollowUp.Drop) {
+    private func reportDropped(_ session: String, _ text: String, _ why: QueuedFollowUp.Drop, from origin: QueuedFollowUp.Origin?) {
+        // A removed phone has nobody to tell, and what the Mac queued was never promised to a phone.
+        if let origin, let reason = why.wire { keepDropped(session, text, device: origin.device, reason) }
         watcher?.queued(session: session, text: text, became: .dropped(why))
         guard Self.on else { return }
         let reason = switch why {
@@ -625,6 +648,7 @@ final class Island {
 
     /// Each read of the live list. A session gone from it for `queuedGrace` won't finish, so its Stop hook will never come.
     func liveSessions(_ alive: Set<String>, now: Date = Date()) {
+        expireDropped(now: now)
         for session in queued.keys {
             if alive.contains(session) { queuedGoneSince[session] = nil; continue }
             let since = queuedGoneSince[session] ?? now
@@ -641,17 +665,69 @@ final class Island {
     }
 
     func loadQueued() {
+        if let droppedFile, let saved = try? PrivateFile.read([DroppedReply].self, from: droppedFile) { dropped = saved }
+        expireDropped()
         guard let queuedFile, let data = try? Data(contentsOf: queuedFile) else { return }
         guard let saved = try? JSONDecoder().decode([String: [SavedFollowUp]].self, from: data) else {
-            // From before follow-ups said who sent them, or unreadable: nobody can vouch for these.
-            RemoteLog.shared("dropped a queued follow-up file with no record of who sent them")
-            try? FileManager.default.removeItem(at: queuedFile)
-            return
+            return setAsideOldQueue(data, at: queuedFile)
         }
         queued = saved.mapValues { $0.map { item in
             .waiting(item.text, from: item.device.map { .init(device: $0, proven: item.proven.flatMap(ConfirmProof.init(rawValue:)) ?? .none) })
         } }
         keepLiveListForQueued()
+    }
+
+    /// From before follow-ups said who sent them, or unreadable: nobody can vouch for these, so none is sent. The user hears
+    /// what's gone, a phone still showing one as Queued gets it back, and the file stays beside the queue.
+    private func setAsideOldQueue(_ data: Data, at file: URL) {
+        let held = (try? JSONDecoder().decode([String: [String]].self, from: data)) ?? [:]
+        // No text and no device on these: nobody can say whose they were, and they must not outlive a removed phone's say.
+        for (session, texts) in held where !texts.isEmpty { keepDropped(session, nil, device: nil, .oldQueue) }
+        let aside = file.deletingLastPathComponent().appendingPathComponent("queued-followups.unread.json")
+        try? FileManager.default.removeItem(at: aside)
+        if (try? FileManager.default.moveItem(at: file, to: aside)) == nil { try? FileManager.default.removeItem(at: file) }
+        // Moving keeps the old date; its time on disk runs from now.
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: aside.path)
+        RemoteLog.shared("set aside a queued follow-up file with no record of who sent them")
+        let texts = held.values.flatMap { $0 }
+        let detail = switch texts.count {
+        case 0: "Side A couldn't read what it was holding. Send them again."
+        case 1: "Send it again: \(texts[0])"
+        default: "Send these \(texts.count) again: \(texts.joined(separator: " · "))"
+        }
+        if Self.on { notice(texts.count == 1 ? "A queued reply wasn't sent" : "Queued replies weren't sent", detail) }
+        store?.notify(texts.count == 1 ? "A queued reply wasn't sent" : "Queued replies weren't sent", detail)
+    }
+
+    private func keepDropped(_ session: String, _ text: String?, device: String?, _ reason: DroppedReply.Reason) {
+        dropped.append(DroppedReply(id: UUID().uuidString.lowercased(), sessionID: session, text: text, at: Date().timeIntervalSince1970, device: device, reason: reason))
+        saveDropped()
+    }
+
+    private func saveDropped() {
+        dropped = Array(dropped.filter { Date().timeIntervalSince1970 - $0.at < Self.droppedKept }.suffix(Self.droppedLimit))
+        guard let droppedFile else { return }
+        if dropped.isEmpty { try? FileManager.default.removeItem(at: droppedFile); return }
+        try? PrivateFile.write(dropped, to: droppedFile)
+    }
+
+    /// For `StateSnapshot.droppedReplies`, before `scoped(to:)` narrows them to each device.
+    func droppedForPhones(now: Date = Date()) -> [DroppedReply] {
+        expireDropped(now: now)
+        return dropped
+    }
+
+    /// Past their time these leave the disk too, whether or not anything new is saved.
+    private func expireDropped(now: Date = Date()) {
+        let kept = dropped.filter { now.timeIntervalSince1970 - $0.at < Self.droppedKept }
+        if kept.count != dropped.count {
+            dropped = kept
+            saveDropped()
+        }
+        if let unreadQueueFile, let date = (try? FileManager.default.attributesOfItem(atPath: unreadQueueFile.path))?[.modificationDate] as? Date,
+           now.timeIntervalSince(date) >= Self.droppedKept {
+            try? FileManager.default.removeItem(at: unreadQueueFile)
+        }
     }
 
     private func saveQueued() {

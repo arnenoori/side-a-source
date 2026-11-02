@@ -8,6 +8,8 @@ import SideARemoteKit
 /// them later can't repeat anything); keys already sent are the Kit's to resend or drop.
 @Observable
 final class TerminalModel {
+    nonisolated deinit {}
+
     enum Phase: Equatable {
         case attaching, live, reconnecting
         case ended(String)

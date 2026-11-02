@@ -119,7 +119,7 @@ final class EventHub: @unchecked Sendable {
                 }
                 // Over 512 KiB the snapshot would fill the socket's send budget (4008, and a reconnect into the same
                 // snapshot): the phone reads it from GET /v1/state instead.
-                guard let snapshot = Self.encode(EventEnvelope(seq: nil, at: Date().timeIntervalSince1970, event: .snapshot(build(ring.seq, ring.epoch)))),
+                guard let snapshot = Self.encode(EventEnvelope(seq: nil, at: Date().timeIntervalSince1970, event: .snapshot(build(ring.seq, ring.epoch).scoped(to: client.peer.device)))),
                       snapshot.count <= Self.snapshotLimit else {
                     return send(client, .welcome(SideAProtocol.Welcome(epoch: ring.epoch, seq: ring.seq, replay: false, snapshotOverREST: true, hello: greeting)))
                 }

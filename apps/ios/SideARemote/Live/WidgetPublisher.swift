@@ -8,6 +8,8 @@ import WidgetKit
 /// as stale on the Home Screen.
 @MainActor
 final class WidgetPublisher {
+    nonisolated deinit {}
+
     static let shared = WidgetPublisher()
     private var last: WidgetSnapshot?
 

@@ -25,8 +25,11 @@ private final class FakeAnthropic: @unchecked Sendable {
     private let lock = NSLock()
     private var _seen: [HTTPRequest] = []
     var seen: [HTTPRequest] { lock.withLock { _seen } }
+    /// Holds each connection this long after answering, then closes it unasked, as a server timing out an idle one does.
+    private let linger: DispatchTimeInterval
 
-    init() throws {
+    init(linger: DispatchTimeInterval = .seconds(0)) throws {
+        self.linger = linger
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
         listener = try NWListener(using: parameters)
@@ -57,7 +60,10 @@ private final class FakeAnthropic: @unchecked Sendable {
                 guard let self else { return }
                 for case .success(let request) in parser.feed(data ?? Data()) {
                     self.lock.withLock { self._seen.append(request) }
-                    connection.send(content: Data(Self.reply(to: request).utf8), isComplete: true, completion: .contentProcessed { _ in connection.cancel() })
+                    let queue = self.queue, linger = self.linger
+                    connection.send(content: Data(Self.reply(to: request).utf8), isComplete: true, completion: .contentProcessed { _ in
+                        queue.asyncAfter(deadline: .now() + linger) { connection.cancel() }
+                    })
                     return
                 }
                 if !complete { read() }
@@ -88,7 +94,7 @@ private final class FakeAnthropic: @unchecked Sendable {
         PoolService(provider: .claude, base: base, prefix: "/v1/", client: "Claude Code", admits: Pool.fromClaudeCode, session: Pool.session),
         PoolService(provider: .codex, base: base.appendingPathComponent("backend-api"), prefix: "/codex/", client: "Codex", admits: Pool.fromCodex, session: { headers, _ in Pool.codexSession(headers) }),
     ])
-    let port = try await proxy.start()
+    let port = try await proxy.start(port: 0)
     defer { proxy.stop() }
 
     var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/messages?beta=true")!)
@@ -135,6 +141,34 @@ private final class FakeAnthropic: @unchecked Sendable {
     #expect((exhausted as? HTTPURLResponse)?.statusCode == 429)
 }
 
+/// Moving on from a full account reuses the connection its 429 came on. A server that has since closed it costs that one
+/// send, which it never read: Claude Code must not hear a 502 for it.
+@MainActor @Test func anUpstreamClosingAKeptConnectionDoesntFailTheRequest() async throws {
+    let upstream = try FakeAnthropic(linger: .milliseconds(150))
+    let base = try await upstream.start()
+    defer { upstream.stop() }
+    let decisions = FakeDecisions()
+    let proxy = PoolProxy(key: String(repeating: "k", count: 64), decisions: decisions, services: [
+        PoolService(provider: .claude, base: base, prefix: "/v1/", client: "Claude Code", admits: Pool.fromClaudeCode, session: Pool.session),
+    ])
+    let port = try await proxy.start(port: 0)
+    defer { proxy.stop() }
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/messages")!)
+    request.httpMethod = "POST"
+    request.httpBody = Data("{}".utf8)
+    request.setValue("Bearer " + String(repeating: "k", count: 64), forHTTPHeaderField: "Authorization")
+    request.setValue("claude-cli/2.1.314 (external, cli)", forHTTPHeaderField: "User-Agent")
+    let (body, response) = try await URLSession.shared.data(for: request)
+    #expect((response as? HTTPURLResponse)?.statusCode == 200, "\(String(decoding: body, as: UTF8.self))")
+    #expect(decisions.answered.map(\.0) == ["full", "ok"])
+}
+
+/// A lost connection may have got there, so only the routes that make a turn take the risk of a second one.
+@Test func onlyTurnsAreResentOnALostConnection() {
+    #expect(PoolProxy.resends("/v1/messages?beta=true") && PoolProxy.resends("/v1/messages") && PoolProxy.resends("/codex/responses"))
+    #expect(!PoolProxy.resends("/v1/messages/count_tokens") && !PoolProxy.resends("/v1/messages/batches") && !PoolProxy.resends("/codex/models"))
+}
+
 @MainActor @Test func aSharedPoolServesOnlyAdmittedPeersWithTheShareKey() async throws {
     let upstream = try FakeAnthropic()
     let base = try await upstream.start()
@@ -145,7 +179,7 @@ private final class FakeAnthropic: @unchecked Sendable {
         PoolService(provider: .claude, base: base, prefix: "/v1/", client: "Claude Code", admits: Pool.fromClaudeCode, session: Pool.session),
         PoolService(provider: .codex, base: base.appendingPathComponent("backend-api"), prefix: "/codex/", client: "Codex", admits: Pool.fromCodex, session: { headers, _ in Pool.codexSession(headers) }),
     ])
-    _ = try await proxy.start()
+    _ = try await proxy.start(port: 0)
     defer { proxy.stop() }
     let admitted = Admitted()
     let port = try await proxy.share(on: "127.0.0.1", port: 0, gate: PoolGate(key: String(repeating: "s", count: 64), admit: { await admitted.check($0) }))
@@ -239,7 +273,7 @@ private actor Admitted {
     let proxy = PoolProxy(key: String(repeating: "k", count: 64), decisions: decisions, services: [
         PoolService(provider: .codex, base: base.appendingPathComponent("backend-api"), prefix: "/codex/", client: "Codex", admits: Pool.fromCodex, session: { headers, _ in Pool.codexSession(headers) }),
     ])
-    let port = try await proxy.start()
+    let port = try await proxy.start(port: 0)
     defer { proxy.stop() }
     let bearer = "Bearer " + String(repeating: "k", count: 64)
 

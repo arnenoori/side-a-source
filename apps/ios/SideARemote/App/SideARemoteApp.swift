@@ -51,6 +51,8 @@ struct SideARemoteApp: App {
 /// (`ReviewDemo`). Pairing adds a Mac, Forget removes one.
 @Observable
 final class AppRoot {
+    nonisolated deinit {}
+
     /// In the order they were paired; empty before pairing.
     private(set) var macs: [AppModel] { didSet { publishWidgets() } }
     /// Sessions, Accounts and Search show this Mac only; nil shows every Mac. Only matters with more than one.
@@ -174,6 +176,8 @@ final class AppRoot {
             macs.append(.live(mac))
         }
         macs.last?.link?.setForeground(true)
+        // The record this one replaces under another id: the same Mac, which had moved on from the id it was paired under.
+        for stale in macs where stale.macID != id && stale.tools.answersAs == id { forget(stale.macID) }
     }
 
     /// App Review's code: the demo in place of any paired Mac, whose links stop until Leave Demo. Notifications are

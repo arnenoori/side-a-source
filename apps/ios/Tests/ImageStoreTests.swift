@@ -63,7 +63,6 @@ final class ImageStoreTests: XCTestCase {
         XCTAssertEqual(thumbs, 1)
 
         // A fresh store (a relaunch) finds the file on disk.
-        try? await Task.sleep(for: .milliseconds(200))
         let again = ImageStore(isDemo: false, disk: ImageCache(folder: folder))
         again.fetch = { _, _ in throw URLError(.notConnectedToInternet) }
         let image = await again.image(ref, thumbnail: true)

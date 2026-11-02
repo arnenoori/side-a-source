@@ -10,6 +10,22 @@ private func account(_ name: String, priority: AccountPriority? = nil, auto: Boo
     Account(id: name, name: name, email: "\(name)@example.com", ready: true, allowAuto: auto, priority: priority)
 }
 
+@Test func signedOutFindsWhoASignInWouldFree() {
+    let full = account("full"), out = account("out"), fine = account("fine"), off = account("off", auto: false)
+    var unready = account("unready")
+    unready.ready = false
+    let found = Planner.signedOut([full, out, fine, off, unready], except: "full", health: ["out": .signIn(), "full": .signIn(), "off": .signIn(), "fine": .offline])
+    #expect(found.map(\.id) == ["out", "unready"])
+}
+
+@Test func theHelpersLimitStretchesOnlyUnderLoad() {
+    #expect(BridgeDeadline.seconds(60, load: 2, cores: 10) == 60)
+    #expect(BridgeDeadline.seconds(60, load: 20, cores: 10) == 120)
+    #expect(BridgeDeadline.seconds(60, load: 400, cores: 10) == 240)
+    #expect(BridgeDeadline.seconds(60, load: 5, cores: 0) == 240)
+    #expect(BridgeDeadline.current(60) >= 60)
+}
+
 private func usage(five: Double? = nil, week: Double? = nil, fable: Double? = nil, capacity: Double? = nil, stale: Bool = false, weekResets: Double = now + 3 * day) -> AccountUsage {
     var windows: [UsageWindow] = []
     if let five { windows.append(UsageWindow(id: "five_hour", label: "5-hour", percent: five, resetsAt: now + 3600)) }

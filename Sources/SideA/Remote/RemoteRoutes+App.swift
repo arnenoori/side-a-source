@@ -57,7 +57,7 @@ extension RemoteRoutes {
 
     @Sendable static func state(_ context: Context) async -> HTTPResponse {
         guard let list = await listed(context, { _ in context.controller.events?.snapshot() }), let build = list.value else { return notReady }
-        return json(200, build(list.seq, list.epoch))
+        return json(200, build(list.seq, list.epoch).scoped(to: context.device))
     }
 
     @Sendable static func sessions(_ context: Context) async -> HTTPResponse {

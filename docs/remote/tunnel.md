@@ -5,7 +5,7 @@ tunnel through the push relay's Durable Object, chosen and dropped on the fly. R
 [protocol](protocol.md) (Conventions, Pairing) and [relay-and-release](relay-and-release.md) (Push
 relay) first.
 
-Status: spec, October 2026, lane L9. Nothing here is deployed.
+Status: built and shipping (Side A 0.5.44). Written as the plan in October 2026; where this differs from the code, the code wins.
 
 ## Summary
 

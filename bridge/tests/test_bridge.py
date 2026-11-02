@@ -1,5 +1,6 @@
 import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -920,6 +921,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
                     self.assertTrue((home/'.claude/.oauth_refresh.lock').is_dir())
                     (home/'.claude/.oauth_refresh.lock').rmdir()
                     for lock in self.root.glob('**/.oauth_refresh.lock'): lock.rmdir()
+                    for lock in [home/'.claude.lock',*self.root.glob('profiles/*.lock')]: lock.rmdir()
                     fail[0]=False
                     bridge.finish_swap(self.root)
                     self.assertNotIn(bridge.SWAP_JOURNAL,keychain)
@@ -1314,7 +1316,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         service=bridge.profile_service(self.root,a['id'])
         keychain[service]=login('alpha',1)
         refused=bridge.token_hash(keychain[service])
-        def renewed(root,account,svc,due):
+        def renewed(root,account,svc,due,config=None):
             if due(keychain[svc]): keychain[svc]=login('alpha',2)
         with patch.object(bridge,'_renew',side_effect=renewed), patch.object(bridge,'verify_idle_owner'):
             self.assertEqual(bridge.pool_token(self.root,config,a)['accessToken'],'alpha-at1')
@@ -1373,7 +1375,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
                 again.cache_clear=lambda: None
                 bridge.renew(self.root,{'accounts':[a]},a)
             self.assertEqual(len(posts),1)
-        dead=bridge.urllib.error.HTTPError(bridge.TOKEN_URL,400,'invalid_grant',{},None)
+        dead=bridge.urllib.error.HTTPError(bridge.TOKEN_URL,400,'Bad Request',{},io.BytesIO(b'{"error":"invalid_grant"}'))
         with patch.object(bridge,'mac_email',return_value=''), patch.object(bridge,'auth_status',return_value={'email':'alpha@example.com'}), \
              patch.object(bridge,'read_secret',return_value=login()) as reader, patch.object(bridge,'post_json',side_effect=dead), patch.object(bridge,'write_secret') as writer:
             reader.cache_clear=lambda: None

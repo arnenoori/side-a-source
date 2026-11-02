@@ -40,6 +40,8 @@ enum GroupBy: String, CaseIterable, Identifiable {
 
 @Observable
 final class SessionsStore {
+    nonisolated deinit {}
+
     private(set) var sessions: [RemoteSession]
     private(set) var extras: [SessionKey: SessionExtras]
     var groupBy: GroupBy = .project
@@ -124,6 +126,8 @@ enum RequestOutcome: Hashable {
 
 @Observable
 final class RequestsStore {
+    nonisolated deinit {}
+
     private(set) var requests: [RequestID: RemoteRequest]
     /// Called once per answer, after the request leaves the open list.
     @ObservationIgnored var onResolve: ((RemoteRequest, RequestOutcome) -> Void)?
@@ -181,6 +185,8 @@ extension IslandQuestion.Option {
 /// A transcript as the phone draws it: the Mac's messages plus what the phone answered.
 @Observable
 final class TranscriptStore {
+    nonisolated deinit {}
+
     private(set) var messages: [SessionKey: [TranscriptMessage]]
     /// Messages before the loaded page, for the "18 earlier messages" fold.
     private(set) var earlier: [SessionKey: Int]
@@ -350,7 +356,39 @@ final class TranscriptStore {
     /// The Mac didn't take it: the turn goes, its text waits in the field. False when the turn is already gone.
     /// The Mac gave up on what it was holding for this session.
     func failQueued(in session: SessionKey, reason: String) {
-        for turn in outgoing[session] ?? [] where turn.state == .queued { fail(turn.id, in: session, reason: reason, item: nil) }
+        let lost = outgoing[session]?.filter { $0.state == .queued } ?? []
+        outgoing[session]?.removeAll { $0.state == .queued }
+        giveBack(lost.map(\.text), in: session, reason: reason)
+    }
+
+    /// What the Mac still remembers giving up on, against what this phone has already settled; answers the new settled set.
+    /// The phone that sent a reply gets it back even with no turn left to show for it, as after a relaunch. Another phone's
+    /// comes with no words and is only noted. One from an old queue file gives back this phone's own turns from before it.
+    func settle(_ dropped: [DroppedReply], device: String, settled: Set<String>) -> Set<String> {
+        let fresh = dropped.filter { !settled.contains($0.id) }.sorted { $0.at < $1.at }
+        for (session, records) in Dictionary(grouping: fresh, by: \.sessionID) {
+            var lost: [String] = []
+            for record in records {
+                if record.reason == .oldQueue {
+                    let held = outgoing[session]?.filter { $0.state == .queued && $0.at.timeIntervalSince1970 <= record.at } ?? []
+                    outgoing[session]?.removeAll { turn in held.contains { $0.id == turn.id } }
+                    lost += held.map(\.text)
+                } else if record.device == device, let text = record.text {
+                    let turn = outgoing[session]?.first { $0.state == .queued && $0.text == text && $0.at.timeIntervalSince1970 <= record.at }
+                    if let turn { outgoing[session]?.removeAll { $0.id == turn.id } }
+                    lost.append(text)
+                }
+            }
+            giveBack(lost, in: session, reason: records[0].reason.unsentReason)
+        }
+        return settled.intersection(dropped.map(\.id)).union(fresh.map(\.id))
+    }
+
+    private func giveBack(_ texts: [String], in session: SessionKey, reason: String) {
+        guard !texts.isEmpty else { return }
+        let text = texts.joined(separator: "\n\n")
+        unsent[session] = Unsent(text: text, reason: reason, item: nil)
+        restore(text, in: session)
     }
 
     @discardableResult func fail(_ id: String, in session: SessionKey, reason: String, item: String?) -> Bool {
@@ -425,6 +463,8 @@ final class TranscriptStore {
 
 @Observable
 final class AccountsStore {
+    nonisolated deinit {}
+
     private(set) var accounts: [RemoteAccount]
     private(set) var autopilot: [AutopilotDecision]
 
@@ -450,6 +490,8 @@ final class AccountsStore {
 
 @Observable
 final class HistoryStore {
+    nonisolated deinit {}
+
     private(set) var past: [PastSession]
     var pinned: Set<String> = []
 
@@ -460,5 +502,17 @@ final class HistoryStore {
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return past }
         return past.filter { [$0.title, $0.project, $0.snippet ?? ""].contains { $0.localizedCaseInsensitiveContains(query) } }
+    }
+}
+
+extension DroppedReply.Reason {
+    /// Under the field, with the text back in it.
+    var unsentReason: String {
+        switch self {
+        case .cannotWait: "This session couldn't take it when its turn ended."
+        case .outranked: "This session needs Face ID for it now."
+        case .oldQueue: "Side A updated before it could be sent."
+        default: "This session ended before it could be sent."
+        }
     }
 }

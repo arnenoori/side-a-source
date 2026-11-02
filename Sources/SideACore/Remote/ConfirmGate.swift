@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import SideAProtocol
 
@@ -44,9 +45,12 @@ public enum ConfirmGate {
         guard let key = proof == .biometric ? keys.confirm : keys.unlock else { return .failure(.missing) }
         guard signature.verify(publicKey: key, macID: macID, deviceID: deviceID, purpose: purpose, subject: subject,
                                now: now.timeIntervalSince1970) else { return .failure(.invalid) }
-        // Keyed on what was signed: ECDSA signatures are malleable, so the same message can come back with different bytes.
+        // Keyed on what was signed and its r, the part of `(r, s)` a copy can't change: ECDSA signatures are malleable, so a
+        // captured one can come back with different bytes, but only the key's holder can make another for the same second.
         guard let message = try? ConfirmMessage.text(macID: macID, deviceID: deviceID, purpose: purpose, subject: subject, at: signature.at),
-              replay.first(signature.signer.rawValue + "\n" + message, now: now) else { return .failure(.replayed) }
+              let parsed = try? P256.Signing.ECDSASignature(derRepresentation: signature.signature),
+              replay.first([signature.signer.rawValue, message, parsed.rawRepresentation.prefix(32).base64EncodedString()].joined(separator: "\n"), now: now)
+        else { return .failure(.replayed) }
         return .success(proof)
     }
 

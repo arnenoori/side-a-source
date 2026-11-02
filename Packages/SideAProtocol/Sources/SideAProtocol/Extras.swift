@@ -18,6 +18,8 @@ public extension Capability {
     static let autopilotAnswers = Self(rawValue: "autopilot.answers")
     static let worth = Self(rawValue: "worth")
     static let incidents = Self(rawValue: "incidents")
+    /// `StateSnapshot.droppedReplies`.
+    static let repliesDropped = Self(rawValue: "replies.dropped")
     static let options = Self(rawValue: "options")
     static let updateCheck = Self(rawValue: "update.check")
     static let lan = Self(rawValue: "lan")

@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -152,13 +153,34 @@ def keychain_user():
     return os.environ.get("USER") or "claude-code-user"
 
 
+class KeychainBusy(ValueError):
+    """The Keychain didn't answer. Says nothing about whether a login is there."""
+
+
+# What `security` exits with when the item really isn't there (errSecItemNotFound).
+KEYCHAIN_NOT_FOUND = 44
+
+
 @functools.lru_cache(maxsize=None)
 def read_secret(service):
-    # Logins are only written by renew(), under Claude Code's refresh lock.
-    result = subprocess.run(["security", "find-generic-password", "-a", keychain_user(), "-s", service, "-w"],
-                            capture_output=True, text=True, timeout=15)
-    if result.returncode != 0:
-        return None
+    # Logins are only written by renew(), under Claude Code's refresh lock. Only "no such item" is
+    # an empty slot: anything else read as empty could put a backup over a live login.
+    problem = ""
+    for limit in (15, 45):
+        try:
+            result = subprocess.run(["security", "find-generic-password", "-a", keychain_user(), "-s", service, "-w"],
+                                    capture_output=True, text=True, timeout=limit)
+        except subprocess.TimeoutExpired:
+            problem = f"no answer in {limit}s"
+            continue
+        if result.returncode == 0:
+            break
+        if result.returncode == KEYCHAIN_NOT_FOUND:
+            return None
+        problem = f"exit {result.returncode}"
+        time.sleep(0.5)
+    else:
+        raise KeychainBusy(f"The Keychain didn't answer ({problem}); retrying later.")
     raw = result.stdout.strip()
     if not raw.startswith("{"):
         raw = bytes.fromhex(raw).decode()
@@ -328,7 +350,8 @@ def post_json(url, body, headers=None, method="POST"):
     import urllib.request  # ssl and http.client cost Python's startup a fifth of a second; the session viewer never needs them
     request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
         method=method, headers={"Content-Type": "application/json", "User-Agent": "claude-cli (side-a)", **(headers or {})})
-    with urllib.request.urlopen(request, timeout=20) as response:
+    # A refresh token is spent once the endpoint answers, so a slow answer is worth waiting for.
+    with urllib.request.urlopen(request, timeout=60 if url == TOKEN_URL else 20) as response:
         return json.load(response)
 
 
@@ -634,30 +657,41 @@ def claude_refresh_lock(folder, timeout=30):
     """Holds Claude Code's own refresh lock for one login while Side A renews it. Claude Code keeps
     it in the login's storage folder (CLAUDE_SECURESTORAGE_CONFIG_DIR, or ~/.claude for the Mac
     login), so every session on that login waits for it, and the server never sees a refresh token
-    used twice. Same format as Claude Code's lock library: a directory, stale after 60 s idle."""
+    used twice. Same format as Claude Code's lock library: a directory, stale after 60 s idle. Claude
+    Code takes this one, then `<folder>.lock`, the only one a session from an older version knows."""
     path = Path(folder) / ".oauth_refresh.lock"
+    legacy = Path(f"{os.path.realpath(folder)}.lock")
     deadline = time.time() + timeout
-    while True:
-        try:
-            path.mkdir()
-            break
-        except FileExistsError:
+    def take(lock):
+        while True:
             try:
-                if time.time() - path.stat().st_mtime > 60:
-                    path.rmdir()
-                    continue
-            except OSError:
-                pass
-            if time.time() > deadline:
-                raise ValueError("Claude Code is refreshing a login right now; Side A will try again shortly.")
-            time.sleep(0.5)
-        except FileNotFoundError:
-            path.parent.mkdir(parents=True, exist_ok=True)
+                lock.mkdir()
+                return
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > 60:
+                        lock.rmdir()
+                        continue
+                except OSError:
+                    pass
+                if time.time() > deadline:
+                    raise ValueError("Claude Code is refreshing a login right now; Side A will try again shortly.") from None
+                time.sleep(0.5)
+            except FileNotFoundError:
+                lock.parent.mkdir(parents=True, exist_ok=True)
+    take(path)
+    try:
+        take(legacy)
+    except ValueError:
+        with contextlib.suppress(OSError):
+            path.rmdir()
+        raise
     stop = threading.Event()
     def keep_fresh():
         while not stop.wait(5):
-            with contextlib.suppress(OSError):
-                os.utime(path)
+            for lock in (path, legacy):
+                with contextlib.suppress(OSError):
+                    os.utime(lock)
     threading.Thread(target=keep_fresh, daemon=True).start()
     keep = False
     try:
@@ -670,8 +704,9 @@ def claude_refresh_lock(folder, timeout=30):
     finally:
         stop.set()
         if not keep:
-            with contextlib.suppress(OSError):
-                path.rmdir()
+            for lock in (legacy, path):
+                with contextlib.suppress(OSError):
+                    lock.rmdir()
 
 
 def run_as(root, account, args, timeout):
@@ -760,8 +795,10 @@ def swap(root, config, slot, other, share=False):
             # Checked last, right before the writes, not from the app's last look: a session started
             # meanwhile must not get the full login.
             processes = slot_processes(root, config)
-            busy = None if processes is None else set(processes.values())
-            if busy is None or (target in busy and not share):
+            if processes is None:
+                raise ValueError(f"Running sessions couldn't be listed ({listing_problem}); trading later.")
+            busy = set(processes.values())
+            if target in busy and not share:
                 raise ValueError("A session is using that account now.")
             # A share hands `other`'s sessions the login whose Fable share is spent: only while none of them runs Fable.
             if share and target in busy:
@@ -1090,23 +1127,31 @@ def forget_backup(account):
     read_secret.cache_clear()
 
 
+# Why the last process_environment() of each pid came back empty, for the log.
+environment_failures = {}
+
+
 def process_environment(pid):
     """A process's argv[0] and environment, exactly as the kernel holds them (what ps -E prints,
-    without the ambiguity of argv text that looks like an environment variable)."""
+    without the ambiguity of argv text that looks like an environment variable). None when the kernel
+    refuses: EINVAL for a zombie or a process that's exiting, and for another user's process."""
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
     mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
     size = ctypes.c_size_t(0)
     if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        environment_failures[pid] = os.strerror(ctypes.get_errno())
         return None
     buffer = ctypes.create_string_buffer(size.value)
     if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0) != 0:
+        environment_failures[pid] = os.strerror(ctypes.get_errno())
         return None
     raw = buffer.raw[:size.value]
     argc = int.from_bytes(raw[:4], "little")
     parts = [part for part in raw[4:].split(b"\0") if part]
     # parts: executable path, argv[0..argc-1], then environment entries.
     if len(parts) < argc + 1:
+        environment_failures[pid] = "cut short"
         return None
     env = dict(entry.decode(errors="replace").split("=", 1) for entry in parts[argc + 1:] if b"=" in entry)
     return parts[1].decode(errors="replace") if argc else parts[0].decode(errors="replace"), env
@@ -1120,13 +1165,57 @@ def busy_slots(root, config):
     return None if processes is None else set(processes.values())
 
 
-def slot_processes(root, config):
-    """Each running claude process's pid with the slot it reads its login from; None when unknown."""
+# Why slot_processes() last answered None, in words safe for the log.
+listing_problem = ""
+# The first limit suits a calm Mac; under a load of hundreds `ps` needs more.
+PS_LIMITS = (10, 40)
+# Waits before reading an unreadable process again: most are exiting or between fork and exec.
+ENVIRONMENT_RETRIES = (0.2, 1.0)
+
+
+def listed_processes():
+    """`ps` output for this user's processes, or None with listing_problem set."""
+    global listing_problem
+    for limit in PS_LIMITS:
+        try:
+            listing = subprocess.run(["ps", "-o", "pid=,comm=", "-U", keychain_user()], capture_output=True, text=True, timeout=limit)
+        except subprocess.TimeoutExpired:
+            listing_problem = f"ps took over {limit}s"
+            continue
+        except OSError as error:
+            listing_problem = f"ps failed: {error.strerror or 'unknown'}"
+            continue
+        if listing.returncode == 0:
+            return listing.stdout
+        listing_problem = f"ps exit {listing.returncode}"
+    return None
+
+
+def process_state(pid):
+    """What `ps` calls a process: "" when gone. Z is a zombie, and E in the flags means it's exiting."""
     try:
-        listing = subprocess.run(["ps", "-o", "pid=,comm=", "-U", keychain_user()], capture_output=True, text=True, timeout=10)
+        os.kill(pid, 0)
+    except OSError:
+        return ""
+    try:
+        found = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
-        return None
-    if listing.returncode != 0:
+        return "unknown"
+    return found.stdout.strip() if found.returncode == 0 else ""
+
+
+def finished(state):
+    return not state or state.startswith("Z") or "E" in state
+
+
+def slot_processes(root, config):
+    """Each running claude process's pid with the slot it reads its login from; None when unknown,
+    with the reason in listing_problem. One process that stays unreadable could be reading either side
+    of a trade, so it holds up every trade: a process that has finished can't read anything."""
+    global listing_problem
+    listing_problem = ""
+    output = listed_processes()
+    if output is None:
         return None
     # Every profile on disk, not only listed accounts: a removed account's profile may hold a moved login.
     profiles = [p.name for p in (root / "profiles").glob("*") if p.is_dir()]
@@ -1134,18 +1223,24 @@ def slot_processes(root, config):
                 if is_uuid(slot)}
     services[GLOBAL_SERVICE] = "mac"
     busy = {}
-    for line in listing.stdout.splitlines():
+    for line in output.splitlines():
         pid, _, command = line.strip().partition(" ")
         program = Path(command.strip())
-        if program.name != "claude" and program.parent.name != "versions":
+        if not pid.isdigit() or (program.name != "claude" and program.parent.name != "versions"):
             continue
-        found = process_environment(int(pid))
+        pid = int(pid)
+        found = process_environment(pid)
+        for wait in ENVIRONMENT_RETRIES:
+            if found is not None or finished(process_state(pid)):
+                break
+            time.sleep(wait)
+            found = process_environment(pid)
         if found is None:
-            try:
-                os.kill(int(pid), 0)
-            except OSError:
-                continue  # exited meanwhile
-            return None  # running but unreadable: unknown, so nothing is traded
+            state = process_state(pid)
+            if finished(state):
+                continue
+            listing_problem = f"process {pid} ({state}) unreadable: {environment_failures.get(pid, 'unknown')}"
+            return None
         env = found[1]
         # A pool session reaches Anthropic through Side A and reads no login.
         if env.get("SIDE_A_POOL") == "1":
@@ -1333,16 +1428,18 @@ def write_secret(service, blob):
     hexed = json.dumps(blob, separators=(",", ":")).encode().hex()
     command = f'add-generic-password -U -a "{keychain_user()}" -s "{service}" -X "{hexed}" '
     for _ in range(3):
-        if len(command) <= STDIN_LIMIT:
-            result = subprocess.run(["security", "-i"], input=command + "\n", capture_output=True, text=True, timeout=15)
-        else:
-            result = subprocess.run(["security", "add-generic-password", "-U", "-a", keychain_user(), "-s", service, "-X", hexed],
-                                    capture_output=True, text=True, timeout=15)
-        read_secret.cache_clear()
-        if result.returncode == 0 and "error" not in result.stderr.lower() and read_secret(service) == blob:
-            return
+        # A timeout's own text carries the arguments, which here can hold the token: it stops here.
+        with contextlib.suppress(subprocess.TimeoutExpired, KeychainBusy):
+            if len(command) <= STDIN_LIMIT:
+                result = subprocess.run(["security", "-i"], input=command + "\n", capture_output=True, text=True, timeout=15)
+            else:
+                result = subprocess.run(["security", "add-generic-password", "-U", "-a", keychain_user(), "-s", service, "-X", hexed],
+                                        capture_output=True, text=True, timeout=15)
+            read_secret.cache_clear()
+            if result.returncode == 0 and "error" not in result.stderr.lower() and read_secret(service) == blob:
+                return
         time.sleep(0.5)
-    raise ValueError("The renewed login could not be saved. Sign in to this account again.")
+    raise KeychainBusy("The login could not be saved to the Keychain; retrying later.")
 
 
 def renew(root, config, account, due=expired):
@@ -1361,18 +1458,183 @@ def renew(root, config, account, due=expired):
             return
         folder = selector_for(root, account) or str(Path.home() / ".claude")
         with claude_refresh_lock(folder):
-            _renew(root, account, service, due)
+            _renew(root, account, service, due, config)
 
 
-def _renew(root, account, service, due=expired):
+def autopilot_note(root, line):
+    """One line in autopilot.log, in the app's format. Never carries token material."""
+    with contextlib.suppress(OSError):
+        descriptor = os.open(root / "runtime" / "autopilot.log", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(descriptor, "a") as stream:
+            stream.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime())} {line}\n")
+
+
+@contextlib.contextmanager
+def termination_held():
+    """Keeps SIGTERM (the app's watchdog) from ending this process inside the block. A refresh token
+    is spent when the endpoint answers, so dying before the answer is saved loses the login."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    pending = []
+    previous = signal.signal(signal.SIGTERM, lambda *_: pending.append(True))
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        if pending:
+            sys.exit(143)
+
+
+class RenewalRefused(ValueError):
+    """The token endpoint turned a refresh down: its HTTP status and OAuth error code only."""
+
+    def __init__(self, status, code, on_hold):
+        super().__init__(f"Renewing the login was refused (HTTP {status}, {code}); retrying later.")
+        self.status, self.code = status, code
+        # Claude Code's rule: only invalid_grant on 400 or 401 means the token is dead. A 403, or any
+        # other code, can be a block or an outage that passes.
+        self.ended = status in (400, 401) and code == "invalid_grant" and not on_hold
+
+
+def refusal(error):
+    """What a 4xx from the token endpoint said. The body is parsed for its code and nothing else is kept."""
+    try:
+        data = json.loads(error.read() or b"{}")
+    except (ValueError, OSError, AttributeError):
+        data = {}
+    found = data.get("error") if isinstance(data, dict) else None
+    code = found.get("type") if isinstance(found, dict) else found
+    code = code if isinstance(code, str) and re.fullmatch(r"[a-z0-9_]{1,40}", code) else "none"
+    return RenewalRefused(error.code, code, isinstance(data, dict) and bool(data.get("error_uri")))
+
+
+def expiry_of(blob):
+    return ((blob or {}).get("claudeAiOauth") or {}).get("expiresAt") or 0
+
+
+def refresh_of(blob):
+    return ((blob or {}).get("claudeAiOauth") or {}).get("refreshToken") or ""
+
+
+def slot_label(slot):
+    return slot if slot == "mac" else slot[:8]
+
+
+def login_generations(root, config, account, service):
+    """Every other copy of this account's login Side A may spend, newest first: other slots no running
+    session reads, its backup, and a recent trade's saved copies. Each is (source, slot, blob), slot
+    None for a dormant copy. A slot whose owner can't be confirmed is never spent."""
+    processes = slot_processes(root, config)
+    running = None if processes is None else set(processes.values())
+    email = account.get("email", "").casefold()
+    homes = read_json(homes_path(root), {}) or {}
+    profiles = [p.name for p in (root / "profiles").glob("*") if p.is_dir() and is_uuid(p.name)]
+    slots = {"mac", *profiles, *[slot for slot in homes.values() if is_uuid(slot)]}
+    held = {slot: read_secret(slot_service(root, slot)) for slot in slots if slot_service(root, slot) != service}
+    found = []
+    for slot, blob in held.items():
+        if refresh_of(blob) and token_email(root, blob) == email and running is not None and slot not in running:
+            found.append((f"slot {slot_label(slot)}", slot, blob))
+    # Spending a dormant copy of a token some slot still reads would end that slot's copy.
+    live = {refresh_of(blob) for blob in held.values()} - {""}
+    backup = read_secret(backup_service(account))
+    if refresh_of(backup) and refresh_of(backup) not in live and token_email(root, backup) in ("", email):
+        found.append(("backup", None, backup))
+    # A trade's copies hold both accounts' logins, so one with no readable owner may be the other account's.
+    dormant = []
+    for entry in (read_json(watch_path(root), {}) or {}).get("trades", []):
+        dormant += [("trade copy", login) for login in (read_secret(watch_service(entry)) or {}).get("logins", [])]
+    for source, blob in dormant:
+        if refresh_of(blob) and refresh_of(blob) not in live and token_email(root, blob) == email:
+            found.append((source, None, blob))
+    return sorted(found, key=lambda item: expiry_of(item[2]), reverse=True)
+
+
+def session_running(root, config, slot):
+    processes = slot_processes(root, config)
+    return "unknown" if processes is None else "yes" if slot in processes.values() else "no"
+
+
+def _renew(root, account, service, due=expired, config=None):
     # Fresh from the Keychain, not this run's cache: a session may have renewed it meanwhile.
     read_secret.cache_clear()
     blob = read_secret(service)
     if not due(blob):
         return
-    oauth = (blob or {}).get("claudeAiOauth") or {}
-    if not oauth.get("refreshToken"):
-        raise ValueError(f"Sign in to {account['name']} again; its login ended.")
+    config = config or {"accounts": [account]}
+    slot = home_slot(root, account)
+    note = lambda text: autopilot_note(root, f"{account['name']}: renewal {text} slot={slot_label(slot)}")
+    # A save that failed last time left the only live copy in the backup: an older token is not sent.
+    saved = read_secret(backup_service(account))
+    spend = saved if (saved or {}).get("rescued") and expiry_of(saved) > expiry_of(blob) else blob
+    with termination_held():
+        refused = "status=none error=no_refresh_token"
+        if refresh_of(spend):
+            try:
+                save_renewal(account, service, blob, spend, request_renewal(spend, note), note)
+                note(f"ok status=200 {generation_age(spend)}")
+                return
+            except RenewalRefused as error:
+                refused = f"status={error.status} error={error.code}"
+                if not error.ended:
+                    note(f"refused {refused} {generation_age(spend)} session-running={session_running(root, config, slot)}")
+                    raise
+        retry_generation(root, config, account, service, slot, due, blob, spend, refused, note)
+
+
+def generation_age(login):
+    return f"expired={int((time.time() - expiry_of(login) / 1000) // 60)}m"
+
+
+def retry_generation(root, config, account, service, slot, due, blob, spent, refused, note):
+    """The endpoint says `spent` is dead. Before the login counts as ended: a session may have renewed
+    the slot meanwhile, and another copy Side A holds may be newer. An older copy is never sent, since
+    a server that spots a reused token may end the whole login. One retry."""
+    ended = f"Sign in to {account['name']} again; its login ended."
+    read_secret.cache_clear()
+    current = read_secret(service)
+    changed = refresh_of(current) and refresh_of(current) != refresh_of(spent)
+    if changed and not due(current):
+        note(f"recovered by=session after {refused}")
+        return
+    others = login_generations(root, config, account, service)
+    if changed:
+        others.insert(0, ("slot again", None, current))
+    newer = [other for other in others if expiry_of(other[2]) > expiry_of(spent) and refresh_of(other[2]) != refresh_of(spent)]
+    facts = (f"{refused} {generation_age(spent)} session-running={session_running(root, config, slot)} "
+             f"other-generations={len(others)} newer={len(newer)}")
+    if not newer:
+        note(f"ended {facts}")
+        raise ValueError(ended)
+    source, other_slot, login = max(newer, key=lambda other: expiry_of(other[2]))
+    folder = (slot_selector(root, other_slot) or str(Path.home() / ".claude")) if other_slot else None
+    with claude_refresh_lock(folder) if folder else contextlib.nullcontext():
+        if other_slot:
+            # Read before the lock: a session may have started on this slot, or spent this token, since.
+            read_secret.cache_clear()
+            if refresh_of(read_secret(slot_service(root, other_slot))) != refresh_of(login) or session_running(root, config, other_slot) != "no":
+                note(f"retry-skipped from={source} copy-changed {facts}")
+                raise RenewalRefused(0, "copy_changed", False)
+        try:
+            data = request_renewal(login, note)
+        except RenewalRefused as error:
+            note(f"retry-failed from={source} status={error.status} error={error.code} {facts}")
+            if error.ended:
+                raise ValueError(ended) from None
+            raise
+        note(f"recovered by={source} {facts}")
+        save_renewal(account, service, blob, login, data, note)
+        # The copy it came from was spent with this; only a slot no account calls home is cleared.
+        if other_slot and other_slot not in (read_json(homes_path(root), {}) or {}).values():
+            subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", slot_service(root, other_slot)],
+                           capture_output=True, timeout=15)
+            read_secret.cache_clear()
+
+
+def request_renewal(login, note):
+    """One spend of `login`'s refresh token. Raises RenewalRefused on a 400, 401 or 403."""
+    oauth = login["claudeAiOauth"]
     body = {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": CLIENT_ID}
     if oauth.get("scopes"):
         body["scope"] = " ".join(oauth["scopes"])
@@ -1380,17 +1642,37 @@ def _renew(root, account, service, due=expired):
         data = post_json(TOKEN_URL, body)
     except urllib.error.HTTPError as error:
         if error.code in (400, 401, 403):
-            raise ValueError(f"Sign in to {account['name']} again; its login ended.") from None
+            raise refusal(error) from None
+        note(f"failed status={error.code} error=none {generation_age(login)}")
         raise ValueError(f"Renewing the login failed (HTTP {error.code}); retrying later.") from None
+    except OSError as error:
+        # The token may have rotated with its answer lost; a later invalid_grant reads against this line.
+        note(f"unanswered status=none error={type(error).__name__} {generation_age(login)}")
+        raise
     if not data.get("access_token") or not data.get("expires_in"):
         raise ValueError("Renewing the login returned an unexpected answer; retrying later.")
+    return data
+
+
+def save_renewal(account, service, blob, login, data, note):
+    """The answer holds the only live refresh token now, so a failed save tries again, then the backup,
+    where the next renewal finds it."""
+    oauth = dict(login["claudeAiOauth"])
     oauth.update(accessToken=data["access_token"], refreshToken=data.get("refresh_token") or oauth["refreshToken"],
                  expiresAt=int((time.time() + float(data["expires_in"])) * 1000))
     if data.get("refresh_token_expires_in"):
         oauth["refreshTokenExpiresAt"] = int((time.time() + float(data["refresh_token_expires_in"])) * 1000)
-    # Only the Claude login is replaced: MCP logins a session saved meanwhile are kept.
-    read_secret.cache_clear()
-    write_secret(service, {**(read_secret(service) or blob), "claudeAiOauth": oauth})
+    for attempt in range(2):
+        try:
+            # Only the Claude login is replaced: MCP logins a session saved meanwhile are kept.
+            read_secret.cache_clear()
+            write_secret(service, {**(read_secret(service) or blob or {}), "claudeAiOauth": oauth})
+            return
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            time.sleep(1 + attempt)
+    note("save-failed status=200 error=keychain")
+    write_secret(backup_service(account), {"claudeAiOauth": oauth, "rescued": True})
+    raise KeychainBusy("The renewed login is in Side A's backup until the Keychain answers; retrying later.")
 
 
 def token_hash(blob):
@@ -2165,7 +2447,6 @@ def serve_sessions(root, parser):
 def main():
     # The app's watchdog sends SIGTERM; exiting normally runs the finally blocks that release
     # Claude Code's refresh lock, instead of leaving every session on that login waiting a minute.
-    import signal
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     # Own process group, so the app's watchdog can stop any claude or codex child with us.
     try:
@@ -2332,7 +2613,7 @@ def main():
             codex_bridge.refresh_pool_homes(root)
         mac = mac_email(root)
         processes = slot_processes(root, config)
-        print(json.dumps({"healed": healed, "accountID": (repair_selection(root, config) or {}).get("id"),
+        print(json.dumps({"healed": healed, "busyProblem": listing_problem if processes is None else None, "accountID": (repair_selection(root, config) or {}).get("id"),
                           "email": "" if account_for_email(config, mac) else mac,
                           "codexAccountID": (codex_bridge.global_account(config) or {}).get("id"),
                           "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),

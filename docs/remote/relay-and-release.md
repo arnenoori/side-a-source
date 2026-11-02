@@ -3,8 +3,7 @@
 How Side A Remote gets notifications to the phone without the Mac holding Apple's push key, and how
 the iOS app ships. Read [remote.md](../remote.md) first (Push, Decisions #1).
 
-Status: spec, October 2026. Nothing here is built yet. Milestone M2 builds the relay and the
-encryption; M4 ships the app and the site section.
+Status: built and shipping (Side A 0.5.44). Written as the plan in October 2026; where this differs from the code, the code wins.
 
 Facts checked on 17 October 2026 are marked as such. Everything else is a decision.
 
@@ -564,11 +563,10 @@ checks for push-to-start.
   Live Activities Info.plist keys and token-based APNs auth.
 - Info.plist: `NSFaceIDUsageDescription` (Allow on destructive requests), `NSCameraUsageDescription`
   (scan the pairing QR code, take a photo for a prompt), `NSSupportsLiveActivities`,
-  `NSSupportsLiveActivitiesFrequentUpdates`, `ITSAppUsesNonExemptEncryption` (see Open questions).
-  `NSLocalNetworkUsageDescription` and `NSBonjourServices` arrive with Wi-Fi pairing (setup),
-  whenever that ships.
-- Associated Domains `applinks:getsidea.com`: the pairing QR code (format v2) is a universal link
-  to `getsidea.com/pair#…` (Site).
+  `NSSupportsLiveActivitiesFrequentUpdates`, `ITSAppUsesNonExemptEncryption` (see Open questions),
+  `NSLocalNetworkUsageDescription` (Wi-Fi addresses come from the QR code; there's no Bonjour).
+- Associated Domains `applinks:getsidea.com`: the app takes `getsidea.com/pair#…` (Site), but the
+  Mac's QR code (format v2) is still `sidea-remote://pair#…`.
 - Info.plist `SideAPushEnvironment` per configuration (Sandbox and production).
 
 ### App Review
@@ -745,8 +743,9 @@ minutes, a JWT signature), and about one row write (the `state` row).
    within Apple's intended use and limits? If yes, it simplifies the phone path.
 4. **Category in the clear.** Encrypting the category too (the extension sets it) hides the kind
    of event from the relay, at the cost of no action buttons when decryption fails. Worth it?
-5. ~~Universal-link pairing.~~ Decided: QR format v2 is a universal link (protocol, Pairing),
-   with `sidea-remote://` until the site serves the association file.
+5. **Universal-link pairing.** The site serves the association file and the app takes the link;
+   the Mac still shows `sidea-remote://`, so scanning before installing does nothing. Switch when
+   a phone has confirmed the link opens the app.
 6. **Privacy label edge.** Whether relayed Live Activity counts count as "collected" under Apple's
    definition (transient, not stored). The draft says no; a reviewer could disagree.
 7. **Contact address.** `privacy@getsidea.com` doesn't exist yet; Cloudflare Email Routing to the

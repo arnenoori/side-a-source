@@ -3,7 +3,7 @@
 A native iOS companion for Side A: see, answer and start Claude Code and Codex sessions on the
 always-on Mac from a phone, whichever account each session is running under.
 
-Status: planning, October 2026. Nothing here is built yet. The specs under
+Status: built and shipping (Side A 0.5.44). Written as the plan in October 2026; where this differs from the code, the code wins. The specs under
 [`remote/`](remote/) fill this in: [protocol](remote/protocol.md) (every wire shape; it wins over
 this file), [mac-server](remote/mac-server.md), [bridge](remote/bridge.md),
 [hosting](remote/hosting.md), [ios-app](remote/ios-app.md),
@@ -110,7 +110,7 @@ sequence number.
   defends against other tailnet and LAN devices, browsers and DNS rebinding, a replacement
   listener, a lost phone that was never paired (or was revoked), and an agent that reads the
   screen during pairing. Details in [mac-server](remote/mac-server.md#threat-model).
-- **Pairing:** Settings > Remote shows a QR code (a universal link with the address, the key hash,
+- **Pairing:** Settings > Remote shows a QR code (a `sidea-remote://pair#…` link with the address, the key hash,
   the Mac's name and an 8-character one-time code). The phone posts the code; both devices then
   show the same six-digit comparison code derived from the key exchange, and the Mac's
   confirmation names that exact attempt. Only after Pair does the phone get its token. The phone

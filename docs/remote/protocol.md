@@ -583,6 +583,13 @@ differ. Every cell is a `ReplyResult.delivery` or an error.
   hook that waits, which only Claude's does. The queue survives a relaunch. If the session ends or
   its turn ends with a hook that can't wait, the text is lost: `finished.resolve` with reason
   `queueDropped`, and a `health` push quoting it. An older phone only drops the session's finished row.
+  With capability `replies.dropped`, `StateSnapshot.droppedReplies` keeps each such reply for 3 days
+  (at most 20, on disk, across relaunches): `{id, sessionID, text?, at, device?, reason}`. `text` and
+  `device` go only to the device that sent the reply, which takes the text back into the field once,
+  by `id`, Queued turn or not. Other devices get `{id, sessionID, at, reason}` and do nothing. Reason
+  `oldQueue` (an old queue file) has neither, for anyone: a phone gives back its own Queued turns in
+  that session from before `at`. Hearing
+  `finished.resolve` with `queueDropped`, a phone fetches `GET /v1/state` to learn which reply it was.
 - `.followUp` and `.queued`-then-delivered both need `turnID` when the session is finished
   (missing: 422 `invalid_reply`; stale: 409 `turn_changed`).
 - `keys` delivery is `ReplyResult.delivery = .typed`.
@@ -921,7 +928,7 @@ public struct NotificationPrefs: Codable, Hashable, Sendable {
 
 1. The Mac's pairing sheet makes a code and shows a QR code (format v2):
    `https://getsidea.com/pair#v=2&a=<tailnet address:port>[&l=<LAN address:port>[,<LAN address:port>…]]&fp=<base64url SHA-256 of the SPKI>&n=<Mac name>&m=<MacInfo.id>&t=<tailnet name>&c=<code>`
-   (until the site serves the universal link, the same fragment under `sidea-remote://pair#…`).
+   (today the Mac shows the same fragment under `sidea-remote://pair#…`; phones take both).
    `l` lists every LAN address, comma-separated, best first. With no Tailscale on the Mac, `a` is
    the best LAN address. A code whose `i`, `r` and `p` name the relay (see tunnel.md) may leave out
    `a` and `l`; `fp` is still required, and the relay origin must pass `RelayRoute.allowed`.
@@ -1059,7 +1066,7 @@ routes and the hosting endpoints return it too.
 | Status | Codes |
 |---|---|
 | 400 | `bad_request`, `bad_json`, `missing_idempotency_key` |
-| 401 | `unauthorized` (missing, unknown or revoked token), `bad_code` (pairing), `confirm_required` and `confirm_invalid` (`details.level`: `unlock`, `biometric`; `details.hint`: `pairAgain` when the device has no confirm keys) |
+| 401 | `unauthorized` (missing, unknown or revoked token), `bad_code` (pairing), `confirm_required` and `confirm_invalid` (`details.level`: `unlock`, `biometric`; `details.hint`: `pairAgain` when the device has no confirm keys; `details.reason`: `invalid`, `replayed` or `malformed`. Replay is keyed on the signed message and the signature's `r`, so a fresh signature in the same second is accepted and a copy, even a malleated one, is not) |
 | 403 | `declined` (pairing cancelled on the Mac), `sas_mismatch` (Codes Don't Match), `forbidden_origin` |
 | 404 | `not_found`, `session_not_found`, `request_not_found`, `image_not_found`, `port_not_found`, `no_pairing` (no pairing sheet open) |
 | 408 | `confirm_timeout` (nobody clicked Pair within 60 s) |

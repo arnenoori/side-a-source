@@ -30,18 +30,22 @@ final class Rig: @unchecked Sendable {
     init(tuning: TunnelMux.Tuning = TunnelMux.Tuning(), echo: Bool = true) throws {
         front = try NWListener(using: .tcp, on: .any)
         target = try NWListener(using: .tcp, on: .any)
-        phone = TunnelMux(queue: queue, tuning: tuning) { [unowned self] frame in
+        // Weak: both listeners and a mux's frames can still fire after a test lets go of its rig.
+        phone = TunnelMux(queue: queue, tuning: tuning) { [weak self] frame in
+            guard let self else { return }
             frames += 1
             let wire = frame.encoded
             queue.async { self.toMac(TunnelFrame(wire)!) }
         }
-        mac = TunnelMux(queue: queue, tuning: tuning) { [unowned self] frame in
+        mac = TunnelMux(queue: queue, tuning: tuning) { [weak self] frame in
+            guard let self else { return }
             frames += 1
             let wire = frame.encoded
             queue.async { self.phone.received(TunnelFrame(wire)!) }
         }
-        mac.ended = { [unowned self] id in macEnded.append(id) }
-        front.newConnectionHandler = { [unowned self] connection in
+        mac.ended = { [weak self] id in self?.macEnded.append(id) }
+        front.newConnectionHandler = { [weak self] connection in
+            guard let self else { return connection.cancel() }
             let id = next; next += 1
             toMac(TunnelFrame(.open, id))
             phone.attach(id, connection)
@@ -218,4 +222,14 @@ final class Box<T>: @unchecked Sendable {
     let frames = queue.sync { sent.value }
     #expect(frames == [TunnelFrame(.fin, 5)])
     target.cancel()
+}
+
+/// A stream's end or a late connection can reach the rig's closures after its test has let go of it.
+@Test func aRigItsTestLetGoOfIgnoresWhatStillArrives() throws {
+    var rig: Rig? = try Rig()
+    weak let gone = rig
+    let ended = try #require(rig?.mac.ended)
+    rig = nil
+    #expect(gone == nil)
+    ended(1)
 }

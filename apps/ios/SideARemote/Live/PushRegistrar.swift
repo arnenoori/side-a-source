@@ -13,6 +13,8 @@ import UserNotifications
 /// straight to the relay, so pushes follow it while the Mac is out of reach.
 @MainActor
 final class PushRegistrar {
+    nonisolated deinit {}
+
     static let shared = PushRegistrar()
 
     private let defaults = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard

@@ -9,6 +9,8 @@ import SideARemoteShared
 /// only when accounts change.
 @Observable
 final class AppModel {
+    nonisolated deinit {}
+
     let mac: MacConnection
     let sessions: SessionsStore
     let requests: RequestsStore
@@ -127,6 +129,8 @@ final class AppModel {
 /// One paired Mac. With one Mac, the Mac never appears as a header anywhere.
 @Observable
 final class MacConnection: Identifiable {
+    nonisolated deinit {}
+
     enum Offline: Equatable {
         case tailscaleOff, macUnreachable, macAsleep, relayRefused, revoked, keyChanged, incompatible(installed: String?), appOutdated
 

@@ -11,6 +11,8 @@ import UIKit
 /// its key, show the comparison code while the user clicks Pair on the Mac, then keep the token.
 @Observable
 final class PairingRun {
+    nonisolated deinit {}
+
     enum Step: Int, CaseIterable {
         case reaching, key, code, done
     }

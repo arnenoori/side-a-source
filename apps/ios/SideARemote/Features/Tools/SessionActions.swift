@@ -7,6 +7,8 @@ import SwiftUI
 /// so every entry point behaves the same.
 @Observable
 final class SessionActions {
+    nonisolated deinit {}
+
     struct Port: Identifiable, Hashable {
         let session: SessionKey
         let port: Int

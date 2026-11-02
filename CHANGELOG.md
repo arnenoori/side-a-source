@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+## 0.5.45 — 2026-11-01
+
+Logins are harder to lose, and "sign in again" now means it. A Keychain that doesn't answer no longer reads as an empty slot, which could put an old backup over a live login or say a login ended without asking Anthropic. A renewed login survives a slow Keychain and Side A being stopped midway. Only Anthropic saying `invalid_grant` ends a login, and first Side A looks for a newer copy it holds and tries that once; a 403 or anything else is retried later. When an account is full and the only free one needs a sign-in, one notification says so, with a Sign In button. `autopilot.log` records each renewal's status, error code, slot, age and whether a session was running, never a token. Autopilot no longer stops over a session that is exiting, reads a slow process list twice, and logs why when it still can't tell which logins are in use. Time limits for Side A's helper stretch when the Mac is under heavy load.
+
+Side A Remote no longer loses keys typed as a terminal opens. A phone that reconnected and sent straight away could have its keys acknowledged and then thrown away by tmux as it started; they now wait until tmux is ready. A second request signed in the same second no longer fails as a replay.
+
+A reply Queued on the Mac that can't be sent now comes back to the phone that sent it, even if the Mac or the phone relaunched or the phone was away when it happened. A queue file from an older Side A is no longer deleted quietly: the Mac says what wasn't sent and keeps the file. Two lost replies for one session both come back.
+
+The Mac now notifies you when a paired iPhone's notification address changes, with Remove Device right on the notification, since that's what a stolen token could change without Face ID.
+
+A phone still paired under an id its Mac no longer answers to, such as an old Side A Dev pairing, now offers Pair Again instead of failing every signed action, and pairing again removes the old record. Pooled requests no longer fail with a 502 when the server has just closed the connection they were about to reuse.
+
+Side A Remote no longer risks an abort on iOS 26 when an object it holds is released; it was seen in tests and not on a phone. Reviewing this release also tightened a few things. A retry can only install a login known to belong to that account, and a token is read again under the lock so it is never spent twice. Undelivered words go only to the phone that sent them, and leave the Mac after three days or when you remove Side A. The pool resends only model requests after a lost connection, since a resend can bill twice.
+
 ## 0.5.44 — 2026-11-01
 
 Settings now follow your data instead of the copy of Side A you changed them in, so every copy on a Mac shows the same Dynamic Island, keep awake, sound, banner, player and terminal choices. Sync with your other Macs carries them too, and the newest change to each setting wins. A setting that arrives works as if you had flipped its toggle, so turning on the island installs its Claude Code hooks. Remote and lid-closed keep awake stay per Mac.

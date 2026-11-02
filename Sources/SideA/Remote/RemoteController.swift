@@ -631,7 +631,7 @@ final class RemoteController {
     static let capabilities: Set<Capability> = [.confirmSigned, .confirmActions, .events, .answersQuestions, .answersPlans, .answersMode, .replyFollowUp, .replyNote, .interrupt, .images, .diffs,
                                                 .uploads, .setup, .options, .push, .transcriptStream, .ports, .interruptNextStep,
                                                 .quit, .mac, .history, .search, .cleanup, .incidents, .autopilot, .autopilotToggle, .autopilotAnswers,
-                                                .accountsUse, .worth, .rotation]
+                                                .accountsUse, .worth, .rotation, .repliesDropped]
 
     /// Remembers what a phone's `hello` said it can show; the keychain is written only when that changes.
     func noteCapabilities(_ device: String, _ capabilities: Set<Capability>) {

@@ -8,7 +8,7 @@ types in [protocol](protocol.md), push and the site's download section in
 [relay-and-release](relay-and-release.md). Where this file changes one of them, the change is
 listed under [Changes to other specs](#changes-to-other-specs).
 
-Status: spec, October 2026. Nothing here is built yet. Copy follows [design](../design.md): one
+Status: built and shipping (Side A 0.5.44). Written as the plan in October 2026; where this differs from the code, the code wins. Copy follows [design](../design.md): one
 fact per line, plain words, real states only, no exclamation marks, no promotion.
 
 **Transport assumed here** (from the security review, superseding Tailscale Serve in the plan and
@@ -29,9 +29,10 @@ carried only in the QR code; pairing is QR-only. No MagicDNS, HTTPS certificates
   its tailnet; the phone can check almost nothing (iOS can't see Tailscale's state). So the Mac
   carries the checklist, and the phone's job is to reach the Mac's QR code and then explain
   failures in terms of what to fix on which device.
-- **One QR code does two jobs.** The pairing code is a universal link. Scanned with the Camera
-  before the app is installed, it opens the site's install page; scanned after, it pairs. A
-  person who starts at the Mac never has to search the App Store.
+- **The QR code pairs; it doesn't install.** The Mac shows `sidea-remote://pair#…`, which needs the
+  app. The app and `site/public/.well-known/apple-app-site-association` also take
+  `https://getsidea.com/pair#…`, but the Mac doesn't show that form yet, so a Camera scan before
+  the app is installed goes nowhere.
 - **Check, don't ask.** Every checklist row is a live check that re-runs on its own (tab opened,
   every 30 s while open, on wake, when Side A becomes active, as `DependencyStatusView` already
   does). Nobody ticks a box.
@@ -243,12 +244,11 @@ end of every Codex turn, so one finished turn after `/hooks` proves trust. Rewri
 
 The sheet from mac-server, with the transport above:
 
-- **QR code** (universal link, everything in the fragment): tailnet address and port, LAN
+- **QR code** (`sidea-remote://pair#…`, everything in the fragment): tailnet address and port, LAN
   address when row 9 is on, the key's SPKI SHA-256 (`fp`), Mac name, Mac id, tailnet name and the
   8-character code. See [Endpoints](#endpoints-and-fields-this-needs). The sheet shows no code
   or address to type: pairing is QR-only.
-- Instruction: "Scan with the iPhone camera. If Side A Remote isn't installed yet, the camera
-  opens the download page."
+- Instruction: scan it from Side A Remote, or with the iPhone camera once the app is installed.
 - **Confirm, with the SAS.** After a right code, both devices derive the same 6 digits from both
   public keys, the pairing nonce and the code (protocol, Pairing) and show them:
 
@@ -563,7 +563,7 @@ Content, in order:
 
 ### `/pair`
 
-The universal link target: `site/pair/index.html`. It must never see the pairing code or key:
+The target of the `https://getsidea.com/pair#…` form, which the Mac doesn't show yet: `site/pair/index.html`. It must never see the pairing code or key:
 
 - Everything is in the fragment, which browsers never send, but page scripts can read it. This
   page loads **no analytics** and no script that reads `location`, so nothing records it. A test
@@ -751,7 +751,7 @@ certificate, two ports and `/v1/ws` on 443):
 | Tour step for existing users | `TourStep.remote`, anchored on the gear button; `tourSeenRemote` | `GuidedTour.swift`, `MenuPlayer.swift` |
 | Phone name | the user-assigned device name entitlement, so `DeviceInfo.name` is the real name | ios-app (capabilities) |
 | Detecting Tailscale on the phone | `tailscale` in `LSApplicationQueriesSchemes`; confirm the Tailscale iOS app registers that scheme | ios-app (4.1) |
-| Local network | `NSLocalNetworkUsageDescription` and `NSBonjourServices` move from M4 to whenever Wi-Fi pairing ships | ios-app, relay-and-release (Bundle ids) |
+| Local network | `NSLocalNetworkUsageDescription` only: Wi-Fi addresses come from the QR code. There's no Bonjour on either side, and no `NSBonjourServices` | ios-app, relay-and-release (Bundle ids) |
 
 Inconsistencies found while writing this, to settle in the owning spec:
 

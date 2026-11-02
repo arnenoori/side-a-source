@@ -36,6 +36,7 @@ final class LiveLink {
     /// Replies from the tap until they settle, by outbox item, and in the outbox's file beside the item.
     @ObservationIgnored private var flights: [String: ReplyFlight] = [:]
     @ObservationIgnored private var seenQueueDrops: [SessionKey: Int] = [:]
+    @ObservationIgnored private var dropsRefresh: Task<Void, Never>?
     private let outbox: Outbox
     /// Flight writes, in order.
     @ObservationIgnored private var flightWrites: Task<Void, Never>?
@@ -182,9 +183,14 @@ final class LiveLink {
     func track(_ state: RemoteState) {
         for (session, drops) in state.queueDrops where drops != seenQueueDrops[session] {
             seenQueueDrops[session] = drops
-            model?.transcripts.failQueued(in: session, reason: "This session ended before it could be sent.")
+            if state.hello?.capabilities.contains(.repliesDropped) == true {
+                refreshDrops()
+            } else {
+                model?.transcripts.failQueued(in: session, reason: DroppedReply.Reason.sessionEnded.unsentReason)
+            }
         }
         guard let transcripts = model?.transcripts else { return }
+        settleDropped(state.droppedReplies, in: transcripts)
         for (id, entry) in sent {
             if case .sending(let item, _) = entry.attempt, case .failed(let error)? = state.outcomes[item] { model?.tools.noteRefusal(error) }
             let (delivery, next) = entry.attempt.advanced(in: state, request: id)
@@ -196,6 +202,26 @@ final class LiveLink {
             if let next { sent[id]?.attempt = next } else { sent[id] = nil }
         }
         trackSteering(state)
+    }
+
+    /// A live drop says only which session: the snapshot says which reply, so a phone that heard it and one that was away
+    /// settle it the same way, once. The next snapshot covers a refresh that never gets through.
+    private func refreshDrops() {
+        guard dropsRefresh == nil else { return }
+        dropsRefresh = Task { [engine] in
+            for attempt in 0..<3 {
+                if attempt > 0 { try? await Task.sleep(for: .seconds(5)) }
+                if (try? await engine.refresh()) != nil { break }
+            }
+            dropsRefresh = nil
+        }
+    }
+
+    private func settleDropped(_ dropped: [DroppedReply], in transcripts: TranscriptStore) {
+        let key = "settledDrops." + mac.endpoint.macID
+        let settled = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        let now = transcripts.settle(dropped, device: mac.deviceID, settled: settled)
+        if now != settled { UserDefaults.standard.set(Array(now), forKey: key) }
     }
 
     /// `resending` is what an earlier attempt took from the tray, in place of what's there now.
@@ -237,6 +263,7 @@ final class LiveLink {
     /// The reply's signature, by what the session's mode asks of it here (the Mac decides again from its own), or by
     /// `level` when the Mac has said. Asked for means no send without it; a Mac without `confirmActions` asks for nothing.
     private func signature(_ body: RemoteReply, session: SessionKey, level: ConfirmLevel? = nil) async -> ReplySignature {
+        if model?.tools.needsKeys == true { return .notRequired }
         let signs = state.hello?.capabilities.contains(.confirmActions) == true
         let required = level ?? (signs ? ConfirmPolicy.reply(body, sessionMode: state.sessions[session]?.settings?.mode) : nil)
         guard let subject = try? ConfirmMessage.subject(action: .reply, target: session, body: body) else {
@@ -295,6 +322,7 @@ final class LiveLink {
 
     /// Once more, signed as the Mac asked; cancelled, nothing goes and the reply waits for Retry at that level.
     private func resign(_ item: String, _ flight: ReplyFlight, level: ConfirmLevel, refused: APIError) {
+        if model?.tools.needsKeys == true { return settleUnsent(item, reason: "Pair this iPhone again to do this from it.") }
         var waiting = flight
         waiting.phase = .resigning
         waiting.needs = level

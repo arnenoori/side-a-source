@@ -45,6 +45,8 @@ public struct RemoteState: Sendable, Equatable {
     public var finished: [SessionKey: FinishedSession] = [:]
     /// How many times the Mac gave up on each session's queued follow-ups.
     public var queueDrops: [SessionKey: Int] = [:]
+    /// From the snapshot: what the Mac still remembers giving up on. Announced live by `queueDrops`.
+    public var droppedReplies: [DroppedReply] = []
     /// Open only, less those with an answer pending in the outbox.
     public var requests: [RequestID: RemoteRequest] = [:]
     /// The last 50, for "Answered on Mac".
@@ -638,6 +640,7 @@ public actor SyncEngine {
         stored.mac = snapshot.mac
         stored.incidents = snapshot.incidents ?? []
         stored.autopilot = snapshot.autopilot
+        stored.droppedReplies = snapshot.droppedReplies ?? []
     }
 
     private func apply(_ event: ServerEvent) {

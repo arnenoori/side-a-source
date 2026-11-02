@@ -7,6 +7,8 @@ import SwiftUI
 /// single question answers on the tap.
 @Observable
 final class NotificationCardModel {
+    nonisolated deinit {}
+
     enum Sending: Equatable { case idle, sending, sent, answeredElsewhere, queued(String), failed(String) }
 
     let category: String

@@ -7,6 +7,8 @@ import UserNotifications
 /// Notification actions from a banner or the Lock Screen (section 5.1): an answer goes through the
 /// shared outbox, Open goes to the request or session by its deep link.
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    nonisolated deinit {}
+
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         Diagnostics.start()
         Diagnostics.watchNetwork()

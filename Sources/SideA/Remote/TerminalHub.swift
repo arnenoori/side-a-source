@@ -25,6 +25,8 @@ final class TerminalHub: @unchecked Sendable {
     private var evaluating: Set<String> = []
     private var again: Set<String> = []
     private var timer: DispatchSourceTimer?
+    /// Tests stand in a slower start for the tmux client.
+    var launch: (@Sendable (TerminalViewer.Command) -> TerminalViewer.Command)?
 
     init(queue: DispatchQueue, epoch: String, hosted: @escaping @MainActor () -> HostedSessions?) {
         self.queue = queue; self.epoch = epoch; self.hosted = hosted
@@ -46,9 +48,9 @@ final class TerminalHub: @unchecked Sendable {
             if !viewers.values.contains(where: { $0.name == name }) { endings[name] = nil }
             evaluate(name)
         }
-        let hosted = hosted
+        let hosted = hosted, launch = launch
         Task { @MainActor in
-            let command = hosted()?.viewer(name)
+            let command = hosted()?.viewer(name).map { launch?($0) ?? $0 }
             self.queue.async { command.map { viewer.resolved($0) } ?? peer.close(4404, "no such session") }
         }
         let others = viewers.values.filter { $0.name == name && $0 !== viewer }.sorted { $0.opened < $1.opened }
@@ -147,6 +149,8 @@ final class TerminalHub: @unchecked Sendable {
 
 /// One phone's terminal view: its socket, its tmux client and the client's PTY.
 final class TerminalViewer: @unchecked Sendable {
+    typealias Command = (path: String, args: [String], environment: [String: String])
+
     /// Output is held while this much waits on the socket, below the socket's own 1 MiB limit.
     static let pauseAt = 768 * 1024
     static let coalesce: DispatchTimeInterval = .milliseconds(4)
@@ -169,7 +173,7 @@ final class TerminalViewer: @unchecked Sendable {
     /// The next frame is partly in the PTY.
     private(set) var partial = false
     private var input = RemoteTerminal.Input()
-    private var command: (path: String, args: [String], environment: [String: String])?
+    private var command: Command?
     private var early: [WebSocketCodec.Message] = []
     private var helloed = false
     private var ready = false
@@ -187,8 +191,14 @@ final class TerminalViewer: @unchecked Sendable {
     private var acked: UInt32 = 0
     private var queries = RemoteTerminal.Queries()
     private var queriesUntil = Date.distantFuture
-    /// Frames not yet in the PTY, in order. Nil bytes is a refused frame, acked with `too_large` when reached.
-    private var outbox: [(seq: UInt32, bytes: Data?)] = []
+    /// What waits to go into the PTY, in order. Nil bytes is a refused frame, acked with `too_large` when reached; nil seq
+    /// is a reply to one of tmux's startup queries.
+    private var outbox: [(seq: UInt32?, bytes: Data?)] = []
+    /// The first of `outbox` is partly in the PTY, so nothing may go ahead of it.
+    private var midWrite = false
+    /// tmux flushes its terminal's input when it takes the terminal over, and only writes after. Bytes in the PTY before
+    /// the client's first output would be acked and lost.
+    private var clientUp = false
     private var stopped = false
 
     init(peer: WebSocketPeer, name: String, hub: TerminalHub) {
@@ -198,7 +208,7 @@ final class TerminalViewer: @unchecked Sendable {
 
     // MARK: Socket
 
-    func resolved(_ command: (path: String, args: [String], environment: [String: String])) {
+    func resolved(_ command: Command) {
         self.command = command
         startIfReady()
     }
@@ -266,7 +276,7 @@ final class TerminalViewer: @unchecked Sendable {
         hub.evaluate(name)
     }
 
-    private func spawn(_ command: (path: String, args: [String], environment: [String: String])) -> Bool {
+    private func spawn(_ command: Command) -> Bool {
         let argv = command.args.map { strdup($0) } + [nil]
         let envp = command.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         defer { (argv + envp).forEach { free($0) } }
@@ -298,16 +308,17 @@ final class TerminalViewer: @unchecked Sendable {
             // EOF or EIO: the client exited and the PTY's other end closed.
             reader?.cancel(); reader = nil
             master = -1
-            outbox.removeAll()
+            dropOutbox()
             flush()
             hub?.clientGone(self)
             return
         }
+        clientUp = true
         var bytes = Data(chunk[..<count])
         if Date() < queriesUntil {
             let filtered = queries.filter(bytes)
             bytes = filtered.forward
-            if !filtered.replies.isEmpty { _ = filtered.replies.withUnsafeBytes { Darwin.write(master, $0.baseAddress, $0.count) } }
+            if !filtered.replies.isEmpty { outbox.insert((nil, filtered.replies), at: midWrite ? 1 : 0) }
         } else if queriesUntil != .distantPast {
             queriesUntil = .distantPast
             bytes = queries.flush() + bytes
@@ -318,6 +329,7 @@ final class TerminalViewer: @unchecked Sendable {
             flushing = work
             queue.asyncAfter(deadline: .now() + Self.coalesce, execute: work)
         }
+        if !outbox.isEmpty { pump() }
     }
 
     private func flush() {
@@ -357,28 +369,40 @@ final class TerminalViewer: @unchecked Sendable {
 
     /// Writes queued frames in order, each in one write when the PTY takes it, waiting for room when it doesn't.
     private func pump() {
-        guard master >= 0 else { return outbox.removeAll() }
+        guard master >= 0 else { return dropOutbox() }
+        guard clientUp else { return }
         while let first = outbox.first {
             guard let bytes = first.bytes else {
                 outbox.removeFirst()
-                written = first.seq
-                acked = first.seq
-                send(.ack(seq: first.seq, error: "too_large"))
+                if let seq = first.seq {
+                    written = seq
+                    acked = seq
+                    send(.ack(seq: seq, error: "too_large"))
+                }
                 continue
             }
             let count = bytes.withUnsafeBytes { Darwin.write(master, $0.baseAddress, $0.count) }
             if count < 0, errno == EAGAIN || errno == EINTR { return wait() }
-            guard count >= 0 else { outbox.removeAll(); return }
+            guard count >= 0 else { return dropOutbox() }
             if count < bytes.count {
                 outbox[0].bytes = bytes.dropFirst(count)
-                partial = partial || count > 0
+                midWrite = midWrite || count > 0
+                if first.seq != nil { partial = partial || count > 0 }
                 return wait()
             }
             outbox.removeFirst()
-            partial = false
-            written = first.seq
+            midWrite = false
+            if let seq = first.seq {
+                partial = false
+                written = seq
+            }
         }
-        ack(force: true)
+        if written > acked { ack(force: true) }
+    }
+
+    private func dropOutbox() {
+        outbox.removeAll()
+        midWrite = false
     }
 
     private func wait() {

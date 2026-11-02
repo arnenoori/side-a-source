@@ -113,3 +113,21 @@ private func object(_ value: some Encodable) throws -> [String: Any] {
     #expect(throws: (any Error).self) { try PushEnvelope.open(sealed, with: key, category: .limit, collapseID: "rotation", deviceID: "d") }
     #expect(try object(NotificationPrefs(rotation: true))["rotation"] as? Bool == true)
 }
+
+@Test func aSnapshotCarriesDroppedRepliesOnlyWhenThereAreAny() throws {
+    let none = try JSONEncoder().encode(StateSnapshot(seq: 1, epoch: "e"))
+    #expect(!String(decoding: none, as: UTF8.self).contains("droppedReplies"))
+    let old = try JSONDecoder().decode(StateSnapshot.self, from: Data(#"{"seq":1,"epoch":"e","sessions":[],"finished":[],"requests":[],"hosted":[],"accounts":[]}"#.utf8))
+    #expect(old.droppedReplies == nil)
+    let reply = DroppedReply(id: "r", sessionID: "s", text: "t", at: 5, device: nil, reason: DroppedReply.Reason(rawValue: "later"))
+    let back = try JSONDecoder().decode(StateSnapshot.self, from: JSONEncoder().encode(StateSnapshot(seq: 1, epoch: "e", droppedReplies: [reply])))
+    #expect(back.droppedReplies == [reply])
+}
+
+@Test func aDroppedReplysWordsGoOnlyToTheDeviceThatSentIt() {
+    let reply = DroppedReply(id: "r", sessionID: "s", text: "secret", at: 5, device: "d1", reason: .sessionEnded)
+    let snapshot = StateSnapshot(seq: 1, epoch: "e", droppedReplies: [reply])
+    #expect(snapshot.scoped(to: "d1").droppedReplies == [reply])
+    let other = snapshot.scoped(to: "d2").droppedReplies?.first
+    #expect(other?.text == nil && other?.device == nil && other?.id == "r" && other?.sessionID == "s" && other?.reason == .sessionEnded)
+}

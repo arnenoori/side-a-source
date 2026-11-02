@@ -7,6 +7,8 @@ import UserNotifications
 /// relevance from the Mac, and `REQUEST` loosened to `REQUEST_SAFE` only when the authenticated payload
 /// says the Lock Screen may allow it. No networking: everything shown is in the payload.
 final class NotificationService: UNNotificationServiceExtension {
+    nonisolated deinit {}
+
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttempt: UNMutableNotificationContent?
 

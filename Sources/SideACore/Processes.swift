@@ -20,3 +20,17 @@ public enum ProcessCheck {
         return abs(now.rounded(.down) - started) <= 1
     }
 }
+
+/// How long a bridge run may take. A process can spend most of its time waiting for a CPU, so a limit
+/// that suits a calm Mac stretches with the load instead of reading as a failure.
+public enum BridgeDeadline {
+    public static func seconds(_ base: Double, load: Double, cores: Int) -> Double {
+        base * min(4, max(1, load / Double(max(cores, 1))))
+    }
+
+    public static func current(_ base: Double) -> Double {
+        var load = [0.0]
+        guard getloadavg(&load, 1) == 1 else { return base }
+        return seconds(base, load: load[0], cores: sysconf(_SC_NPROCESSORS_ONLN))
+    }
+}

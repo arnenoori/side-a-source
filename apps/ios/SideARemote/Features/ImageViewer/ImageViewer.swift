@@ -230,6 +230,8 @@ private struct ZoomableImage: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
+        nonisolated deinit {}
+
         var imageView: UIImageView?
         var onTap: () -> Void
 

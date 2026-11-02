@@ -1700,7 +1700,7 @@ light and dark, at default and AX3 text sizes, compared against the references, 
 ### M4 · Codex and offline
 
 1. Codex everywhere: glyphs, Codex `FileChange` diffs, Codex hook trust row, Codex models in chips.
-2. LAN mode: Bonjour discovery in onboarding ("Pair over Wi-Fi"), the same pinned key as over
+2. LAN mode, with Wi-Fi addresses from the QR code rather than Bonjour ("Pair over Wi-Fi"), the same pinned key as over
    Tailscale, the Mac chip showing "Wi-Fi" vs "Tailscale".
 3. Remote approvals log (Settings › Macs › Mac › "Answered from this iPhone").
 4. Autopilot, worth, incidents and Clean Up (protocol's M4 rows).

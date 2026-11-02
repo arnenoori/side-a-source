@@ -65,7 +65,13 @@ quiet for five minutes, because the move costs them their prompt cache.
   the stored login inside the lock (if a session renewed it first, that one is used), sends the
   same request to the same endpoint with Claude Code's client id, and saves the result the way
   Claude Code does. Only the Claude login is replaced; MCP logins in the same item are kept. A
-  refresh token is never spent twice.
+  refresh token is never spent twice. Side A holds off being stopped from the request until the
+  answer is saved; if the Keychain refuses the save, the renewed login waits in the login backup
+  and the next renewal spends it. On `invalid_grant`, Side A re-reads the item and retries once
+  with a strictly newer copy of the same account's login that it holds: another item with a
+  confirmed owner and no running session, the backup, or a trade's saved copy. An older copy is
+  never sent. `autopilot.log` gets each outcome's HTTP status, OAuth error code, slot, age and
+  whether a session was running, never a token or the response's other words.
 - **Live limits.** Side A wraps the Claude Code statusline command. The wrapper saves the
   statusline input (limits, model, working folder, context and cost) to `~/Library/Application Support/SideA/runtime/live`,
   one file per account and one per session,

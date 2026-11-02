@@ -162,6 +162,11 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
 
     static let answerable = "answerable-request"
     static let openOnly = "open-request"
+    static let signInCategory = "sign-in"
+    static let signInKey = "signIn"
+    static let signInAction = "signIn"
+    static let deviceChanged = "remote-device-changed"
+    private static let removeDevice = "remove-device"
 
     @MainActor init(store: AccountStore) {
         self.store = store
@@ -170,10 +175,34 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
         center.delegate = self
         let allow = UNNotificationAction(identifier: "allow", title: "Allow")
         let deny = UNNotificationAction(identifier: "deny", title: "Deny")
+        let remove = UNNotificationAction(identifier: Self.removeDevice, title: "Remove Device", options: [.destructive])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: Self.answerable, actions: [allow, deny], intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.openOnly, actions: [], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Self.signInCategory, actions: [UNNotificationAction(identifier: Self.signInAction, title: "Sign In", options: .foreground)], intentIdentifiers: []),
+            UNNotificationCategory(identifier: Self.deviceChanged, actions: [remove], intentIdentifiers: []),
         ])
+    }
+
+    /// The account to sign in to, for the Sign In button or a click on the notification itself.
+    static func signInTarget(info: [AnyHashable: Any], action: String) -> String? {
+        guard action == signInAction || action == UNNotificationDefaultActionIdentifier,
+              let account = info[signInKey] as? String, !account.isEmpty else { return nil }
+        return account
+    }
+
+    /// A paired phone's notification address moved, with Remove Device on it. One per device: a later one replaces it.
+    nonisolated static func deviceMoved(_ device: String, name: String) {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "\(name) has a new notification address"
+            content.body = "If you didn't restore or reinstall it, remove it."
+            content.categoryIdentifier = deviceChanged
+            content.userInfo = ["device": device]
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: deviceChanged + "-" + device, content: content, trigger: nil))
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
@@ -183,11 +212,19 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         let action = response.actionIdentifier
+        if action == Self.removeDevice, let device = info["device"] as? String {
+            await MainActor.run { store?.remote.revoke(device) }
+            return
+        }
         if let request = (info["request"] as? String).flatMap(UUID.init(uuidString:)), action == "allow" || action == "deny" {
             await MainActor.run {
                 // Answered elsewhere meanwhile: the island ignores ids it no longer holds.
                 store?.island.answer(action == "allow" ? .allow : .deny(nil), request, by: .notification)
             }
+            return
+        }
+        if let account = Self.signInTarget(info: info, action: action) {
+            _ = await store?.signIn(account)
             return
         }
         guard let id = info["session"] as? String, !id.isEmpty else { return }

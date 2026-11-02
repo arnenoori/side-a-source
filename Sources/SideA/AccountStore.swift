@@ -173,6 +173,12 @@ final class AccountStore {
     @ObservationIgnored var codexPoolHomes: [Bool: String] = [:]
     @ObservationIgnored var poolBlocked: [String: Double] = [:]
     @ObservationIgnored var signInWarned: Set<String> = []
+    /// Accounts already named in "is full; sign in to X", once per lapse.
+    @ObservationIgnored var signInAsked: Set<String> = []
+    /// Why the last read of the logins in use failed; nil when it worked or was only overtaken by a new selection.
+    @ObservationIgnored var activeProblem: String?
+    /// Why running sessions couldn't be listed, from the bridge.
+    @ObservationIgnored var busyProblem: String?
     @ObservationIgnored private(set) lazy var keepAwake = KeepAwakeController(system: isDemo ? nil : MacSleepSystem(root: root.path))
     @ObservationIgnored private(set) var preferences: PreferencesMirror?
     @ObservationIgnored private var notificationRouter: NotificationRouter?
@@ -752,6 +758,7 @@ final class AccountStore {
             failing.remove(id)
             health[id] = nil
             signInWarned.remove(id)
+            signInAsked.remove(id)
             autopilotLog.note("read \(id)", nil)
             sample(id, value.fiveHour, at: started.timeIntervalSince1970)
         } catch {
@@ -862,7 +869,7 @@ final class AccountStore {
     func warnSignIn(_ id: String, _ message: String) {
         guard !message.contains("login is now"), signInWarned.insert(id).inserted,
               let name = config.accounts.first(where: { $0.id == id })?.name else { return }
-        notify("Sign in to \(name) again", "Its login ended, so Autopilot and the pool use your other accounts until you do.")
+        notify("Sign in to \(name) again", "Its login ended, so Autopilot and the pool use your other accounts until you do.", signIn: id)
     }
     /// A read or renewal found the login refused. Records whose login now sits in the account's slot ("…its saved login
     /// is now someone@example.com's."), and says so once, since the menu row alone is easy to miss.
@@ -871,7 +878,7 @@ final class AccountStore {
             config.accounts.first { $0.email.caseInsensitiveCompare(String(match.1)) == .orderedSame }?.name ?? String(match.1)
         }
         if let other, health[id] != .signIn(replacedBy: other), let name = config.accounts.first(where: { $0.id == id })?.name {
-            notify("Sign in to \(name) again", "Its saved login was replaced by \(other)'s. Sign in to \(name) from the menu.")
+            notify("Sign in to \(name) again", "Its saved login was replaced by \(other)'s.", signIn: id)
         }
         health[id] = .signIn(replacedBy: other)
         usage[id]?.stale = true
@@ -1015,27 +1022,42 @@ final class AccountStore {
         notify("Memory is tight", pressure.notification)
     }
 
-    func notify(_ title: String, _ body: String) {
+    /// `signIn`: the account the notification's Sign In button signs in to.
+    func notify(_ title: String, _ body: String, signIn: String? = nil) {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return }
-        Self.post(title, body)
+        Self.post(title, body, signIn: signIn)
     }
     /// Nonisolated: the authorization callback runs on a background queue, and a closure formed in
     /// this main-actor class traps there under Swift 6's isolation checks (found by brandedDaniel).
-    private nonisolated static func post(_ title: String, _ body: String) {
+    private nonisolated static func post(_ title: String, _ body: String, signIn: String?) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
             content.title = title; content.body = body
+            if let signIn {
+                content.categoryIdentifier = NotificationRouter.signInCategory
+                content.userInfo = [NotificationRouter.signInKey: signIn]
+            }
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
     }
     @discardableResult func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let healed: [String]?; let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]?; let busy: [Busy]?; let limits: [String: Hit]?; let models: [String: [String?]]?; let quiet: [String: Double]? }
+        struct Active: Decodable { let busyProblem: String?; let healed: [String]?; let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]?; let busy: [Busy]?; let limits: [String: Hit]?; let models: [String: [String?]]?; let quiet: [String: Double]? }
         struct Hit: Decodable { let limit: String; let at: Double; let sessions: [String]? }
         struct Busy: Decodable { let slot: String; let account: String? }
         struct Live: Decodable { let at: Double; let windows: [UsageWindow] }
-        guard let data = try? await bridgeOutput(["active"]), let value = try? JSONDecoder().decode(Active.self, from: data) else { return false }
+        activeProblem = nil
+        let data: Data
+        do { data = try await bridgeOutput(["active"]) } catch {
+            activeProblem = (error as? BridgeFailure)?.message ?? error.localizedDescription
+            return false
+        }
+        guard let value = try? JSONDecoder().decode(Active.self, from: data) else {
+            activeProblem = "its answer couldn't be read"
+            return false
+        }
+        busyProblem = value.busyProblem
         for line in value.healed ?? [] {
             autopilotLog.write(line)
             notify("Side A fixed a login", line)
@@ -1155,7 +1177,8 @@ final class AccountStore {
             try? files.removeItem(at: root)
             if let domain = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: domain) }
         } else {
-            for name in ["runtime/report.json", "runtime/report-cache.json", "runtime/usage-cache.json"] {
+            for name in ["runtime/report.json", "runtime/report-cache.json", "runtime/usage-cache.json", "runtime/queued-followups.json",
+                         "runtime/queued-followups.unread.json", "runtime/dropped-followups.json"] {
                 try? files.removeItem(at: root.appendingPathComponent(name))
             }
         }
@@ -1208,7 +1231,7 @@ final class AccountStore {
         }
         // Without knowing who is active, a "switch" could only re-pick the current account.
         guard await refreshActive() else {
-            autopilotLog.note("active", "Couldn't read which logins are in use; Autopilot waits.")
+            if let activeProblem { autopilotLog.note("active", "Couldn't read which logins are in use (\(activeProblem)); Autopilot waits.") }
             return
         }
         autopilotLog.note("active", nil)
@@ -1249,7 +1272,7 @@ final class AccountStore {
             var slots = busyLogins ?? [:]
             var held: [String: HeldMove] = [:]
             defer { if heldMoves != held { heldMoves = held } }
-            autopilotLog.note("busy", busyLogins == nil ? "Running sessions couldn't be listed; only new commands move." : nil)
+            autopilotLog.note("busy", busyLogins == nil ? "Running sessions couldn't be listed (\(busyProblem ?? "unknown")); only new commands move." : nil)
             let busy = { Set(slots.values).union([current].compactMap { $0 }) }
             for slot in slots.keys.sorted(by: { slots[$0] == current && slots[$1] != current }) {
                 // Settings may have changed during the last trade.
@@ -1354,6 +1377,13 @@ final class AccountStore {
             if config.smartMode, activeIDs[provider] == nil, shellSwitching, let best = Planner.best(accounts, usage: plannable, health: health, active: nil, now: now) {
                 await activate(best)
             }
+            // No listed session named it, or none could be listed: it can still be full with only a signed-out account free.
+            if let current = activeIDs[provider], !slots.values.contains(current), let account = accounts.first(where: { $0.id == current }), account.allowAuto {
+                let full = usage[current].map { !Planner.hasHeadroom($0, now: now) } ?? false
+                if full, (Planner.best(accounts, usage: plannable, health: health, active: current, now: now) ?? current) == current {
+                    noteStuck(account, slot: "new commands", others: accounts, now: now)
+                } else { stuckNotified.remove("new commands") }
+            }
             if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, health: health, active: current, now: now) == nil {
                 if !exhaustedNotified {
                     exhaustedNotified = true
@@ -1384,19 +1414,22 @@ final class AccountStore {
     /// Sessions at a limit with nowhere to go are otherwise silent: says once what would free them.
     private func noteStuck(_ account: Account, slot: String, others: [Account], now: Double) {
         guard stuckNotified.insert(slot).inserted else { return }
-        let signedOut = others.filter { $0.id != account.id && $0.allowAuto && (!$0.ready || health[$0.id]?.takesWork == false) }.map(\.name)
+        let signedOut = Planner.signedOut(others, except: account.id, health: health)
         let inUse = others.first { other in
             other.id != account.id && other.ready && other.allowAuto && health[other.id]?.takesWork != false && (busyLogins ?? [:]).values.contains(other.id)
                 && plannable[other.id].map { Planner.hasHeadroom($0, now: now) } == true
         }
         var fixes: [String] = []
-        if !signedOut.isEmpty { fixes.append("sign in to \(signedOut.joined(separator: ", "))") }
+        if !signedOut.isEmpty { fixes.append("sign in to \(signedOut.map(\.name).joined(separator: ", "))") }
         if let inUse, config.pool != true { fixes.append("turn on Pool mode so these sessions can share \(inUse.name) next time") }
         let reset = usage[account.id].flatMap { value in [value.fiveHour, value.weekly].compactMap { $0 }.filter { $0.percent >= Planner.full }.compactMap(\.resetsAt).max() }
         let wait = reset.map { "\(account.name) is back \(UsageBar.format($0))." } ?? ""
         pushStuck(account, reset: reset)
         let advice = fixes.isEmpty ? "" : " To keep going, " + fixes.joined(separator: ", or ") + "."
-        notify("\(account.name) is full, with no account free", (wait + advice).trimmingCharacters(in: .whitespaces))
+        let body = (wait + advice).trimmingCharacters(in: .whitespaces)
+        guard let free = signedOut.first else { notify("\(account.name) is full, with no account free", body); return }
+        guard signInAsked.insert(free.id).inserted else { return }
+        notify("\(account.name) is full; \(free.name) needs a sign-in", body, signIn: free.id)
     }
     func setMenuBarOnly(_ value: Bool) {
         config.menuBarOnly = value; persist()
@@ -1419,13 +1452,16 @@ final class AccountStore {
             try process.run()
             // The bridge leads its own process group; stopping the group also stops a hung claude or codex child.
             let watchdog = DispatchWorkItem { if process.isRunning { kill(-process.processIdentifier, SIGTERM); process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
+            let deadline = BridgeDeadline.current(timeout)
+            DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: watchdog)
             defer { watchdog.cancel() }
             let data = output.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             if process.terminationStatus != 0 {
-                let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Account verification failed."
-                throw BridgeFailure(message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+                let message = (String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Account verification failed.")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                // The watchdog's signal leaves nothing on stderr.
+                throw BridgeFailure(message: message.isEmpty ? "the helper didn't finish within \(Int(deadline))s" : message)
             }
             return data
         }.value

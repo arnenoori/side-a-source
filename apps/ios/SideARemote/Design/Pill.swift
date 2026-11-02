@@ -4,6 +4,8 @@ import SwiftUI
 /// where the Mac allows one. One at a time; a new one replaces the old. No haptic: the action that caused it had one.
 @Observable
 final class Pill {
+    nonisolated deinit {}
+
     static let shared = Pill()
 
     struct Item: Identifiable {

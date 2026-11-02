@@ -68,6 +68,8 @@ extension View {
 /// Requests the user is being asked to answer, shown as the approval sheet from anywhere.
 @Observable
 final class ApprovalPresenter {
+    nonisolated deinit {}
+
     var request: RemoteRequest?
     /// The note sheet, opened from a row's swipe, a context menu, the toolbar or the health card.
     var note: NoteTarget?

@@ -252,9 +252,21 @@ final class PoolProxy: @unchecked Sendable {
         if let workspace = credential.accountID { outgoing.setValue(workspace, forHTTPHeaderField: "chatgpt-account-id") }
         outgoing.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         outgoing.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        let (bytes, response) = try await session.bytes(for: outgoing)
+        let (bytes, response): (URLSession.AsyncBytes, URLResponse)
+        do {
+            (bytes, response) = try await session.bytes(for: outgoing)
+        } catch let error as URLError where error.code == .networkConnectionLost && Self.resends(request.target) {
+            // Usually a kept connection the server had closed. The server may have had it all the same, so a resend can bill a
+            // turn twice; that's the price of not failing a conversation for it, and only these routes pay it.
+            (bytes, response) = try await session.bytes(for: outgoing)
+        }
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         return (bytes, http)
+    }
+
+    /// The routes that produce a turn. Nothing else admitted is resent on a lost connection.
+    static func resends(_ target: String) -> Bool {
+        ["/v1/messages", "/codex/responses"].contains(target.split(separator: "?", omittingEmptySubsequences: false).first.map(String.init) ?? "")
     }
 
     private static func headers(_ response: HTTPURLResponse) -> HTTPHeaders {

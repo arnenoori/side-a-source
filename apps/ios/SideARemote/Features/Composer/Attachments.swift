@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 /// reads), and uploaded at once; the reply carries the Mac's upload ids. The demo keeps them here.
 @Observable
 final class ComposerAttachments {
+    nonisolated deinit {}
+
     struct Pending: Identifiable {
         enum State: Equatable { case uploading, ready(String), failed(String) }
         let id = UUID()
@@ -190,6 +192,8 @@ struct CameraPicker: UIViewControllerRepresentable {
     func updateUIViewController(_ picker: UIImagePickerController, context: Context) {}
 
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        nonisolated deinit {}
+
         let parent: CameraPicker
         init(_ parent: CameraPicker) { self.parent = parent }
 

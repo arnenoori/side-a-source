@@ -157,3 +157,53 @@ func aPhoneTerminalTypesOnceSizesTheWindowAndHearsTheEnd() async throws {
     }
     await fixture.cleanUp()
 }
+
+/// tmux flushes its terminal's input as it takes it over. Keys a reconnecting phone sends the moment it hears `ready` get
+/// there first when the client is slow to start, so nothing may go into the PTY until the client is up, and the ack means it.
+@MainActor
+@Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
+func keysSentBeforeTheTmuxClientIsUpStillReachTheSession() async throws {
+    let fixture = try HostedFixture()
+    let keychain = try TestKeychain()
+    let hosted = HostedSessions(root: fixture.root, environment: fixture.environment, bridge: fixture.bridge)
+    await hosted.install()
+    let identity = try #require(try keychain.store.identity())
+    let server = RemoteServer(identity: identity, epoch: "e1") { _, _ in HTTPResponse(status: 404) }
+    let terminals = TerminalHub(queue: server.queue, epoch: "e1") { hosted }
+    terminals.launch = { command in
+        ("/bin/sh", ["/bin/sh", "-c", "sleep 1; exec \"$0\" \"$@\"", command.path] + command.args.dropFirst(), command.environment)
+    }
+    server.opened = { peer in terminals.attach(peer, name: peer.path[3]) }
+    let token = DeviceToken.make()
+    let faceID = P256.Signing.PrivateKey()
+    server.macID = "mac"
+    server.setDevices([(id: "d1", hash: DeviceToken.hash(token))],
+                      keys: ["d1": .init(confirm: faceID.publicKey.x963Representation.base64URL, unlock: nil)])
+    let port = freePort()
+    server.serve(addresses: ["127.0.0.1"], port: port)
+    defer { server.stop() }
+    do {
+        try #require(hosted.available)
+        let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: nil)))
+        for _ in 0..<250 where server.listenerStates.values.first != .ready { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(await eventually { await hosted.command(["capture-pane", "-p", "-t", "=\(name):"]).output.contains("Try \"refactor") })
+        let now = Int(Date().timeIntervalSince1970)
+        let text = try ConfirmMessage.text(macID: "mac", deviceID: "d1", purpose: .terminal, subject: ConfirmMessage.subject(terminal: name), at: now)
+        var request = URLRequest(url: URL(string: "wss://127.0.0.1:\(port)/v1/ws/term/\(name)")!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(ConfirmSignature(at: now, signer: .confirm, signature: try faceID.signature(for: Data(text.utf8)).derRepresentation).headerValue,
+                         forHTTPHeaderField: ConfirmSignature.header)
+        let phone = Viewer(URLSessionTransport(trust: PinnedTrust(.pinned(identity.spkiHash.base64URL))).socket(request))
+        try await phone.send(.hello(viewer: UUID().uuidString, cols: 60, rows: 20))
+        #expect(await eventually { await phone.screen.controls.first == .ready(epoch: "e1", applied: nil, cols: 60, rows: 20, owner: "phone") })
+        // The fake ignores the first Enter after its composer appears.
+        try await phone.type(1, "hi")
+        try await phone.type(2, "\r")
+        try await phone.type(3, "\r")
+        #expect(await eventually { await phone.screen.acked == 3 })
+        #expect(await eventually(5) { fixture.lines() == ["'hi'"] })
+    } catch {
+        Issue.record(error)
+    }
+    await fixture.cleanUp()
+}

@@ -36,6 +36,21 @@ private struct Phone {
     #expect(verify(try phone.header(.confirm, subject: "r1:allow"), keys: .init(confirm: nil, unlock: phone.keys.unlock)) == .failure(.missing))
 }
 
+/// Asking twice in one second signs the same message twice. Only a copy of a signature is a replay; the second is fresh.
+@Test func aSecondSignatureInTheSameSecondIsNotAReplay() throws {
+    let phone = Phone(), replay = ConfirmGate.ReplayCache(), now = Date()
+    func verify(_ header: String) -> Result<ConfirmProof, ConfirmGate.Failure> {
+        ConfirmGate.verify(header, macID: "mac", deviceID: "d1", purpose: .terminal, subject: "sa-one", keys: phone.keys, replay: replay, now: now)
+    }
+    let first = try phone.header(.confirm, purpose: .terminal, subject: "sa-one", at: now)
+    let second = try phone.header(.confirm, purpose: .terminal, subject: "sa-one", at: now)
+    #expect(first != second)
+    #expect(verify(first) == .success(.biometric))
+    #expect(verify(second) == .success(.biometric))
+    #expect(verify(first) == .failure(.replayed))
+    #expect(verify(second) == .failure(.replayed))
+}
+
 @Test func whatAMacGateAsksForIsWhatAProofMustReach() {
     #expect(ConfirmProof(AllowGate.lockScreen) == .none)
     #expect(ConfirmProof(AllowGate.unlock) == .unlock)

@@ -12,12 +12,58 @@ public struct StateSnapshot: Codable, Hashable, Sendable {
     public let mac: MacState?
     public let incidents: [Incident]?
     public let autopilot: AutopilotState?
+    /// Capability `replies.dropped`: queued replies the Mac gave up on lately. Left out when there are none.
+    public private(set) var droppedReplies: [DroppedReply]?
     public init(seq: Int, epoch: String, sessions: [RemoteSession] = [], finished: [FinishedSession] = [], requests: [RemoteRequest] = [],
                 hosted: [HostedSession] = [], accounts: [RemoteAccount] = [], mac: MacState? = nil, incidents: [Incident]? = nil,
-                autopilot: AutopilotState? = nil) {
+                autopilot: AutopilotState? = nil, droppedReplies: [DroppedReply]? = nil) {
         self.autopilot = autopilot
+        self.droppedReplies = droppedReplies
         self.seq = seq; self.epoch = epoch; self.sessions = sessions; self.finished = finished; self.requests = requests
         self.hosted = hosted; self.accounts = accounts; self.mac = mac; self.incidents = incidents
+    }
+}
+
+public extension StateSnapshot {
+    /// What one device may read: its own dropped replies, and only that one of the others' exists.
+    func scoped(to device: String) -> StateSnapshot {
+        var scoped = self
+        scoped.droppedReplies = droppedReplies?.map { $0.seen(by: device) }
+        return scoped
+    }
+}
+
+/// A reply answered `.queued` that won't be sent. It outlives the `finished.resolve` that announced it, which a phone away
+/// past the replay window or a relaunched Mac never replays.
+public struct DroppedReply: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let sessionID: SessionKey
+    /// Only for the device that sent it.
+    public let text: String?
+    public let at: Timestamp
+    /// The device that sent it, told only to that device.
+    public let device: String?
+    public let reason: Reason
+
+    public struct Reason: OpenEnum {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public static let sessionEnded = Self(rawValue: "sessionEnded")
+        /// The turn ended with a Stop hook that doesn't wait.
+        public static let cannotWait = Self(rawValue: "cannotWait")
+        /// The session asks more now than was proven when it was sent.
+        public static let outranked = Self(rawValue: "outranked")
+        /// Held in a file from an older Side A, which can't say who authorized it, so it carries no text or device: a phone
+        /// gives back its own Queued turns in that session from before `at`.
+        public static let oldQueue = Self(rawValue: "oldQueue")
+    }
+
+    public init(id: String, sessionID: SessionKey, text: String?, at: Timestamp, device: String?, reason: Reason) {
+        self.id = id; self.sessionID = sessionID; self.text = text; self.at = at; self.device = device; self.reason = reason
+    }
+
+    public func seen(by viewer: String) -> DroppedReply {
+        device == viewer ? self : DroppedReply(id: id, sessionID: sessionID, text: nil, at: at, device: nil, reason: reason)
     }
 }
 

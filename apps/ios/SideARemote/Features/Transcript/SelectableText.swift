@@ -121,6 +121,8 @@ struct SelectableText: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate, UIEditMenuInteractionDelegate {
+        nonisolated deinit {}
+
         var parent: SelectableText
         weak var view: UITextView?
         lazy var editMenu = UIEditMenuInteraction(delegate: self)
@@ -208,6 +210,8 @@ struct EditMenuArea: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(menu) }
 
     final class Coordinator: NSObject, UIEditMenuInteractionDelegate {
+        nonisolated deinit {}
+
         var menu: [SelectableText.Action]
         lazy var editMenu = UIEditMenuInteraction(delegate: self)
 

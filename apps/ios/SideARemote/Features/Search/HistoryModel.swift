@@ -8,6 +8,8 @@ import SideARemoteKit
 /// The demo lists its own sample and changes it here only.
 @Observable
 final class HistoryList {
+    nonisolated deinit {}
+
     let archived: Bool
     private(set) var sessions: [PastSession] = []
     private(set) var next: Cursor?
@@ -83,6 +85,8 @@ final class HistoryList {
 /// Typing in the Search tab: the Mac's index of asks, replies and commands (`GET /v1/search`), paged.
 @Observable
 final class HistorySearch {
+    nonisolated deinit {}
+
     private(set) var query = ""
     private(set) var results: [PastSession] = []
     private(set) var next: Cursor?

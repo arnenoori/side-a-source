@@ -9,6 +9,8 @@ import SideARemoteKit
 /// changes nothing.
 @Observable
 final class MacTools {
+    nonisolated deinit {}
+
     /// From the Mac's latest `Hello`; everything in the demo.
     private(set) var capabilities: Set<Capability>
     /// Hosted sessions by tmux name.
@@ -46,6 +48,9 @@ final class MacTools {
     /// No keys to sign with: this iPhone has none for the Mac (a pairing from before them), or the Mac said it has
     /// none (`details.hint = pairAgain`).
     private var keyless = false
+    /// The id the Mac at this pairing's address answers to, when it isn't the one this pairing signs for: its signatures
+    /// can't verify, whatever the keys. Side A Dev under the id it shared with release before it got its own, say.
+    private(set) var answersAs: String?
     /// Where terminal input waits for its ack, shared with the extensions.
     @ObservationIgnored var outbox: Outbox?
     @ObservationIgnored private let demo: Demo?
@@ -95,6 +100,11 @@ final class MacTools {
     private func guarded<T>(_ purpose: ConfirmPurpose = .action, subject: String, level: ConfirmLevel = .unlock, reason: String,
                             _ call: (String?) async throws -> T) async throws -> T {
         guard let paired else { throw ToolError.demo }
+        if needsKeys {
+            do { return try await signed { try await call(nil) } } catch let failure as RemoteFailure where [.confirmRequired, .confirmInvalid].contains(failure.error.code) {
+                throw ToolError.pairAgain
+            }
+        }
         func signature(_ signer: DeviceKeys.Signer) async -> String? {
             await DeviceKeys.header(signer, macID: paired.endpoint.macID, deviceID: paired.deviceID, purpose: purpose, subject: subject, reason: reason)
         }
@@ -113,6 +123,10 @@ final class MacTools {
     func apply(_ state: RemoteState) {
         let capabilities = state.hello?.capabilities ?? []
         if self.capabilities != capabilities { self.capabilities = capabilities }
+        if let id = state.hello?.mac.id, let paired, id != paired.endpoint.macID, answersAs != id {
+            answersAs = id
+            keyless = true
+        }
         if hosted != state.hosted { hosted = state.hosted }
         if attention != state.attention { attention = state.attention }
         if incidents != state.incidents { incidents = state.incidents }

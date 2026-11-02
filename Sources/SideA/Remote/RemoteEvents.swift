@@ -260,9 +260,10 @@ final class RemoteEvents: Island.Watcher {
         let incidents = WireBuilders.incidents(store)
         let hosted = hostedNow(store)
         let autopilot = autopilot
+        let dropped = island.droppedForPhones()
         return { seq, epoch in
             StateSnapshot(seq: seq, epoch: epoch, sessions: sessions, finished: finished, requests: requests, hosted: hosted, accounts: accounts,
-                          mac: mac, incidents: incidents, autopilot: autopilot)
+                          mac: mac, incidents: incidents, autopilot: autopilot, droppedReplies: dropped.isEmpty ? nil : dropped)
         }
     }
 }

@@ -8,6 +8,8 @@ import UserNotificationsUI
 /// hosting controller, sized by the content's own height. A question answers from here; a plan and
 /// a request keep the category's actions below.
 final class NotificationViewController: UIViewController, UNNotificationContentExtension {
+    nonisolated deinit {}
+
     private var host: UIHostingController<NotificationCard>?
     private var card: NotificationCardModel?
 

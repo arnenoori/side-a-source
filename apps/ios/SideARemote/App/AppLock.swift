@@ -6,6 +6,8 @@ import SwiftUI
 /// Settings › Security). A phone left unlocked shouldn't hand over sessions, the terminal and Allow.
 @Observable
 final class AppLock {
+    nonisolated deinit {}
+
     static let after: TimeInterval = 5 * 60
     static let key = "lock.enabled"
 
@@ -62,6 +64,8 @@ final class AppLock {
 /// terminal that was open when the app locked (or that a notification tap opens while it's locked) stays out of reach.
 @MainActor
 final class LockWindow {
+    nonisolated deinit {}
+
     static let shared = LockWindow()
     static let level = UIWindow.Level.alert + 1
     private(set) var window: UIWindow?

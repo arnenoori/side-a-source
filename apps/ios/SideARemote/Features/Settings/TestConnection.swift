@@ -11,6 +11,8 @@ import UserNotifications
 /// at the first failing step and says what to do. Steps after a failure show "Not checked".
 @Observable
 final class ConnectionTest {
+    nonisolated deinit {}
+
     enum Outcome: Equatable {
         case waiting, running, passed(String), failed(String, detail: String?), notChecked(String?)
     }
