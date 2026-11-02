@@ -1,0 +1,9 @@
+{
+  "code": "already_resolved",
+  "details": {
+    "answer": "deny",
+    "by": "mac"
+  },
+  "message": "This was already answered on the Mac.",
+  "retryable": false
+}

@@ -1,0 +1,259 @@
+name: SideARemote
+options:
+  bundleIdPrefix: com.arnenoori.sidea
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "12"
+    ENABLE_PREVIEWS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+settingGroups:
+  # iPhone only, the app and every extension; set per target, since XcodeGen gives each iOS target "1,2".
+  iphoneOnly:
+    TARGETED_DEVICE_FAMILY: "1"
+packages:
+  SideAProtocol:
+    path: ../../Packages/SideAProtocol
+  # The terminal (MIT), the app's only third-party package. 1.12 and later compile Metal shaders, which need Xcode's separate Metal Toolchain.
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.11.2
+targets:
+  SideARemote:
+    type: application
+    platform: iOS
+    sources:
+      - SideARemote
+      # Compiled into each binary that answers, since the packages link statically.
+      - Linked
+      # The Content Extension's card, so DEBUG builds can show it with `--notification-card`.
+      - path: NotificationContent/NotificationCard.swift
+      # The widgets' views, so DEBUG builds can show them with `--widget-gallery`.
+      - path: Widgets
+        excludes: [Widgets.swift, Assets.xcassets, PrivacyInfo.xcprivacy]
+      - path: DemoPushes
+        buildPhase: resources
+    dependencies:
+      - target: SideARemoteShared
+      - target: NotificationService
+      - target: NotificationContent
+      - target: SideARemoteWidgets
+      - package: SideAProtocol
+        product: SideAProtocol
+      - package: SideAProtocol
+        product: SideARemoteKit
+      - package: SwiftTerm
+    entitlements:
+      path: Config/SideARemote.entitlements
+      properties:
+        com.apple.security.application-groups: ["$(APP_GROUP)"]
+        keychain-access-groups: ["$(SHARED_KEYCHAIN_GROUP)"]
+        # development in Debug, production in Release and so in an archive (Config/*.xcconfig).
+        aps-environment: $(APS_ENVIRONMENT)
+        # Universal links: getsidea.com/pair opens a pairing invitation (the site's AASA lists both bundle ids).
+        com.apple.developer.associated-domains: ["applinks:getsidea.com"]
+    info:
+      path: Config/SideARemote-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: Side A
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UIBackgroundModes: [remote-notification]
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        NSCameraUsageDescription: Side A Remote uses the camera to scan the pairing code on your Mac and to take photos for a prompt.
+        NSLocalNetworkUsageDescription: Side A Remote connects to Side A on your Mac over this Wi-Fi when Tailscale isn't on.
+        SideAKeychainGroup: $(SHARED_KEYCHAIN_GROUP)
+        SideAAppGroup: $(APP_GROUP)
+        SideAAPNsEnvironment: $(APNS_ENVIRONMENT)
+        NSFaceIDUsageDescription: To confirm before allowing a destructive request.
+        NSPhotoLibraryAddUsageDescription: To save images from a session.
+        LSApplicationQueriesSchemes: [tailscale]
+        # Apple's encryption only: CryptoKit, the Secure Enclave and Network.framework's TLS.
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleURLTypes:
+          - CFBundleURLName: $(APP_BUNDLE_ID)
+            CFBundleURLSchemes: [sidea-remote]
+    settings:
+      groups: [iphoneOnly]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  SideARemoteShared:
+    type: framework
+    platform: iOS
+    sources:
+      - Shared
+    info:
+      path: Config/SideARemoteShared-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      groups: [iphoneOnly]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).shared
+        APPLICATION_EXTENSION_API_ONLY: YES
+        DEFINES_MODULE: YES
+        # XcodeGen's framework preset sets its own build number 1; the app's comes from the project settings above.
+        CURRENT_PROJECT_VERSION: $(inherited)
+
+  NotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - NotificationService
+      - path: Linked/PairedMac.swift
+      - path: Linked/Revocations.swift
+      - path: Linked/PushOpener.swift
+      - path: Linked/Diagnostics.swift
+      - path: Linked/DeviceKeys.swift
+    dependencies:
+      - target: SideARemoteShared
+        embed: false
+      - package: SideAProtocol
+        product: SideAProtocol
+      - package: SideAProtocol
+        product: SideARemoteKit
+    entitlements:
+      path: Config/NotificationService.entitlements
+      properties:
+        com.apple.security.application-groups: ["$(APP_GROUP)"]
+        keychain-access-groups: ["$(SHARED_KEYCHAIN_GROUP)"]
+    info:
+      path: Config/NotificationService-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: Side A Notifications
+        SideAAppGroup: $(APP_GROUP)
+        SideAKeychainGroup: $(SHARED_KEYCHAIN_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      groups: [iphoneOnly]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).NotificationService
+
+  NotificationContent:
+    type: app-extension
+    platform: iOS
+    sources:
+      - NotificationContent
+      - Linked
+    dependencies:
+      - target: SideARemoteShared
+        embed: false
+      - package: SideAProtocol
+        product: SideAProtocol
+      - package: SideAProtocol
+        product: SideARemoteKit
+    entitlements:
+      path: Config/NotificationContent.entitlements
+      properties:
+        com.apple.security.application-groups: ["$(APP_GROUP)"]
+        keychain-access-groups: ["$(SHARED_KEYCHAIN_GROUP)"]
+    info:
+      path: Config/NotificationContent-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: Side A Questions
+        SideAKeychainGroup: $(SHARED_KEYCHAIN_GROUP)
+        SideAAppGroup: $(APP_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationViewController
+          NSExtensionAttributes:
+            UNNotificationExtensionCategory: [QUESTION, PLAN, REQUEST_SAFE, REQUEST, REQUEST_DESTRUCTIVE]
+            UNNotificationExtensionInitialContentSizeRatio: 0.6
+            UNNotificationExtensionUserInteractionEnabled: true
+            UNNotificationExtensionDefaultContentHidden: true
+    settings:
+      groups: [iphoneOnly]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).NotificationContent
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+
+  SideARemoteWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widgets
+      # The Live Activity's buttons answer through the same code as notifications.
+      - Linked
+    dependencies:
+      - target: SideARemoteShared
+        embed: false
+      - package: SideAProtocol
+        product: SideAProtocol
+      - package: SideAProtocol
+        product: SideARemoteKit
+    entitlements:
+      path: Config/Widgets.entitlements
+      properties:
+        com.apple.security.application-groups: ["$(APP_GROUP)"]
+        keychain-access-groups: ["$(SHARED_KEYCHAIN_GROUP)"]
+    info:
+      path: Config/Widgets-Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleDisplayName: Side A
+        SideAAppGroup: $(APP_GROUP)
+        SideAKeychainGroup: $(SHARED_KEYCHAIN_GROUP)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      groups: [iphoneOnly]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).Widgets
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  SideARemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests
+    dependencies:
+      - target: SideARemote
+      - package: SideAProtocol
+        product: SideAProtocol
+      - package: SideAProtocol
+        product: SideARemoteKit
+    settings:
+      groups: [iphoneOnly]
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  SideARemote:
+    build:
+      targets:
+        SideARemote: all
+    run:
+      config: Debug
+      commandLineArguments:
+        "--demo": true
+    test:
+      config: Debug
+      targets: [SideARemoteTests]

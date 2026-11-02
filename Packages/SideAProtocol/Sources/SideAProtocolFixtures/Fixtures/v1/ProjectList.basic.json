@@ -1,0 +1,17 @@
+{
+  "projects": [
+    {
+      "branch": "main",
+      "branches": [
+        "main",
+        "sidea/sa-app-3f9c",
+        "fix/island"
+      ],
+      "gitRoot": "/Users/you/code/app",
+      "lastUsedAt": 1791559911.9,
+      "liveSessions": 2,
+      "name": "app",
+      "path": "/Users/you/code/app"
+    }
+  ]
+}

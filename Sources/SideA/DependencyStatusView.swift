@@ -17,6 +17,7 @@ struct DependencyStatusView: View {
                 }
                 row(store.dependencies.python, url: URL(string: "https://www.python.org/downloads/macos/")!)
                 row(store.dependencies.agent(provider), url: provider.setupURL)
+                if !compact && store.dependencies.tmux.state == .ready { tmuxRow(store.dependencies.tmux) }
                 if !store.dependencies.ready(for: provider) {
                     Button(store.checkingDependencies ? "Checking…" : "Check again") { Task { await store.refreshDependencies() } }
                         .disabled(store.checkingDependencies).font(.system(size: 12))
@@ -35,8 +36,24 @@ struct DependencyStatusView: View {
             Spacer()
             if store.checkingDependencies { ProgressView().controlSize(.mini) }
             else if dependency.state == .ready { Text(dependency.version ?? "Ready").foregroundStyle(.secondary) }
+            else if dependency.name == store.dependencies.python.name {
+                // Apple's tools carry a current Python; python.org stays the alternative.
+                Button("Install Command Line Tools") { DependencyCheck.installCommandLineTools() }
+                    .help("Opens Apple's installer. Python 3.9 or later comes with it.")
+                Link("python.org ↗", destination: url)
+            }
             else { Link(dependency.state == .incompatible ? "Update ↗" : "Install ↗", destination: url) }
         }.font(.system(size: 12))
+    }
+    private func tmuxRow(_ tmux: Dependency) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.secondary)
+            Text("tmux")
+            Spacer()
+            Text(tmux.path == DependencyCheck.bundledTmux ? "Included" : tmux.version ?? "Ready").foregroundStyle(.secondary)
+        }
+        .font(.system(size: 12))
+        .help("Keeps hosted sessions running after their tab closes.")
     }
 }
 

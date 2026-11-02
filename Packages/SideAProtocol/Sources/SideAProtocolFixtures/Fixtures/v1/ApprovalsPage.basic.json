@@ -1,0 +1,34 @@
+{
+  "approvals": [
+    {
+      "request": {
+        "agent": "claude",
+        "headline": "Run a command",
+        "sessionTitle": "Fix the island layout",
+        "tool": "Bash"
+      },
+      "resolution": {
+        "answer": "allow",
+        "at": 1791560013.9,
+        "by": "device",
+        "deviceID": "d41d8cd98f00b204",
+        "deviceName": "Arne's iPhone",
+        "requestID": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
+      }
+    },
+    {
+      "request": {
+        "agent": "codex",
+        "headline": "Run a command",
+        "tool": "exec"
+      },
+      "resolution": {
+        "answer": "deny",
+        "at": 1791560020.1,
+        "by": "terminal",
+        "requestID": "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
+      }
+    }
+  ],
+  "next": "ap:41"
+}

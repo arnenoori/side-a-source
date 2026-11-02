@@ -1,0 +1,23 @@
+{
+  "code": "K7Q2-9XMD",
+  "device": {
+    "app": "1.0",
+    "build": 41,
+    "capabilities": [
+      "answers.plans",
+      "answers.questions",
+      "events",
+      "images",
+      "liveActivity",
+      "push",
+      "transcript.stream"
+    ],
+    "model": "iPhone18,1",
+    "name": "Arne's iPhone",
+    "system": "iOS 27.0"
+  },
+  "deviceID": "AAECAwQFBgcICQoLDA0ODw",
+  "devicePublicKey": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "deviceSecretHash": "Zmh6rfhivXdsj8GLjp-OIAiXFIVu4jOzkCpZHQ1fKSU",
+  "serverKeyHash": "onU-SgAqTBq5oy2g_g0TLe3tki23oMUF51bR9HsOF4E"
+}

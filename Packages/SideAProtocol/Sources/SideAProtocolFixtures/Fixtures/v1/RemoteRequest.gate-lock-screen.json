@@ -1,0 +1,26 @@
+{
+  "accountName": "Work",
+  "action": {
+    "kind": "read",
+    "path": "/Users/you/code/app/Sources/Island.swift"
+  },
+  "agent": "claude",
+  "answers": [
+    "allow",
+    "deny",
+    "terminal"
+  ],
+  "arrivedAt": 1791560003.9,
+  "detail": "/Users/you/code/app/Sources/Island.swift",
+  "gate": "lockScreen",
+  "headless": false,
+  "headline": "Read Island.swift",
+  "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+  "project": "app",
+  "risk": "low",
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "suggestions": [],
+  "title": "Fix the island layout",
+  "tool": "Read",
+  "truncated": false
+}

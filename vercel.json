@@ -88,6 +88,15 @@
       ]
     },
     {
+      "source": "/.well-known/apple-app-site-association",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/json"
+        }
+      ]
+    },
+    {
       "source": "/product.json",
       "headers": [
         {
@@ -98,6 +107,10 @@
     }
   ],
   "routes": [
+    {
+      "src": "^/(pair|remote|privacy)$",
+      "dest": "/$1/index.html"
+    },
     {
       "src": "^/appcast\\.xml$",
       "dest": "https://raw.githubusercontent.com/arnenoori/side-a-releases/main/appcast.xml",

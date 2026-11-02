@@ -1,0 +1,12 @@
+{
+  "data": {
+    "battery": 65,
+    "keepAwake": true,
+    "memoryPressure": "warning",
+    "memoryTotal": 38654705664,
+    "memoryUsed": 27917287424,
+    "onPower": true,
+    "sessionMemory": 9878424780
+  },
+  "type": "mac.update"
+}

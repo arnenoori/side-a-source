@@ -1,0 +1,6 @@
+{
+  "agent": "claude",
+  "headline": "Run a command",
+  "sessionTitle": "Fix the island layout",
+  "tool": "Bash"
+}

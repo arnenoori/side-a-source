@@ -1,0 +1,14 @@
+{
+  "agent": "claude",
+  "archived": false,
+  "branch": "fix/island",
+  "customTitle": "Island height, second try",
+  "cwd": "/Users/you/code/app",
+  "firstAt": 1791552811.9,
+  "id": "77aa0000-1111-4222-8333-444455556666",
+  "lastAt": 1791556411.9,
+  "parentID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "pinned": true,
+  "project": "app",
+  "title": "Island height, second try"
+}

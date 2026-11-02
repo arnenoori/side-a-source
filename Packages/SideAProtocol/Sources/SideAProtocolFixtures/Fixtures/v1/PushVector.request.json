@@ -1,0 +1,18 @@
+{
+  "category": "REQUEST",
+  "collapseID": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+  "deviceID": "AAECAwQFBgcICQoLDA0ODw",
+  "devicePrivateKey": "Prilshkdpxx7Fwj2NhJZvkK-k4eFomjNskURx2gGC2c",
+  "devicePublicKey": "pTyUG8RH1kKX2-RtMzHacA4-G2-bhng_WhhMSyHtICo",
+  "envelope": "AZu7pTboFz5uN-dOgvINcj9UeAatNyzKSICeeWFnmID9gZvmPki1qMPiu0h7uH8G-cfWJsHrI59lOH1_b3JmPzJrH6yG8m3EIQC_diVn26vUlN1RY7jl6VPnALT01va4hDDfJWVllWuVuvNQNJvuikyMiTePwWk8qvOwqxMyOoy_rKNeWtgpJf-LRstVFUrXOVxwBG4dXvSjURgy84pRgaMsEu7AAm2MJVm5wNDi75by0GDP8oUEvVJcjsM7oi0kc-AhPrlUtl_UHditRXLIy6lZLKe4ZSGmtGkEeT0KIpKeLndJUWCdnF-HtHqjncrGL_lPEB_FifRxrkUHNsaTPsvIjIvUibZvsGSyGJTalAJfAgfI7fPJRZuOcKR59vsLtIn5eYUOpm92iraFqb1GhZl-Oo-5gTAkLO5bSD9m3j0KOIvYIdVmagk0yp_06SkGHsy3Gi_3kuDEYZ8JWn-ZADNsYg",
+  "installID": "XsFDif2r-oebU07VsxiVgA",
+  "installPrivateKey": "ozneKnknU3Gqnk_1_S6IgkrKoYuvEXARV9x_igvr8lY",
+  "installPublicKey": "RPsaAZk18Q-63cKk_zVDF36jzcBNmixdXIUDu2RBYZY",
+  "key": "Se07erS1TGu2UIzTDRp_Tl_R0TGBdE3gGNhLuihICRg",
+  "keyID": "m7ulNg",
+  "macID": "kKa-uC2_pposMoLb",
+  "macPrivateKey": "E0r-b-GlFJcRgFdzlmHj3vOjJV5G99MGgkc2-iie638",
+  "macPublicKey": "C9yAmRymJGJG9ze05W24o_FuJiwoO8JPDSiM96BJHF4",
+  "nonce": "6Bc-bjfnToLyDXI_",
+  "payload": "PushPayload.request"
+}

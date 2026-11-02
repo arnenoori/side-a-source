@@ -1,0 +1,17 @@
+{
+  "abilities": [
+    "end",
+    "terminal",
+    "type"
+  ],
+  "agent": "claude",
+  "cwd": "/Users/you/code/app",
+  "headless": false,
+  "hosted": "sa-app-3f9c",
+  "id": "tmux-sa-app-3f9c",
+  "openRequests": [],
+  "project": "app",
+  "status": "starting",
+  "title": "app",
+  "worktree": false
+}

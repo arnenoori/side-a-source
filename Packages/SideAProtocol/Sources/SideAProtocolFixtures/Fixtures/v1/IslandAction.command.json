@@ -1,0 +1,4 @@
+{
+  "command": "npm test",
+  "kind": "command"
+}

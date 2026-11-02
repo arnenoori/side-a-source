@@ -1,0 +1,30 @@
+{
+  "files": [
+    {
+      "additions": 2,
+      "change": "modified",
+      "deletions": 1,
+      "hunks": [
+        {
+          "lines": [
+            " let a = 1",
+            "-let b = 2",
+            "+let b = 3",
+            "+let c = 4",
+            "\\ No newline at end of file"
+          ],
+          "newCount": 7,
+          "newStart": 40,
+          "oldCount": 6,
+          "oldStart": 40
+        }
+      ],
+      "path": "/Users/you/code/app/Island.swift",
+      "truncated": false
+    }
+  ],
+  "note": "Edits made with Claude's file tools; shell changes aren't shown.",
+  "running": false,
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "turnID": "t-0007"
+}

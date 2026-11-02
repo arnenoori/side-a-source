@@ -1,0 +1,10 @@
+{
+  "finished": false,
+  "limits": true,
+  "liveActivity": true,
+  "plans": true,
+  "questions": true,
+  "requests": true,
+  "suppressWhileWatching": true,
+  "timeSensitiveRequests": true
+}

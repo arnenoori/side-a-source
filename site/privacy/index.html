@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta name="theme-color" content="#f7f8f7" />
+  <meta name="description" content="What Side A and Side A Remote keep, what passes through the relay, and what this website counts." />
+  <link rel="canonical" href="https://getsidea.com/privacy/" />
+  <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+  <title>Privacy · Side A</title>
+  <script type="module" src="/src/doc.ts"></script>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <a class="wordmark" href="../" aria-label="Side A home"><span class="disc-mark" aria-hidden="true"></span>Side A</a>
+    </header>
+    <main class="doc">
+      <h1>Privacy</h1>
+      <p class="updated">Updated October 2026</p>
+
+      <h2>Side A for Mac</h2>
+      <p>Your accounts and usage stay on your Mac. Claude and Codex handle sign-in and requests under their own policies. If you turn on Remote, your Mac also uses our relay, as described below.</p>
+
+      <h2>Side A Remote for iPhone</h2>
+      <p>Side A Remote talks to Side A on your Mac. Your sessions, transcripts, images, prompts, answers and account details go between your phone and your Mac, and we can’t read them.</p>
+      <h3>How it connects</h3>
+      <p>Your phone connects to your Mac directly, over your Wi-Fi or your own Tailscale network. If you turn on Reach this Mac from anywhere on your Mac, it connects through our relay when it can’t reach your Mac directly. The connection is encrypted between your phone and your Mac with a key from pairing, so the relay passes along bytes it can’t read.</p>
+      <h3>Notifications</h3>
+      <p>When your Mac has something for you, it sends the notification through our relay to Apple’s Push Notification service. It’s encrypted on your Mac with a key only your Mac and your phone have; our relay and Apple can’t read it.</p>
+      <p>Live Activity updates are the exception. They carry only counts (sessions working and waiting), a request number, and the time and percentage of your next limit reset, unencrypted, because iOS shows them without running the app first. The relay passes them on and doesn’t keep them.</p>
+      <h3>What the relay keeps</h3>
+      <p>For each paired phone: a random identifier for your Mac and for your phone, your Mac’s public key, the push tokens Apple gives the app, whether it’s a development or App Store build, and the app’s version.</p>
+      <p>It doesn’t keep your IP address, your notifications or their contents. To stop abuse, it keeps a keyed hash of the connecting IP address for up to 24 hours, never logged or linked to a phone. Its logs record the route, the result and the time taken for each request, never contents, tokens or IP addresses.</p>
+      <h3>How long</h3>
+      <ul>
+        <li>Unpairing on either device deletes that phone’s record at once.</li>
+        <li>A Mac that stops using the relay is deleted after 90 days, or after 30 days with no phones paired.</li>
+        <li>Live Activity tokens are deleted after 12 hours.</li>
+        <li>Backups of deleted records expire within 30 days.</li>
+      </ul>
+      <h3>On your phone</h3>
+      <p>The app keeps a short connection log on your phone, three files of up to 1 MB each. It leaves your phone only if you tap Share Logs and choose where to send it.</p>
+      <p>Face ID and the camera are used on your phone only: Face ID to confirm risky requests, the camera to scan the pairing code and take photos you attach. Photos you attach go to your Mac.</p>
+      <h3>No accounts, no analytics</h3>
+      <p>There’s nothing to sign in to. The app has no analytics, no advertising and no third-party SDKs that collect data, and it doesn’t track you. If you share crash reports with developers in iOS Settings, Apple gives them to us without identifying you.</p>
+      <h3>Who processes data</h3>
+      <p>Cloudflare runs the relay. Apple delivers notifications. Tailscale, if you use it, carries traffic between your devices under your own Tailscale account and its policy.</p>
+      <h3>Delete everything</h3>
+      <p>Tap Forget This Mac in the app’s Settings, or unpair the phone on your Mac in Side A › Settings › Remote. Then delete the app.</p>
+
+      <h2>This website</h2>
+      <p>Anonymous page, download-click and demo statistics via PostHog. No cookies or recordings. Your browser’s privacy signals are respected. You can turn statistics off under Privacy on the home page. The home page checks GitHub for downloads. This page loads nothing from anyone else.</p>
+
+      <h2>Contact</h2>
+      <p><a href="mailto:support@getsidea.com">support@getsidea.com</a></p>
+    </main>
+    <footer><a href="https://arne.ai">Made with love by Arne Noori</a><p class="fine"><a href="https://github.com/arnenoori/side-a-source/blob/main/SECURITY.md">Security details</a> · <a href="../remote/">Side A Remote setup</a></p></footer>
+  </div>
+</body>
+</html>

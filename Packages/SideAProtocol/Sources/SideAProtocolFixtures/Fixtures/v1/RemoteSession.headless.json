@@ -1,0 +1,11 @@
+{
+  "abilities": [],
+  "agent": "claude",
+  "headless": true,
+  "id": "pid-4242-1791559000",
+  "openRequests": [],
+  "project": "scripts",
+  "status": "working",
+  "title": "claude -p",
+  "worktree": false
+}

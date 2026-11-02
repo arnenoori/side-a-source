@@ -1,0 +1,6 @@
+{
+  "added": "let b = 3\nlet c = 4",
+  "kind": "edit",
+  "path": "/Users/you/code/app/Island.swift",
+  "removed": "let b = 2"
+}

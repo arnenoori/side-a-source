@@ -1,0 +1,18 @@
+{
+  "action": {
+    "command": "swift test",
+    "kind": "command"
+  },
+  "diffs": [],
+  "endedAt": 1791560010.9,
+  "group": false,
+  "id": "item_3",
+  "images": [],
+  "name": "CommandExecution",
+  "output": "1 test failed",
+  "outputTruncated": false,
+  "parent": "call_9f8e7d",
+  "startedAt": 1791560008.15,
+  "status": "failed",
+  "summary": "Bash: swift test"
+}

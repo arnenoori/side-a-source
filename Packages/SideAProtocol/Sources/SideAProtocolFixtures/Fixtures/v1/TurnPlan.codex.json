@@ -1,0 +1,17 @@
+{
+  "explanation": "Fix the flaky test, then run the suite",
+  "steps": [
+    {
+      "status": "completed",
+      "text": "Find the flaky assertion"
+    },
+    {
+      "status": "inProgress",
+      "text": "Wait for the island to settle"
+    },
+    {
+      "status": "pending",
+      "text": "Run the suite"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "Simulator Target Bundle": "com.arnenoori.sidea.remote.dev",
+  "aps": {
+    "alert": {
+      "title": "Allow Bash",
+      "subtitle": "side-a · Work",
+      "body": "for i in $(seq 1 50); do swift test --filter SyncEngineTests/testSnapshotBeforeResume 2>&1 | tail -1; done | sort | uniq -c && git add Sources/SideARemoteKit/SyncEngine.swift Tests/SideARemoteKitTests/SyncEngineTests.swift && git commit -m \"Resume only after the snapshot lands\" && git push origin fix/sync-race --force-with-lease"
+    },
+    "category": "REQUEST",
+    "thread-id": "demo-sync",
+    "interruption-level": "time-sensitive",
+    "sound": "default"
+  },
+  "p": {
+    "v": 1,
+    "mac": "demo",
+    "sent": 1791560012.4,
+    "t": "request",
+    "rid": "d1a0b2c3-0000-4000-8000-000000000005",
+    "sid": "demo-sync",
+    "agent": "claude",
+    "gate": "unlock",
+    "risk": "normal",
+    "title": "Allow Bash",
+    "subtitle": "side-a · Work",
+    "body": "for i in $(seq 1 50); do swift test --filter SyncEngineTests/testSnapshotBeforeResume 2>&1 | tail -1; done | sort | uniq -c && git add Sources/SideARemoteKit/SyncEngine.swift Tests/SideARemoteKitTests/SyncEngineTests.swift && git commit -m \"Resume only after the snapshot lands\" && git push origin fix/sync-race --force-with-lease"
+  }
+}

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta name="theme-color" content="#f7f8f7" />
+  <meta name="description" content="Pair Side A Remote with Side A on your Mac, and what to do when your iPhone can't reach it." />
+  <link rel="canonical" href="https://getsidea.com/remote/" />
+  <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+  <title>Set up Side A Remote</title>
+  <script type="module" src="/src/doc.ts"></script>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <a class="wordmark" href="../" aria-label="Side A home"><span class="disc-mark" aria-hidden="true"></span>Side A</a>
+    </header>
+    <main class="doc">
+      <h1>Set up Side A Remote</h1>
+      <p class="lead">Answer your Mac’s Claude Code and Codex sessions from your iPhone.</p>
+      <p class="requirements">Side A on macOS 14 or later. Side A Remote on iOS 26 or later.</p>
+      <div class="actions"><!-- remote-availability --><a class="download" href="../">Get Side A for Mac</a></div>
+
+      <h2>Pair your iPhone</h2>
+      <ol class="steps">
+        <li>In Side A on your Mac, open Settings › Remote.</li>
+        <li>Turn on Side A Remote and click Pair iPhone… If macOS asks about incoming connections, click Allow.</li>
+        <li>On your iPhone, open Side A Remote, tap Pair with Your Mac and scan the code.</li>
+        <li>Check both show the same 6-digit code, then click Pair on your Mac.</li>
+        <li>Optional: run /hooks once in Codex, and turn on Keep this Mac awake in Settings › Remote.</li>
+      </ol>
+
+      <h2>Where it connects</h2>
+      <p>Choose in Settings › Remote › Connection on your Mac.</p>
+      <dl>
+        <dt>Tailscale</dt>
+        <dd>Sign in to the same Tailscale account on both.</dd>
+        <dt>Also on this Wi-Fi</dt>
+        <dd>When both are on the same Wi-Fi.</dd>
+        <dt>Reach this Mac from anywhere</dt>
+        <dd>Through our relay, encrypted end to end.</dd>
+      </dl>
+
+      <h2>If it doesn’t connect</h2>
+      <dl>
+        <dt>Can’t reach your Mac. It may be asleep or Side A is closed</dt>
+        <dd>Wake the Mac and open Side A. Away from your Wi-Fi, turn on Tailscale on both, or Reach this Mac from anywhere.</dd>
+        <dt>Tailscale is off on this iPhone</dt>
+        <dd>Open Tailscale on your iPhone and turn it on.</dd>
+        <dt>This iPhone was removed from your Mac</dt>
+        <dd>Pair again from Settings › Remote on your Mac.</dd>
+        <dt>Your Mac has a new security key, so this iPhone has to pair again</dt>
+        <dd>Tap Pair Again and scan the new code on your Mac.</dd>
+        <dt>Update Side A on your Mac</dt>
+        <dd>Choose Check for Updates… in Side A’s menu.</dd>
+        <dt>Update Side A Remote to use it with your Mac</dt>
+        <dd>Update the app from TestFlight or the App Store.</dd>
+      </dl>
+      <p>Still stuck? Run Settings › Test Connection in the app.</p>
+
+      <h2>Privacy</h2>
+      <p>Encrypted end to end. No account, no analytics. <a href="../privacy/">Privacy policy</a></p>
+
+      <h2>Help</h2>
+      <p>Write to <a href="mailto:support@getsidea.com">support@getsidea.com</a> or <a href="https://github.com/arnenoori/side-a-source/issues">open an issue on GitHub</a>.</p>
+    </main>
+    <footer><a href="https://arne.ai">Made with love by Arne Noori</a><p class="fine"><a href="https://github.com/arnenoori/side-a-source/blob/main/SECURITY.md">Security details</a> · <a href="../privacy/">Privacy</a></p></footer>
+  </div>
+</body>
+</html>

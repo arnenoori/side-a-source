@@ -1,0 +1,7 @@
+// Debug builds install beside an App Store build: every id ends in .dev.
+APP_ID_SUFFIX = .dev
+// Development-signed builds get sandbox APNs tokens; the relay sends to the matching host.
+APNS_ENVIRONMENT = sandbox
+// The push entitlement: development signs for sandbox APNs, production for the App Store.
+APS_ENVIRONMENT = development
+#include "Shared.xcconfig"

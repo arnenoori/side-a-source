@@ -1,5 +1,6 @@
 import './style.css';
 import { analytics } from './analytics';
+import { initLoveEggs } from './love-egg';
 import { latestDownloadableRelease, releaseAPI, releasesURL } from './release.mjs';
 
 analytics.capture('$pageview');
@@ -9,12 +10,8 @@ analyticsToggle.checked = analytics.isEnabled();
 analyticsToggle.disabled = analytics.privacySignal();
 analyticsToggle.addEventListener('change', () => analytics.setDisabled(!analyticsToggle.checked));
 
-document.querySelectorAll<HTMLButtonElement>('[data-open]').forEach(button => {
-  button.addEventListener('click', () => {
-    const dialog = document.getElementById(button.dataset.open!) as HTMLDialogElement;
-    dialog.showModal();
-    if (dialog.id === 'setup') analytics.capture('setup_opened');
-  });
+document.querySelectorAll<HTMLButtonElement>('[data-dialog]').forEach(button => {
+  button.addEventListener('click', () => (document.getElementById(button.dataset.dialog!) as HTMLDialogElement).showModal());
 });
 document.querySelectorAll<HTMLDialogElement>('dialog').forEach(dialog => {
   dialog.querySelector('[data-close]')?.addEventListener('click', () => dialog.close());
@@ -22,34 +19,37 @@ document.querySelectorAll<HTMLDialogElement>('dialog').forEach(dialog => {
 });
 
 const download = document.querySelector<HTMLAnchorElement>('#download')!;
+const downloads = [...document.querySelectorAll<HTMLAnchorElement>('[data-download]')];
+const setDownload = (href: string, disabled = false) => downloads.forEach(link => {
+  link.href = href;
+  if (disabled) link.setAttribute('aria-disabled', 'true'); else link.removeAttribute('aria-disabled');
+});
 const label = document.querySelector('#download-label')!;
 const status = document.querySelector('#release-status')!;
 let downloadVersion: string | undefined;
-download.addEventListener('click', event => {
-  if (download.getAttribute('aria-disabled') === 'true') { event.preventDefault(); return; }
-  if (downloadVersion) analytics.capture('download_clicked', { version: downloadVersion });
-  else if (download.href === releasesURL) analytics.capture('release_list_opened');
-});
+downloads.forEach(link => link.addEventListener('click', event => {
+  if (link.getAttribute('aria-disabled') === 'true') { event.preventDefault(); return; }
+  if (downloadVersion) analytics.capture('download_clicked', { version: downloadVersion, source: link.dataset.download || 'hero' });
+  else if (link.href === releasesURL) analytics.capture('release_list_opened');
+}));
 async function loadRelease() {
   try {
     const response = await fetch(releaseAPI, { signal: AbortSignal.timeout(7000), credentials: 'omit', headers: { Accept: 'application/vnd.github+json' } });
     if (!response.ok && response.status !== 404) throw new Error('Release lookup unavailable');
     const release = response.ok ? latestDownloadableRelease(await response.json()) : null;
     if (release) {
-      download.href = release.url;
+      setDownload(release.url);
       downloadVersion = release.version;
-      download.removeAttribute('aria-disabled');
       label.textContent = 'Download for Mac';
       status.textContent = `v${release.version} · ${(release.size / 1048576).toFixed(1)} MB · Free public preview`;
     } else {
-      download.setAttribute('aria-disabled', 'true');
+      setDownload(download.href, true);
       label.textContent = 'Coming soon';
       status.textContent = 'The first signed download is on its way.';
     }
   } catch {
     analytics.capture('release_lookup_failed');
-    download.href = releasesURL;
-    download.removeAttribute('aria-disabled');
+    setDownload(releasesURL);
     label.textContent = 'View downloads';
     status.textContent = 'Check available versions on GitHub.';
   }
@@ -95,3 +95,24 @@ mark?.addEventListener('click', event => {
   lastTap = performance.now();
   if (taps === 5) { taps = 0; dispatchEvent(new Event('sidea:shuffle')); }
 });
+
+initLoveEggs();
+
+// The How demos and their CSS load on first interaction or idle, so the hero paints first.
+const how = document.querySelector<HTMLElement>('#how');
+if (how) {
+  let started = false;
+  const loadHow = () => {
+    if (started) return;
+    started = true;
+    import('./how').then(({ mountHow }) => {
+      mountHow(how);
+      // The styled layout moves anchors inside #how, so a deep link (or the old /how/) lands again.
+      const target = location.hash.length > 1 ? document.getElementById(location.hash.slice(1)) : null;
+      if (target && how.contains(target)) target.scrollIntoView();
+    }).catch(error => console.warn('How it works demos unavailable.', error));
+  };
+  if (location.hash.length > 1) loadHow();
+  for (const type of ['scroll', 'keydown', 'pointerdown', 'hashchange']) addEventListener(type, loadHow, { once: true, passive: true });
+  addEventListener('load', () => ('requestIdleCallback' in window ? requestIdleCallback(loadHow, { timeout: 3000 }) : setTimeout(loadHow, 1500)));
+}

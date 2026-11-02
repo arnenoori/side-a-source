@@ -1,0 +1,9 @@
+{
+  "battery": 64,
+  "keepAwake": true,
+  "memoryPressure": "warning",
+  "memoryTotal": 38654705664,
+  "memoryUsed": 27917287424,
+  "onPower": false,
+  "sessionMemory": 9878424780
+}

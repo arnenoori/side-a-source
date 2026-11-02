@@ -1,0 +1,13 @@
+{
+  "claudeHooks": true,
+  "codexHooks": "unconfirmed",
+  "codexLastHeardAt": 1791473611.9,
+  "keepAwake": false,
+  "onPower": true,
+  "push": {
+    "lastResult": "ok",
+    "registered": true
+  },
+  "relay": "ok",
+  "tmux": "ok"
+}

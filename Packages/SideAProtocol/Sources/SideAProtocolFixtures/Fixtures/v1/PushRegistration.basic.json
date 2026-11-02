@@ -1,0 +1,20 @@
+{
+  "activityTokens": {
+    "act-1": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+  },
+  "apnsEnvironment": "production",
+  "apnsToken": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "bundleID": "com.arnenoori.sidea.remote",
+  "prefs": {
+    "finished": false,
+    "health": true,
+    "limits": true,
+    "liveActivity": true,
+    "plans": true,
+    "questions": true,
+    "requests": true,
+    "suppressWhileWatching": true,
+    "timeSensitiveRequests": true
+  },
+  "pushToStartToken": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+}

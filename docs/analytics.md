@@ -35,7 +35,7 @@ Run `npm --prefix site test` and `npm --prefix site run build`. For a production
 
 The [app-health dashboard](https://us.posthog.com/project/598589/dashboard/2074258) separates opt-in setup, session, completed handoff, and error counts from website clicks.
 
-App statistics are a separate opt-in, off by default. The toggle appears after connecting an account and in Settings → Privacy. It persists only the user's consent; every app launch creates a fresh random ID in memory. Disabling cancels pending requests, discards that ID, and sends no opt-out event. Demo launches never send events. No website-to-app identity linkage exists.
+App statistics are a separate opt-in, off by default. The toggle, Share anonymous usage, appears after connecting an account and in Settings > General > Privacy. It persists only the user's consent; every app launch creates a fresh random ID in memory. Disabling cancels pending requests, discards that ID, and sends no opt-out event. Demo launches never send events. No website-to-app identity linkage exists.
 
 The only events are `app_launched` (when already opted in), `account_connected` (a profile becomes verified while already opted in) and `account_handoff_ready` (Side A moved the Mac-wide login to another account). No event backlog is stored or replayed on consent.
 

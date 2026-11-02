@@ -1,0 +1,12 @@
+{
+  "attempts": 0,
+  "body": "eyJhbnN3ZXIiOnsia2luZCI6ImFsbG93In19",
+  "createdAt": 1791560012.5,
+  "expiresAt": 1791646412.5,
+  "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b:allow:r1",
+  "macID": "3a9f0c1d2e4b5a67",
+  "method": "POST",
+  "path": "/v1/requests/5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b/answer",
+  "retry": 1,
+  "retryOf": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b:allow"
+}

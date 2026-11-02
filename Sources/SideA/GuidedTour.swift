@@ -9,7 +9,7 @@ enum TourStep: String, CaseIterable {
         case .use: "Switch this Mac to this account."
         case .autopilot: "Autopilot picks for you."
         case .usage: "Tokens by day and project."
-        case .add: "Add accounts."
+        case .add: "Add accounts in Settings."
         }
     }
 }

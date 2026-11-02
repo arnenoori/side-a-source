@@ -1,0 +1,54 @@
+// Side A push relay. Spec: docs/remote/relay-and-release.md. Secrets (never in this file):
+// APNS_KEY_P8, APNS_KEY_ID, APNS_TEAM_ID and RATE_KEY (32 random bytes, keys the per-IP registration
+// counter), set with `wrangler secret put` per environment.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sidea-push",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  // The hostnames are placeholders until the domain is settled (DEPLOY.md). These two `routes` are
+  // the only place the relay names them; the Mac app's default relay URL has to match.
+  "routes": [{ "pattern": "push.getsidea.com", "custom_domain": true }],
+  "triggers": { "crons": ["*/15 * * * *"] },
+  // Every invocation logged: the canary.page and apns.token_updates alerts (DEPLOY.md) read these logs,
+  // and sampling is per invocation, so a sampled page would mostly go unseen. No automatic invocation
+  // logs: each tunnel frame is a Durable Object invocation and would write one. What's kept is the
+  // relay's own console lines, one per request plus the canary's.
+  "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "invocation_logs": false } },
+  // RELAY_TUNNEL_PAUSED: refuses new tunnel sockets (docs/remote/tunnel.md) and leaves pushes alone.
+  // APNS_BUNDLES: the apps whose tokens this relay accepts, comma-separated.
+  "vars": { "RELAY_PAUSED": "", "RELAY_TUNNEL_PAUSED": "", "RELAY_ENV": "production", "APNS_BUNDLES": "com.arnenoori.sidea.remote,com.arnenoori.sidea.remote.dev" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "INSTALLS", "class_name": "Install" },
+      { "name": "HEALTH", "class_name": "Health" },
+      { "name": "LEDGER", "class_name": "Ledger" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Install", "Health"] }, { "tag": "v2", "new_sqlite_classes": ["Ledger"] }],
+  "ratelimits": [
+    { "name": "REGISTER_LIMIT", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } },
+    { "name": "TUNNEL_LIMIT", "namespace_id": "4103", "simple": { "limit": 120, "period": 60 } }
+  ],
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "sidea_push" }],
+  "env": {
+    "staging": {
+      "name": "sidea-push-staging",
+      "routes": [{ "pattern": "push-staging.getsidea.com", "custom_domain": true }],
+      "vars": { "RELAY_PAUSED": "", "RELAY_TUNNEL_PAUSED": "", "RELAY_ENV": "staging", "APNS_BUNDLES": "com.arnenoori.sidea.remote,com.arnenoori.sidea.remote.dev" },
+      "durable_objects": {
+        "bindings": [
+          { "name": "INSTALLS", "class_name": "Install" },
+          { "name": "HEALTH", "class_name": "Health" },
+          { "name": "LEDGER", "class_name": "Ledger" }
+        ]
+      },
+      "ratelimits": [
+        { "name": "REGISTER_LIMIT", "namespace_id": "4102", "simple": { "limit": 10, "period": 60 } },
+        { "name": "TUNNEL_LIMIT", "namespace_id": "4104", "simple": { "limit": 120, "period": 60 } }
+      ],
+      "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "sidea_push_staging" }]
+    }
+  }
+}

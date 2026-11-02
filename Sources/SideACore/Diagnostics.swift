@@ -13,9 +13,12 @@ public struct Dependency: Sendable {
         guard let range = output.range(of: #"\b[0-9]+\.[0-9]+(?:\.[0-9]+)?\b"#, options: .regularExpression) else { return nil }
         return String(output[range])
     }
-    public static func supportsPython(_ version: String) -> Bool {
+    public static func supportsPython(_ version: String) -> Bool { python(version, atLeast: 9) }
+    /// 3.11 brings `tomllib`, which the island hook needs to read Codex's `config.toml` and managed requirements.
+    public static func prefersPython(_ version: String) -> Bool { python(version, atLeast: 11) }
+    static func python(_ version: String, atLeast minor: Int) -> Bool {
         let parts = version.split(separator: ".").compactMap { Int($0) }
-        return parts.count >= 2 && (parts[0] > 3 || (parts[0] == 3 && parts[1] >= 9))
+        return parts.count >= 2 && (parts[0] > 3 || (parts[0] == 3 && parts[1] >= minor))
     }
 }
 
@@ -42,14 +45,18 @@ public struct DiagnosticSummary: Encodable, Sendable {
     let claude: Tool
     let codex: Tool
     let libraryReadable: Bool
+    let inApplications: Bool
+    let updateError: Int?
     public init(appVersion: String, macOSVersion: String, architecture: String,
                 python: Dependency, claude: Dependency, codex: Dependency,
-                libraryReadable: Bool) {
+                libraryReadable: Bool, inApplications: Bool = true, updateError: Int? = nil) {
         self.appVersion = Dependency.version(in: appVersion)
         self.macOSVersion = Dependency.version(in: macOSVersion)
         self.architecture = ["arm64", "x86_64"].contains(architecture) ? architecture : "unknown"
         self.python = Tool(python); self.claude = Tool(claude); self.codex = Tool(codex)
         self.libraryReadable = libraryReadable
+        self.inApplications = inApplications
+        self.updateError = updateError
     }
 }
 

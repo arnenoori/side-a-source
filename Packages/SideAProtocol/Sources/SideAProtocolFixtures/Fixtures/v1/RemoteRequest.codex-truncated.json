@@ -1,0 +1,30 @@
+{
+  "action": {
+    "files": [
+      "src/a.ts",
+      "old.ts"
+    ],
+    "kind": "patch",
+    "text": "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-x\n+y\n*** Delete File: old.ts\n*** End Patch"
+  },
+  "agent": "codex",
+  "answers": [
+    "allow",
+    "deny",
+    "terminal"
+  ],
+  "arrivedAt": 1791560003.9,
+  "detail": "src/a.ts\nold.ts",
+  "handBackAt": 1791560123.9,
+  "headless": false,
+  "headline": "Edit 2 files",
+  "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+  "project": "side-a",
+  "risk": "destructive",
+  "riskReason": "Deletes files",
+  "sessionID": "019a1b2c-3d4e-7f50-8a9b-0c1d2e3f4a5b",
+  "suggestions": [],
+  "title": "Port the bridge",
+  "tool": "apply_patch",
+  "truncated": true
+}

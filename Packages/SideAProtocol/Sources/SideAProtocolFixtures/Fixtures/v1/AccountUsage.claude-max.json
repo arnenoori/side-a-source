@@ -1,0 +1,29 @@
+{
+  "capacity": 5.5,
+  "extra": {
+    "currency": "USD",
+    "enabled": true,
+    "limit": 10.5,
+    "used": 3.2
+  },
+  "stale": false,
+  "windows": [
+    {
+      "id": "five_hour",
+      "label": "5-hour",
+      "percent": 42.5,
+      "resetsAt": 1791563612.9
+    },
+    {
+      "id": "seven_day",
+      "label": "Weekly",
+      "percent": 61.25,
+      "resetsAt": 1791646412.9
+    },
+    {
+      "id": "model:fable",
+      "label": "Weekly Fable",
+      "percent": 12.5
+    }
+  ]
+}

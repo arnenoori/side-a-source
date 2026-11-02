@@ -1,15 +1,5 @@
 import Foundation
 
-public enum AgentProvider: String, Codable, CaseIterable, Identifiable, Sendable {
-    case claude, codex
-    public var id: String { rawValue }
-    public var title: String { self == .claude ? "Claude" : "Codex" }
-    public var cliName: String { self == .claude ? "Claude Code" : "Codex CLI" }
-    public var setupURL: URL {
-        URL(string: self == .claude ? "https://code.claude.com/docs/en/setup" : "https://developers.openai.com/codex/cli")!
-    }
-}
-
 public struct Account: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public var name: String
@@ -17,13 +7,15 @@ public struct Account: Codable, Identifiable, Equatable, Sendable {
     public var ready: Bool
     public var allowAuto: Bool
     public var provider: AgentProvider
+    /// Which accounts Autopilot and the pool spend before the others. Nil means normal.
+    public var priority: AccountPriority?
 
     public init(id: String = UUID().uuidString.lowercased(), name: String, email: String = "",
-                ready: Bool = false, allowAuto: Bool = false, provider: AgentProvider = .claude) {
+                ready: Bool = false, allowAuto: Bool = false, provider: AgentProvider = .claude, priority: AccountPriority? = nil) {
         self.id = id; self.name = name; self.email = email
-        self.ready = ready; self.allowAuto = allowAuto; self.provider = provider
+        self.ready = ready; self.allowAuto = allowAuto; self.provider = provider; self.priority = priority
     }
-    private enum CodingKeys: String, CodingKey { case id, name, email, ready, allowAuto, provider }
+    private enum CodingKeys: String, CodingKey { case id, name, email, ready, allowAuto, provider, priority }
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         id = try values.decode(String.self, forKey: .id)
@@ -33,7 +25,16 @@ public struct Account: Codable, Identifiable, Equatable, Sendable {
         allowAuto = try values.decode(Bool.self, forKey: .allowAuto)
         // Existing v1 libraries contain Claude profiles. Never reassign their identity.
         provider = try values.decodeIfPresent(AgentProvider.self, forKey: .provider) ?? .claude
+        priority = try? values.decodeIfPresent(AccountPriority.self, forKey: .priority)
     }
+}
+
+/// First accounts are spent while any has room; Last ones only once every other is out, like
+/// an account that bills extra usage or one kept free for another Mac.
+public enum AccountPriority: String, Codable, CaseIterable, Sendable {
+    case first, normal, last
+    public var rank: Int { switch self { case .first: 0; case .normal: 1; case .last: 2 } }
+    public var title: String { switch self { case .first: "First"; case .normal: "Normal"; case .last: "Last" } }
 }
 
 public struct Configuration: Codable, Equatable, Sendable {
@@ -51,9 +52,32 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var liveLimits: Bool?
     /// The 5-hour or weekly percentage at which Autopilot moves off an account. Nil means 95.
     public var swapAt: Double?
+    /// A question with a recommended choice, or a plan, is answered after a minute unanswered. Nil means off.
+    public var answerRecommended: Bool?
+    /// Claude Code in Terminal goes through Side A's local proxy, which picks an account per conversation. Nil means off.
+    public var pool: Bool?
+    /// Pool mode also serves the user's other Macs over Tailscale. Nil means off.
+    public var poolShare: Bool?
+    /// Logins the user removed, as "provider:email", so a Mac login Side A finds again isn't added back on its own.
+    public var removedLogins: [String]?
     public init() {}
 
     public var selected: Account? { accounts.first { $0.id == selectedID } }
+    private static func loginKey(_ email: String, _ provider: AgentProvider) -> String { "\(provider.rawValue):\(email.lowercased())" }
+    public func wasRemoved(_ email: String, _ provider: AgentProvider) -> Bool {
+        removedLogins?.contains(Self.loginKey(email, provider)) == true
+    }
+    /// Removing an account remembers its login; an account without an email has none to remember.
+    public mutating func noteRemoved(_ account: Account) {
+        guard !account.email.isEmpty, !wasRemoved(account.email, account.provider) else { return }
+        removedLogins = (removedLogins ?? []) + [Self.loginKey(account.email, account.provider)]
+    }
+    /// Signing an account in, or adding it by hand, takes back its removal.
+    public mutating func forgetRemoval(_ email: String, _ provider: AgentProvider) {
+        guard wasRemoved(email, provider) else { return }
+        removedLogins?.removeAll { $0 == Self.loginKey(email, provider) }
+        if removedLogins?.isEmpty == true { removedLogins = nil }
+    }
     public mutating func step(_ offset: Int) {
         guard !accounts.isEmpty else { selectedID = nil; return }
         let current = accounts.firstIndex { $0.id == selectedID } ?? 0
@@ -74,49 +98,26 @@ public struct Configuration: Codable, Equatable, Sendable {
     }
 }
 
-public struct UsageWindow: Codable, Equatable, Sendable {
-    public var id: String
-    public var label: String
-    public var percent: Double
-    public var resetsAt: Double?
-    public init(id: String, label: String, percent: Double, resetsAt: Double?) {
-        self.id = id; self.label = label; self.percent = percent; self.resetsAt = resetsAt
+// UsageWindow, ExtraUsage and AccountUsage live in SideAProtocol; these rules are Autopilot policy.
+public extension AccountUsage {
+    /// The reading after a session reported hitting the limit `id` at `at`. The reply says when it
+    /// resets only in words, so a known future reset is kept, else the longest it could take.
+    func hitting(_ id: String, at: Double) -> AccountUsage {
+        var copy = self
+        let index = copy.windows.firstIndex { $0.id == id }
+        let known = index.flatMap { copy.windows[$0].resetsAt }.flatMap { $0 > at ? $0 : nil }
+        let label = ["five_hour": "5-hour", "seven_day": "Weekly"][id] ?? "Weekly " + id.dropFirst(6).capitalized
+        let window = UsageWindow(id: id, label: index.map { copy.windows[$0].label } ?? label, percent: 100,
+                                 resetsAt: known ?? at + (id == "five_hour" ? 5 * 3600 : 7 * 86_400))
+        if let index { copy.windows[index] = window } else { copy.windows.append(window) }
+        copy.stale = false
+        return copy
     }
-}
-
-/// Paid usage past the plan's limits ("usage credits"), this month.
-public struct ExtraUsage: Codable, Equatable, Sendable {
-    public var enabled: Bool
-    public var used: Double
-    public var limit: Double?
-    public var currency: String
-    public init(enabled: Bool, used: Double, limit: Double?, currency: String = "USD") {
-        self.enabled = enabled; self.used = used; self.limit = limit; self.currency = currency
-    }
-    public func money(_ value: Double) -> String { value.formatted(.currency(code: currency)) }
-    /// "$3.20 of $10 this month".
-    public var summary: String { "\(money(used))\(limit.map { " of \(money($0))" } ?? "") this month" }
-}
-
-public struct AccountUsage: Codable, Equatable, Sendable {
-    public var windows: [UsageWindow]
-    public var stale: Bool
-    /// Paid usage, Claude only; absent in readings from older versions.
-    public var extra: ExtraUsage?
-    /// Relative plan size (Pro 1, Max 5x 5, Max 20x 20). Missing means unknown, treated as 1.
-    public var capacity: Double?
-    public init(windows: [UsageWindow], stale: Bool = false, capacity: Double? = nil) {
-        self.windows = windows; self.stale = stale; self.capacity = capacity
-    }
-    public var fiveHour: UsageWindow? { windows.first { $0.id == "five_hour" } }
-    public var weekly: UsageWindow? { windows.first { $0.id == "seven_day" } }
-    /// Weekly caps that apply to one model only, such as "Weekly Fable".
-    public var modelLimits: [UsageWindow] { windows.filter { $0.id.hasPrefix("model:") } }
 
     /// The account as Fable sees it. Fable may use half of the weekly limit, so its room is the
     /// smaller of what is left of the Fable cap and twice what is left of the weekly limit.
     /// Nil for a plan without a Fable cap, where Fable is billed as extra usage.
-    public var forFable: AccountUsage? {
+    var forFable: AccountUsage? {
         // ponytail: assumes the Fable percent is of the Fable cap (100 = limited), like every other window.
         let fable = windows.first { $0.id == "model:fable" }
         // A Max plan whose usage lists no Fable cap yet has its whole Fable share left.
@@ -163,9 +164,9 @@ public struct UsageReport: Codable, Equatable, Sendable {
     /// Macs sharing totals through sync, this one included; empty or absent without sync.
     public var machines: [Machine]?
     /// Accounts set up on another Mac but not on this one.
-    public var elsewhere: [RemoteAccount]?
+    public var elsewhere: [SyncedAccount]?
     public init(days: [TokenRow], projects: [TokenRow], models: [TokenRow], activity: [ActivitySpan], dayModels: [TokenRow]? = nil,
-                machines: [Machine]? = nil, elsewhere: [RemoteAccount]? = nil) {
+                machines: [Machine]? = nil, elsewhere: [SyncedAccount]? = nil) {
         self.days = days; self.projects = projects; self.models = models; self.activity = activity; self.dayModels = dayModels
         self.machines = machines; self.elsewhere = elsewhere
     }
@@ -182,7 +183,8 @@ public struct Machine: Codable, Hashable, Sendable {
     }
 }
 
-public struct RemoteAccount: Codable, Hashable, Sendable {
+/// An account set up on another Mac, from iCloud sync.
+public struct SyncedAccount: Codable, Hashable, Sendable {
     public var name: String
     public var email: String
     public var provider: AgentProvider
@@ -354,12 +356,24 @@ public enum Planner {
         return max((full - last.1) / perMinute - since, 0)
     }
 
-    public static func best(_ candidates: [Account], usage: [String: AccountUsage], active: String?, now: Double) -> String? {
-        let eligible = candidates.filter { account in
-            guard account.ready, account.allowAuto, let value = usage[account.id], !value.stale else { return false }
-            // Only move to an account with real room; the active one may run up to the limit.
-            return hasHeadroom(value, now: now) && (account.id == active || (live(value.fiveHour, now)?.percent ?? 0) < switchTarget)
+    public static func best(_ candidates: [Account], usage: [String: AccountUsage], health: [String: LoginHealth] = [:], active: String?, now: Double) -> String? {
+        let usable = candidates.filter { account in
+            guard account.ready, account.allowAuto, health[account.id]?.takesWork != false,
+                  let value = usage[account.id], !value.stale else { return false }
+            return hasHeadroom(value, now: now)
         }
+        // Only move to an account with real room on every limit, so it is not left again minutes
+        // later; the active one may run up to the limit. With none, any 5-hour room will do.
+        let roomy = { (account: Account, weekly: Bool) in
+            let value = usage[account.id]!
+            return account.id == active || ((live(value.fiveHour, now)?.percent ?? 0) < switchTarget
+                && (!weekly || (live(value.weekly, now)?.percent ?? 0) < switchTarget))
+        }
+        var eligible = usable.filter { roomy($0, true) }
+        if eligible.isEmpty { eligible = usable.filter { roomy($0, false) } }
+        // Priority before urgency: a Last account waits even when its week is the one about to lapse.
+        let rank = { (account: Account) in (account.priority ?? .normal).rank }
+        if let tier = eligible.map(rank).min() { eligible = eligible.filter { rank($0) == tier } }
         guard let top = eligible.map({ urgency(usage[$0.id]!, now: now) }).max() else { return nil }
         let pick = eligible.filter { urgency(usage[$0.id]!, now: now) >= top * 0.75 }
             .min { (live(usage[$0.id]!.fiveHour, now)?.resetsAt ?? .infinity) < (live(usage[$1.id]!.fiveHour, now)?.resetsAt ?? .infinity) }
@@ -371,10 +385,65 @@ public enum Planner {
         return pick?.id
     }
 
+    /// A move only for priority, off an account with room, waits this long after the login's last move, so
+    /// limits coming and going (Fable above all) can't bounce its sessions between tiers and cost their cache each time.
+    public static let priorityDwell = 3600.0
+
+    public static func priorityMoveWaits(from: Account, to: Account, usage: AccountUsage?, movedAt: Double?, now: Double) -> Bool {
+        guard let usage, let movedAt, hasHeadroom(usage, now: now),
+              (to.priority ?? .normal).rank < (from.priority ?? .normal).rank else { return false }
+        return now - movedAt < priorityDwell
+    }
+
+    /// Sessions keep their prompt cache only while they stay on one account, so a trade the account doesn't need yet
+    /// waits until its sessions have been quiet this long; one that is out of room moves at once.
+    public static let pause = 300.0
+
+    public static func waitsForPause(_ usage: AccountUsage?, quiet: Double?, now: Double) -> Bool {
+        guard let usage, let quiet else { return false }
+        return quiet < pause && hasHeadroom(usage, now: now)
+    }
+
+    /// Whether a running login's sessions need Fable: true if any runs it, false only when every model is known.
+    public static func needsFable(_ models: [String?]?) -> Bool? {
+        guard let models, !models.isEmpty else { return nil }
+        if models.contains(where: { $0?.localizedCaseInsensitiveContains("fable") == true }) { return true }
+        return models.contains(nil) ? nil : false
+    }
+
+    /// When `slot`'s Fable sessions have spent their account's Fable share and no free account has any: another
+    /// running login with Fable room whose sessions all use other models, provided `slot`'s account still has room
+    /// for them. Trading the two keeps the Fable sessions going and hands the others a login they can still use.
+    public static func fableShare(for slot: String, slots: [String: String], models: [String: [String?]], accounts: [Account],
+                                  usage: [String: AccountUsage], health: [String: LoginHealth] = [:], excluded: Set<String>, now: Double) -> (slot: String, account: String)? {
+        guard needsFable(models[slot]) == true, let id = slots[slot], let mine = accounts.first(where: { $0.id == id }),
+              best([mine], usage: usage, health: health, active: nil, now: now) == id else { return nil }
+        let fable = usage.compactMapValues(\.forFable)
+        let partners = slots.filter { other, account in
+            other != slot && account != id && !excluded.contains(account) && needsFable(models[other]) == false
+                && slots.values.filter { $0 == account }.count == 1
+        }
+        let candidates = accounts.filter { account in partners.values.contains(account.id) }
+        guard let pick = best(candidates, usage: fable, health: health, active: nil, now: now),
+              let partner = partners.first(where: { $0.value == pick })?.key else { return nil }
+        return (partner, pick)
+    }
+
+    /// A live reading whose weekly window resets at a different time than the account's own
+    /// (still running) week came from another account's login. (From brandeddaniel's fork.)
+    public static func belongsElsewhere(_ windows: [UsageWindow], known: AccountUsage?, now: Double) -> Bool {
+        guard let mine = known?.weekly?.resetsAt, mine > now,
+              let theirs = windows.first(where: { $0.id == "seven_day" })?.resetsAt else { return false }
+        return abs(mine - theirs) > 3600
+    }
+
     /// A 5-hour window only starts on the first message; starting it early makes it reset early.
     public static func shouldPrime(_ account: Account, usage: AccountUsage?, now: Double) -> Bool {
         guard account.ready, account.allowAuto, let usage, !usage.stale else { return false }
-        // A plan with no 5-hour window has nothing to start.
+        // A Last account isn't meant to be spent yet, so its window waits until it is.
+        guard account.priority != .last else { return false }
+        // A plan with no 5-hour window has nothing to start. Claude's plans may omit an idle one, so those are tried;
+        // the caller waits a day after a verified Ultra account, which has none, shows no window from it.
         guard account.provider == .claude || usage.fiveHour != nil else { return false }
         return live(usage.fiveHour, now) == nil && (live(usage.weekly, now)?.percent ?? 0) < full
     }
@@ -390,13 +459,61 @@ public enum StorageError: LocalizedError {
     }
 }
 
+/// What's wrong with an account's login; one with nothing wrong has no entry. Limits and rests (`usage`, `poolBlocked`,
+/// `backoffUntil`) are separate facts: a login in good health can still be full.
+public enum LoginHealth: Sendable, Equatable {
+    /// Unused since it expired; the last reading holds and renewing it is free.
+    case idle
+    /// The bridge can't confirm whose login sits in the slot.
+    case verify
+    /// The read failed for a passing reason.
+    case offline
+    /// Refused until the user signs in again. `replacedBy` names whose login took its place. A session's own reading
+    /// says nothing about this: a running session can outlive the login nobody else can use.
+    case signIn(replacedBy: String? = nil)
+
+    /// Whether new work may be handed to this login.
+    public var takesWork: Bool { if case .signIn = self { false } else { true } }
+
+    /// The word kept in the usage cache.
+    public var saved: String {
+        switch self {
+        case .idle: "idle"
+        case .verify: "verify"
+        case .offline: "offline"
+        case .signIn: "signIn"
+        }
+    }
+
+    public init?(saved: String) {
+        switch saved {
+        case "idle": self = .idle
+        case "verify": self = .verify
+        case "offline": self = .offline
+        case "signIn": self = .signIn()
+        default: return nil
+        }
+    }
+}
+
 public enum PrivateFile {
     public static func write<T: Encodable>(_ value: T, to url: URL) throws {
+        try write(data: try JSONEncoder().encode(value), to: url)
+    }
+    public static func write(data: Data, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let data = try JSONEncoder().encode(value)
         try data.write(to: url, options: [.atomic])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+    /// Text that is never readable by others, not even for a moment (a prompt, a session's last screen).
+    public static func writeText(_ text: String, to url: URL) throws {
+        let files = FileManager.default
+        try files.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? files.removeItem(at: url)
+        guard files.createFile(atPath: url.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
     }
     public static func read<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
         try JSONDecoder().decode(type, from: Data(contentsOf: url))

@@ -1,0 +1,17 @@
+{
+  "header": "Platforms",
+  "multiSelect": true,
+  "options": [
+    {
+      "label": "iOS"
+    },
+    {
+      "label": "macOS"
+    },
+    {
+      "description": "Later",
+      "label": "watchOS"
+    }
+  ],
+  "question": "Which platforms?"
+}

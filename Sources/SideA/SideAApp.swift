@@ -5,10 +5,21 @@ struct SideAApp: App {
     @State private var store: AccountStore
     @StateObject private var updates: Updates
     init() {
+        AppCopies.claimLaunch()
         let store = AccountStore()
         _store = State(initialValue: store)
-        _updates = StateObject(wrappedValue: Updates())
-        DispatchQueue.main.async { store.setMenuBarOnly(store.config.menuBarOnly) }
+        let updates = Updates()
+        updates.willRelaunch = { store.keepAwake.handOff(); store.remote.handOff() }
+        store.remote.checkForUpdates = { [weak updates] in updates?.checkQuietly() ?? false }
+        _updates = StateObject(wrappedValue: updates)
+        DispatchQueue.main.async {
+            store.setMenuBarOnly(store.config.menuBarOnly)
+            store.startNotifications()
+            store.island.start()
+            store.remote.start()
+            store.keepAwake.start()
+            AppCopies.offerMove()
+        }
     }
     var body: some Scene {
         Window("Side A", id: "player") {
@@ -20,7 +31,11 @@ struct SideAApp: App {
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(after: .appInfo) { UpdateButton(updates: updates) }
-            CommandGroup(after: .help) { Button("Save diagnostics…") { store.saveDiagnostics() } }
+            CommandGroup(after: .help) { Button("Save diagnostics…") { store.saveDiagnostics(updateError: updates.failure) } }
+            CommandGroup(before: .windowList) {
+                Button("Sessions") { store.openSessions() }.keyboardShortcut("s", modifiers: [.command, .shift])
+                Divider()
+            }
             CommandMenu("Player") {
                 Button("Use selected account on this Mac") { store.play() }.keyboardShortcut(.return, modifiers: .command)
                 Button("Previous account") { store.step(-1) }.keyboardShortcut(.leftArrow, modifiers: .command)
@@ -30,6 +45,12 @@ struct SideAApp: App {
                 Button("Hold controls") { store.held.toggle() }.keyboardShortcut("h", modifiers: [.command, .shift])
             }
         }
+        Window("Sessions", id: "sessions") {
+            SessionsWindow(store: store)
+        }
+        .defaultSize(width: 1080, height: 720)
+        .hiddenAtLaunch()
+        .commandsRemoved()
         MenuBarExtra {
             MenuPlayer(store: store, updates: updates)
         } label: {
@@ -46,7 +67,8 @@ struct SideAApp: App {
     /// The active Claude account's tightest limit: 5-hour or weekly, whichever is closer.
     private var menuPercent: Int? {
         guard let account = store.active, let usage = store.usage[account.id] else { return nil }
-        let percents = [usage.fiveHour, usage.weekly].compactMap { $0?.percent }
+        let now = Date().timeIntervalSince1970
+        let percents = [usage.fiveHour, usage.weekly].compactMap { $0?.used(at: now) }
         return percents.max().map { Int($0.rounded()) }
     }
     static func gauge(_ percent: Int) -> String {

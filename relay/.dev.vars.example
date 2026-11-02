@@ -1,0 +1,4 @@
+APNS_KEY_P8="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+APNS_KEY_ID="ABC123DEFG"
+APNS_TEAM_ID="NV46KL65S9"
+RATE_KEY="any-random-string"

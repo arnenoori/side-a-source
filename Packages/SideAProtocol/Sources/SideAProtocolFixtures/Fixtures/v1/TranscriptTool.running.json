@@ -1,0 +1,15 @@
+{
+  "action": {
+    "command": "npm test",
+    "kind": "command"
+  },
+  "diffs": [],
+  "group": false,
+  "id": "toolu_02XYZ",
+  "images": [],
+  "name": "Bash",
+  "outputTruncated": false,
+  "startedAt": 1791560012.15,
+  "status": "running",
+  "summary": "Bash: npm test"
+}

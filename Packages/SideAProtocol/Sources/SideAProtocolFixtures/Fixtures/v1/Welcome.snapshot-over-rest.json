@@ -1,0 +1,43 @@
+{
+  "epoch": "e5b0c7d2a1f3",
+  "hello": {
+    "app": "0.6.0",
+    "build": 612,
+    "capabilities": [
+      "answers.plans",
+      "answers.questions",
+      "diffs",
+      "events",
+      "hosted",
+      "images",
+      "interrupt",
+      "options",
+      "reply.followUp",
+      "reply.note",
+      "search",
+      "terminal",
+      "transcript.stream",
+      "uploads"
+    ],
+    "endpoints": {
+      "name": "macbook-pro.tail1234.ts.net:47800",
+      "tailnet": "100.101.12.4:47800"
+    },
+    "epoch": "e5b0c7d2a1f3",
+    "keyID": "9f86d081884c7d65",
+    "mac": {
+      "id": "3a9f0c1d2e4b5a67",
+      "name": "MacBook Pro"
+    },
+    "maxProtocol": 1,
+    "minClientBuild": 40,
+    "minProtocol": 1,
+    "paired": true,
+    "protocolVersion": 1,
+    "remoteOn": true,
+    "serverTime": 1791560012.4
+  },
+  "replay": false,
+  "seq": 41,
+  "snapshotOverREST": true
+}

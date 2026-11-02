@@ -1,0 +1,8 @@
+{
+  "at": 1791560013.9,
+  "data": {
+    "sunny": true
+  },
+  "seq": 43,
+  "type": "weather.update"
+}

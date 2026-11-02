@@ -3,38 +3,80 @@ import ServiceManagement
 import SideACore
 import SwiftUI
 
-enum SettingsTab: String { case accounts, usage, autopilot, general }
+/// In tab order; ⌘1–⌘7 follow it.
+enum SettingsTab: String, CaseIterable { case accounts, autopilot, usage, notifications, remote, setup, general }
 
 /// The one place to manage accounts and preferences; the menu bar and player link here.
 struct SettingsView: View {
     @Bindable var store: AccountStore
     @ObservedObject var updates: Updates
+    @State private var query = ""
+    @FocusState private var searching: Bool
     var body: some View {
-        TabView(selection: $store.settingsTab) {
-            AccountsSettings(store: store)
-                .tabItem { Label("Accounts", systemImage: "person.2") }.tag(SettingsTab.accounts)
-            UsageSettings(store: store)
-                .tabItem { Label("Usage", systemImage: "chart.bar") }.tag(SettingsTab.usage)
-            AutopilotSettings(store: store)
-                .tabItem { Label("Autopilot", systemImage: "arrow.triangle.2.circlepath") }.tag(SettingsTab.autopilot)
-            GeneralSettings(store: store, updates: updates)
-                .tabItem { Label("General", systemImage: "gearshape") }.tag(SettingsTab.general)
+        VStack(spacing: 0) {
+            TextField("Search settings", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($searching)
+                .onExitCommand { query = "" }
+                .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 4)
+            if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                tabs
+            } else {
+                SettingsResults(query: query) { tab in
+                    store.settingsTab = tab
+                    query = ""
+                    searching = false
+                }
+            }
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 520, height: 600)
+        .background { TabShortcuts(store: store) { searching = true } }
+    }
+
+    private var tabs: some View {
+        TabView(selection: $store.settingsTab) {
+            AccountsSettings(store: store).settingsTab(.accounts)
+            AutopilotSettings(store: store).settingsTab(.autopilot)
+            UsageSettings(store: store).settingsTab(.usage)
+            NotificationSettings(store: store).settingsTab(.notifications)
+            RemoteSettings(store: store).settingsTab(.remote)
+            SetupSettings(store: store).settingsTab(.setup)
+            GeneralSettings(store: store, updates: updates).settingsTab(.general)
+        }
+    }
+}
+
+private extension View {
+    func settingsTab(_ tab: SettingsTab) -> some View {
+        tabItem { Label(tab.title, systemImage: tab.symbol) }.tag(tab)
+    }
+}
+
+/// ⌘1–⌘7 pick a tab, ⌘F searches and ⌘⇧S opens Sessions. Invisible buttons, because a menu-bar-only Side A has no menu bar to hold them.
+private struct TabShortcuts: View {
+    let store: AccountStore
+    let search: () -> Void
+    var body: some View {
+        ZStack {
+            ForEach(Array(SettingsTab.allCases.enumerated()), id: \.offset) { index, tab in
+                Button("") { store.settingsTab = tab }.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+            }
+            Button("", action: search).keyboardShortcut("f", modifiers: .command)
+            Button("") { store.openSessions() }.keyboardShortcut("s", modifiers: [.command, .shift])
+        }
+        .opacity(0).accessibilityHidden(true)
     }
 }
 
 struct AccountsSettings: View {
     @Bindable var store: AccountStore
-    @State private var provider: AgentProvider = .claude
-    @State private var name = ""
-    @State private var email = ""
     @State private var removing: Account?
+    @State private var adding = false
 
     var body: some View {
         Form {
             ForEach(AgentProvider.allCases) { provider in
-                if let login = store.unknownLogins[provider] {
+                if let login = store.loginsToAdd[provider] {
                     Section {
                         LabeledContent {
                             Button("Add to Side A") { Task { await store.adoptMacLogin(provider) } }
@@ -59,7 +101,7 @@ struct AccountsSettings: View {
                 }
             }
             if store.config.accounts.isEmpty {
-                Section { Text("No accounts yet. Add one below.").foregroundStyle(.secondary) }
+                Section { Text("No accounts yet.").foregroundStyle(.secondary) }
             }
             ForEach(AgentProvider.allCases) { provider in
                 let accounts = store.config.accounts.filter { $0.provider == provider }
@@ -71,19 +113,11 @@ struct AccountsSettings: View {
                     }
                 }
             }
-            Section("Add account") {
-                Picker("Agent", selection: $provider) {
-                    ForEach(AgentProvider.allCases) { Text($0.title).tag($0) }
-                }.pickerStyle(.segmented)
-                TextField("Name", text: $name, prompt: Text("Personal"))
-                TextField("Email", text: $email, prompt: Text("Optional, prefills sign-in"))
-                    .autocorrectionDisabled()
-                DependencyStatusView(store: store, provider: provider, compact: true)
+            Section {
                 HStack {
                     Spacer()
-                    Button("Sign in with \(provider.title)") { add() }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || !store.isInstalled(provider) || store.python == nil)
+                    Button("Add Account…") { adding = true }
+                        .buttonStyle(.borderedProminent)
                 }
             }
             if let error = store.error {
@@ -91,15 +125,71 @@ struct AccountsSettings: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear(perform: focusAdd)
+        .onChange(of: store.addingAccount) { focusAdd() }
+        .sheet(isPresented: $adding) { AddAccountSheet(store: store) }
         .alert("Remove \(removing?.name ?? "account")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("Cancel", role: .cancel) { removing = nil }
             Button("Remove", role: .destructive) { if let removing { store.remove(removing.id) }; removing = nil }
         } message: { Text("Conversations stay.") }
     }
 
+    private func focusAdd() {
+        guard store.addingAccount else { return }
+        store.addingAccount = false
+        adding = true
+    }
+}
+
+struct AddAccountSheet: View {
+    @Bindable var store: AccountStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var provider: AgentProvider = .claude
+    @State private var name = ""
+    @State private var email = ""
+    @FocusState private var naming: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    Picker("Agent", selection: $provider) {
+                        ForEach(AgentProvider.allCases) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented)
+                    TextField("Name", text: $name, prompt: Text("Optional"))
+                        .focused($naming)
+                    TextField("Email", text: $email, prompt: Text("Optional, prefills sign-in"))
+                        .autocorrectionDisabled()
+                    DependencyStatusView(store: store, provider: provider, compact: true)
+                } header: {
+                    Text("Add an account")
+                } footer: {
+                    Text("Opens \(provider.title)'s sign-in in your browser.")
+                }
+            }
+            .formStyle(.grouped)
+            .scrollDisabled(true)
+            // Accounts shows errors behind this sheet, where they can't be seen while it's open.
+            if let error = store.error {
+                Text(error).font(.caption).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Add Account") { add() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!store.isInstalled(provider) || store.python == nil)
+            }
+            .padding([.horizontal, .bottom], 20)
+        }
+        .frame(width: 420)
+        .onAppear { naming = true }
+    }
+
     private func add() {
         guard let id = store.addAccount(name: name, email: email, provider: provider) else { return }
-        name = ""; email = ""
+        dismiss()
         Task { await store.signIn(id) }
     }
 }
@@ -130,9 +220,9 @@ struct AccountSettingsRow: View {
             Group {
                 if store.signingIn.contains(account.id) || store.waking.contains(account.id) {
                     ProgressView().controlSize(.small)
-                } else if !account.ready || (store.issues[account.id] == "signIn" && !isActive) {
+                } else if !account.ready || (store.health[account.id]?.takesWork == false && !isActive) {
                     Button("Sign in") { Task { await store.signIn(account.id) } }
-                } else if store.issues[account.id] == "idle" && store.usage[account.id] == nil && account.provider == .claude {
+                } else if store.health[account.id] == .idle && store.usage[account.id] == nil && account.provider == .claude {
                     Button("Renew") { Task { await store.wake(account.id) } }
                         .help("Has Claude Code renew this login; no model runs and no quota is used")
                 } else if isActive {
@@ -148,6 +238,9 @@ struct AccountSettingsRow: View {
             Menu {
                 Button("Rename") { editing = true }
                 Toggle("Include in Autopilot", isOn: Binding(get: { account.allowAuto }, set: { store.setAuto(account.id, $0) }))
+                Picker("Use", selection: Binding(get: { account.priority ?? .normal }, set: { store.setPriority(account.id, $0) })) {
+                    ForEach(AccountPriority.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
                 if account.provider == .claude && account.ready {
                     Button("Open Terminal on \(account.name)") { Task { await store.openTerminal(account.id) } }
                 }
@@ -165,10 +258,11 @@ struct AccountSettingsRow: View {
     }
 
     private var subtitle: String {
-        guard account.ready else { return "Not signed in" }
+        guard account.ready else { return store.signingIn.contains(account.id) ? account.email : "Not signed in" }
         let identity = account.email.isEmpty ? "Connected" : account.email
         if let issue = store.issueText(account.id) { return "\(identity) · \(issue)" }
-        return account.allowAuto ? identity : "\(identity) · Autopilot skips it"
+        guard account.allowAuto else { return "\(identity) · Autopilot skips it" }
+        return account.priority.flatMap { $0 == .normal ? nil : "\(identity) · Used \($0.title.lowercased())" } ?? identity
     }
     private func commit() {
         if !store.rename(account.id, draft) { draft = account.name }
@@ -190,6 +284,21 @@ struct UsageSettings: View {
                     Text(outlook(weekly, rhythm: rhythm))
                 }
             }
+            let paying = store.config.accounts.filter { ($0.provider == .claude) && (store.usage[$0.id]?.extra.map { $0.enabled || $0.used > 0 } ?? false) }
+            if !paying.isEmpty {
+                Section {
+                    ForEach(paying) { account in
+                        let extra = store.usage[account.id]!.extra!
+                        LabeledContent(account.name) {
+                            Text(extra.enabled ? extra.summary : "Off · \(extra.summary)").monospacedDigit()
+                        }
+                    }
+                } header: {
+                    Text("Paid usage")
+                } footer: {
+                    Text("Past a plan limit, accounts with usage credits on keep working and bill them. Side A warns before that happens and when it does.")
+                }
+            }
             if let report = store.report {
                 Section {
                     HStack(spacing: 10) {
@@ -202,6 +311,17 @@ struct UsageSettings: View {
                         StatTile(title: "30 days", value: sum(0...29))
                     }
                 }
+                Section("Tokens per day") {
+                    Chart(report.dayModels ?? report.days, id: \.self) { row in
+                        BarMark(x: .value("Day", Self.day(row.date), unit: .day), y: .value("Tokens", row.total))
+                            .foregroundStyle(by: .value("Model", ModelName.short(row.model)))
+                    }
+                    .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { Text(TokenCount.short(value.as(Int.self) ?? 0)) } } }
+                    .chartXAxis { AxisMarks(values: .stride(by: .day, count: 7)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
+                    .chartLegend(position: .bottom, alignment: .leading)
+                    .frame(height: 170)
+                }
+                Section("When you work") { HourStrip(activity: report.activity) }
                 if let machines = report.machines, machines.count > 1 {
                     Section("Your Macs, last 7 days") {
                         let top = Double(max(machines.map(\.tokens).max() ?? 1, 1))
@@ -217,39 +337,34 @@ struct UsageSettings: View {
                         }
                     }
                 }
-                let paying = store.config.accounts.filter { ($0.provider == .claude) && (store.usage[$0.id]?.extra.map { $0.enabled || $0.used > 0 } ?? false) }
-                if !paying.isEmpty {
-                    Section {
-                        ForEach(paying) { account in
-                            let extra = store.usage[account.id]!.extra!
-                            LabeledContent(account.name) {
-                                Text(extra.enabled ? extra.summary : "Off · \(extra.summary)").monospacedDigit()
-                            }
+                let rows = report.dayModels ?? []
+                Section {
+                    DisclosureGroup("Projects") { shares(report.projects.prefix(6).map { (URL(fileURLWithPath: $0.project ?? "").lastPathComponent, $0.total) }) }
+                    // Per agent, so a smaller Codex share is not crowded out by Claude.
+                    ForEach(AgentProvider.allCases) { provider in
+                        let models = report.models.filter { ModelName.provider($0.model) == provider }
+                        if !models.isEmpty {
+                            DisclosureGroup("\(provider.title) models") { shares(models.prefix(5).map { (ModelName.short($0.model), $0.total) }) }
                         }
-                    } header: {
-                        Text("Paid usage")
-                    } footer: {
-                        Text("Past a plan limit, accounts with usage credits on keep working and bill them. Side A warns before that happens and when it does.")
                     }
-                }
-                Section("Tokens per day") {
-                    Chart(report.dayModels ?? report.days, id: \.self) { row in
-                        BarMark(x: .value("Day", Self.day(row.date), unit: .day), y: .value("Tokens", row.total))
-                            .foregroundStyle(by: .value("Model", ModelName.short(row.model)))
+                    if !rows.isEmpty {
+                        DisclosureGroup("Worth at API prices") {
+                            let week = rows.filter { ($0.date ?? "") >= MenuPlayer.day(-6) }
+                            LabeledContent("Last 7 days") { Text(APIPrice.dollars(week), format: .currency(code: "USD").precision(.fractionLength(0))).monospacedDigit() }
+                            LabeledContent("Last 30 days") { Text(APIPrice.dollars(rows), format: .currency(code: "USD").precision(.fractionLength(0))).monospacedDigit() }
+                            let byModel = Dictionary(grouping: rows.filter { APIPrice.of($0.model) != nil }, by: { ModelName.short($0.model) })
+                                .mapValues(APIPrice.dollars).sorted { $0.value > $1.value }.prefix(4)
+                            ForEach(byModel, id: \.key) { model, dollars in
+                                LabeledContent(model) { Text(dollars, format: .currency(code: "USD").precision(.fractionLength(0))).monospacedDigit().foregroundStyle(.secondary) }
+                            }
+                            let source = store.pricesUpdated.map { "list prices from LiteLLM's public price list, updated \($0.formatted(.relative(presentation: .named)))" }
+                                ?? "list prices as of October 2026"
+                            Text("What the same Claude tokens would cost on Anthropic's API, at \(source). Your plans cover them for a flat price. Most of it is cache reads and writes. Codex isn't included.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                    .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { Text(TokenCount.short(value.as(Int.self) ?? 0)) } } }
-                    .chartXAxis { AxisMarks(values: .stride(by: .day, count: 7)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
-                    .chartLegend(position: .bottom, alignment: .leading)
-                    .frame(height: 170)
-                }
-                Section("When you work") { HourStrip(activity: report.activity) }
-                Section("Projects") { shares(report.projects.prefix(6).map { (URL(fileURLWithPath: $0.project ?? "").lastPathComponent, $0.total) }) }
-                // Per agent, so a smaller Codex share is not crowded out by Claude.
-                ForEach(AgentProvider.allCases) { provider in
-                    let models = report.models.filter { ModelName.provider($0.model) == provider }
-                    if !models.isEmpty {
-                        Section("\(provider.title) models") { shares(models.prefix(5).map { (ModelName.short($0.model), $0.total) }) }
-                    }
+                } header: {
+                    Text("Details")
                 }
             } else {
                 Section {
@@ -310,7 +425,7 @@ struct PaceRow: View {
     let rhythm: WeekRhythm?
     private var window: UsageWindow { usage.weekly! }
     var body: some View {
-        let used = min(max(window.percent, 0), 100)
+        let used = window.used(at: Date().timeIntervalSince1970)
         let forecast = WeekForecast(window, rhythm: rhythm, now: Date().timeIntervalSince1970)
         VStack(alignment: .leading, spacing: 5) {
             HStack {
@@ -334,9 +449,9 @@ struct PaceRow: View {
         .accessibilityElement(children: .combine)
     }
     private func verdict(used: Double, forecast: WeekForecast?) -> String {
-        guard let reset = window.resetsAt else { return "\(Int(used))% used" }
+        guard let reset = window.resetsAt, reset > Date().timeIntervalSince1970 else { return "\(Int(used.rounded()))% used" }
         if used >= Planner.limited { return "Limited, back \(UsageBar.format(reset))" }
-        guard let forecast, forecast.projected > used else { return "\(Int(used))% used, resets \(UsageBar.format(reset))" }
+        guard let forecast, forecast.projected > used else { return "\(Int(used.rounded()))% used, resets \(UsageBar.format(reset))" }
         if let out = forecast.runsOut { return "Runs out \(UsageBar.format(out))" }
         return "On pace for \(Int(forecast.projected))% by \(UsageBar.format(reset))"
     }
@@ -353,12 +468,12 @@ enum LimitText {
         let now = Date().timeIntervalSince1970
         let live = { (window: UsageWindow?) in window.flatMap { ($0.resetsAt ?? 0) > now ? $0 : nil } }
         var parts: [String] = []
-        if let five = live(usage.fiveHour) { parts.append("5-hour \(Int(five.percent))%, resets \(UsageBar.format(five.resetsAt!))") }
+        if let five = live(usage.fiveHour) { parts.append("5-hour \(five.text(at: now)), resets \(UsageBar.format(five.resetsAt!))") }
         else if usage.fiveHour != nil { parts.append("5-hour idle") }
         let weekly = live(usage.weekly).map { "week resets \(UsageBar.format($0.resetsAt!))" }
         if let weekly { parts.append(weekly) }
         for limit in usage.modelLimits {
-            parts.append("\(name(limit)) \(Int(limit.percent))%\(live(limit).map { ", resets \(UsageBar.format($0.resetsAt!))" } ?? "")")
+            parts.append("\(name(limit)) \(limit.text(at: now))\(live(limit).map { ", resets \(UsageBar.format($0.resetsAt!))" } ?? "")")
         }
         return parts.joined(separator: " · ")
     }
@@ -446,12 +561,41 @@ struct AutopilotSettings: View {
                     ForEach([80.0, 85, 90, 95, 97, 99], id: \.self) { Text("\(Int($0))%").tag($0) }
                 } label: {
                     Text("Move at")
-                    Text("When an account reaches this much of its 5-hour or weekly limit, Autopilot moves your sessions to another. Lower leaves room for a burst of use; higher uses more of each account.")
+                    Text("Of a 5-hour or weekly limit, before your sessions move to another account. Lower leaves room for a burst.")
                 }
                 Toggle(isOn: Binding(get: { store.config.followFable != false }, set: { store.setFollowFable($0) })) {
                     Text("Follow Fable")
-                    Text("While you use Fable, pick the account with the most Fable left. Fable can use up to half of each weekly limit, and Pro plans bill it as extra usage.")
+                    Text("While you use Fable, pick the account with the most Fable left. Pro plans bill Fable as extra usage.")
                 }
+                Toggle(isOn: Binding(get: { store.config.pool == true }, set: { value in Task { await store.setPool(value) } })) {
+                    Text("Pool mode")
+                    Text(poolStatus)
+                }
+                if store.config.pool == true || store.remotePool != nil {
+                    PoolHealthRows(store: store)
+                }
+                if store.config.pool == true {
+                    Toggle(isOn: Binding(get: { store.config.poolShare == true }, set: { value in Task { await store.setPoolShare(value) } })) {
+                        Text("Share with my other Macs")
+                        Text(store.poolShareProblem ?? "Over Tailscale, only to devices signed in to Tailscale as you. Sign in to your accounts here once; on each other Mac, run this in Terminal:")
+                    }
+                    if let command = store.poolShareCommand {
+                        HStack {
+                            Text(command).font(.caption.monospaced()).textSelection(.enabled).lineLimit(2).truncationMode(.middle)
+                            Spacer()
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(command, forType: .string)
+                            }
+                            Button("New Key") { Task { await store.newPoolShareKey() } }
+                                .help("Macs that joined stop using this one until they run the new command.")
+                        }
+                    }
+                }
+            }
+            Section {
+                Toggle("Answer with recommended after 1 minute",
+                       isOn: Binding(get: { store.config.answerRecommended == true }, set: { store.setAnswerRecommended($0) }))
             }
             Section {
                 UpNext(store: store)
@@ -461,39 +605,91 @@ struct AutopilotSettings: View {
                 Text("\(store.fableMode ? "Fable" : "weekly") % left ÷ hours until it resets × plan size")
                     .font(.custom("Noteworthy-Bold", size: 13)).foregroundStyle(.secondary)
             }
-            Section("Your day") {
+            Section {
                 DayTimeline(store: store)
                 HStack(spacing: 8) {
                     RuleChip(value: "\(Int(Planner.full))%", text: "leaves an account")
                     RuleChip(value: "<\(Int(Planner.switchTarget))%", text: "moves only to one")
                     RuleChip(value: "1.5×", text: "more urgent to switch")
                 }
-            }
-            Section {
-                Toggle(isOn: Binding(get: { store.shellSwitching }, set: { value in Task { await store.setShellSwitching(value) } })) {
-                    Text("Switch in Terminal")
-                    Text("New claude commands use the account Autopilot picks, and sidea use <name> keeps one terminal on one account. Adds one line to ~/.zshrc.")
-                }
-                Toggle(isOn: Binding(get: { store.liveLimits }, set: { value in Task { await store.setLiveLimits(value) } })) {
-                    Text("Live limits from Claude Code")
-                    Text("Each reply updates the numbers, and your own statusline keeps working unchanged.")
-                }
-                Toggle(isOn: Binding(get: { store.limitHook }, set: { value in Task { await store.setLimitHook(value) } })) {
-                    Text("React the moment a limit hits")
-                    Text("A silent Claude Code hook that rechecks right away.")
-                }
+            } header: {
+                Text("Your day")
             } footer: {
-                Text("Codex accounts are tracked and warmed up; switch Codex itself with codex login.")
+                Text("Codex accounts are tracked and warmed up; switch Codex itself with codex login. Terminal switching is in Setup.")
             }
         }.formStyle(.grouped)
     }
 
+    private var poolStatus: String {
+        guard store.config.pool == true else {
+            return "Claude Code and Codex in Terminal send their requests through Side A, which keeps each conversation on one account and moves it the moment that one is full. Logins never leave this Mac. Anthropic doesn't support this setup."
+        }
+        guard store.poolPort != nil else { return "Starting…" }
+        let conversations = store.poolConversations.values.reduce(0, +)
+        return "On. \(conversations) conversation\(conversations == 1 ? "" : "s") in the last hour, on \(store.poolConversations.count) account\(store.poolConversations.count == 1 ? "" : "s"). New terminal commands use it; sidea use <name> keeps a tab on one account."
+    }
+
     private var status: String {
         guard store.config.smartMode else { return "Off. Side A only shows your limits." }
-        guard store.shellSwitching else { return "On, but it can't move Terminal to another account until Switch in Terminal is on." }
+        guard store.shellSwitching else { return "On, but it can't move Terminal to another account until Switch in Terminal is on, in Setup." }
         let using = store.active.map { "Using \($0.name)\(store.fableMode ? " for Fable" : "")" } ?? "Watching your accounts"
         guard let schedule = store.schedule else { return "\(using). Learning your hours." }
         return "\(using). Warms up idle windows from \(TokenCount.clock(schedule.start - WorkSchedule.lead))."
+    }
+}
+
+/// What is left across the pool, what it last did, and a check of every login that spends no quota.
+struct PoolHealthRows: View {
+    @Bindable var store: AccountStore
+
+    var body: some View {
+        let now = Date().timeIntervalSince1970
+        if store.config.pool == true {
+            ForEach(AgentProvider.allCases) { provider in
+                let members = store.poolMembers(provider)
+                if let room = PoolRoom(members, usage: provider == .claude ? store.planning(store.usage) : store.usage, now: now) {
+                    LabeledContent(provider.title) {
+                        Text(Self.summary(room)).multilineTextAlignment(.trailing)
+                    }
+                }
+                if let activity = store.poolHealth[provider], let line = Self.line(activity, now: now) {
+                    Text(line).font(.caption).foregroundStyle(activity.failing ? .red : .secondary)
+                }
+            }
+        }
+        if let remote = store.remotePool {
+            LabeledContent("Another Mac's pool") {
+                Text(remote.detail).multilineTextAlignment(.trailing).foregroundStyle(remote.answered == false ? .red : .secondary)
+            }
+        }
+        LabeledContent("Check logins") {
+            if store.poolTesting { ProgressView().controlSize(.small) } else {
+                Button("Test Pool") { Task { await store.testPool() } }
+                    .help("Checks each account's login the way a request would. No model runs and no quota is used.")
+            }
+        }
+        if let results = store.poolTest {
+            ForEach(store.config.accounts.filter { results[$0.id] != nil }) { account in
+                LabeledContent("\(account.name) · \(account.provider.title)") {
+                    Text(results[account.id]!).foregroundStyle(results[account.id] == "Ready" ? .green : .red)
+                }
+            }
+        }
+    }
+
+    private static func summary(_ room: PoolRoom) -> String {
+        var parts = room.fiveHourLeft.map { ["5-hour \(Int($0))% left"] } ?? []
+        parts += ["week \(Int(room.weeklyLeft))% left", "\(room.accounts) account\(room.accounts == 1 ? "" : "s")"]
+        if room.limited > 0 { parts.append("\(room.limited) full") }
+        if let refill = room.refill { parts.append("\(refill.name) back \(UsageBar.format(refill.at))") }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func line(_ activity: PoolActivity, now: Double) -> String? {
+        if activity.failing, let failure = activity.failure { return "Last request refused: \(failure)" }
+        guard let at = activity.servedAt, let name = activity.servedBy else { return nil }
+        let minutes = Int((now - at) / 60)
+        return "Last answer \(minutes < 1 ? "just now" : "\(minutes) min ago") from \(name)."
     }
 }
 
@@ -507,7 +703,7 @@ struct UpNext: View {
             .compactMap { account in usage[account.id].map { (account, $0, Planner.urgency($0, now: now)) } }
             .sorted { $0.2 > $1.2 }
         let top = max(ranked.first?.2 ?? 1, 0.01)
-        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: usage, active: store.activeIDs[.claude], now: now)
+        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: usage, health: store.health, active: store.activeIDs[.claude], now: now)
         if ranked.isEmpty {
             Text("Add Claude accounts to see how Autopilot ranks them.").foregroundStyle(.secondary)
         }
@@ -598,27 +794,25 @@ struct GeneralSettings: View {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("tourSeen") private var tourSeen = false
     @AppStorage("playerEnabled") private var playerEnabled = false
+    @State private var indexBytes: Int64 = 0
+    @State private var rebuilding = false
     var body: some View {
         Form {
             Section {
                 Toggle("Open at login", isOn: Binding(get: { launchAtLogin }, set: { store.setLaunchAtLogin($0); launchAtLogin = SMAppService.mainApp.status == .enabled }))
                 Toggle("Show only in the menu bar", isOn: Binding(get: { store.config.menuBarOnly }, set: { store.setMenuBarOnly($0) }))
-                LabeledContent("Guided tour") { Button("Show again") { tourSeen = false } }
                 Toggle(isOn: $playerEnabled) {
                     Text("3D player")
                     Text("A pocket disc player for your accounts, from the menu.")
                 }
             }
+            KeepAwakeSettings(keepAwake: store.keepAwake)
             Section {
                 Toggle(isOn: Binding(get: { store.config.sync == true }, set: { store.setSync($0) })) {
                     Text("Sync with your other Macs")
                     Text(store.syncFolder == nil ? "Turn on iCloud Drive to combine usage across your Macs."
-                         : "Combines usage, working hours and your account list through iCloud Drive. Logins stay on each Mac; sign in once per Mac.")
+                         : "Usage, working hours, accounts and settings through iCloud Drive. Logins stay on each Mac.")
                 }.disabled(store.syncFolder == nil && store.config.sync != true)
-            }
-            Section("Tools") {
-                DependencyStatusView(store: store, provider: .claude)
-                DependencyStatusView(store: store, provider: .codex, compact: true)
             }
             Section("Updates") {
                 Toggle("Automatically check for updates", isOn: $updates.automaticallyChecks)
@@ -628,12 +822,259 @@ struct GeneralSettings: View {
                     Text("Side A \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                 }
             }
+            Section("Session search") {
+                LabeledContent {
+                    if rebuilding { ProgressView().controlSize(.small) }
+                    else {
+                        Button("Rebuild") {
+                            rebuilding = true
+                            Task { await store.sessions.rebuildIndex(); indexBytes = store.sessions.indexBytes; rebuilding = false }
+                        }
+                    }
+                } label: {
+                    Text("Search index")
+                    Text(rebuilding ? "Reading your conversations again…" : "\(indexBytes.formatted(.byteCount(style: .file))) on this Mac, built from your transcripts")
+                }
+            }
             Section("Privacy") {
                 UsagePreference(analytics: store.analytics)
                 LabeledContent {
-                    Button("Save diagnostics…") { store.saveDiagnostics() }
+                    Button("Save diagnostics…") { store.saveDiagnostics(updateError: updates.failure) }
                 } label: { Link("Privacy details", destination: URL(string: "https://getsidea.com/index.md")!) }
             }
-        }.formStyle(.grouped)
+            Section {
+                LabeledContent("Guided tour") { Button("Show Again") { tourSeen = false } }
+                LabeledContent {
+                    Button("Remove…", role: .destructive) { confirmUninstall() }
+                } label: {
+                    Text("Remove Side A")
+                    Text("Undoes its shell line, statusline and hooks, and moves it to the Trash.")
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { indexBytes = store.sessions.indexBytes }
+    }
+
+    private func confirmUninstall() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove Side A?"
+        alert.informativeText = "Side A takes its line out of ~/.zshrc, restores your Claude Code statusline and hooks, stops opening at login, deletes its caches and search index, and moves itself to the Trash. Your conversations aren't touched, and your accounts and their logins stay unless you choose otherwise."
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Also sign out of and forget my accounts"
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let forget = alert.suppressionButton?.state == .on
+        Task { await store.uninstall(forgetAccounts: forget) }
+    }
+}
+
+/// Everything that can interrupt you: the notch, banners and sounds.
+struct NotificationSettings: View {
+    @Bindable var store: AccountStore
+    @AppStorage(Sounds.enabledKey) private var sounds = true
+    @AppStorage(Sounds.volumeKey) private var volume = 0.5
+    @AppStorage(WaitingNotifier.enabledKey) private var notifyWaiting = false
+    @AppStorage(AccountStore.weeklyAlertKey) private var weeklyAlert = 0.0
+
+    var body: some View {
+        Form {
+            IslandSettings(store: store)
+            Section {
+                Toggle(isOn: $notifyWaiting) {
+                    Text("A session needs you")
+                    Text("When Claude Code asks for permission or input, even with Side A closed.")
+                }
+                .onChange(of: notifyWaiting) {
+                    if notifyWaiting { WaitingNotifier.requestPermission() }
+                    store.startNotifications()
+                }
+                Picker("An account's week passes", selection: $weeklyAlert) {
+                    Text("Off").tag(0.0)
+                    ForEach([50.0, 75.0, 90.0], id: \.self) { Text("\(Int($0))%").tag($0) }
+                }
+            } header: {
+                Text("Banners")
+            } footer: {
+                Text("One weekly banner per account.")
+            }
+            Section("Sound") {
+                Toggle(isOn: $sounds) {
+                    Text("Sound effects")
+                    Text("Clicks when the account changes, a session resumes or one needs you.")
+                }
+                if sounds {
+                    LabeledContent("Volume") {
+                        Slider(value: $volume, in: 0.1...1) { editing in if !editing { Sounds.play(.trackChange) } }
+                            .frame(width: 160)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+struct KeepAwakeSettings: View {
+    @Bindable var keepAwake: KeepAwakeController
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(get: { keepAwake.settings.enabled }, set: { keepAwake.setEnabled($0) })) {
+                Text("Keep awake while agents work")
+                Text("While a session works and for two minutes after. The display can still sleep.")
+            }
+            if keepAwake.settings.enabled && keepAwake.offersLid || keepAwake.settings.lidClosed || keepAwake.busy {
+                Toggle(isOn: Binding(get: { keepAwake.settings.lidClosed }, set: { value in Task { await keepAwake.setLidClosed(value) } })) {
+                    Text("Also with the lid closed")
+                    Text("A small Side A helper turns sleep off while agents work, on power only.")
+                }.disabled(keepAwake.busy)
+                if keepAwake.settings.lidClosed {
+                    HelperApproval(keepAwake: keepAwake)
+                    Toggle(isOn: Binding(get: { keepAwake.settings.onBattery }, set: { keepAwake.setOnBattery($0) })) {
+                        Text("Also on battery")
+                        Text("Below \(KeepAwake.lowBattery)% the Mac sleeps as usual.")
+                    }
+                }
+            }
+        } footer: {
+            if let error = keepAwake.error {
+                Text(error).foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+/// System Settings is where the user approves the helper, so the row follows its status while it waits.
+private struct HelperApproval: View {
+    var keepAwake: KeepAwakeController
+
+    var body: some View {
+        Group {
+            switch keepAwake.helper {
+            case .ready:
+                Label("Approved in Login Items", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .needsApproval:
+                HStack {
+                    Label("Needs a one-time approval in Login Items.", systemImage: "lock.circle")
+                    Spacer()
+                    Button("Open Login Items") { keepAwake.openLoginItems() }
+                }
+            case .off:
+                HStack {
+                    Label("Side A's helper is off.", systemImage: "exclamationmark.circle")
+                    Spacer()
+                    Button("Turn On") { Task { await keepAwake.setLidClosed(true) } }
+                }
+            case .unavailable:
+                Label("Only Side A in Applications can do this.", systemImage: "exclamationmark.circle")
+            }
+        }
+        .font(.callout)
+        .task(id: keepAwake.helper) {
+            keepAwake.refreshHelper()
+            while keepAwake.helper == .needsApproval, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                keepAwake.refreshHelper()
+            }
+        }
+    }
+}
+
+struct IslandSettings: View {
+    @Bindable var store: AccountStore
+    @AppStorage(Island.onKey) private var on = false
+    @AppStorage(Island.eventsKey) private var events = true
+    @AppStorage(Island.waitingKey) private var waiting = true
+    @AppStorage(Island.finishedKey) private var finished = true
+    @AppStorage(Island.finishedClearKey) private var clearFinished = 0
+    @AppStorage(Island.finishedAutomatedKey) private var finishedAutomated = false
+    @AppStorage(Island.screenKey) private var screen = "notch"
+    @State private var showingKeys = false
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(get: { on }, set: { value in
+                on = value
+                // Remote keeps the hooks; only the notch goes.
+                if value || !RemoteController.active { Task { await store.setIsland(value ? .claude : nil, value ? "on" : "off") } }
+                store.startNotifications()
+            })) {
+                Text("Dynamic Island")
+                Text("Answer Claude Code and Codex from the notch.")
+            }
+            if on {
+                Toggle(isOn: hook(.claude)) {
+                    Text("Claude Code requests")
+                    Text("Allow, deny, answer questions and review plans. The terminal prompt stays open too.")
+                }
+                Toggle(isOn: hook(.codex)) {
+                    Text("Codex requests")
+                    Text("Approve the hook once with /hooks in Codex.")
+                }
+                Toggle(isOn: $finished) {
+                    Text("Sessions that finish")
+                    Text("A chime and their last message, kept in Ready until you go to them.")
+                }
+                if finished {
+                    Toggle(isOn: $finishedAutomated) {
+                        Text("Include automated runs")
+                        Text("claude -p, scripts and the Agent SDK. Off, they finish quietly in the Done list.")
+                    }
+                    Picker("Clear finished sessions", selection: $clearFinished) {
+                        Text("Never").tag(0)
+                        Text("After 30 seconds").tag(30)
+                        Text("After 1 minute").tag(60)
+                        Text("After 5 minutes").tag(300)
+                    }
+                }
+                Toggle("Account changes and limits", isOn: $events)
+                Toggle("Sessions waiting for you", isOn: $waiting)
+                    .onChange(of: waiting) { store.startNotifications() }
+                Picker("Show on", selection: $screen) {
+                    Text("The display with the notch").tag("notch")
+                    Text("The display with the pointer").tag("active")
+                }
+                LabeledContent("Shortcuts") {
+                    Button("Show Shortcuts") { showingKeys = true }
+                        .popover(isPresented: $showingKeys, arrowEdge: .trailing) { IslandShortcuts() }
+                }
+                LabeledContent("Try it") { Button("Show a sample request") { store.island.preview() } }
+            }
+        } footer: {
+            if on {
+                Text("Destructive commands, like rm -rf or a force push, need a click: no shortcut or Always approves them.")
+            }
+        }
+    }
+
+    private func hook(_ agent: IslandAgent) -> Binding<Bool> {
+        Binding(get: { store.island.installed[agent] == true },
+                set: { value in Task { await store.setIsland(agent, value ? "on" : "off") } })
+    }
+}
+
+private struct IslandShortcuts: View {
+    private static let keys = [("⌃⌥Y", "Allow"), ("⌃⌥N", "Deny"), ("⌃⌥A", "Always allow"), ("⌃⌥1–4", "Answer a question"),
+                               ("⌃⌥G", "Go to the session that's done"), ("⌃⌥R", "Reply with its next task"), ("⌃⌥I", "Focus the island"),
+                               ("⌃⌥T", "Show the terminal"), ("⌃⌥← →", "Switch requests")]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                ForEach(Self.keys, id: \.0) { key, action in
+                    GridRow {
+                        Text(key).font(.system(size: 12).monospaced()).foregroundStyle(.secondary)
+                        Text(action)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            Text("They work only while a request is waiting.").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
     }
 }

@@ -1,0 +1,25 @@
+{
+  "accountName": "Work",
+  "action": {
+    "kind": "plan",
+    "plan": "## Plan\n1. Add the package\n2. Move the types"
+  },
+  "agent": "claude",
+  "answers": [
+    "approvePlan",
+    "deny",
+    "terminal"
+  ],
+  "arrivedAt": 1791560003.9,
+  "detail": "## Plan\n1. Add the package\n2. Move the types",
+  "headless": false,
+  "headline": "Review the plan",
+  "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+  "project": "app",
+  "risk": "low",
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "suggestions": [],
+  "title": "Fix the island layout",
+  "tool": "ExitPlanMode",
+  "truncated": false
+}

@@ -1,0 +1,28 @@
+{
+  "accounts": [],
+  "epoch": "e5b0c7d2a1f3",
+  "finished": [],
+  "hosted": [],
+  "incidents": [
+    {
+      "id": "inc-8d2k",
+      "provider": "claude",
+      "startedAt": 1791558211.9,
+      "status": "identified",
+      "title": "Elevated errors on Opus",
+      "url": "https://status.claude.com/incidents/8d2k"
+    }
+  ],
+  "mac": {
+    "battery": 64,
+    "keepAwake": true,
+    "memoryPressure": "warning",
+    "memoryTotal": 38654705664,
+    "memoryUsed": 27917287424,
+    "onPower": false,
+    "sessionMemory": 9878424780
+  },
+  "requests": [],
+  "seq": 0,
+  "sessions": []
+}

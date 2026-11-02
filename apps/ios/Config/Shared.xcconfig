@@ -1,0 +1,10 @@
+// Ids and signing for every target. Debug.xcconfig and Release.xcconfig set APP_ID_SUFFIX first.
+
+APP_BUNDLE_ID = com.arnenoori.sidea.remote$(APP_ID_SUFFIX)
+APP_GROUP = group.$(APP_BUNDLE_ID)
+SHARED_KEYCHAIN_GROUP = $(AppIdentifierPrefix)$(APP_BUNDLE_ID).shared
+
+// Automatic signing on the team from Local.xcconfig (untracked; copy Local.xcconfig.template), or from
+// DEVELOPMENT_TEAM on the xcodebuild command line, which scripts/ios-run-device.sh passes from TEAM_ID.
+CODE_SIGN_STYLE = Automatic
+#include? "../Local.xcconfig"

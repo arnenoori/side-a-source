@@ -22,7 +22,7 @@ export function createAnalytics({ projectToken, host, location, navigator, stora
       if (typeof properties.version !== 'string' || !/^\d+\.\d+\.\d+$/.test(properties.version)) return;
       allowed.version = properties.version;
       allowed.format = 'dmg';
-      allowed.source = 'hero';
+      allowed.source = properties.source === 'cta' ? 'cta' : 'hero';
     }
     try {
       visitID ??= randomUUID(); // Memory only: reloads are new visits, never returning-user identities.

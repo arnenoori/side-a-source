@@ -1,0 +1,9 @@
+{
+  "code": "confirm_invalid",
+  "details": {
+    "hint": "pairAgain",
+    "level": "unlock"
+  },
+  "message": "Pair this iPhone again to approve from it.",
+  "retryable": false
+}

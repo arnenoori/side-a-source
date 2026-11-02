@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.sidea.keepawake</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/SideAKeepAwake</string>
+	<key>MachServices</key>
+	<dict>
+		<key>com.sidea.keepawake</key>
+		<true/>
+	</dict>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.arnenoori.sidea</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>PathState</key>
+		<dict>
+			<key>/private/var/db/com.sidea.keepawake</key>
+			<true/>
+		</dict>
+	</dict>
+</dict>
+</plist>

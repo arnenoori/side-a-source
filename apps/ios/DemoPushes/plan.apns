@@ -1,0 +1,28 @@
+{
+  "Simulator Target Bundle": "com.arnenoori.sidea.remote.dev",
+  "aps": {
+    "alert": {
+      "title": "Plan ready for review",
+      "subtitle": "side-a \u00b7 Work",
+      "body": "Fix the flaky sync test"
+    },
+    "category": "PLAN",
+    "thread-id": "demo-sync",
+    "interruption-level": "active",
+    "sound": "default"
+  },
+  "p": {
+    "v": 1,
+    "mac": "demo",
+    "sent": 1791560012.4,
+    "t": "plan",
+    "rid": "d1a0b2c3-0000-4000-8000-000000000004",
+    "sid": "demo-sync",
+    "agent": "claude",
+    "full": true,
+    "title": "Plan ready for review",
+    "subtitle": "side-a \u00b7 Work",
+    "body": "Fix the flaky sync test",
+    "plan": "## Fix the flaky sync test\n\nThe test races the outbox drain against the socket's first event.\n\n1. Wait for `hello` before draining\n2. Give `SyncEngine` an injected clock\n3. Replace the `sleep(1)` in `SyncTests` with the clock\n\n```swift\nawait engine.start(clock: .test)\n```\n\nNo production behaviour changes."
+  }
+}

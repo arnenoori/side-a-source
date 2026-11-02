@@ -1,0 +1,19 @@
+{
+  "answers": [
+    {
+      "picked": [
+        "SQLite (Recommended)"
+      ],
+      "question": "Which database should the app use?"
+    },
+    {
+      "other": "visionOS too",
+      "picked": [
+        "iOS",
+        "macOS"
+      ],
+      "question": "Which platforms?"
+    }
+  ],
+  "kind": "answers"
+}

@@ -50,10 +50,12 @@ header { view-transition-name: header; }
 @media (hover: hover) and (pointer: fine) { .download:hover { background: #3b4540; } }
 .download[aria-disabled=true] { background: #e6e9e6; color: #747c77; cursor: default; }
 .requirements { font-size: 11px; color: var(--muted); margin: 14px 0 0; }
-footer { display: flex; justify-content: center; color: var(--muted); }
+footer { display: flex; flex-direction: column; align-items: center; color: var(--muted); }
+footer .fine { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; }
+footer .fine a, footer .fine .text-button { min-width: 0; min-height: 0; padding: 4px 0; font-size: 11px; color: inherit; cursor: pointer; text-decoration: none; }
 footer a { font-size: 11px; text-decoration: none; }
 .text-button { padding: 0; border: 0; background: none; font: inherit; text-decoration: underline; text-underline-offset: 4px; }
-@media (hover: hover) and (pointer: fine) { footer a:hover, .quiet-button:hover { color: var(--ink); } }
+@media (hover: hover) and (pointer: fine) { footer a:hover, footer .text-button:hover, .quiet-button:hover, .icon-link:hover { color: var(--ink); } }
 dialog { border: 1px solid #e0e4df; border-radius: 22px; padding: 32px; background: #fafbf9; color: var(--ink); width: min(390px, calc(100% - 32px)); box-shadow: 0 24px 90px #20282024; max-height: calc(100svh - 48px); overflow-y: auto; }
 dialog::backdrop { background: #20282030; backdrop-filter: blur(8px); }
 /* Occasional and modal: a short fade and settle, centered. */
@@ -62,6 +64,7 @@ dialog[open]::backdrop { opacity: 1; transition: opacity 200ms var(--ease-out); 
 @starting-style { dialog[open] { opacity: 0; transform: scale(.96); } dialog[open]::backdrop { opacity: 0; } }
 dialog h2 { font-size: 26px; letter-spacing: -.8px; font-weight: 600; margin: 0 0 28px; }
 dialog p { font-size: 13px; line-height: 1.6; color: #626b65; }
+.dialog-link { margin: 20px 0 0; }
 .close { position: absolute; right: 12px; top: 12px; width: 44px; height: 44px; font-size: 25px; border: 0; background: none; }
 .steps { padding: 0; list-style: none; margin: 0 0 28px; counter-reset: step; }
 .steps li { display: flex; align-items: baseline; gap: 16px; margin: 22px 0; font-size: 14px; line-height: 1.5; }
@@ -84,8 +87,16 @@ summary { min-height: 44px; display: list-item; align-content: center; cursor: p
   * { scroll-behavior: auto !important; }
 }
 nav { display: flex; align-items: center; gap: 22px; }
+.icon-link { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin-right: -12px; color: var(--muted); }
+.icon-link svg { width: 20px; height: 20px; }
 .quiet-button { display: inline-flex; align-items: center; text-decoration: none; color: var(--muted); line-height: 1; }
 .title { text-align: center; max-width: 640px; padding: 8px 0 0; }
 .title h1 { font-size: clamp(30px, 4.4vw, 48px); line-height: 1.06; letter-spacing: -.035em; font-weight: 600; margin: 0; text-wrap: balance; }
 .title p { font-size: clamp(15px, 1.5vw, 18px); line-height: 1.45; color: var(--muted); margin: 14px auto 0; max-width: 470px; text-wrap: balance; }
 .stage { height: clamp(280px, 50svh, 520px); }
+/* The hero fills the first screen; How it works follows on the same page. */
+.intro { width: 100%; min-height: calc(100svh - 90px); display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.scroll-cue { display: grid; place-items: center; width: 44px; height: 44px; margin: 4px auto 0; border-radius: 50%; color: var(--muted); }
+@media (hover: hover) and (pointer: fine) { .scroll-cue:hover { color: var(--ink); background: #eceeec; } }
+#how { scroll-margin-top: 12px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }

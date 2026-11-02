@@ -1,0 +1,29 @@
+{
+  "Simulator Target Bundle": "com.arnenoori.sidea.remote.dev",
+  "aps": {
+    "alert": {
+      "title": "Allow Bash",
+      "subtitle": "side-a \u00b7 Work",
+      "body": "rm -rf ~/Library/Caches/side-a-build"
+    },
+    "category": "REQUEST_DESTRUCTIVE",
+    "thread-id": "demo-sync",
+    "interruption-level": "time-sensitive",
+    "sound": "default"
+  },
+  "p": {
+    "v": 1,
+    "mac": "demo",
+    "sent": 1791560012.4,
+    "t": "request",
+    "rid": "d1a0b2c3-0000-4000-8000-000000000006",
+    "sid": "demo-sync",
+    "agent": "claude",
+    "gate": "biometric",
+    "risk": "destructive",
+    "riskReason": "Deletes files outside the project",
+    "title": "Allow Bash",
+    "subtitle": "side-a \u00b7 Work",
+    "body": "rm -rf ~/Library/Caches/side-a-build"
+  }
+}

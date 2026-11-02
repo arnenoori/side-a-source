@@ -1,0 +1,3 @@
+// Copy to Local.xcconfig (gitignored) and set your team, from developer.apple.com > Membership, or
+// Xcode > Settings > Accounts. Then `xcodegen` and build, or run scripts/ios-run-device.sh.
+DEVELOPMENT_TEAM = ABCDE12345

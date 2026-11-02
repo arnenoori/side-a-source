@@ -1,0 +1,12 @@
+/* Shown by iOS when the Notification Service Extension can't run, so no words from the Mac are available. */
+"PUSH_REQUEST_FALLBACK" = "A session needs your OK";
+"PUSH_QUESTION_FALLBACK" = "A session has a question";
+"PUSH_PLAN_FALLBACK" = "A plan is ready for review";
+"PUSH_FINISHED_FALLBACK" = "A session finished";
+"PUSH_LIMIT_FALLBACK" = "An account is near its limit";
+"PUSH_HEALTH_FALLBACK" = "A session looks stuck";
+"PUSH_ROTATION_FALLBACK" = "Autopilot moved your sessions";
+"PUSH_TEST_FALLBACK" = "Notifications from your Mac work";
+"PUSH_ANSWERED" = "Answered";
+"ACTIVITY_START_TITLE" = "Side A";
+"ACTIVITY_START_BODY" = "Sessions are working";

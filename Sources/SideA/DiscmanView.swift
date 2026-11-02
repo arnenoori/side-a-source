@@ -205,7 +205,7 @@ struct DiscmanView: NSViewRepresentable {
             hinge.position = SCNVector3(0, 0.45, -2.05)
             scene.rootNode.addChildNode(hinge)
             do {
-                guard let url = AppResources.bundle.url(forResource: "discman", withExtension: "json") else {
+                guard let url = AppResources.resource("discman.json") else {
                     throw CocoaError(.fileNoSuchFile)
                 }
                 let meshes = try JSONDecoder().decode([MeshObject].self, from: Data(contentsOf: url))

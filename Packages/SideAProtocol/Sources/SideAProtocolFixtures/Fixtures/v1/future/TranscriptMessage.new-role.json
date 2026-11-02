@@ -1,0 +1,30 @@
+{
+  "at": 1791560009.9,
+  "extra": {
+    "a": 1
+  },
+  "images": [],
+  "inherited": false,
+  "role": "thinking",
+  "seq": 812,
+  "textTruncated": false,
+  "tools": [
+    {
+      "action": {
+        "command": "npm test",
+        "kind": "command"
+      },
+      "colour": "blue",
+      "diffs": [],
+      "group": false,
+      "id": "toolu_02XYZ",
+      "images": [],
+      "name": "Bash",
+      "outputTruncated": false,
+      "startedAt": 1791560012.15,
+      "status": "paused",
+      "summary": "Bash: npm test"
+    }
+  ],
+  "uuid": "1f0c2d3e-0000-4000-8000-000000000812"
+}

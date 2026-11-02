@@ -1,0 +1,33 @@
+{
+  "action": {
+    "added": "let b = 3",
+    "kind": "edit",
+    "path": "/Users/you/code/app/Island.swift",
+    "removed": "let b = 2"
+  },
+  "agent": "claude",
+  "answers": [
+    "allow",
+    "allowMode",
+    "always",
+    "deny",
+    "terminal"
+  ],
+  "arrivedAt": 1791560003.9,
+  "detail": "Island.swift",
+  "gate": "lockScreen",
+  "headless": false,
+  "headline": "Edit a file",
+  "id": "6f7a8b9c-0d1e-4f2a-8b3c-4d5e6f7a8b9c",
+  "modes": [
+    "acceptEdits",
+    "auto"
+  ],
+  "project": "app",
+  "risk": "normal",
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "suggestions": [],
+  "title": "Fix the island layout",
+  "tool": "Edit",
+  "truncated": false
+}

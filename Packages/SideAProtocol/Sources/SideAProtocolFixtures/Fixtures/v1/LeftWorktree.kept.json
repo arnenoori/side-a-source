@@ -1,0 +1,8 @@
+{
+  "branch": "sidea/old",
+  "bytes": 48211968,
+  "id": "wt-3f9c",
+  "keep": "ignoredFiles",
+  "keepReason": "Holds .env",
+  "path": "/Users/you/code/app/.claude/worktrees/old"
+}

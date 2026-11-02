@@ -11,6 +11,7 @@ struct MenuPlayer: View {
     @ObservedObject var updates: Updates
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openURL) private var openURL
     @AppStorage("tourSeen") private var tourSeen = false
     @AppStorage("playerEnabled") private var playerEnabled = false
     var body: some View {
@@ -21,8 +22,9 @@ struct MenuPlayer: View {
                 Button { Task { await store.refreshAll(force: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.plain).help("Refresh usage")
             }
+            statusLine
             ForEach(AgentProvider.allCases) { provider in
-                if let email = store.unknownLogins[provider] {
+                if let email = store.loginsToAdd[provider] {
                     HStack {
                         Text("\(provider.title) on this Mac: \(email)").font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
                         Spacer()
@@ -31,7 +33,12 @@ struct MenuPlayer: View {
                 }
             }
             if store.config.accounts.isEmpty {
-                Text("Add an account to see its limits.").font(.system(size: 12)).foregroundStyle(.secondary)
+                HStack {
+                    Text("Add an account to see its limits.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { store.openLibrary() } label: { Label("Add account", systemImage: "plus") }
+                        .controlSize(.small).tourAnchor(.add)
+                }
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -44,7 +51,7 @@ struct MenuPlayer: View {
             .frame(maxHeight: 440)
             .fixedSize(horizontal: false, vertical: true)
             if store.unknownLogins[.claude] == nil, let next = Planner.nextAvailable(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, now: Date().timeIntervalSince1970),
-               Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, active: nil, now: Date().timeIntervalSince1970) == nil {
+               Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, health: store.health, active: nil, now: Date().timeIntervalSince1970) == nil {
                 Text("All limited. \(next.0.name) is back \(UsageBar.format(next.1)).")
                     .font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
             }
@@ -70,21 +77,72 @@ struct MenuPlayer: View {
                     Label("Update to \(version)", systemImage: "arrow.down.circle.fill").font(.system(size: 11, weight: .medium))
                 }.buttonStyle(.borderless).help("Restart Side A with the new version")
             }
+            if updates.failure != nil {
+                Link(destination: URL(string: "https://getsidea.com")!) {
+                    Label("Update didn't install · Download it", systemImage: "exclamationmark.arrow.circlepath").font(.system(size: 11, weight: .medium))
+                }.help("Download the latest Side A and replace this copy")
+            }
             Divider()
-            Toggle(isOn: Binding(get: { store.config.smartMode }, set: { _ in store.toggleSmart() })) {
-                Text("Autopilot")
-            }.toggleStyle(.switch).controlSize(.small).tourAnchor(.autopilot)
             HStack(spacing: 14) {
-                Button { store.openLibrary() } label: { Label("Add account", systemImage: "plus") }.tourAnchor(.add)
+                HStack(spacing: 8) {
+                    Text("Autopilot").font(.system(size: 13))
+                    Toggle("Autopilot", isOn: Binding(get: { store.config.smartMode }, set: { _ in store.toggleSmart() }))
+                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }.tourAnchor(.autopilot)
                 Spacer()
-                if playerEnabled { Button { openPlayer() } label: { Image(systemName: "opticaldisc") }.help("Show the player") }
-                Button { store.settingsTab = .general; store.openSettings() } label: { Image(systemName: "gearshape") }.help("Settings")
-                Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Side A")
+                if playerEnabled {
+                    Button { openPlayer() } label: { Image(systemName: "opticaldisc") }.help("Show the player").accessibilityLabel("Show the player")
+                }
+                Button { openSessions() } label: { Image(systemName: "text.bubble") }.help("Sessions").accessibilityLabel("Sessions")
+                Button { store.openSettings() } label: { Image(systemName: "gearshape") }
+                    .help("Settings").accessibilityLabel("Settings")
+                    .modifier(TourAnchorIf(step: .add, active: !store.config.accounts.isEmpty))
+                Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Side A").accessibilityLabel("Quit Side A")
             }.buttonStyle(.borderless).font(.system(size: 12))
         }.padding(16).frame(width: 320)
         .guidedTour(isPresented: Binding(get: { !tourSeen && !store.isDemo }, set: { if !$0 { tourSeen = true } }))
         .task { await store.refreshAll() }
-        .onAppear { store.showSettings = { openSettings() } }
+        .onAppear {
+            store.showSettings = { openSettings() }
+            store.showSessions = { openWindow(id: "sessions") }
+        }
+    }
+    /// One line at most, so the menu never stacks banners; the rest stay visible in Sessions.
+    @ViewBuilder private var statusLine: some View {
+        let waiting = store.island.pending.count, finished = store.island.ready.count
+        if waiting > 0 {
+            status("hand.raised.fill", .orange, finished > 0 ? "\(waiting) waiting for you · \(finished) finished" : "\(waiting) waiting for you",
+                   help: "Answer or reply in Sessions", action: openSessions)
+        } else if let warning = store.memoryWarning {
+            status("memorychip", .orange, warning,
+                   help: "macOS reports memory pressure. See what each session holds and quit idle ones in Sessions.", action: openSessions)
+        } else if let outage = store.outage {
+            status("exclamationmark.icloud", outage.major ? .red : .orange, "Claude: \(outage.name)",
+                   help: "Open status.claude.com. Errors in sessions right now may be Anthropic's, not your accounts'.") { openURL(AccountStore.statusPage) }
+        } else if finished > 0 {
+            status("checkmark.circle.fill", .green, "\(finished) finished", help: "Reply in Sessions", action: openSessions)
+        } else if let awake = store.keepAwake.line {
+            status("cup.and.saucer.fill", .secondary, awake, help: "Keep awake while agents work, in Settings > General",
+                   label: store.keepAwake.accessibilityLine) { store.settingsTab = .general; store.openSettings() }
+                .foregroundStyle(.secondary)
+        }
+    }
+    private func status(_ symbol: String, _ tint: Color, _ text: String, help: String, label: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol).foregroundStyle(tint)
+                Text(text).lineLimit(2)
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 11, weight: .medium)).contentShape(.rect)
+        }
+        .buttonStyle(.plain).help(help)
+        .accessibilityLabel(label ?? text)
+    }
+    /// Opens the conversation that waits longest on you, else the one that finished last.
+    private func openSessions() {
+        store.openSessions(store.island.pending.first?.request.sessionID ?? store.island.ready.first?.finish.sessionID)
     }
     private func openPlayer() { store.playerRequested = true; openWindow(id: "player"); NSApp.activate(ignoringOtherApps: true) }
 }
@@ -150,19 +208,24 @@ struct AccountUsageRow: View {
             }
             Spacer(minLength: 4)
             if let usage {
-                MiniBar(label: "5h", window: usage.fiveHour)
-                MiniBar(label: "wk", window: usage.weekly)
-                // A model's own weekly cap only earns space once that model has been used.
-                ForEach(usage.modelLimits.filter { $0.percent >= 1 }, id: \.id) { limit in
-                    MiniBar(label: String(limit.label.dropFirst("Weekly ".count).prefix(2)).lowercased(), window: limit)
-                        .help(limit.label)
+                // With the week used up nothing else can be spent until it resets, so only the week shows.
+                let weekFull = (usage.weekly?.used(at: Date().timeIntervalSince1970) ?? 0) >= Planner.limited
+                if !weekFull {
+                    MiniBar(label: "5h", window: usage.fiveHour)
+                    // A model's own weekly cap only earns space once that model has been used.
+                    ForEach(usage.modelLimits.filter { $0.percent >= 1 }, id: \.id) { limit in
+                        MiniBar(label: String(limit.label.dropFirst("Weekly ".count).prefix(2)).lowercased(), window: limit)
+                            .help(limit.label)
+                    }
                 }
+                MiniBar(label: "wk", window: usage.weekly)
             }
             Group {
-                if !account.ready || (store.issues[account.id] == "signIn" && !isActive) {
+                if store.signingIn.contains(account.id) {
+                    ProgressView().controlSize(.mini)
+                } else if !account.ready || (store.health[account.id]?.takesWork == false && !isActive) {
                     Button("Sign in") { Task { await store.signIn(account.id) } }
-                        .disabled(store.signingIn.contains(account.id))
-                } else if store.issues[account.id] == "idle" && usage == nil && account.provider == .claude {
+                } else if store.health[account.id] == .idle && usage == nil && account.provider == .claude {
                     Button("Renew") { Task { await store.wake(account.id) } }
                         .disabled(store.waking.contains(account.id))
                         .help("Has Claude Code renew this login; no model runs and no quota is used")
@@ -184,7 +247,7 @@ struct AccountUsageRow: View {
     }
 
     private var caption: String? {
-        guard account.ready else { return "Not signed in" }
+        guard account.ready else { return store.signingIn.contains(account.id) ? nil : "Not signed in" }
         if let issue = store.issueText(account.id) { return issue }
         guard let usage = store.usage[account.id] else { return "Reading…" }
         if usage.stale { return "Sign in again" }
@@ -205,9 +268,10 @@ struct MiniBar: View {
     /// Shows when the window resets under the bar instead of only in the tooltip.
     var showsReset = false
     var body: some View {
-        let percent = min(max(window?.percent ?? 0, 0), 100)
+        let now = Date().timeIntervalSince1970
+        let percent = window?.used(at: now) ?? 0
         VStack(alignment: .trailing, spacing: 2) {
-            Text(window.map { "\(label) \(Int($0.percent.rounded()))%" } ?? "\(label) –")
+            Text(window.map { "\(label) \($0.text(at: now))" } ?? "\(label) –")
                 .font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
             Capsule().fill(.quaternary).frame(width: 46, height: 4)
                 .overlay(alignment: .leading) {
@@ -219,7 +283,7 @@ struct MiniBar: View {
                     .font(.system(size: 9).monospacedDigit()).foregroundStyle(.tertiary).lineLimit(1)
             }
         }
-        .help(window?.resetsAt.map { "\(window?.label ?? label) resets \(UsageBar.format($0))" } ?? "")
+        .help(window?.resetsAt.flatMap { $0 > now ? "\(window?.label ?? label) resets \(UsageBar.format($0))" : nil } ?? "")
         .accessibilityElement(children: .combine)
     }
 }
@@ -234,13 +298,14 @@ extension AccountUsageRow {
 struct UsageBar: View {
     let window: UsageWindow
     var body: some View {
-        let percent = min(max(window.percent, 0), 100)
+        let now = Date().timeIntervalSince1970
+        let percent = window.used(at: now)
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(window.label).font(.system(size: 10))
                 Spacer()
-                Text("\(Int(percent.rounded()))%").font(.system(size: 10).monospacedDigit())
-                if let reset = window.resetsAt, reset > Date().timeIntervalSince1970 {
+                Text(window.text(at: now)).font(.system(size: 10).monospacedDigit())
+                if let reset = window.resetsAt, reset > now {
                     Text("· resets \(Self.format(reset))").font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
@@ -252,7 +317,9 @@ struct UsageBar: View {
         let date = Date(timeIntervalSince1970: reset)
         let seconds = date.timeIntervalSinceNow
         if seconds < 24 * 3600 {
-            let hours = Int(seconds) / 3600, minutes = Int(seconds) % 3600 / 60
+            // Rounded up, so a reset seconds away reads "in 1m", never "in 0m" or a negative time.
+            let total = max(Int((seconds / 60).rounded(.up)), 1)
+            let hours = total / 60, minutes = total % 60
             return hours > 0 ? "in \(hours)h \(minutes)m" : "in \(minutes)m"
         }
         return date.formatted(.dateTime.weekday(.abbreviated).hour())

@@ -1,0 +1,12 @@
+{
+  "agent": "claude",
+  "defaultEffort": "ultra",
+  "efforts": [
+    "auto",
+    "none",
+    "ultra",
+    "turbo"
+  ],
+  "id": "claude-mythos-1",
+  "title": "Mythos"
+}

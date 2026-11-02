@@ -1,0 +1,54 @@
+{
+  "abilities": [
+    "compact",
+    "replyTerminal",
+    "review",
+    "settings.effort",
+    "settings.mode",
+    "settings.model",
+    "transcript",
+    "turnDiff"
+  ],
+  "abilityReasons": {
+    "settings.fast": "Codex has no fast mode."
+  },
+  "agent": "codex",
+  "backgroundTasks": 0,
+  "branch": "main",
+  "contextPercent": 18.5,
+  "conversationID": "019a3b2c-7d4e-7f10-8a9b-0c1d2e3f4a5b",
+  "cost": 0.42,
+  "cwd": "/Users/you/code/app",
+  "effort": "medium",
+  "headless": false,
+  "id": "019a3b2c-7d4e-7f10-8a9b-0c1d2e3f4a5b",
+  "model": "gpt-5.5-codex",
+  "openRequests": [],
+  "plan": {
+    "explanation": "Fix the flaky test, then run the suite",
+    "steps": [
+      {
+        "status": "completed",
+        "text": "Find the flaky assertion"
+      },
+      {
+        "status": "inProgress",
+        "text": "Wait for the island to settle"
+      },
+      {
+        "status": "pending",
+        "text": "Run the suite"
+      }
+    ]
+  },
+  "project": "app",
+  "settings": {
+    "effort": "medium",
+    "mode": "plan",
+    "model": "gpt-5.5-codex"
+  },
+  "status": "idle",
+  "title": "Refactor the outbox",
+  "turnID": "019a3b2c-turn-0003",
+  "worktree": false
+}

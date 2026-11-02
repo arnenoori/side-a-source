@@ -1,7 +1,7 @@
 import product from '../public/product.json' with { type: 'json' };
 import { latestDownloadableRelease, releaseAPI, releasesURL } from './release.mjs';
 
-export function createAgentTools(fetcher = fetch) {
+export function createAgentTools() {
   return [{
     name: 'get_side_a_info',
     description: 'Read Side A product information, Mac requirements, setup guide, and experimental feature limitations.',
@@ -16,7 +16,7 @@ export function createAgentTools(fetcher = fetch) {
     execute: async () => {
       let result;
       try {
-        const response = await fetcher(releaseAPI, { credentials: 'omit', signal: AbortSignal.timeout(7000), headers: { Accept: 'application/vnd.github+json' } });
+        const response = await fetch(releaseAPI, { credentials: 'omit', signal: AbortSignal.timeout(7000), headers: { Accept: 'application/vnd.github+json' } });
         if (!response.ok) throw new Error('Release lookup unavailable');
         const release = latestDownloadableRelease(await response.json());
         result = release ? { status: 'available', ...release } : { status: 'coming-soon', releasesURL };

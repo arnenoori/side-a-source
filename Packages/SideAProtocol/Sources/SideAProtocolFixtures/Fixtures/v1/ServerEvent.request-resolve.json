@@ -1,0 +1,11 @@
+{
+  "data": {
+    "answer": "allow",
+    "at": 1791560013.9,
+    "by": "device",
+    "deviceID": "d41d8cd98f00b204",
+    "deviceName": "Arne's iPhone",
+    "requestID": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
+  },
+  "type": "request.resolve"
+}

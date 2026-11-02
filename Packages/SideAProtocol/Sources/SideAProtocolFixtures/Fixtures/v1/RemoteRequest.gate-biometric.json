@@ -1,0 +1,27 @@
+{
+  "accountName": "Work",
+  "action": {
+    "command": "rm -rf build",
+    "kind": "command"
+  },
+  "agent": "claude",
+  "answers": [
+    "allow",
+    "deny",
+    "terminal"
+  ],
+  "arrivedAt": 1791560003.9,
+  "detail": "rm -rf build",
+  "gate": "biometric",
+  "headless": false,
+  "headline": "Run a command",
+  "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+  "project": "app",
+  "risk": "destructive",
+  "riskReason": "Deletes files and folders",
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "suggestions": [],
+  "title": "Fix the island layout",
+  "tool": "Bash",
+  "truncated": false
+}

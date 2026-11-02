@@ -1,0 +1,14 @@
+{
+  "accountID": "6d1f0a2b-3c4e-4f5a-8b9c-0d1e2f3a4b5c",
+  "handoff": {
+    "accountID": "0b9c2e4a-5f1d-4c1e-9a77-2f3e1d0c9b8a",
+    "branch": "fix/island",
+    "cwd": "/Users/you/code/app",
+    "failed": "Pinning the frame in IslandView broke the Finished panel.",
+    "goal": "Keep the island's height steady when a question arrives",
+    "lastMessages": "**You:** it still jumps\n\n**Claude:** The frame is set after the transition starts.",
+    "model": "claude-opus-5-5",
+    "next": "Try a fixed-height container first.",
+    "project": "app"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "app": "0.6.0",
+  "build": 612,
+  "capabilities": [
+    "events"
+  ],
+  "endpoints": {
+    "lan": "192.168.1.20:47800",
+    "name": "macbook-pro.tail1234.ts.net:47800",
+    "tailnet": "100.101.12.4:47800"
+  },
+  "epoch": "e5b0c7d2a1f3",
+  "keyID": "9f86d081884c7d65",
+  "mac": {
+    "id": "3a9f0c1d2e4b5a67",
+    "name": "MacBook Pro"
+  },
+  "maxProtocol": 1,
+  "minProtocol": 1,
+  "protocolVersion": 1,
+  "remoteOn": true,
+  "serverTime": 1791560012.4
+}

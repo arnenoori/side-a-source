@@ -1,0 +1,8 @@
+{
+  "data": {
+    "capabilities": [
+      "events"
+    ]
+  },
+  "type": "hello"
+}

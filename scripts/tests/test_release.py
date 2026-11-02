@@ -21,6 +21,7 @@ class ReleaseSafetyTests(unittest.TestCase):
         self.version = plistlib.loads((self.root / "scripts/Info.plist").read_bytes())["CFBundleShortVersionString"]
         self.tag = f"v{self.version}"
         (self.root / "releases" / f"{self.tag}.md").write_text("Fixture release notes")
+        (self.root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {self.version} — 2026-10-25\n\nFixture change.\n\n## 0.0.1 — 2026-01-01\n\nOld.\n")
 
     def check(self, tag):
         return subprocess.run(["python3", "scripts/check-release.py", tag], cwd=self.root, capture_output=True, text=True)
@@ -35,6 +36,17 @@ class ReleaseSafetyTests(unittest.TestCase):
         for tag in ("main", "v1.2", "../../secret", self.tag + ";exit 0"):
             with self.subTest(tag=tag):
                 self.assertNotEqual(self.check(tag).returncode, 0)
+
+    def test_a_release_without_its_changelog_section_is_rejected(self):
+        changelog = self.root / "CHANGELOG.md"
+        for text in ("# Changelog\n\n## 0.0.1 — 2026-01-01\n\nOld.\n",
+                     f"# Changelog\n\n## {self.version} — 2026-10-25\n\n## 0.0.1 — 2026-01-01\n\nOld.\n",
+                     f"# Changelog\n\n## Unreleased\n\nNot moved.\n\n## {self.version} — 2026-10-25\n\nFixture change.\n"):
+            with self.subTest(text=text):
+                changelog.write_text(text)
+                self.assertNotEqual(self.check(self.tag).returncode, 0)
+        changelog.write_text(f"# Changelog\n\n## Unreleased\n\n## {self.version} — 2026-10-25\n\nFixture change.\n")
+        self.assertEqual(self.check(self.tag).returncode, 0)
 
     def test_missing_notes_are_rejected(self):
         (self.root / "releases" / f"{self.tag}.md").unlink()

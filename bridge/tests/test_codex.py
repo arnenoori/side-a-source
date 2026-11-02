@@ -23,6 +23,18 @@ class CodexTests(unittest.TestCase):
             with patch.object(Path,'home',return_value=home):
                 self.assertEqual(codex.adopt(root,a)['email'],'a@example.com')
             self.assertFalse((root/'profiles'/a['id']/'auth.json').exists())
+    def test_the_island_mail_hooks_count_as_trusted_only_when_codex_says_so(self):
+        def hook(status,command='/bin/sh /r/runtime/island-codex-mail.sh codex # side-a-island'):
+            return {'trustStatus':status,'command':command}
+        cases=[([hook('trusted'),hook('trusted'),hook('untrusted','/bin/sh /r/runtime/island-hook.sh codex # side-a-island')],'trusted'),
+               ([hook('trusted'),hook('modified')],'review'),([hook('untrusted')],'review'),([],'unknown')]
+        with tempfile.TemporaryDirectory() as d, patch('codex_bridge.RPC') as cls, patch.object(codex,'codex_binary',return_value='codex'):
+            for hooks,expected in cases:
+                cls.return_value.__enter__.return_value.call.return_value={'data':[{'cwd':'/','hooks':hooks}]}
+                self.assertEqual(codex.mail_hooks_trust(Path(d),Path(d)/'.codex'),expected)
+            self.assertEqual(cls.call_args.args[1]['CODEX_HOME'],str(Path(d)/'.codex'))
+            cls.return_value.__enter__.return_value.call.side_effect=ValueError('old Codex')
+            self.assertEqual(codex.mail_hooks_trust(Path(d),Path(d)/'.codex'),'unknown')
     def test_the_mac_codex_login_is_read_where_codex_keeps_it(self):
         with tempfile.TemporaryDirectory() as d, patch('codex_bridge.RPC') as cls, patch.object(codex,'global_email',return_value='a@example.com'), \
              patch.object(codex,'codex_binary',return_value='codex'):

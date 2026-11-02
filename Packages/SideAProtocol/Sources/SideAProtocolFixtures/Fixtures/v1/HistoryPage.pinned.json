@@ -1,0 +1,31 @@
+{
+  "next": "h:2:1791473612",
+  "sessions": [
+    {
+      "agent": "claude",
+      "archived": false,
+      "branch": "fix/island",
+      "customTitle": "Island height, second try",
+      "cwd": "/Users/you/code/app",
+      "firstAt": 1791552811.9,
+      "id": "77aa0000-1111-4222-8333-444455556666",
+      "lastAt": 1791556411.9,
+      "parentID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+      "pinned": true,
+      "project": "app",
+      "title": "Island height, second try"
+    },
+    {
+      "agent": "claude",
+      "branch": "main",
+      "cwd": "/Users/you/code/side-a",
+      "firstAt": 1791470011.9,
+      "id": "4d3c2b1a-0f9e-4d8c-8b7a-6f5e4d3c2b1a",
+      "lastAt": 1791474011.9,
+      "project": "side-a",
+      "snippet": "…open the session's own **Warp** tab…",
+      "snippetUUID": "77e1c0de-0000-4000-8000-000000000001",
+      "title": "Ship 0.5.36"
+    }
+  ]
+}

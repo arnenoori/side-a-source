@@ -1,0 +1,14 @@
+{
+  "data": {
+    "capabilities": [
+      "answers.plans",
+      "answers.questions",
+      "events",
+      "images",
+      "transcript.stream"
+    ],
+    "epoch": "e5b0c7d2a1f3",
+    "lastSeq": 41
+  },
+  "type": "hello"
+}

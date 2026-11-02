@@ -1,0 +1,8 @@
+{
+  "files": [
+    "src/a.ts",
+    "old.ts"
+  ],
+  "kind": "patch",
+  "text": "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-x\n+y\n*** Delete File: old.ts\n*** End Patch"
+}

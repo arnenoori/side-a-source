@@ -4,12 +4,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tag="${1:?Release tag required}"
-remote="${SOURCE_REMOTE:-git@github.com:arnenoori/side-a-source.git}"
+remote="${SOURCE_REMOTE:-https://github.com/arnenoori/side-a-source.git}"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/sidea-source.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 git clone -q "$remote" "$work/mirror"
 git -C "$work/mirror" rm -rq --ignore-unmatch -- .
 git archive "$tag" | tar -x -C "$work/mirror"
+python3 scripts/scan-public-source.py "$work/mirror"
 git -C "$work/mirror" add -A
 if git -C "$work/mirror" rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   echo "Source for $tag is already public." && exit 0

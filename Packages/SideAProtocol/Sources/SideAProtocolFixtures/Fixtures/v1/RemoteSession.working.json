@@ -1,0 +1,28 @@
+{
+  "abilities": [
+    "followUp",
+    "interrupt",
+    "note",
+    "transcript"
+  ],
+  "accountID": "0b9c2e4a-5f1d-4c1e-9a77-2f3e1d0c9b8a",
+  "accountName": "Work",
+  "agent": "claude",
+  "branch": "main",
+  "context": 84210,
+  "conversationID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "cost": 1.25,
+  "cwd": "/Users/you/code/app",
+  "effort": "high",
+  "headless": false,
+  "id": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "lastReplyAt": 1791559971.9,
+  "model": "claude-opus-5-5",
+  "openRequests": [],
+  "project": "app",
+  "status": "working",
+  "statusAt": 1791559999.9,
+  "step": "Running tests",
+  "title": "Fix the island layout",
+  "worktree": false
+}

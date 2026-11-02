@@ -1,0 +1,44 @@
+{
+  "Simulator Target Bundle": "com.arnenoori.sidea.remote.dev",
+  "aps": {
+    "alert": {
+      "title": "Question for you",
+      "subtitle": "side-a \u00b7 Work",
+      "body": "Where should the cache live?"
+    },
+    "category": "QUESTION",
+    "thread-id": "demo-cache",
+    "interruption-level": "time-sensitive",
+    "sound": "default"
+  },
+  "p": {
+    "v": 1,
+    "mac": "demo",
+    "sent": 1791560012.4,
+    "t": "question",
+    "rid": "d1a0b2c3-0000-4000-8000-000000000001",
+    "sid": "demo-cache",
+    "agent": "claude",
+    "full": true,
+    "title": "Question for you",
+    "subtitle": "side-a \u00b7 Work",
+    "body": "Where should the cache live?",
+    "questions": [
+      {
+        "question": "Where should the cache live?",
+        "header": "Cache",
+        "multiSelect": false,
+        "options": [
+          {
+            "label": "App Group (Recommended)",
+            "description": "Shared with the widgets and extensions"
+          },
+          {
+            "label": "Caches directory",
+            "description": "The system may clear it when space runs low"
+          }
+        ]
+      }
+    ]
+  }
+}

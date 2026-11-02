@@ -1,5 +1,4 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import sharp from 'sharp';
 import { gzipSync } from 'node:zlib';
 const root = new URL('../', import.meta.url);
 const meshes = JSON.parse(await readFile(new URL('../Sources/SideA/Resources/discman.json', root), 'utf8'));
@@ -37,6 +36,4 @@ await mkdir(new URL('public/', root), { recursive: true });
 const compressed = gzipSync(Buffer.concat(chunks), { level: 9 });
 await writeFile(new URL('src/generated/discman.mesh', root), compressed);
 await writeFile(new URL('src/generated/model.json', root), JSON.stringify(metadata));
-const image = new URL('../design/discman.png', root);
-await sharp(image.pathname).resize(1200, 630, { fit: 'contain', background: '#f7f8f7' }).flatten({ background: '#f7f8f7' }).jpeg({ quality: 85, mozjpeg: true }).toFile(new URL('public/social.jpg', root).pathname);
 console.log(`Prepared ${meshes.length} original Blender meshes (${(compressed.length / 1024).toFixed(0)} KB transfer)`);

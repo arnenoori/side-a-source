@@ -31,9 +31,7 @@ final class CaptureProtocol: URLProtocol, @unchecked Sendable {
 }
 
 @Test @MainActor func appAnalyticsRequiresConsentAndHonorsRevocationAndDemoMode() async throws {
-    let suite = "sidea-test-\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suite))
-    defer { defaults.removePersistentDomain(forName: suite) }
+    let defaults = temporaryDefaults()
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [CaptureProtocol.self]
     let session = URLSession(configuration: configuration)
@@ -52,6 +50,10 @@ final class CaptureProtocol: URLProtocol, @unchecked Sendable {
     let body = try #require(CaptureProtocol.requests.first?.httpBody)
     let payload = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
     #expect(payload["event"] as? String == "account_connected")
+    let properties = try #require(payload["properties"] as? [String: Any])
+    #expect(Set(properties.keys) == ["surface", "schema_version", "app_version", "provider", "$process_person_profile", "$is_identified", "$geoip_disable"])
+    #expect(properties["$process_person_profile"] as? Bool == false && properties["$geoip_disable"] as? Bool == true)
+    #expect(properties["surface"] as? String == "mac_app")
     #expect(AppAnalytics(defaults: defaults, token: "phc_fixture", session: session).enabled)
     analytics.setEnabled(false)
     analytics.capture(.launched)

@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["NV46KL65S9.com.arnenoori.sidea.remote", "NV46KL65S9.com.arnenoori.sidea.remote.dev"],
+        "components": [
+          { "/": "/pair", "comment": "Pairing QR codes: everything after # stays on the phone" },
+          { "/": "/pair/" }
+        ]
+      }
+    ]
+  }
+}

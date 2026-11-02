@@ -12,10 +12,13 @@ python3 scripts/verify-bundle.py "$app_path" --architectures arm64 x86_64
 signing_args=(--force --sign "$SIGNING_IDENTITY" --options runtime --timestamp)
 if [[ -n "${SIGNING_KEYCHAIN:-}" ]]; then signing_args+=(--keychain "$SIGNING_KEYCHAIN"); fi
 ./scripts/sign-framework.sh "$app_path/Contents/Frameworks/Sparkle.framework" "${signing_args[@]}"
+./scripts/sign-helper.sh "$app_path" "${signing_args[@]}"
 codesign "${signing_args[@]}" "$app_path"
-details="$(codesign --display --verbose=4 "$app_path" 2>&1)"
-[[ "$details" == *"TeamIdentifier=$APPLE_TEAM_ID"* ]] || { echo "Wrong signing team" >&2; exit 1; }
-[[ "$details" == *"runtime"* && "$details" == *"Timestamp="* ]] || { echo "Missing hardened runtime or timestamp" >&2; exit 1; }
+for code in "$app_path" "$app_path/Contents/MacOS/SideAKeepAwake" "$app_path/Contents/Helpers/tmux"; do
+  details="$(codesign --display --verbose=4 "$code" 2>&1)"
+  [[ "$details" == *"TeamIdentifier=$APPLE_TEAM_ID"* ]] || { echo "Wrong signing team: $code" >&2; exit 1; }
+  [[ "$details" == *"runtime"* && "$details" == *"Timestamp="* ]] || { echo "Missing hardened runtime or timestamp: $code" >&2; exit 1; }
+done
 codesign --verify --deep --strict "$app_path"
 version=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' scripts/Info.plist)
 archive="$PWD/dist/SideA-$version-macOS-universal.zip"

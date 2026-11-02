@@ -1,0 +1,99 @@
+{
+  "at": 1791559200,
+  "cases": [
+    {
+      "answer": {
+        "confirmDestructive": true,
+        "kind": "allow"
+      },
+      "header": "v1.1791559200.c.MEUCIGNE4ipE3reCAhmRnVhmgurA7dAoqFxQ9r0XriWFfdqzAiEAu42akNZotHfBuG37P2qFoxIu6htdd00BE80iBhk6AxA",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nallow\n4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:allow\n1791559200",
+      "name": "allow",
+      "purpose": "allow",
+      "subject": "4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:allow"
+    },
+    {
+      "answer": {
+        "kind": "always",
+        "suggestionID": "s1"
+      },
+      "header": "v1.1791559200.c.MEQCIFn855XpPUC-A1qTx40haCYJJOCVz3jzn1tqs__2PXu1AiAdiIT0CyMrhMVGxkj6U5jpH4uQYoIrQiZ3fBPzHqlVHQ",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nallow\n4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:always:s1\n1791559200",
+      "name": "always",
+      "purpose": "allow",
+      "subject": "4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:always:s1"
+    },
+    {
+      "answer": {
+        "acceptEdits": true,
+        "kind": "approvePlan"
+      },
+      "header": "v1.1791559200.u.MEQCICZvyDWg-FxSTDgZA2AJIswImRLuJoJULK1EsXEZSXGyAiBjhkItyucjp5IBDD21SskTvzOeKT7H67IQa3jol4ei5Q",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nallow\n4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:approvePlan:acceptEdits\n1791559200",
+      "name": "plan",
+      "purpose": "allow",
+      "subject": "4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:approvePlan:acceptEdits"
+    },
+    {
+      "answer": {
+        "acceptEdits": false,
+        "kind": "approvePlan"
+      },
+      "header": "v1.1791559200.u.MEUCIBJvSb2UG-LJG3CiiItx6bkSNWIYDI5rixJlNJ4dQSNUAiEAukF7Mio4XHcp-rgpF4pyzxl2SDQUkX6pdU4n_T5MquA",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nallow\n4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:approvePlan:askEdits\n1791559200",
+      "name": "plan-ask",
+      "purpose": "allow",
+      "subject": "4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:approvePlan:askEdits"
+    },
+    {
+      "answer": {
+        "answers": [
+          {
+            "picked": [
+              "Postgres"
+            ],
+            "question": "Which database?"
+          },
+          {
+            "other": "orders",
+            "picked": [],
+            "question": "Name?"
+          }
+        ],
+        "kind": "answers"
+      },
+      "header": "v1.1791559200.u.MEQCIHE1Vbsn-RVzrkvUxQtpXmpDPngIPMuXC0vuQTgvgKhMAiBRnegOfSh_g-otzGrYlhRXlGXqXxIANqG0oAQgZnfKow",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nallow\n4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:answers:fe_obLkSoD0tgFE6aeWd1Eau-v-xw3jDzIua4r4SoXM\n1791559200",
+      "name": "answers",
+      "purpose": "allow",
+      "subject": "4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190:answers:fe_obLkSoD0tgFE6aeWd1Eau-v-xw3jDzIua4r4SoXM"
+    },
+    {
+      "header": "v1.1791559200.c.MEUCICKkrWZhJtH-0Jcchu1NktXDOafkKVUs4B1NkxQBzzE4AiEAxKF9PZygHftXUzcsNb-fmyMrsFbDQOHpSpG-TyXrX7A",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nterminal\nsa-app\n1791559200",
+      "name": "terminal",
+      "purpose": "terminal",
+      "subject": "sa-app"
+    },
+    {
+      "header": "v1.1791559200.u.MEUCIQDrMcWhRMPQBZcX2eg-7CL_YyDS-mVa-wqsDj1SiBRkvwIgTTdYrBM4kPiCqI2ON1_rBQYYPxQ8vvU1ylJMZb29RWA",
+      "message": "sidea-confirm-v1\na1b2c3d4e5f60718\nAAECAwQFBgcICQoLDA0ODw\nkeys\ntmux-sa-app-3f9c:WzMX2Qxu8-RrbzvqozwCHatlIMn-EfHa9p4XaqOJZCk\n1791559200",
+      "name": "keys",
+      "purpose": "keys",
+      "subject": "tmux-sa-app-3f9c:WzMX2Qxu8-RrbzvqozwCHatlIMn-EfHa9p4XaqOJZCk"
+    }
+  ],
+  "confirmKey": "BBhdRtj49RbOg1qCyo2qs94MxrAxIdVEhycYRElOJdSVuJQbI1Zv-QpiHU3g8jy-KyBDC9JsfdF5fyU1EhDKEE8",
+  "confirmPrivateKey": "zfZzft_g7XwH1r3FhjLuD_nN5rkzl0EwLluZSDB9hyQ",
+  "deviceID": "AAECAwQFBgcICQoLDA0ODw",
+  "keys": [
+    "down",
+    "enter",
+    "y"
+  ],
+  "macID": "a1b2c3d4e5f60718",
+  "requestID": "4f3c2b1a-0d9e-4c8b-a7f6-e5d4c3b2a190",
+  "sessionID": "tmux-sa-app-3f9c",
+  "unlockKey": "BHdiiYBgzqI1I_DtNv2xPL3axz-5EL0jeg08U8uWYWrmMqF6tg3YtYGjamw6fWDEhUd50j_NZDvJ2Hws9jvF5NY",
+  "unlockPrivateKey": "glqTRCf2lpj7Eq4adPZIb7K3f3Kq_5_kWYo0SWdPKvs"
+}

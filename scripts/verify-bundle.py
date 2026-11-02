@@ -5,6 +5,7 @@ import hashlib
 import json
 import plistlib
 from pathlib import Path
+import re
 import subprocess
 
 
@@ -30,13 +31,33 @@ def main():
     executable = contents / "MacOS/SideA"
     architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True).split()
     require(set(architectures) == set(args.architectures), f"Unexpected architectures: {architectures}")
-    resources = contents / "Resources/SideA_SideA.bundle"
-    expected_resources = {path.name: path for path in (root / "bridge").glob("*.py")}
-    expected_resources["discman.json"] = root / "Sources/SideA/Resources/discman.json"
+    # The fixed paths AppResources reads; SwiftPM's resource bundle must not ship.
+    expected_resources = {f"Resources/bridge/{path.name}": path for path in (root / "bridge").glob("*.py")}
+    expected_resources["Resources/discman.json"] = root / "Sources/SideA/Resources/discman.json"
+    require("Resources/bridge/sidea_bridge.py" in expected_resources, "No bridge sources found")
     for name, source in expected_resources.items():
-        require(digest(resources / name) == digest(source), f"Resource differs: {name}")
-    allowed = {"Info.plist", "MacOS/SideA", "Resources/SideA.icns", "Resources/SideA_SideA.bundle/Info.plist"}
-    allowed.update(f"Resources/SideA_SideA.bundle/{name}" for name in expected_resources)
+        require((contents / name).is_file(), f"Resource missing: {name}")
+        require(digest(contents / name) == digest(source), f"Resource differs: {name}")
+    helper = contents / "MacOS/SideAKeepAwake"
+    helper_architectures = subprocess.check_output(["lipo", "-archs", str(helper)], text=True).split()
+    require(set(helper_architectures) == set(args.architectures), f"Unexpected helper architectures: {helper_architectures}")
+    daemon = contents / "Library/LaunchDaemons/com.sidea.keepawake.plist"
+    require(plistlib.loads(daemon.read_bytes()) == plistlib.loads((root / "scripts/com.sidea.keepawake.plist").read_bytes()),
+            "Packaged keep-awake daemon differs from release metadata")
+    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(helper)], capture_output=True, text=True).stderr
+    require("Identifier=com.sidea.keepawake" in signature, "Keep-awake helper has the wrong signing identifier")
+    # tmux is built universal (scripts/build-tmux.sh) and goes into both single-architecture apps whole.
+    tmux = contents / "Helpers/tmux"
+    tmux_architectures = subprocess.check_output(["lipo", "-archs", str(tmux)], text=True).split()
+    require({"arm64", "x86_64"} == set(tmux_architectures), f"Unexpected tmux architectures: {tmux_architectures}")
+    tmux_version = re.search(r"^TMUX_VERSION=(\S+)$", (root / "scripts/build-tmux.sh").read_text(), re.M)[1]
+    require(subprocess.check_output([str(tmux), "-V"], text=True).strip() == f"tmux {tmux_version}", "Bundled tmux does not run")
+    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(tmux)], capture_output=True, text=True).stderr
+    require("Identifier=com.sidea.tmux" in signature, "tmux helper has the wrong signing identifier")
+    allowed = {"Info.plist", "MacOS/SideA", "MacOS/SideAKeepAwake", "Library/LaunchDaemons/com.sidea.keepawake.plist",
+               "Resources/SideA.icns", *expected_resources, "Helpers/tmux",
+               "Resources/terminfo/74/tmux", "Resources/terminfo/74/tmux-256color"}
+    allowed.update(f"Resources/Licenses/{name}.txt" for name in ["tmux", "libevent", "ncurses", "utf8proc", "jemalloc"])
     framework = contents / "Frameworks/Sparkle.framework"
     framework_info = plistlib.loads((framework / "Resources/Info.plist").read_bytes())
     require(framework_info["CFBundleShortVersionString"] == "2.9.6", "Unexpected Sparkle version")

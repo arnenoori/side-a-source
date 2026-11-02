@@ -1,0 +1,13 @@
+{
+  "diffs": [],
+  "endedAt": 1791560010.9,
+  "group": true,
+  "id": "call_9f8e7d",
+  "images": [],
+  "name": "exec",
+  "output": "…\n1 test failed",
+  "outputTruncated": true,
+  "startedAt": 1791560007.9,
+  "status": "failed",
+  "summary": "exec: 2 commands"
+}

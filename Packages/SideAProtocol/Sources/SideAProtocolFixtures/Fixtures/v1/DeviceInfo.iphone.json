@@ -1,0 +1,16 @@
+{
+  "app": "1.0",
+  "build": 41,
+  "capabilities": [
+    "answers.plans",
+    "answers.questions",
+    "events",
+    "images",
+    "liveActivity",
+    "push",
+    "transcript.stream"
+  ],
+  "model": "iPhone18,1",
+  "name": "Arne's iPhone",
+  "system": "iOS 27.0"
+}

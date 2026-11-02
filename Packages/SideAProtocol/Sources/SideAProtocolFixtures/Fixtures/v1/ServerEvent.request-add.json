@@ -1,0 +1,35 @@
+{
+  "data": {
+    "accountName": "Work",
+    "action": {
+      "command": "npm test",
+      "kind": "command"
+    },
+    "agent": "claude",
+    "answers": [
+      "allow",
+      "always",
+      "deny",
+      "terminal"
+    ],
+    "arrivedAt": 1791560003.9,
+    "detail": "npm test",
+    "headless": false,
+    "headline": "Run a command",
+    "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+    "project": "app",
+    "reason": "Run the tests",
+    "risk": "normal",
+    "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+    "suggestions": [
+      {
+        "id": "3f2a9c0d1e4b5a6f",
+        "title": "Always allow Bash(npm test:*) in this project"
+      }
+    ],
+    "title": "Fix the island layout",
+    "tool": "Bash",
+    "truncated": false
+  },
+  "type": "request.add"
+}

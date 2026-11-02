@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Heart lab</title>
+<style>html,body{margin:0;height:100%;background:#c9cacb}canvas{display:block;width:100vw;height:100vh}</style></head>
+<body><canvas id="c"></canvas><script type="module">
+import { createHeartStage } from '/src/heart3d.ts';
+const q = new URLSearchParams(location.search);
+const canvas = document.querySelector('#c');
+const stage = createHeartStage(canvas);
+stage.size(innerWidth, innerHeight);
+const px = Number(q.get('px') || innerWidth * 0.62);
+stage.place(innerWidth / 2, innerHeight / 2 + px * 0.48, px);
+stage.heart.rotation.set(Number(q.get('pitch') || 0), Number(q.get('yaw') || 0), Number(q.get('roll') || 0));
+stage.render();
+document.body.dataset.ready = '1';
+</script></body></html>

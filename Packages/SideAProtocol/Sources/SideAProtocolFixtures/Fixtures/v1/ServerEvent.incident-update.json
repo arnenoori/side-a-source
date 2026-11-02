@@ -1,0 +1,13 @@
+{
+  "data": [
+    {
+      "id": "inc-8d2k",
+      "provider": "claude",
+      "startedAt": 1791558211.9,
+      "status": "resolved",
+      "title": "Elevated errors on Opus",
+      "url": "https://status.claude.com/incidents/8d2k"
+    }
+  ],
+  "type": "incident.update"
+}

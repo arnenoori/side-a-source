@@ -1,0 +1,9 @@
+{
+  "additions": 0,
+  "change": "renamed",
+  "deletions": 0,
+  "hunks": [],
+  "oldPath": "Sources/Old.swift",
+  "path": "Sources/New.swift",
+  "truncated": false
+}

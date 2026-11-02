@@ -28,4 +28,5 @@ with tempfile.TemporaryDirectory(prefix="sidea-installer-") as temporary:
         subprocess.run([sys.executable, str(root / "scripts/verify-bundle.py"), str(mount / "Side A.app"), "--architectures", "arm64", "x86_64"], check=True)
         print("Verified read-only installer and Applications shortcut")
     finally:
-        subprocess.run(["hdiutil", "detach", str(mount)], check=True, stdout=subprocess.DEVNULL)
+        if subprocess.run(["hdiutil", "detach", str(mount)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            subprocess.run(["hdiutil", "detach", "-force", str(mount)], check=True, stdout=subprocess.DEVNULL)

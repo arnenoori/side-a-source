@@ -1,0 +1,8 @@
+{
+  "nextTurn": true,
+  "settings": {
+    "effort": "high",
+    "mode": "default",
+    "model": "gpt-5.5-codex"
+  }
+}

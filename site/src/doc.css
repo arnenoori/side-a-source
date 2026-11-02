@@ -1,0 +1,27 @@
+/* The text pages (/privacy, /remote, /pair): one column in the home page's type. */
+main.doc { display: block; width: min(680px, 100%); margin: 0 auto; padding: 64px 0 96px; }
+.doc h1 { font-size: clamp(30px, 4.4vw, 44px); line-height: 1.06; letter-spacing: -.035em; font-weight: 600; margin: 0 0 18px; text-wrap: balance; }
+.doc h2 { font-size: 22px; line-height: 1.2; letter-spacing: -.02em; font-weight: 600; margin: 56px 0 14px; }
+.doc h3 { font-size: 16px; font-weight: 600; margin: 28px 0 6px; }
+.doc p, .doc li, .doc dd { font-size: 16px; line-height: 1.6; color: #4c5550; }
+.doc p { margin: 0 0 14px; }
+.doc .lead { font-size: 19px; line-height: 1.5; color: var(--ink); }
+.doc .updated { font-size: 13px; color: var(--muted); }
+.doc ul { padding-left: 20px; margin: 0 0 14px; }
+.doc li { margin: 6px 0; }
+.doc b, .doc strong { color: var(--ink); font-weight: 600; }
+.doc .requirements { font-size: 13px; margin: 0 0 22px; }
+.doc .steps li { font-size: 16px; color: #4c5550; }
+.doc dl { margin: 0; }
+.doc dt { margin: 22px 0 4px; font-size: 16px; font-weight: 600; color: var(--ink); }
+.doc dd { margin: 0; }
+.doc dl + p { margin-top: 28px; }
+.doc .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0 24px; }
+.doc .remote-soon, .doc .remote-store, .doc .remote-beta { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; margin: 0; }
+.doc .remote-soon { gap: 7px; padding: 0 16px; border-radius: 20px; background: #eceeec; font-size: 13px; font-weight: 500; line-height: 1; color: #4c5550; }
+.doc .remote-beta { gap: 7px; padding: 0 18px; border-radius: 20px; background: var(--ink); color: white; font-size: 13px; font-weight: 500; line-height: 1; text-decoration: none; }
+@media (hover: hover) and (pointer: fine) { .doc .remote-beta:hover { background: #3b4540; } }
+.doc .remote-soon svg, .doc .remote-beta svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.doc .remote-store img { display: block; height: 40px; width: auto; }
+.doc .download { min-width: 0; }
+@media (max-width: 600px) { main.doc { padding: 40px 0 72px; } .doc h2 { margin-top: 44px; } }

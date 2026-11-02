@@ -1,0 +1,53 @@
+{
+  "agents": [
+    {
+      "agent": "claude",
+      "commands": [
+        {
+          "id": "/compact",
+          "label": "Compact"
+        },
+        {
+          "id": "/ship",
+          "label": "ship (yours)"
+        }
+      ],
+      "installed": true,
+      "models": [
+        {
+          "agent": "claude",
+          "canChangeEffortMidSession": true,
+          "defaultEffort": "high",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "id": "claude-opus-5-5",
+          "title": "Opus 5.5"
+        },
+        {
+          "agent": "claude",
+          "canChangeEffortMidSession": true,
+          "defaultEffort": "medium",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "id": "claude-sonnet-5-5",
+          "title": "Sonnet 5.5"
+        }
+      ]
+    },
+    {
+      "agent": "codex",
+      "commands": [],
+      "installed": false,
+      "models": []
+    }
+  ]
+}

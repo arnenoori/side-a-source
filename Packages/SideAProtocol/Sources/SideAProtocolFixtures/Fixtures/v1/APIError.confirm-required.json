@@ -1,0 +1,8 @@
+{
+  "code": "confirm_required",
+  "details": {
+    "level": "biometric"
+  },
+  "message": "Confirm with Face ID on your iPhone.",
+  "retryable": false
+}

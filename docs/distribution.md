@@ -50,37 +50,47 @@ public repository, so branch protection is **not enforced**. Keep the source pri
 
 1. Update both version/build values in `scripts/Info.plist`, add
    `releases/vMAJOR.MINOR.PATCH.md`, and merge a reviewed, green PR to `main`.
-2. Tag that commit `vMAJOR.MINOR.PATCH` and push the tag. Alternatively rerun
-   `Signed public release` using an existing matching tag.
-3. The workflow rejects branch dispatches, tags outside `main`, mismatched versions,
-   missing notes, and missing credentials before building. It reruns both native
-   test/build jobs against the release commit.
-4. The signing job downloads those exact artifacts, validates resources, combines
-   their executable slices, signs with hardened runtime and a secure timestamp,
-   and submits the app to Apple. It requires `Accepted`, staples the ticket,
-   checks Gatekeeper, then builds, signs, notarizes, and staples the custom DMG too.
-   The ZIP is a fallback download. A SHA-256 manifest must cover both files exactly.
-5. A separate publishing job with only the public-repository token creates a draft,
+2. From an up-to-date `main`, run `scripts/ship.sh`. It dispatches
+   `Local signed release` on the Mac's one-job runner.
+3. The workflow rejects dispatches from anything but `main`, mismatched versions,
+   and missing notes before building, and runs every local gate.
+4. The signing step combines the tested builds' executable slices, signs with
+   hardened runtime and a secure timestamp, and submits the app to Apple. It requires
+   `Accepted`, staples the ticket, checks Gatekeeper, then builds, signs, notarizes,
+   and staples the custom DMG too. The ZIP is a fallback download. A SHA-256 manifest
+   must cover both files exactly.
+5. The publishing step, with only the public-repository token, creates a draft,
    uploads the verified binaries, and publishes it. Already published versions are
    never overwritten; a failed draft may be retried. Ship a new patch version to
    fix or roll back a public build.
+6. `scripts/ship.sh` then publishes the site and the source. `scripts/publish-source.sh`
+   refuses a snapshot that `scripts/scan-public-source.py` finds a key, token, real
+   home path or real tailnet name in.
 
-Signing keys live in a temporary keychain on an ephemeral GitHub runner. Credentials
-are removed even when signing fails. Rejected or timed-out notarization prevents
-publication; use Apple's notarytool history/log commands locally to investigate,
-and do not bypass the gate. Signed artifacts are retained for 30 days, CI previews
-for 14 days. Preview artifacts are ad hoc signed and are not public releases.
+Signing keys live in a temporary keychain on the Mac's one-job runner, and each key
+file is on disk only for the step that needs it. Credentials are removed even when
+signing fails. Rejected or timed-out notarization prevents publication; use Apple's
+notarytool history/log commands locally to investigate, and do not bypass the gate.
+
+The release secrets are repository secrets, so a workflow edited on any branch and
+dispatched from it can read them: the `github.ref` check lives in the file being edited.
+An environment with a deployment-branch policy would close this, which GitHub offers for
+private repositories from GitHub Pro up, with the secrets moved into it. This repository is
+on the free plan, so nothing enforces it.
 
 ## Local packaging
 
 ```sh
-./scripts/build-app.sh release arm64
-./scripts/build-app.sh release x86_64
+SIDEA_RELEASE_BUILD=1 ./scripts/build-app.sh release arm64
+SIDEA_RELEASE_BUILD=1 ./scripts/build-app.sh release x86_64
 ./scripts/assemble-universal.sh
 python3 -m venv .build/dmg-tools
 .build/dmg-tools/bin/pip install -r scripts/requirements-dmg.txt
 ./scripts/build-dmg.sh
 ```
+
+`dmgbuild` needs Python 3.10 or later (`scripts/local-ci.sh` picks the newest `python3.1x`
+it finds); the app itself still runs with Python 3.9+.
 
 Run `scripts/notarize-app.sh` with the documented signing/notary environment
 variables (see the release workflow). It signs the existing tested bundle; it does

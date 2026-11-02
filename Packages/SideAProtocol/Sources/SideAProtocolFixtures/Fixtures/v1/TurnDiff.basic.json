@@ -1,0 +1,29 @@
+{
+  "files": [
+    {
+      "additions": 2,
+      "change": "modified",
+      "deletions": 1,
+      "hunks": [
+        {
+          "lines": [
+            " let a = 1",
+            "-let b = 2",
+            "+let b = 3",
+            "+let c = 4",
+            "\\ No newline at end of file"
+          ],
+          "newCount": 7,
+          "newStart": 40,
+          "oldCount": 6,
+          "oldStart": 40
+        }
+      ],
+      "path": "/Users/you/code/app/Island.swift",
+      "truncated": false
+    }
+  ],
+  "running": false,
+  "sessionID": "019a3b2c-7d4e-7f10-8a9b-0c1d2e3f4a5b",
+  "turnID": "019a3b2c-turn-0003"
+}

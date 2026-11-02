@@ -1,0 +1,15 @@
+{
+  "action": {
+    "kind": "plan",
+    "plan": "## Plan\n1. Add the package\n2. Move the types"
+  },
+  "diffs": [],
+  "group": false,
+  "id": "toolu_05Plan",
+  "images": [],
+  "name": "ExitPlanMode",
+  "outputTruncated": false,
+  "plan": "## Plan\n1. Add the package\n2. Move the types",
+  "status": "ok",
+  "summary": "Plan"
+}

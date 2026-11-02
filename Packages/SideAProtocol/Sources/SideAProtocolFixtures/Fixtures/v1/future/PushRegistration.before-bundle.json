@@ -1,0 +1,19 @@
+{
+  "activityTokens": {
+    "act-1": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+  },
+  "apnsToken": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "environment": "sandbox",
+  "prefs": {
+    "finished": false,
+    "health": true,
+    "limits": true,
+    "liveActivity": true,
+    "plans": true,
+    "questions": true,
+    "requests": true,
+    "suppressWhileWatching": true,
+    "timeSensitiveRequests": true
+  },
+  "pushToStartToken": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { downloadableRelease, releasesURL } from '../src/release.mjs';
+import { downloadableRelease, latestDownloadableRelease, releasesURL } from '../src/release.mjs';
 function fixture() {
   return { tag_name: 'v0.3.1', published_at: '2026-09-06', assets: ['SideA-0.3.1-macOS-universal.dmg', 'SHA256SUMS.txt'].map(name => ({ name, state: 'uploaded', size: 12345, browser_download_url: `${releasesURL}/download/v0.3.1/${name}` })) };
 }
@@ -15,4 +15,9 @@ test('another host or repository cannot become the download URL', () => {
 test('a missing checksum or mismatched version fails closed', () => {
   const release = fixture(); release.assets.pop(); assert.equal(downloadableRelease(release), null);
   assert.equal(downloadableRelease({ ...fixture(), tag_name: 'v1.0.0' }), null);
+});
+test('the release list cannot turn drafts, incomplete data, or malformed responses into downloads', () => {
+  assert.equal(latestDownloadableRelease(null), null);
+  assert.equal(latestDownloadableRelease({ assets: [] }), null);
+  assert.equal(latestDownloadableRelease([{ draft: true }, { tag_name: 'v1.0.0' }]), null);
 });

@@ -1,0 +1,22 @@
+{
+  "abilities": [
+    "followUp",
+    "replyTerminal",
+    "transcript"
+  ],
+  "agent": "codex",
+  "branch": "main",
+  "conversationID": "019a1b2c-3d4e-7f50-8a9b-0c1d2e3f4a5b",
+  "cwd": "/Users/you/code/side-a",
+  "flag": {
+    "kind": "unsent",
+    "text": "Didn't reach Codex: \"Also run the linter before you commit\""
+  },
+  "headless": false,
+  "id": "019a1b2c-3d4e-7f50-8a9b-0c1d2e3f4a5b",
+  "openRequests": [],
+  "project": "side-a",
+  "status": "idle",
+  "title": "Fix the flaky test",
+  "worktree": false
+}

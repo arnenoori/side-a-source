@@ -1,0 +1,6 @@
+{
+  "arguments": "{\"title\":\"Crash on launch\"}",
+  "kind": "mcp",
+  "server": "github",
+  "tool": "create_issue"
+}

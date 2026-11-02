@@ -1,0 +1,13 @@
+{
+  "keepAwake": true,
+  "memoryPressure": "warning",
+  "memoryTotal": 38654705664,
+  "memoryUsed": 27917287424,
+  "onPower": true,
+  "sessionMemory": 9878424780,
+  "worth": {
+    "currency": "USD",
+    "days30": 412.75,
+    "days7": 96.4
+  }
+}

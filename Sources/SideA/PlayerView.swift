@@ -13,6 +13,7 @@ struct PlayerView: View {
     @Bindable var store: AccountStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -27,6 +28,7 @@ struct PlayerView: View {
             .modifier(ClearWindowSurface())
             .onAppear {
                 store.showSettings = { openSettings() }
+                store.showSessions = { openWindow(id: "sessions") }
                 if !store.playerRequested { dismissWindow(id: "player") }
             }
             .alert("Side A", isPresented: Binding(
@@ -51,7 +53,8 @@ struct PlayerView: View {
         if store.config.accounts.isEmpty { return "OPEN TO ADD ACCOUNT" }
         guard let selected = store.selected, selected.ready else { return "OPEN TO FINISH SIGN-IN" }
         let usage = store.usage[selected.id]
-        let levels = [usage?.fiveHour.map { "5H \(Int($0.percent.rounded()))%" }, usage?.weekly.map { "WK \(Int($0.percent.rounded()))%" }]
+        let now = Date().timeIntervalSince1970
+        let levels = [usage?.fiveHour.map { "5H \($0.text(at: now))" }, usage?.weekly.map { "WK \($0.text(at: now))" }]
             .compactMap { $0 }.joined(separator: " ")
         if store.isActive(selected) { return levels.isEmpty ? "ACTIVE ON THIS MAC" : "ACTIVE / " + levels }
         if levels.isEmpty { return "PLAY TO USE ON THIS MAC" }

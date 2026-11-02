@@ -1,0 +1,5 @@
+version: 2
+secret:
+  ignored_paths:
+    # Known-answer test vectors: fixed keys generated for the protocol tests, never used anywhere real
+    - Packages/SideAProtocol/Sources/SideAProtocolFixtures/Fixtures/**

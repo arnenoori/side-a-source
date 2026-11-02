@@ -1,0 +1,54 @@
+/* ---------- Side A Remote: the Mac runs it, the phone answers it ---------- */
+.remote { text-align: center; }
+.remote-icon { display: block; width: 64px; height: 64px; margin: 0 auto 22px; border-radius: 15px; box-shadow: 0 1px 2px #20282014, 0 10px 28px #2028201f; }
+.how .remote .eyebrow { margin-bottom: 14px; }
+.how .remote-soon, .remote-store, .remote-beta { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; margin: 30px 0 0; }
+.how .remote-soon { gap: 7px; padding: 0 16px; border-radius: 20px; background: #eceeec; font-size: 13px; font-weight: 500; line-height: 1; color: #4c5550; }
+.remote-beta { gap: 7px; padding: 0 18px; border-radius: 20px; background: var(--ink); color: white; font-size: 13px; font-weight: 500; line-height: 1; text-decoration: none; transition: background-color 120ms ease, transform 160ms var(--ease-out); }
+.remote-beta:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) { .remote-beta:hover { background: #3b4540; } }
+.remote-soon svg, .remote-beta svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.remote-store img { display: block; height: 40px; width: auto; }
+
+/* The phone overlaps the Mac's lower right corner, as on Apple's Continuity pages. */
+.remote-demo { position: relative; width: min(880px, 100%); margin: 56px auto 0; padding: 2% 0 36px; }
+.remote-mac { width: 78%; }
+.remote-mac .screen { height: auto; aspect-ratio: 16 / 10; }
+.remote-term { position: absolute; left: 6%; top: 22%; width: 60%; bottom: 0; padding: 0 18px; border-radius: 10px 10px 0 0; background: #fbfbf9; box-shadow: 0 0 0 1px #20282012, 0 14px 40px #2028201a; text-align: left; font: 12px/1.75 ui-monospace, "SF Mono", Menlo, monospace; color: #2b302e; overflow: hidden; }
+.how .remote-term p { margin: 0; font: inherit; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.how .remote-term .dim { color: #8a928d; }
+.how .remote-term .wait { color: #b7432a; }
+.remote-term .dot { color: #2f7d58; }
+.remote-term .term-bar { margin-bottom: 4px; }
+.remote-term .term-bar span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.phone { --w: 24.5%; position: absolute; right: 3%; bottom: 0; width: var(--w); padding: 2.6%; border-radius: 17.5% / 8%; background: #0c0d0d; box-shadow: inset 0 0 0 1.5px #3a3d3c, 0 0 0 1px #9aa09d, 0 2px 3px #20282026, 0 30px 70px #20282033; }
+.phone-screen { position: relative; aspect-ratio: 1206 / 2622; border-radius: 13.6% / 6.3%; overflow: hidden; background: #f2f2f7; }
+/* The Dynamic Island, where iPhone 17 Pro has it. */
+.phone-screen::after { content: ""; position: absolute; z-index: 1; top: 2.7%; left: 50%; width: 31%; aspect-ratio: 126 / 37; border-radius: 99px; background: #000; transform: translateX(-50%); }
+.phone-screen picture { position: absolute; inset: 0; opacity: 0; transition: opacity 240ms ease-out; }
+.phone-screen picture.on { opacity: 1; }
+.phone-screen img { display: block; width: 100%; height: 100%; }
+
+/* A segmented control, iOS's own. */
+.remote-tabs { display: inline-flex; gap: 2px; margin: 12px auto 0; padding: 2px; border-radius: 10px; background: #e7eae7; }
+.remote-tabs button { min-width: 96px; min-height: 32px; padding: 0 16px; border: 0; border-radius: 8px; background: none; font-size: 13px; font-weight: 500; color: #4c5550; }
+.remote-tabs [aria-selected=true] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px #2028201f, 0 2px 8px #2028200f; }
+@media (hover: hover) and (pointer: fine) { .remote-tabs [aria-selected=false]:hover { color: var(--ink); } }
+
+.remote-points { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px 48px; max-width: 920px; margin: 72px auto 0; padding: 0; text-align: left; }
+.remote-points li { font-size: 15px; line-height: 1.5; color: #4c5550; }
+.remote-points b { display: block; margin-bottom: 4px; font-size: 16px; font-weight: 600; color: var(--ink); }
+
+@media(max-width:820px) {
+  .remote-points { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; }
+}
+@media(max-width:600px) {
+  /* The phone outgrows the Mac here, so the Mac starts lower to keep it clear of the copy. */
+  .remote-demo { margin-top: 24px; padding: 30% 0 24px; }
+  .remote-mac { width: 92%; }
+  .remote-term { left: 5%; width: 70%; top: 17%; padding: 0 10px; font-size: 8px; }
+  .remote-term .term-bar { height: 18px; font-size: 7.5px; }
+  .phone { --w: 42%; right: 0; }
+  .remote-points { grid-template-columns: minmax(0, 1fr); gap: 22px; margin-top: 52px; }
+}

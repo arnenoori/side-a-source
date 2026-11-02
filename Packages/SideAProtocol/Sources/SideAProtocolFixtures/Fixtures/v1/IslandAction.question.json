@@ -1,0 +1,37 @@
+{
+  "kind": "question",
+  "questions": [
+    {
+      "header": "Database",
+      "multiSelect": false,
+      "options": [
+        {
+          "description": "One file, no server",
+          "label": "SQLite (Recommended)"
+        },
+        {
+          "description": "Runs as a service",
+          "label": "Postgres"
+        }
+      ],
+      "question": "Which database should the app use?"
+    },
+    {
+      "header": "Platforms",
+      "multiSelect": true,
+      "options": [
+        {
+          "label": "iOS"
+        },
+        {
+          "label": "macOS"
+        },
+        {
+          "description": "Later",
+          "label": "watchOS"
+        }
+      ],
+      "question": "Which platforms?"
+    }
+  ]
+}

@@ -1,95 +1,105 @@
-# Validation — 2026-09-06
+# Validation
 
-## Executed locally
+How Side A is checked before a release. Tests never touch real logins: they run in temporary
+folders with fake CLIs and a fake Keychain. What only real accounts can show is checked by hand.
 
-- Swift 6.3.3 / Xcode 26.6, Apple Silicon Mac.
-- Blender 5.2.1 generated the editable `.blend`, 50 evaluated mesh objects, and
-  the reference render. The native view renders those meshes with a dynamic LCD.
-- 23 Python tests passed, including six real PTY-supervisor integration cases
-  against a deterministic fake Claude executable:
-  - Same session ID resumed under the next account after a structured rate limit.
-  - Manual switch deferred while a tool/turn remained active.
-  - Auto disabled, authentication error, and source account without opt-in did not flip.
-  - Unsent input prevented a handoff.
-- 6 Swift tests passed for track wrapping, invalid/duplicate identifiers, unsupported
-  configuration versions, private persistence, and literal shell-argument round trip.
-- Installed Claude Code 2.1.263 accepted `auth status --json` for a fresh isolated
-  profile and reported `loggedIn: false`, `authMethod: none`; the existing account
-  was not imported or modified.
-- Native app opened and was visually inspected. Model scale and lighting refined.
-- Native onboarding: empty name disables Continue; a filled name enables it.
-- Actual 3D HOLD switch disabled the native transport; pressing it again restored it.
-- Actual 3D OPEN latch opened the account onboarding sheet.
-- Settings exposed menu-bar-only mode; the same process stayed alive after closing
-  the player window. The popover implementation shares the verified account store.
+## Local gates
 
-- Release app built successfully; `codesign --verify --deep --strict` passed.
-- Packaged bridge and mesh matched their canonical source byte-for-byte.
-- Final release app relaunched and rendered the model successfully.
+`./scripts/local-ci.sh` runs every gate on this Mac and stops at the first failure:
 
-## Remaining acceptance checks
+1. `actionlint` on the workflows and `shellcheck` on `scripts/*.sh`.
+2. Packaging and release tests (`scripts/tests`): release tags, notes and the update feed.
+3. Bridge tests (`bridge/tests`).
+4. Copies the bridge into the app's resources, then `swift test`.
+5. The download page in `site/`: install, test and build.
+6. Release builds for arm64 and x86_64, joined into a universal app. Intel is cross-compiled;
+   it is not run on this Mac.
+7. The disk image, built with Python 3.10 or later, then mounted and checked.
 
-These need real user sign-ins and must not be inferred from fixture tests:
+GitHub runs the same suites on native Apple Silicon and Intel runners (`.github/workflows/ci.yml`).
 
-- Browser OAuth completion and verified display of two distinct real accounts.
-- Live Claude transcript compatibility and resume across those two profiles.
-- A real provider limit and successful live Auto flip.
-- Full menu bar popover interaction, VoiceOver narration, and testing on macOS 14/15
-  (the development Mac uses a newer macOS version).
-- Developer ID signing, notarization, Intel build, and distribution-machine install.
+## Bridge tests
 
-The app is a functional Claude Code preview with these live acceptance limits,
-not a Claude Desktop integration. See the v0.3 results below for Codex. Automated handoff deliberately
-resumes at the prompt instead of replaying work.
+`python3 -m unittest discover -s bridge/tests -v`
 
-## v0.2 model-only interface
+- **Logins** (`test_bridge.py`): Keychain slot names match the CLI's; a slot holding another
+  account's login is refused; reading usage never writes a login; a renewal spends its refresh
+  token once; a trade moves logins between items and a crash finishes it forward; Side A waits
+  for Claude Code's refresh lock and releases it.
+- **Switching:** the `~/.zshrc` line survives aliases, `set -u` and upgrades; `sidea use` keeps
+  one terminal on one account; busy slots follow Claude Code's storage rule; a session's own limit
+  error names the full account.
+- **Hooks:** the statusline wrapper keeps the user's line; the limit hook is silent and
+  removable; the island hooks install beside the user's own for both CLIs and come out cleanly;
+  the hook relays the island's answer over a real socket and steps aside when Side A is gone; a
+  note or stop reaches a working session at its next tool call.
+- **Usage:** each response and Codex turn counts once; two Macs share totals through the sync
+  folder without logins.
+- **Codex** (`test_codex.py`): the Mac's Codex login is read where Codex keeps it and never
+  copied; a revoked login asks for sign-in.
+- **Sessions** (`test_sessions.py`): indexing, titles and branches; Codex sessions; live sessions
+  listed waiting first; the current step and health flags; incremental reindexing; opening a
+  conversation around a search hit.
 
-- Removed the header, account inspector, footer, background panel, and visible window controls.
-- The standalone view is a transparent 620×620 surface containing only the Blender model.
-- Dragging the housing did not activate OPEN; the model remained interactive afterwards.
-- Stable accessibility buttons are attached directly to the model. Pressing HOLD
-  updated the LCD and disabled the other transport actions; pressing again restored them.
-- OPEN displayed onboarding; dismissing it returned to the model-only surface.
-- Release build and all 6 native tests passed with no compiler warnings.
-- Claude account/session bridge code is unchanged in this release.
+## Swift tests
 
-## v0.2.1 onboarding copy
+`swift test`
 
-- Release build and signature verification passed.
-- Visually inspected the compact 400×274 first-step sheet in the running app.
-- Accessibility tree contains only its title, close action, labeled name/email
-  fields, and Continue. Empty-name validation remains in place.
-- Account and session behavior is unchanged. No new tests were added for copy.
+- **Models:** duplicate identities, path traversal and unknown providers fail closed; the
+  library is saved with private permissions; old libraries migrate without changing accounts.
+- **Planner:** expiring quota goes first and idle windows are primed; overnight agent traffic
+  doesn't count as working hours; spent Fable caps are skipped; Fable sessions trade with a login
+  only other models use; a session's limit error fills that limit; trades wait for a pause unless
+  the account is out of room; weekly forecasts follow a weekday rhythm.
+- **Island:** requests read the command, reason and suggested rule; Codex commands and patches
+  show as they will run; destructive commands need a click; answers are one JSON line the hook
+  understands; questions and plans are answered by sending their input back; a request is settled
+  once Claude Code's registry says its session stopped waiting after it arrived, and never for Codex
+  or headless runs.
+- **Pricing, diagnostics and analytics:** API prices, the status.claude.com filter, diagnostic
+  canaries, and analytics that need consent, honor revocation and stay off in the demo.
+- **Warp:** the tab picked is the pane still running the session, by Warp's focus link and, without one, by folder.
 
-## v0.3 providers and account panel
+## Demo mode
 
-- Final gates: 38 Python tests and 9 Swift tests passed (47 total). Release build
-  completed without compiler warnings.
+```sh
+open -n "dist/Side A.app" --args --demo
+```
 
-- Swift migration tests verify old Claude profiles retain identity, email, readiness
-  and consent. Codex profiles round-trip; unknown providers fail closed.
-- Codex protocol and real PTY fixtures cover exact-thread resume, manual switch
-  deferral, source consent, typed drafts, pending approvals, auth errors, collaborator
-  activity, provider separation, private storage, and metadata filtering.
-- The installed Codex 0.148.0 reported no signed-in identity for a disposable profile
-  using the Keychain backend. No default login was imported.
-- A real unsigned-in app-server created a locally saved conversation, and a second
-  disposable profile successfully resumed its exact thread ID using the shared
-  managed history index. This is storage compatibility evidence, not live OAuth.
-- The real native Codex TUI connected through the private Unix proxy: observed
-  initialize, initialized, account/read and account/login/start; its sign-in screen
-  appeared without a connection error. No sign-in was completed.
-- Visually inspected a separately identified preview build to avoid another older
-  preview sharing the production bundle ID. OPEN created an independent Accounts
-  dialog. Account rows have a single, unobstructed ellipsis. Claude/Codex selection,
-  empty-name validation, and the Codex sign-in action were exercised.
-- No real user account was added, removed, signed out, or used for a coding request
-  during these tests. Live two-account OAuth and actual limit handoff remain pending.
+The demo uses a temporary root (`$TMPDIR/SideA-preview-<pid>`) with fictional Claude and Codex
+accounts, limits and running sessions. It does not sign in, read real usage, check for updates,
+send analytics, or install the shell line, statusline or hooks. Use it to inspect layout, copy,
+VoiceOver and Reduce Motion, and for screenshots. **Show a sample request** in Settings > General
+tries the island without a session.
 
-## v0.4.1 first use and recovery — 2026-09-07
+## Live checks
 
-- All local gates passed: 12 packaging/release tests, 38 bridge tests, 16 Swift tests, and 18 website tests (84 total). Both architectures compiled, the website built, and the universal DMG mounted read-only with a valid Applications shortcut. Intel execution was not tested on this ARM host.
-- Native preview exercised Add account, empty-name validation, compact installed-tool readiness, Verify, Done, Settings, and a real diagnostic save. The exported JSON contained only its fixed schema and was mode 0600. Preview analytics remained disabled. Auto flip explanatory copy was shortened and made multiline after visual inspection found truncation.
-- The analytics integration test captures the actual HTTP payload locally: account verification before consent sends nothing; after consent it sends account_connected. Revocation and demo exclusion still hold. Core tests cover diagnostic canaries for identities and paths.
-- One real managed Claude account passed auth status. Two tiny print-mode requests in an empty temporary project were rejected because its organization has disabled Claude subscription access to Claude Code. A separate interactive supervisor attempt reached Claude's initial setup/sign-in screen and was stopped. The browser account differed from the managed account, so no browser authorization was granted and no credentials were replaced.
-- No successful real coding turn or account handoff is claimed. A second eligible Claude account and two eligible Codex accounts are still needed for live resume acceptance. Genuine usage-limit handoff, network interruption, and sleep/wake remain unverified. Existing deterministic PTY cases cover safe turns, unsent drafts, pending approvals, authentication failures, and opted-out accounts without exhausting real quotas or disturbing unrelated sessions.
+Some behavior depends on real accounts and real Claude Code sessions. It is checked by hand on a
+local build, and is never inferred from the tests above:
+
+- Sign-in in the browser, and limits that match what Claude Code shows.
+- A trade while sessions run: they continue as the new account without restarting.
+- A real limit reply triggering a trade while the usage endpoint is rate-limited.
+- The island: Allow, Deny and Always from Claude Code and Codex; answering in the terminal
+  instead, which clears the request within a second; Reply waking a finished session; Go and Show terminal reaching the right tab in
+  Ghostty, iTerm, Terminal and Warp.
+- Notes and stops reaching a working session; health flags on a real stuck or looping session.
+- VoiceOver, keyboard-only use, Reduce Motion and Increase Contrast.
+
+Local builds are "Side A Dev" with their own bundle ID and no updater, so testing never disturbs
+an installed copy.
+
+## Release verification
+
+These scripts in `scripts/` run during the build and release steps and stop on any mismatch:
+
+- `check-release.py`: the tag matches the version and release notes exist.
+- `verify-bundle.py`: the app's Info.plist, architectures, bridge resources, icon and pinned
+  Sparkle 2.9.6 framework match the sources; the update feed requires signatures.
+- `verify-dmg.py`: mounts the disk image read-only and checks the app, the Applications shortcut
+  and the installer layout.
+- `notarize-app.sh`: signs with Developer ID, notarizes and staples the app and the disk image,
+  and checks both with `codesign` and `spctl`.
+- `verify-downloads.py`: the checksum file covers exactly the two downloads.
+- `verify-appcast.py`: the feed names one update with the right version, size, download URL,
+  signature and minimum macOS.

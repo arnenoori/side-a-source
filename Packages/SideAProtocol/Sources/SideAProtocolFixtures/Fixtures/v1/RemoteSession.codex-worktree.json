@@ -1,0 +1,16 @@
+{
+  "abilities": [
+    "transcript"
+  ],
+  "agent": "codex",
+  "branch": "sidea/x",
+  "conversationID": "019a1b2c-3d4e-7f50-8a9b-0c1d2e3f4a5b",
+  "cwd": "/Users/you/code/side-a/.claude/worktrees/x",
+  "headless": false,
+  "id": "019a1b2c-3d4e-7f50-8a9b-0c1d2e3f4a5b",
+  "openRequests": [],
+  "project": "side-a",
+  "status": "idle",
+  "title": "Port the bridge",
+  "worktree": true
+}

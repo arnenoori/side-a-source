@@ -1,0 +1,38 @@
+{
+  "archivable": [
+    {
+      "bytes": 1932735283,
+      "count": 420,
+      "olderThanDays": 30
+    },
+    {
+      "bytes": 1181116006,
+      "count": 260,
+      "olderThanDays": 60
+    },
+    {
+      "bytes": 536870912,
+      "count": 120,
+      "olderThanDays": 90
+    }
+  ],
+  "archived": 310,
+  "conversationBytes": 4831838208,
+  "conversations": 1204,
+  "worktrees": [
+    {
+      "branch": "sidea/old",
+      "bytes": 48211968,
+      "id": "wt-3f9c",
+      "keep": "ignoredFiles",
+      "keepReason": "Holds .env",
+      "path": "/Users/you/code/app/.claude/worktrees/old"
+    },
+    {
+      "branch": "sidea/x",
+      "bytes": 1048576,
+      "id": "wt-0a1b",
+      "path": "/Users/you/code/web/.claude/worktrees/x"
+    }
+  ]
+}

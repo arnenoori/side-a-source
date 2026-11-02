@@ -1,0 +1,16 @@
+{
+  "agent": "claude",
+  "canChangeEffortMidSession": true,
+  "defaultEffort": "high",
+  "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+  ],
+  "fast": true,
+  "id": "claude-opus-5-5",
+  "isDefault": true,
+  "title": "Opus 5.5"
+}

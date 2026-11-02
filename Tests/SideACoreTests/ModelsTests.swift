@@ -2,23 +2,18 @@ import Foundation
 import Testing
 @testable import SideACore
 
-@Test func rejectsDuplicateIdentityAndUnsupportedVersion() throws {
-    let account = Account(name: "Personal")
-    var config = Configuration()
-    config.accounts = [account, account]
-    #expect(throws: StorageError.self) { try config.validated() }
-    config.accounts = [account]
-    config.version = 3
-    #expect(throws: StorageError.self) { try config.validated() }
-}
+private let invalidConfigs: [(String, @Sendable (inout Configuration) -> Void)] = [
+    ("duplicate identity", { let account = Account(name: "Personal"); $0.accounts = [account, account] }),
+    ("unsupported version", { $0.accounts = [Account(name: "Personal")]; $0.version = 3 }),
+    ("traversal", { $0.accounts = [Account(id: "../escape", name: "Wrong")] }),
+    ("dangling selection", { $0.accounts = [Account(name: "Real")]; $0.selectedID = UUID().uuidString }),
+]
 
-@Test func rejectsTraversalAndDanglingSelection() {
+@Test(arguments: invalidConfigs)
+func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout Configuration) -> Void) {
     var config = Configuration()
-    config.accounts = [Account(id: "../escape", name: "Wrong")]
-    #expect(throws: StorageError.self) { try config.validated() }
-    config.accounts = [Account(name: "Real")]
-    config.selectedID = UUID().uuidString
-    #expect(throws: StorageError.self) { try config.validated() }
+    change(&config)
+    #expect(throws: StorageError.self, "\(name)") { try config.validated() }
 }
 
 @Test func persistsPrivateLibraryWithRestrictivePermissions() throws {
@@ -87,6 +82,11 @@ import Testing
     table[soon.id] = usage(93, now + 2 * hour, 40, now + 24 * hour)
     #expect(Planner.best([soon, full], usage: table, active: full.id, now: now) == nil)
     #expect(Planner.best([soon, full], usage: table, active: soon.id, now: now) == soon.id)
+    // From brandedDaniel's fork: a target nearly out of weekly quota would be left again minutes
+    // later, so an account with room on every limit wins; one is still used when it is all there is.
+    table[soon.id] = usage(10, now + 2 * hour, 93, now + 2 * hour)
+    #expect(Planner.best(accounts, usage: table, active: full.id, now: now) == later.id)
+    #expect(Planner.best([soon, full], usage: table, active: full.id, now: now) == soon.id)
     table[soon.id] = usage(10, now + 2 * hour, 40, now + 6 * 24 * hour)
     // An expired window counts as not started.
     #expect(Planner.shouldPrime(later, usage: table[later.id], now: now))
@@ -95,6 +95,14 @@ import Testing
     #expect(!Planner.shouldPrime(Account(name: "Off", ready: true), usage: table[later.id], now: now))
     // Review: a Codex plan with no 5-hour window was primed every 30 minutes forever.
     #expect(!Planner.shouldPrime(Account(name: "Codex", ready: true, allowAuto: true, provider: .codex), usage: usage(nil, nil, 10, now + hour), now: now))
+    // Claude's plans may omit an idle window, Ultra's included; a Last account's waits until it's needed.
+    var ultra = usage(nil, nil, 10, now + hour); ultra.capacity = 20
+    #expect(Planner.shouldPrime(Account(name: "Claude", ready: true, allowAuto: true), usage: ultra, now: now))
+    #expect(!Planner.shouldPrime(Account(name: "Reserve", ready: true, allowAuto: true, priority: .last), usage: ultra, now: now))
+    let top = Account(name: "Top", ready: true, allowAuto: true, priority: .first), low = Account(name: "Low", ready: true, allowAuto: true, priority: .last)
+    #expect(Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 60, now: now))
+    #expect(!Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 2 * hour, now: now))
+    #expect(!Planner.priorityMoveWaits(from: top, to: low, usage: table[soon.id], movedAt: now - 60, now: now))
     // A Max 20x account's remaining weekly quota outweighs a Pro account's.
     var big = table[later.id]!; big.capacity = 20
     #expect(Planner.urgency(big, now: now) > Planner.urgency(table[soon.id]!, now: now))
@@ -164,4 +172,92 @@ import Testing
     let busy = try #require(WeekForecast(UsageWindow(id: "seven_day", label: "Weekly", percent: 80, resetsAt: reset), rhythm: rhythm, now: wednesday))
     let out = Date(timeIntervalSince1970: try #require(busy.runsOut))
     #expect(calendar.component(.weekday, from: out) == 4 && (16..<17).contains(calendar.component(.hour, from: out)))
+}
+
+@Test func aSessionsLimitErrorFillsThatLimitUntilANewerReading() {
+    let now = 1_000_000.0
+    let reading = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 70, resetsAt: now + 3600),
+                                         UsageWindow(id: "seven_day", label: "Weekly", percent: 80, resetsAt: now - 60)], capacity: 5)
+    // A known reset is kept; an expired one gives way to the longest the limit could last.
+    let five = reading.hitting("five_hour", at: now)
+    #expect(five.fiveHour == UsageWindow(id: "five_hour", label: "5-hour", percent: 100, resetsAt: now + 3600))
+    #expect(reading.hitting("seven_day", at: now).weekly?.resetsAt == now + 7 * 86_400)
+    #expect(!Planner.hasHeadroom(five, now: now))
+    // A model cap the reading did not list yet is added, and Fable planning sees it spent.
+    let fable = reading.hitting("model:fable", at: now)
+    #expect(fable.modelLimits.map(\.label) == ["Weekly Fable"])
+    #expect(fable.forFable.map { Planner.hasHeadroom($0, now: now) } == false)
+}
+
+@Test func fableSessionsTradeWithALoginOnlyOpusSessionsUse() {
+    let now = 1_000_000.0
+    func window(_ id: String, _ percent: Double) -> UsageWindow { UsageWindow(id: id, label: id, percent: percent, resetsAt: now + 3600) }
+    let spent = Account(name: "Spent", email: "a@x.y", ready: true, allowAuto: true)
+    let opus = Account(name: "Opus", email: "b@x.y", ready: true, allowAuto: true)
+    let idle = Account(name: "Idle", email: "c@x.y", ready: true, allowAuto: true)
+    let usage = [spent.id: AccountUsage(windows: [window("five_hour", 10), window("seven_day", 30), window("model:fable", 100)], capacity: 20),
+                 opus.id: AccountUsage(windows: [window("five_hour", 20), window("seven_day", 20), window("model:fable", 10)], capacity: 20)]
+    let slots = ["mac": spent.id, "p1": opus.id]
+    let pick = Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-opus-5-5", "claude-opus-5-5"]],
+                                  accounts: [spent, opus, idle], usage: usage, excluded: [], now: now)
+    #expect(pick?.slot == "p1" && pick?.account == opus.id)
+    // A partner whose session model is unknown, or one running Fable itself, never takes a spent login.
+    #expect(Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-opus-5-5", nil]],
+                               accounts: [spent, opus], usage: usage, excluded: [], now: now) == nil)
+    #expect(Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-fable-5-1"]],
+                               accounts: [spent, opus], usage: usage, excluded: [], now: now) == nil)
+    // The Opus sessions must have room on the login they'd get.
+    var full = usage; full[spent.id] = AccountUsage(windows: [window("five_hour", 100), window("seven_day", 30), window("model:fable", 100)])
+    #expect(Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-opus-5-5"]],
+                               accounts: [spent, opus], usage: full, excluded: [], now: now) == nil)
+    #expect(Planner.needsFable(nil) == nil && Planner.needsFable(["claude-opus-5-5", nil]) == nil && Planner.needsFable(["claude-sonnet-5-5"]) == false)
+}
+
+@Test func tradesWaitForAPauseUnlessTheAccountIsOutOfRoom() {
+    let now = 1_000_000.0
+    let room = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 60, resetsAt: now + 3600)])
+    let full = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 99, resetsAt: now + 3600)])
+    #expect(Planner.waitsForPause(room, quiet: 30, now: now))
+    #expect(!Planner.waitsForPause(room, quiet: 600, now: now))
+    #expect(!Planner.waitsForPause(full, quiet: 30, now: now))
+    #expect(!Planner.waitsForPause(room, quiet: nil, now: now))
+}
+
+@Test func usageReadingsStayWithinTheCap() throws {
+    let over = UsageWindow(id: "five_hour", label: "5-hour", percent: 101.4, resetsAt: 2_000)
+    #expect(over.percent == 100)
+    #expect(over.text(at: 1_000) == "100%")
+    #expect(UsageWindow(id: "five_hour", label: "5-hour", percent: -3, resetsAt: nil).percent == 0)
+    #expect(UsageWindow(id: "five_hour", label: "5-hour", percent: .nan, resetsAt: nil).percent == 0)
+    let saved = Data(#"{"id":"seven_day","label":"Weekly","percent":130,"resetsAt":2000}"#.utf8)
+    #expect(try JSONDecoder().decode(UsageWindow.self, from: saved).percent == 100)
+    // Once the window resets it holds nothing, however full the last reading was.
+    #expect(over.used(at: 2_000) == 0)
+    #expect(over.text(at: 2_500) == "0%")
+}
+
+@Test func aLiveReadingFromAnotherWeekBelongsElsewhere() {
+    let now = 1_000_000.0
+    let known = AccountUsage(windows: [UsageWindow(id: "seven_day", label: "Weekly", percent: 40, resetsAt: now + 200_000)])
+    let week = { (reset: Double) in [UsageWindow(id: "seven_day", label: "Weekly", percent: 90, resetsAt: reset)] }
+    #expect(Planner.belongsElsewhere(week(now + 50_000), known: known, now: now))
+    #expect(!Planner.belongsElsewhere(week(now + 200_600), known: known, now: now))
+    // Once the account's own week has reset, a new week's reading is its own.
+    #expect(!Planner.belongsElsewhere(week(now + 600_000), known: known, now: now + 250_000))
+    #expect(!Planner.belongsElsewhere(week(now + 50_000), known: nil, now: now))
+}
+
+/// A removal is remembered per provider and email, survives a save, and libraries from before it read as none.
+@Test func aRemovedLoginIsRememberedUntilTakenBack() throws {
+    var config = try JSONDecoder().decode(Configuration.self, from: Data(#"{"version":2,"accounts":[],"smartMode":true,"menuBarOnly":true}"#.utf8))
+    #expect(config.removedLogins == nil)
+    config.noteRemoved(Account(name: "Work", email: "Work@Example.com"))
+    config.noteRemoved(Account(name: "Work", email: "work@example.com"))
+    config.noteRemoved(Account(name: "Blank"))
+    #expect(config.removedLogins == ["claude:work@example.com"])
+    #expect(config.wasRemoved("WORK@example.com", .claude) && !config.wasRemoved("work@example.com", .codex))
+    let saved = try JSONDecoder().decode(Configuration.self, from: JSONEncoder().encode(config))
+    #expect(saved.wasRemoved("work@example.com", .claude))
+    config.forgetRemoval("work@EXAMPLE.com", .claude)
+    #expect(config.removedLogins == nil && !config.wasRemoved("work@example.com", .claude))
 }

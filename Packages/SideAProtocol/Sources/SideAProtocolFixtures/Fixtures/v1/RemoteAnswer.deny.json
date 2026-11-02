@@ -1,0 +1,4 @@
+{
+  "kind": "deny",
+  "message": "Use the staging database instead."
+}

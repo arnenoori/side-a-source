@@ -10,3 +10,7 @@ To regenerate after changing the lighting or Three.js version:
 4. Rebuild the site and compare the player before committing the assets.
 
 The tool binds to loopback only, checks the request origin and exact payload shape, and is not included in the production build.
+
+# Heart lab
+
+`tools/heart-lab.html` renders the love egg's heart ([data-love-egg], on the home and How it works pages) as a still for look development. With `npx vite` running from `site/`, open `/tools/heart-lab.html?yaw=0.3&pitch=0.1` (also `roll` and `px`, the heart's width in CSS pixels).

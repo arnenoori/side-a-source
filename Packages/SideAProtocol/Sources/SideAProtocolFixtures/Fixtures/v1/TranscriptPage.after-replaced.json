@@ -1,0 +1,96 @@
+{
+  "after": "a41f09c2e7b3.813.1911",
+  "before": "a41f09c2e7b3.813.0",
+  "count": 900,
+  "generation": "a41f09c2e7b3",
+  "hasMoreAfter": true,
+  "inheritedBefore": 0,
+  "messages": [
+    {
+      "at": 1791559946.9,
+      "images": [],
+      "inherited": false,
+      "model": "claude-opus-5-5",
+      "role": "assistant",
+      "seq": 813,
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+      "textTruncated": true,
+      "tools": [],
+      "uuid": "1f0c2d3e-0000-4000-8000-000000000813"
+    }
+  ],
+  "replaced": [
+    {
+      "at": 1791560009.9,
+      "images": [],
+      "inherited": false,
+      "role": "tools",
+      "seq": 812,
+      "textTruncated": false,
+      "tools": [
+        {
+          "action": {
+            "added": "let b = 3\nlet c = 4",
+            "kind": "edit",
+            "path": "/Users/you/code/app/Island.swift",
+            "removed": "let b = 2"
+          },
+          "diffs": [
+            {
+              "additions": 2,
+              "change": "modified",
+              "deletions": 1,
+              "hunks": [
+                {
+                  "lines": [
+                    " let a = 1",
+                    "-let b = 2",
+                    "+let b = 3",
+                    "+let c = 4",
+                    "\\ No newline at end of file"
+                  ],
+                  "newCount": 7,
+                  "newStart": 40,
+                  "oldCount": 6,
+                  "oldStart": 40
+                }
+              ],
+              "path": "/Users/you/code/app/Island.swift",
+              "truncated": false
+            }
+          ],
+          "endedAt": 1791560011.9,
+          "group": false,
+          "id": "toolu_01ABCdef",
+          "images": [],
+          "name": "Edit",
+          "output": "The file has been updated.",
+          "outputTruncated": false,
+          "startedAt": 1791560009.9,
+          "status": "ok",
+          "summary": "Edit: /Users/you/code/app/Island.swift"
+        },
+        {
+          "action": {
+            "command": "npm test",
+            "kind": "command"
+          },
+          "diffs": [],
+          "endedAt": 1791560016.9,
+          "group": false,
+          "id": "toolu_02XYZ",
+          "images": [],
+          "name": "Bash",
+          "output": "42 passed",
+          "outputTruncated": false,
+          "startedAt": 1791560012.15,
+          "status": "ok",
+          "summary": "Bash: npm test"
+        }
+      ],
+      "uuid": "1f0c2d3e-0000-4000-8000-000000000812"
+    }
+  ],
+  "reset": false,
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
+}

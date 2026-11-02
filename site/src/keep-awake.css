@@ -1,0 +1,104 @@
+/* Keep awake: a MacBook whose lid closes into a night scene, agents that keep going, a Mac that sleeps when they finish. */
+.desk.ka { container-type: inline-size; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 18px; padding: 28px 22px 22px; transition: color 600ms ease; }
+.ka-sky { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity 900ms ease;
+  background:
+    radial-gradient(1.4px 1.4px at 9% 14%, #fff 60%, #fff0), radial-gradient(1px 1px at 22% 32%, #ffffffc0 60%, #fff0),
+    radial-gradient(1.2px 1.2px at 37% 9%, #fff 60%, #fff0), radial-gradient(1px 1px at 54% 22%, #ffffffa0 60%, #fff0),
+    radial-gradient(1.4px 1.4px at 68% 7%, #fff 60%, #fff0), radial-gradient(1px 1px at 79% 28%, #ffffffb0 60%, #fff0),
+    radial-gradient(1.2px 1.2px at 92% 40%, #fff 60%, #fff0), radial-gradient(1px 1px at 6% 52%, #ffffff90 60%, #fff0),
+    radial-gradient(1px 1px at 96% 66%, #ffffff90 60%, #fff0), radial-gradient(1.2px 1.2px at 30% 58%, #ffffffa0 60%, #fff0),
+    radial-gradient(60% 45% at 50% 105%, #4b3f8f 0%, #4b3f8f00 70%),
+    radial-gradient(45% 40% at 85% 12%, #2d4a8a 0%, #2d4a8a00 70%),
+    linear-gradient(#0a1024, #151d45 55%, #261f52);
+}
+.ka-moon { position: absolute; top: 22px; right: 26px; width: 30px !important; height: 30px !important; color: #f6eccb; filter: drop-shadow(0 0 16px #f6eccb73); opacity: 0; transform: translateY(14px) rotate(-12deg); transition: opacity 900ms ease 150ms, transform 1400ms var(--m-glide) 150ms; }
+.ka.night .ka-sky, .ka.night .ka-moon { opacity: 1; }
+.ka.night .ka-moon { transform: none; }
+/* Night turns the glass dark, as macOS does. */
+.ka.night { --m-ink: rgba(255, 255, 255, .92); --m-2: rgba(255, 255, 255, .6); --m-3: rgba(255, 255, 255, .4); --m-4: rgba(255, 255, 255, .14); --m-line: rgba(255, 255, 255, .12); --m-accent: #0a84ff; --m-green: #30d158; }
+.ka .glass { transition: background-color 600ms ease, box-shadow 600ms ease; }
+.ka.night .glass { background: rgba(30, 34, 58, .5); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 1px 0 rgba(255, 255, 255, .12), 0 0 0 .5px rgba(0, 0, 0, .4), 0 24px 60px rgba(0, 0, 0, .35); }
+.ka.night .glass::before { opacity: .15; }
+.ka.night .switch:not([aria-checked=true]) { background: rgba(255, 255, 255, .16); }
+.ka .ka-lid { transition: background-color 600ms ease, box-shadow 600ms ease, transform 160ms var(--m-glide); }
+.ka.night .ka-lid { background: rgba(255, 255, 255, .14); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 0 0 .5px rgba(255, 255, 255, .22), 0 2px 8px rgba(0, 0, 0, .3); }
+@media (hover: hover) and (pointer: fine) { .ka.night .ka-lid:hover { background: rgba(255, 255, 255, .22); } }
+
+/* The MacBook: a lid hinged on a deck, drawn in 3D so it really closes. */
+.ka-stage { display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.lap { --w: 292px; --h: 186px; --f: 0; position: relative; width: var(--w); height: calc(var(--h) + 34px); perspective: 1100px; perspective-origin: 50% 0%; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; }
+.lap.dragging { cursor: grabbing; }
+.lap-lid, .lap-base { position: absolute; left: 0; width: 100%; transform-style: preserve-3d; }
+.lap-lid { top: 0; height: var(--h); z-index: 1; transform-origin: 50% 100%; transform: rotateX(calc(10deg - var(--f) * 100deg)); transition: transform 900ms cubic-bezier(.32, .72, .18, 1); }
+.lap.dragging .lap-lid { transition: none; }
+.lap-screen, .lap-back { position: absolute; inset: 0; border-radius: 13px 13px 4px 4px; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
+.lap-screen { padding: 8px 8px 13px; background: #0c0d0e; box-shadow: inset 0 0 0 1.5px #3a3d42, 0 0 0 .5px #8c9096; }
+.lap-display { position: relative; height: 100%; border-radius: 5px; overflow: hidden; transition: opacity 1200ms ease;
+  background: radial-gradient(60% 70% at 15% 20%, #ff9f6e, #ff9f6e00 70%), radial-gradient(55% 65% at 90% 10%, #6fa8ff, #6fa8ff00 70%), radial-gradient(60% 60% at 70% 100%, #b892ff, #b892ff00 70%), linear-gradient(135deg, #f7d5c3, #d3def6 55%, #e3d3f3); }
+.lap-bar { display: flex; align-items: center; justify-content: space-between; height: 12px; padding: 0 7px; background: #ffffff70; }
+.lap-bar i { width: 7px; height: 7px; border-radius: 50% 50% 45% 45%; background: #1d1f24; transform: scale(.8); }
+.lap-bar .mini-disc { width: 7px; height: 7px; border-width: 1px; color: #1d1f24; }
+.lap-bar .mini-disc::after { inset: 2px; }
+.lap-term { position: absolute; left: 10%; right: 10%; bottom: 0; top: 30px; padding: 9px 10px; border-radius: 6px 6px 0 0; background: #fbfbf9; box-shadow: 0 0 0 .5px #0000001a, 0 8px 24px #20282026; font: 8.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: #2b302e; }
+.how .ka .lap-term p { margin: 0; font: inherit; color: inherit; }
+.lap-term span { color: #d97757; }
+.how .ka .lap-work { color: #b86400; }
+.how .ka .lap-done { display: none; color: #2f7d58; }
+.ka.done .lap-work { display: none; }
+.ka.done .lap-done { display: block; }
+.ka.asleep .lap-display { opacity: 0; }
+.lap-back { display: grid; place-items: center; transform: rotateY(180deg); background: linear-gradient(180deg, #e3e5e8, #b9bdc3); box-shadow: inset 0 0 0 .5px #ffffffb0, inset 0 -1px 0 #8d9198; }
+.lap-logo { width: 22px; height: 22px; border: 1.5px solid #9599a0; border-radius: 50%; position: relative; }
+.lap-logo::after { content: ""; position: absolute; inset: 6px; border: 1.5px solid #9599a0; border-radius: 50%; }
+/* The deck lies flat toward you; its front edge is the lip you would open the lid by. */
+.lap-base { top: calc(var(--h) + 2px); height: var(--h); transform-origin: 50% 0; transform: rotateX(90deg); border-radius: 0 0 12px 12px; background: linear-gradient(180deg, #a9adb3, #d6d9dd 60%, #e4e6e9); box-shadow: inset 0 0 0 .5px #ffffff90; }
+.lap-lip { position: absolute; left: 0; right: 0; bottom: 0; height: 9px; transform-origin: 50% 100%; transform: rotateX(90deg); border-radius: 0 0 9px 9px; background: linear-gradient(#c3c6cb, #8f949b); }
+.lap::after { content: ""; position: absolute; left: 4%; right: 4%; bottom: -6px; height: 18px; border-radius: 50%; background: radial-gradient(closest-side, #1a203a55, #1a203a00); z-index: -1; }
+.ka-lid { position: relative; z-index: 3; min-width: 128px; }
+
+/* Agents and the setting, side by side when there is room. */
+.ka-cards { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.ka-card { padding: 12px 14px; border-radius: 16px; }
+.how .desk .ka-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; font-size: 12px; }
+.ka-head b { font-weight: 600; }
+.ka-list { list-style: none; margin: 0; padding: 0; }
+.ka-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
+.ka-row + .ka-row { border-top: .5px solid var(--m-line); }
+.ka-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.ka-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ka-title { font-size: 12.5px; font-weight: 500; }
+.ka-sub { min-width: 0; font-size: 11px; color: var(--m-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ka-row .mini-bar { height: 4px; }
+.ka-row .mini-bar i { transition: background-color 300ms ease; }
+.ka-row .ok { display: none; font-size: 12px; color: var(--m-green); }
+.ka-row.finished .eq { display: none; }
+.ka-row.finished .ok { display: block; }
+.ka-row.finished .mini-bar i { background: var(--m-green); }
+.ka.asleep .eq i { animation-play-state: paused; }
+.how .desk .ka-status { display: flex; align-items: center; gap: 7px; min-height: 22px; margin-top: 6px; padding-top: 8px; border-top: .5px solid var(--m-line); font-size: 11.5px; font-weight: 500; }
+.ka-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--m-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-green) 22%, transparent); transition: background-color 300ms ease, box-shadow 300ms ease; }
+.ka.asleep .ka-dot, .ka.done .ka-dot { background: var(--m-3); box-shadow: none; }
+.ka .ka-status .link-btn { margin-left: auto; color: var(--m-accent); }
+.ka-settings .f-row { padding: 9px 0; }
+.ka-settings .f-label { font-size: 12.5px; }
+.ka-settings .f-label small { font-size: 10.5px; }
+.ka-sub-row { padding-left: 14px !important; }
+.ka-settings .switch:disabled { opacity: .4; cursor: default; }
+.ka-settings .ka-head + .f-row { border-top: 0; }
+
+/* Asleep, the whole room dims a little; the controls stay usable. */
+.ka::after { content: ""; position: absolute; inset: 0; z-index: 2; background: #05081a; opacity: 0; pointer-events: none; transition: opacity 1400ms ease; }
+.ka.asleep::after { opacity: .22; }
+
+@container (max-width: 520px) {
+  .ka-cards { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .desk.ka { padding: 26px 12px 12px; }
+  .lap { --w: 248px; --h: 158px; }
+  .ka-moon { top: 16px; right: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lap-lid { transition: none; }
+  .ka-moon { transform: none !important; transition: opacity 400ms ease; }
+}

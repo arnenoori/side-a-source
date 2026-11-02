@@ -1,0 +1,27 @@
+{
+  "diffs": [],
+  "endedAt": 1791560003.15,
+  "group": false,
+  "id": "toolu_03Todo",
+  "images": [],
+  "name": "TodoWrite",
+  "outputTruncated": false,
+  "startedAt": 1791560002.9,
+  "status": "ok",
+  "summary": "Update the todo list",
+  "todos": [
+    {
+      "status": "completed",
+      "text": "Add the package"
+    },
+    {
+      "activeForm": "Moving the types",
+      "status": "inProgress",
+      "text": "Move the types"
+    },
+    {
+      "status": "pending",
+      "text": "Write fixtures"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+APP_ID_SUFFIX =
+APNS_ENVIRONMENT = production
+// The push entitlement: development signs for sandbox APNs, production for the App Store.
+APS_ENVIRONMENT = production
+#include "Shared.xcconfig"

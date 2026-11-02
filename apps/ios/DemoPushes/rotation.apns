@@ -1,0 +1,21 @@
+{
+  "Simulator Target Bundle": "com.arnenoori.sidea.remote.dev",
+  "aps": {
+    "alert": {
+      "title": "Now on Personal",
+      "body": "5-hour 96%"
+    },
+    "category": "ROTATION",
+    "thread-id": "rotation",
+    "interruption-level": "active",
+    "sound": "default"
+  },
+  "p": {
+    "v": 1,
+    "mac": "demo",
+    "sent": 1791560012.4,
+    "t": "rotation",
+    "title": "Now on Personal",
+    "body": "5-hour 96%"
+  }
+}

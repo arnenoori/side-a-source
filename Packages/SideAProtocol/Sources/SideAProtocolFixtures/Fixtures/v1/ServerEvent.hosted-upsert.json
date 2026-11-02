@@ -1,0 +1,18 @@
+{
+  "data": {
+    "agent": "claude",
+    "alive": true,
+    "createdAt": 1791559411.9,
+    "cwd": "/Users/you/code/app/.claude/worktrees/sa-app-3f9c",
+    "macAttached": true,
+    "name": "sa-app-3f9c",
+    "project": "app",
+    "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+    "viewers": 1,
+    "worktree": {
+      "branch": "sidea/sa-app-3f9c",
+      "path": "/Users/you/code/app/.claude/worktrees/sa-app-3f9c"
+    }
+  },
+  "type": "hosted.upsert"
+}

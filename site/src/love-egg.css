@@ -1,0 +1,20 @@
+/* "Send with love": a resting pointer or a long press on [data-love-egg] turns it into a sent iMessage bubble and a heart floats off. */
+.fx-veil, .fx-layer { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.fx-veil { z-index: 1000; opacity: 0; background: #1c1c1e33; }
+.fx-layer { z-index: 1001; }
+[data-love-egg] { --love: 0; --bubble-h: 28px; position: relative; z-index: 1002; display: inline-flex; align-items: center; justify-content: center; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; transition: scale 250ms cubic-bezier(.2, .8, .2, 1); }
+/* A long press on touch: the credit gives a little under the finger and the bubble starts to tint, so the hold reads as deliberate. */
+[data-love-egg].pressing { scale: .95; transition: scale 700ms cubic-bezier(.3, 0, .2, 1); }
+[data-love-egg].loving { color: color-mix(in srgb, #fff calc(var(--love) * 100%), var(--muted)); transform: translateY(calc(var(--love) * -8px)); }
+/* The bubble is always laid out, so nothing moves when it appears; its block margins cancel its height in the line. */
+.love-bubble { position: relative; display: inline-flex; align-items: center; box-sizing: border-box; height: var(--bubble-h); margin: calc(var(--bubble-h) / -2) -12px; padding: 0 12px; border-radius: calc(var(--bubble-h) / 2); line-height: 1; white-space: nowrap; }
+/* Trimmed to cap height and baseline, the text box is the ink an eye centers on, so flex centering is optical
+   centering in any font. Engines without text-box get --ink-shift, measured from the font in heart3d. */
+.love-text { display: block; line-height: 1; text-box: trim-both cap alphabetic; text-box-trim: trim-both; text-box-edge: cap alphabetic; translate: 0 var(--ink-shift, 0px); }
+.pressing .love-bubble::before { content: ''; position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: #0a7cff; opacity: .16; animation: love-press 700ms ease-in both; }
+@keyframes love-press { from { opacity: 0; } }
+.loving .love-bubble::before { content: ''; position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: linear-gradient(#2b8dff, #0a7cff); box-shadow: 0 4px 14px #0a7cff40; opacity: var(--love); transform: scale(calc(.8 + .2 * var(--love))); }
+/* Like iMessage, the effect's name sits above the bubble's trailing edge. The negative margin hangs the trailing letter-space. */
+.loving .love-bubble::after { content: 'Send with love'; position: absolute; right: 0; bottom: calc(100% + 5px); margin-right: -.06em; font-size: 8.5px; line-height: 1; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #8e8e93; opacity: var(--love); white-space: nowrap; }
+.heart-grab, .heart-grab * { cursor: grab !important; }
+.heart-grabbing, .heart-grabbing * { cursor: grabbing !important; -webkit-user-select: none; user-select: none; }

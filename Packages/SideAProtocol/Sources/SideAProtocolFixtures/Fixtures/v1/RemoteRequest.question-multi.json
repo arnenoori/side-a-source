@@ -1,0 +1,58 @@
+{
+  "accountName": "Work",
+  "action": {
+    "kind": "question",
+    "questions": [
+      {
+        "header": "Database",
+        "multiSelect": false,
+        "options": [
+          {
+            "description": "One file, no server",
+            "label": "SQLite (Recommended)"
+          },
+          {
+            "description": "Runs as a service",
+            "label": "Postgres"
+          }
+        ],
+        "question": "Which database should the app use?"
+      },
+      {
+        "header": "Platforms",
+        "multiSelect": true,
+        "options": [
+          {
+            "label": "iOS"
+          },
+          {
+            "label": "macOS"
+          },
+          {
+            "description": "Later",
+            "label": "watchOS"
+          }
+        ],
+        "question": "Which platforms?"
+      }
+    ]
+  },
+  "agent": "claude",
+  "answers": [
+    "answers",
+    "deny",
+    "terminal"
+  ],
+  "arrivedAt": 1791560003.9,
+  "detail": "SQLite (Recommended), Postgres, iOS, macOS, watchOS",
+  "headless": false,
+  "headline": "2 questions for you",
+  "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b",
+  "project": "app",
+  "risk": "low",
+  "sessionID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "suggestions": [],
+  "title": "Fix the island layout",
+  "tool": "AskUserQuestion",
+  "truncated": false
+}

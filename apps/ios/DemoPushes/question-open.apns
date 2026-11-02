@@ -1,0 +1,26 @@
+{
+  "Simulator Target Bundle": "com.arnenoori.sidea.remote.dev",
+  "aps": {
+    "alert": {
+      "title": "Claude has a question",
+      "subtitle": "side-a \u00b7 Work",
+      "body": "Open to answer"
+    },
+    "category": "QUESTION",
+    "thread-id": "demo-cache",
+    "interruption-level": "time-sensitive",
+    "sound": "default"
+  },
+  "p": {
+    "v": 1,
+    "mac": "demo",
+    "sent": 1791560012.4,
+    "t": "question",
+    "rid": "d1a0b2c3-0000-4000-8000-000000000003",
+    "sid": "demo-cache",
+    "full": false,
+    "title": "Claude has a question",
+    "subtitle": "side-a \u00b7 Work",
+    "body": "Open to answer"
+  }
+}

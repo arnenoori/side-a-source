@@ -1,0 +1,14 @@
+{
+  "agent": "codex",
+  "canChangeEffortMidSession": false,
+  "defaultEffort": "medium",
+  "efforts": [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ],
+  "id": "gpt-5-codex",
+  "title": "GPT-5 Codex"
+}
