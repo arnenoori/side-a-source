@@ -29,10 +29,10 @@ carried only in the QR code; pairing is QR-only. No MagicDNS, HTTPS certificates
   its tailnet; the phone can check almost nothing (iOS can't see Tailscale's state). So the Mac
   carries the checklist, and the phone's job is to reach the Mac's QR code and then explain
   failures in terms of what to fix on which device.
-- **The QR code pairs; it doesn't install.** The Mac shows `sidea-remote://pair#…`, which needs the
-  app. The app and `site/public/.well-known/apple-app-site-association` also take
-  `https://getsidea.com/pair#…`, but the Mac doesn't show that form yet, so a Camera scan before
-  the app is installed goes nowhere.
+- **The QR code pairs; it doesn't install.** The Mac shows `https://getsidea.com/pair#…`, which
+  `site/public/.well-known/apple-app-site-association` hands to the app when it's installed; without
+  the app, a Camera scan opens `/pair` and its App Store link. Phones from Build 13 also take
+  `sidea-remote://pair#…`, the form Side A showed before 0.5.47.
 - **Check, don't ask.** Every checklist row is a live check that re-runs on its own (tab opened,
   every 30 s while open, on wake, when Side A becomes active, as `DependencyStatusView` already
   does). Nobody ticks a box.
@@ -244,7 +244,7 @@ end of every Codex turn, so one finished turn after `/hooks` proves trust. Rewri
 
 The sheet from mac-server, with the transport above:
 
-- **QR code** (`sidea-remote://pair#…`, everything in the fragment): tailnet address and port, LAN
+- **QR code** (`https://getsidea.com/pair#…`, everything in the fragment): tailnet address and port, LAN
   address when row 9 is on, the key's SPKI SHA-256 (`fp`), Mac name, Mac id, tailnet name and the
   8-character code. See [Endpoints](#endpoints-and-fields-this-needs). The sheet shows no code
   or address to type: pairing is QR-only.
@@ -563,7 +563,7 @@ Content, in order:
 
 ### `/pair`
 
-The target of the `https://getsidea.com/pair#…` form, which the Mac doesn't show yet: `site/pair/index.html`. It must never see the pairing code or key:
+The target of the `https://getsidea.com/pair#…` form the Mac shows: `site/pair/index.html`. It must never see the pairing code or key:
 
 - Everything is in the fragment, which browsers never send, but page scripts can read it. This
   page loads **no analytics** and no script that reads `location`, so nothing records it. A test

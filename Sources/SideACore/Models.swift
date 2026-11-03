@@ -52,6 +52,7 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var liveLimits: Bool?
     /// The 5-hour or weekly percentage at which Autopilot moves off an account. Nil means 95.
     public var swapAt: Double?
+    public var moveAt: Double { swapAt ?? 95 }
     /// A question with a recommended choice, or a plan, is answered after a minute unanswered. Nil means off.
     public var answerRecommended: Bool?
     /// Claude Code in Terminal goes through Side A's local proxy, which picks an account per conversation. Nil means off.

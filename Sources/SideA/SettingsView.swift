@@ -1,6 +1,7 @@
 import Charts
 import ServiceManagement
 import SideACore
+import SideAProtocol
 import SwiftUI
 
 /// In tab order; ⌘1–⌘7 follow it.
@@ -557,8 +558,8 @@ struct AutopilotSettings: View {
                     Text("Autopilot").font(.headline)
                     Text(status)
                 }
-                Picker(selection: Binding(get: { store.config.swapAt ?? 95 }, set: { store.setSwapAt($0) })) {
-                    ForEach([80.0, 85, 90, 95, 97, 99], id: \.self) { Text("\(Int($0))%").tag($0) }
+                Picker(selection: Binding(get: { store.config.moveAt }, set: { store.setSwapAt($0) })) {
+                    ForEach(SwapAtChange.choices.map { Double($0) }, id: \.self) { Text("\(Int($0))%").tag($0) }
                 } label: {
                     Text("Move at")
                     Text("Of a 5-hour or weekly limit, before your sessions move to another account. Lower leaves room for a burst.")

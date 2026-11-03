@@ -13,12 +13,6 @@ extension Island {
         case refused(String)
     }
 
-    /// The gate a pending request has now, judged afresh, and the one the phone was last shown for it.
-    func remoteGate(_ rid: String) -> (now: AllowGate, shown: AllowGate?)? {
-        guard let id = UUID(uuidString: rid), let item = pending.first(where: { $0.id == id }) else { return nil }
-        return (AllowGate.of(item.request, projects: Self.projects(item.request.cwd)), ShownGates.shared[item.id])
-    }
-
     /// What answering a pending request this way must prove, by the gate it has now.
     func remoteNeeds(_ rid: String, _ answer: RemoteAnswer, mode: PermissionMode?) -> (gate: AllowGate, needs: ConfirmProof)? {
         guard let id = UUID(uuidString: rid), let item = pending.first(where: { $0.id == id }) else { return nil }

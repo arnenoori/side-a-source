@@ -21,7 +21,7 @@ struct BridgeFailure: LocalizedError, Sendable {
 final class AccountStore {
     var config = Configuration() {
         didSet {
-            Planner.full = config.swapAt ?? 95
+            Planner.full = config.moveAt
             if config.accounts != oldValue.accounts || config.swapAt != oldValue.swapAt || config.followFable != oldValue.followFable { remoteUsageChanged() }
             if config.smartMode != oldValue.smartMode || config.swapAt != oldValue.swapAt || config.followFable != oldValue.followFable { remote.events?.autopilotChanged() }
         }
@@ -463,9 +463,10 @@ final class AccountStore {
             NSWorkspace.shared.open(url)
         } catch { self.error = "Terminal could not be opened: \(error.localizedDescription)" }
     }
-    /// Matches the bridge's pin_name: lowercased, anything else becomes a dash.
+    /// Matches the bridge's pin_name: case-folded, each run of anything but a-z and 0-9 becomes one dash.
     static func pinName(_ name: String) -> String {
-        let slug = name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? String($0) : "-" }.joined()
+        let slug = name.folding(options: .caseInsensitive, locale: nil).unicodeScalars
+            .map { ("a"..."z").contains($0) || ("0"..."9").contains($0) ? String($0) : "-" }.joined()
             .split(separator: "-").joined(separator: "-")
         return slug.isEmpty ? "account" : slug
     }

@@ -192,6 +192,11 @@ final class HostedSessions {
         }
         guard current == installs else { return }
         tmux = found
+        // The watcher ends by itself once tmux is gone; dropping it here lets the next install start one.
+        if tmux == nil {
+            watcher?.cancel()
+            watcher = nil
+        }
         pruneFolders()
         await refresh()
         guard current == installs else { return }

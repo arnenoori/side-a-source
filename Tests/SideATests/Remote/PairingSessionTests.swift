@@ -31,6 +31,14 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     try await Task.sleep(for: .milliseconds(50))
     session.decide(.pair)
     #expect(await decision == .pair)
+    // The sheet says Paired only once the phone has its token.
+    #expect(session.phase == .pairing(attempt))
+    session.decide(.mismatch)
+    #expect(session.phase == .pairing(attempt))
+    session.finished("someone-else", saved: true)
+    #expect(session.phase == .pairing(attempt))
+    session.finished(pending.attemptID, saved: true)
+    #expect(session.phase == .paired("Arne’s iPhone"))
     let (approved, key) = try #require(session.takeApproved(pending.attemptID))
     let phoneSide = try PushKey.derive(phone, peer: Curve25519.KeyAgreement.PublicKey(rawRepresentation: macKey), macPublicKey: macKey,
                                        devicePublicKey: phone.publicKey.rawRepresentation, installID: "XsFDif2r-oebU07VsxiVgA",
@@ -41,6 +49,28 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     #expect(throws: PairingSession.Refusal.expired) { try session.submit(request(code), spki: spki).get() }
 }
 
+@MainActor @Test func eachEndingSaysWhyAndADeviceThatWasntSavedIsntCalledPaired() throws {
+    let session = PairingSession()
+    defer { session.end() }
+    var pending = try session.submit(request(session.code.code), spki: spki).get()
+    session.decide(.pair)
+    session.finished(pending.attemptID, saved: false)
+    #expect(session.phase == .stopped(.unsaved))
+
+    session.restart()
+    _ = try session.submit(request(session.code.code), spki: spki).get()
+    session.decide(.mismatch)
+    #expect(session.phase == .stopped(.mismatch))
+
+    session.restart()
+    pending = try session.submit(request(session.code.code), spki: spki).get()
+    session.tick(now: Date().addingTimeInterval(PairingSession.confirmTime + 1))
+    #expect(session.phase == .stopped(.timeout) && session.knows(pending.attemptID))
+    // A stopped sheet's later ticks change nothing.
+    session.tick(now: Date().addingTimeInterval(10_000))
+    #expect(session.phase == .stopped(.timeout))
+}
+
 @MainActor @Test func aSecondPhoneOnTheSameCodeVoidsBoth() async throws {
     let session = PairingSession()
     defer { session.end() }
@@ -49,7 +79,7 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     try await Task.sleep(for: .milliseconds(50))
     #expect(throws: PairingSession.Refusal.busy) { try session.submit(request(session.code.code), spki: spki).get() }
     #expect(await decision == .cancel)
-    #expect(session.phase == .stopped("Two Devices Used This Code"))
+    #expect(session.phase == .stopped(.twoDevices))
 }
 
 @MainActor @Test func aSubstitutedKeyNeverOffersPairAndSilenceTimesOut() async throws {
@@ -72,10 +102,10 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
 
 @MainActor @Test func thePairingLinkCarriesTheAddressesKeyAndCode() {
     #expect(PairingSession.link(address: "100.1.2.3:47800", lan: [], spki: spki, mac: MacInfo(id: "ab", name: "Arne’s Mac"), tailnetName: "t", code: "K7Q29XMD")
-            == "sidea-remote://pair#v=2&a=100.1.2.3:47800&fp=\(Secret.base64url(spki))&n=Arne%E2%80%99s%20Mac&m=ab&t=t&c=K7Q29XMD")
+            == "https://getsidea.com/pair#v=2&a=100.1.2.3:47800&fp=\(Secret.base64url(spki))&n=Arne%E2%80%99s%20Mac&m=ab&t=t&c=K7Q29XMD")
     #expect(PairingSession.link(address: "192.168.1.20:47800", lan: ["192.168.1.20:47800", "10.0.0.7:47800"], spki: spki,
                                 mac: MacInfo(id: "ab", name: "Mac"), tailnetName: nil, code: "K7Q29XMD")
-            == "sidea-remote://pair#v=2&a=192.168.1.20:47800&l=192.168.1.20:47800,10.0.0.7:47800&fp=\(Secret.base64url(spki))&n=Mac&m=ab&c=K7Q29XMD")
+            == "https://getsidea.com/pair#v=2&a=192.168.1.20:47800&l=192.168.1.20:47800,10.0.0.7:47800&fp=\(Secret.base64url(spki))&n=Mac&m=ab&c=K7Q29XMD")
 }
 
 @MainActor @Test func anUnusedCodeRenewsSixTimesThenStops() {
@@ -90,7 +120,7 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     }
     #expect(session.renewed == 6 && codes.count == 7 && session.phase == .code)
     session.tick(now: now.addingTimeInterval(301))
-    #expect(session.phase == .stopped("Code Expired"))
+    #expect(session.phase == .stopped(.expired))
     // Start Again keeps renewing.
     session.restart()
     #expect(session.renewing && session.renewed == 0 && session.phase == .code)

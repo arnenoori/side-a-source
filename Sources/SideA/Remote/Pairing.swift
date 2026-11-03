@@ -26,9 +26,22 @@ final class PairingSession {
     enum Phase: Equatable {
         case code
         case confirm(Attempt)
+        /// Pair clicked; the phone hasn't taken its token yet.
+        case pairing(Attempt)
         case paired(String)
         /// Too many wrong codes, a raced code, the renewals used up: the sheet's title says which, with Start Again.
-        case stopped(String)
+        case stopped(Stop)
+    }
+
+    /// Each way a pairing stops; the raw value is the sheet's title.
+    enum Stop: String, Sendable {
+        case expired = "Code Expired"
+        case wrongCodes = "Too Many Wrong Codes"
+        case twoDevices = "Two Devices Used This Code"
+        case mismatch = "Codes Didn’t Match"
+        case timeout = "Pairing Timed Out"
+        case cancelled = "Pairing Cancelled"
+        case unsaved = "Couldn’t Save This iPhone"
     }
 
     enum Decision: Sendable { case pair, cancel, mismatch, timeout }
@@ -78,7 +91,7 @@ final class PairingSession {
             return
         }
         guard phase == .code, now.timeIntervalSince1970 >= code.expiresAt else { return }
-        guard renewed < Self.renewals else { phase = .stopped("Code Expired"); log("code expired, renewals used up"); return }
+        guard renewed < Self.renewals else { phase = .stopped(.expired); log("code expired, renewals used up"); return }
         renewed += 1
         code = PairingCode.make(now: now.timeIntervalSince1970)
         log("code renewed (\(renewed) of \(Self.renewals))")
@@ -105,12 +118,12 @@ final class PairingSession {
             return .failure(.wrong)
         case .expired:
             log("\(request.device.name) sent a code that's expired or used up" + (code.triesLeft(source) == 0 ? " (its address has no tries left)" : ""))
-            if phase == .code, code.burned { phase = .stopped("Too Many Wrong Codes") }
+            if phase == .code, code.burned { phase = .stopped(.wrongCodes) }
             return .failure(.expired)
         case .busy:
             // A second phone with the same code: someone raced the user, so neither attempt goes on.
             if case .confirm(let first) = phase { finish(first.id, .cancel) }
-            phase = .stopped("Two Devices Used This Code")
+            phase = .stopped(.twoDevices)
             log("\(request.device.name) used a code another device already used; stopped")
             return .failure(.busy)
         case .accepted(let id):
@@ -193,8 +206,13 @@ final class PairingSession {
                                                     "cancel": "cancelled on the Mac"]["\(decision)", default: "\(decision)"])
         finish(attempt.id, decision)
         code.finish()
-        phase = decision == .pair ? .paired(attempt.request.device.name)
-            : .stopped(decision == .mismatch ? "Codes Didn’t Match" : decision == .timeout ? "Nobody Clicked Pair in Time" : "Pairing Cancelled")
+        phase = decision == .pair ? .pairing(attempt) : .stopped(decision == .mismatch ? .mismatch : decision == .timeout ? .timeout : .cancelled)
+    }
+
+    /// The phone took its token, or the Mac couldn't keep the device: only now does the sheet say how it went.
+    func finished(_ attemptID: String, saved: Bool) {
+        guard case .pairing(let attempt) = phase, attempt.id == attemptID else { return }
+        phase = saved ? .paired(attempt.request.device.name) : .stopped(.unsaved)
     }
 
     private func finish(_ id: String, _ decision: Decision) {
@@ -214,8 +232,8 @@ final class PairingSession {
         code.finish()
     }
 
-    /// Everything in the fragment, so no web server ever sees it. The universal link replaces the scheme once the site
-    /// serves its association file.
+    /// Everything in the fragment, so no web server ever sees it. The universal link opens Side A Remote when it's
+    /// installed, and getsidea.com/pair's App Store link when it isn't, so the iPhone's Camera can scan it too.
     /// `address` is the primary one (the tailnet's, else the LAN's); `lan` every LAN address, best first.
     /// `relay` adds `i` (install id), `r` (relay origin) and `p` (the sheet's ticket); `address` may then be nil.
     static func link(address: String?, lan: [String], spki: Data, mac: MacInfo, tailnetName: String?, code: String,
@@ -230,7 +248,7 @@ final class PairingSession {
         if let tailnetName { fields.append("t=" + escape(tailnetName)) }
         if let relay { fields += ["i=" + relay.installID, "r=" + escape(relay.url.absoluteString), "p=" + Secret.base64url(relay.ticket)] }
         fields.append("c=" + code)
-        return "sidea-remote://pair#" + fields.joined(separator: "&")
+        return "https://getsidea.com/pair#" + fields.joined(separator: "&")
     }
 
     static func qr(_ text: String, scale: CGFloat = 8, correction: String = "M") -> CGImage? {

@@ -110,7 +110,7 @@ sequence number.
   defends against other tailnet and LAN devices, browsers and DNS rebinding, a replacement
   listener, a lost phone that was never paired (or was revoked), and an agent that reads the
   screen during pairing. Details in [mac-server](remote/mac-server.md#threat-model).
-- **Pairing:** Settings > Remote shows a QR code (a `sidea-remote://pair#…` link with the address, the key hash,
+- **Pairing:** Settings > Remote shows a QR code (a `https://getsidea.com/pair#…` link with the address, the key hash,
   the Mac's name and an 8-character one-time code). The phone posts the code; both devices then
   show the same six-digit comparison code derived from the key exchange, and the Mac's
   confirmation names that exact attempt. Only after Pair does the phone get its token. The phone

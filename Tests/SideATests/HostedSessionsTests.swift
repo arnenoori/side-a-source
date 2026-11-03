@@ -335,6 +335,32 @@ func worktreeSessionsCleanUpAfterThemselvesAndAmbiguityIsRaisedNotPressed() asyn
 
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
+func tmuxIsWatchedAgainAfterAnInstallThatFailed() async throws {
+    let fixture = try HostedFixture()
+    var failing = false
+    let hosted = HostedSessions(root: fixture.root, environment: fixture.environment, bridge: { args in
+        if failing { throw BridgeFailure(message: "the helper didn't finish within 60s") }
+        return try await fixture.bridge(args)
+    })
+    await hosted.install()
+    failing = true
+    await hosted.install()
+    #expect(!hosted.available)
+    // The watcher sees tmux gone once its wait ends, within 5 s.
+    try await Task.sleep(for: .seconds(6))
+    failing = false
+    await hosted.install()
+    #expect(hosted.available)
+    let made = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "new-session", "-d", "-s", "by-hand", "sleep 60"],
+                                            environment: fixture.environment, timeout: 5)
+    #expect(made.status == 0)
+    #expect(await waitFor(15) { hosted.sessions.map(\.name) == ["by-hand"] }, "\(hosted.sessions.map(\.name))")
+    hosted.stop()
+    await fixture.cleanUp()
+}
+
+@MainActor
+@Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func endStopsAnAgentThatOutlivesTheHangup() async throws {
     let fixture = try HostedFixture()
     let hosted = HostedSessions(root: fixture.root, environment: fixture.environment, bridge: fixture.bridge)

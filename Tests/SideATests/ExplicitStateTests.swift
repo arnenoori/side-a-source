@@ -270,6 +270,30 @@ private func room(at now: Double) -> [UsageWindow] {
     #expect(failure.code == nil)
 }
 
+@Test func aWaitingUpdateIsDroppedOnlyWhenTheFeedHasANewerBuild() {
+    let feed = Data("""
+    <?xml version="1.0" standalone="yes"?><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel>
+    <item><title>0.5.46</title><sparkle:version>54</sparkle:version><sparkle:shortVersionString>0.5.46</sparkle:shortVersionString>
+    <enclosure url="https://example.com/SideA-0.5.46.dmg" length="1" type="application/octet-stream"></enclosure></item>
+    </channel></rss><!-- sparkle-signatures: -->
+    """.utf8)
+    #expect(StagedUpdate.superseded(build: "53", feed: feed))
+    #expect(StagedUpdate.superseded(build: "9", feed: feed))
+    #expect(!StagedUpdate.superseded(build: "54", feed: feed))
+    #expect(!StagedUpdate.superseded(build: "100", feed: feed))
+    let attribute = Data(#"<rss xmlns:sparkle="s"><channel><item><enclosure sparkle:version="55" url="u"/></item></channel></rss>"#.utf8)
+    #expect(StagedUpdate.superseded(build: "54", feed: attribute))
+    #expect(!StagedUpdate.superseded(build: "54", feed: Data("not a feed".utf8)))
+}
+
+/// Taking the install-now block keeps Sparkle's session open, and then no later check reaches the feed.
+@MainActor @Test func aDownloadWaitingForQuitLeavesSparkleFreeToCheckAgain() {
+    let updates = Updates()
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
+    #expect(!updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: {}))
+    #expect(updates.available != nil)
+}
+
 // MARK: Key check
 
 private final class Signatures: @unchecked Sendable {

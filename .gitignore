@@ -19,7 +19,6 @@ site/.wrangler/
 Sources/SideA/Resources/sidea_bridge.py
 Sources/SideA/Resources/codex_bridge.py
 Sources/SideA/Resources/sessions.py
-Sources/SideA/Resources/codex_transport.py
 Sources/SideA/Resources/cleanup.py
 Sources/SideA/Resources/setup.py
 Sources/SideA/Resources/hosting.py

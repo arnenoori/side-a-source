@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.5.47 — 2026-11-03
+
+Update to installs the newest Side A, not one downloaded before a newer release came out. Once an update had downloaded, Side A stopped checking until it quit, so Update to kept offering that version and Check for Updates stayed greyed out. Now a download waiting to install is checked against the feed when you press Update to, when Check for Updates runs, and once a day; if the feed has something newer, the old download is dropped and the newest is fetched instead.
+
+Pairing an iPhone is calmer and says what's going on. Pair iPhone… is never just greyed out: the row says what it waits for, such as a security key Side A can't use, with Make New Key… beside it, or no network, with Use Wi-Fi. The QR code is bigger and sharp at every size, and now opens getsidea.com/pair, so the iPhone's Camera can scan it too and offers the App Store when Side A Remote isn't installed. After you click Pair, the iPhone pulses until it really has its pairing, then turns into a check; a pairing the Mac couldn't save no longer says Paired, and a phone that was reconnecting as you clicked no longer finds the sheet gone. Each way a pairing stops says what to do next, Escape cancels from every step, and VoiceOver reads out each step.
+
+Open Terminal keeps the terminal on its account when the account's name has a letter such as ß, ﬁ, İ or an accent typed as a separate mark. The terminal named the account differently from the shell line and followed Autopilot instead.
+
+Hosted sessions keep updating after Side A's helper fails once while turning terminal hosting or Remote back on. Until a relaunch, sessions that ended stayed listed and the phone's terminals weren't told they had exited.
+
+A Mac with more than ten iPhones set up for notifications now notifies all of them. The relay takes ten devices per send, and Side A put every phone in one, so none got the notification.
+
 ## 0.5.46 — 2026-11-02
 
 Pair iPhone works on a Mac that has a developer certificate in its Keychain, and Make New Key can no longer delete one. Side A's search for its security key could return another certificate, such as an Apple Distribution one, which left Remote stuck on "Side A can't use its security key"; Make New Key would then have deleted that certificate. Side A now only ever uses and removes its own key. Update before pressing Make New Key on 0.5.45 or earlier.

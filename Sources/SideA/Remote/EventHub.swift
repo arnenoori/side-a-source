@@ -174,8 +174,6 @@ final class EventHub: @unchecked Sendable {
         }
     }
 
-    func subscribers(_ session: SessionKey) -> Int { clients.values.filter { $0.subscriptions.keys.contains(session) }.count }
-
     /// Every session some socket is subscribed to, from the main actor.
     var subscriptions: Set<SessionKey> { queue.sync { Set(clients.values.flatMap(\.subscriptions.keys)) } }
 

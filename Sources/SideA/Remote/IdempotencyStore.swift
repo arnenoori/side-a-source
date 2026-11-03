@@ -100,8 +100,6 @@ final class IdempotencyStore {
 
     func forget(device: String) { run("DELETE FROM records WHERE device = ?", [.text(device)]) }
 
-    func forgetAll() { run("DELETE FROM records", []) }
-
     /// At launch and hourly: 24 hours and 1,000 per device.
     func trim(now: TimeInterval) {
         run("DELETE FROM records WHERE created < ?", [.real(now - Self.maxAge)])

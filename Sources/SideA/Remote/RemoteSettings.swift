@@ -55,7 +55,7 @@ struct RemoteSettings: View {
 
     private var switchDetail: String? {
         if !remote.available { return store.isDemo ? "The demo doesn't serve Remote." : "Only Side A in Applications can serve Remote." }
-        return remote.on ? nil : "Answer requests from your iPhone."
+        return nil
     }
 
     /// What the iPhone gets: requests to answer, messages it can send, and a Mac that stays awake to answer them.
@@ -100,7 +100,7 @@ struct RemoteSettings: View {
             }
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                if let error = remote.error, error != RemoteController.keyWaiting { Text(error).foregroundStyle(.red) }
+                if let error = remote.error, !shownWithPairing(error) { Text(error).foregroundStyle(.red) }
                 Text(remote.hello(paired: nil).versionLine)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -118,21 +118,68 @@ struct RemoteSettings: View {
                 } label: {
                     Label("Paired devices couldn't be read.", systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                 }
-            } else if remote.devices.devices.isEmpty {
-                Text("No iPhone yet").foregroundStyle(.secondary)
             }
             ForEach(remote.devices.devices) { device in
                 LabeledContent {
                     Button("Revoke") { revoking = device }
                         .accessibilityLabel("Revoke \(device.name)")
                 } label: {
-                    Text(device.name)
-                    Text(seen(device))
+                    Label {
+                        Text(device.name)
+                        Text(seen(device))
+                    } icon: {
+                        Image(systemName: "iphone.gen3")
+                            .foregroundStyle(remote.connected[device.id, default: 0] > 0 ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+                    }
                 }
             }
-            Button("Pair iPhone…") { remote.beginPairing() }
-                .disabled((!remote.listening.values.contains(.ready) && remote.tunnel == nil) || remote.devices.unreadable != nil)
+            pairRow
         }
+    }
+
+    /// Pair iPhone… when a phone could reach the sheet; otherwise what's in the way, with the fix beside it.
+    @ViewBuilder private var pairRow: some View {
+        let none = remote.devices.devices.isEmpty
+        switch remote.pairReadiness {
+        case .ready:
+            LabeledContent {
+                Button("Pair iPhone…") { remote.beginPairing() }
+                    .buttonStyle(.borderedProminent)
+            } label: {
+                if none { statusLabel(Text("No iPhone yet"), "iphone.gen3", .secondary).foregroundStyle(.secondary) }
+            }
+        case .starting:
+            LabeledContent {
+                ProgressView().controlSize(.small).frame(height: 22)
+            } label: {
+                statusLabel(Text("Starting Remote…"), "iphone.gen3", .secondary).foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        case .keyWaiting:
+            statusLabel(Text("Click Allow in the macOS keychain dialog"), "lock.fill", .secondary)
+        case .keyBroken:
+            LabeledContent {
+                Button("Make New Key…") { renewingKey = true }
+            } label: {
+                statusLabel(Text("Side A can't use its security key"), "exclamationmark.triangle.fill", .yellow)
+            }
+        case .noNetwork:
+            LabeledContent {
+                if !lan { Button("Use Wi-Fi") { remote.setLAN(true) } }
+            } label: {
+                statusLabel(Text(lan ? "Connect to Wi-Fi or Tailscale" : "Turn on Wi-Fi or Tailscale"), "wifi.slash", .secondary)
+            }
+        case .cantListen(let why):
+            statusLabel(Text(why), "exclamationmark.triangle.fill", .yellow)
+        case .devicesUnreadable:
+            EmptyView()
+        }
+    }
+
+    /// Errors the iPhones section already says, with their fix.
+    private func shownWithPairing(_ error: String) -> Bool {
+        [RemoteController.keyWaiting, RemoteController.keyRefused, RemoteController.keyUnreadable, RemoteController.portBusy(remote.port),
+         remote.devices.unreadable].contains(error)
     }
 
     private func seen(_ device: RemoteDevice) -> String {
@@ -174,7 +221,7 @@ struct RemoteSettings: View {
 
     @ViewBuilder private var tunnelRow: some View {
         switch remote.tunnelStatus {
-        case .off: statusLabel(Text("Starts when an iPhone is paired"), "clock", .secondary)
+        case .off: EmptyView()
         case .connecting: statusLabel(Text("Connecting to the relay…"), "ellipsis.circle", .secondary)
         case .connected: statusLabel(Text("Connected to the relay"), "checkmark.circle.fill", .green)
         case .waiting(let why): statusLabel(Text(why), "exclamationmark.triangle.fill", .yellow)
@@ -207,21 +254,12 @@ struct RemoteSettings: View {
         }
     }
 
-    /// Only while it isn't listening: once it is, the addresses show on the Tailscale and Wi-Fi rows.
+    /// An address that failed while another serves; anything that stops pairing shows with Pair iPhone instead.
     @ViewBuilder private var listenerRow: some View {
-        let states = remote.listening
-        if let failure = states.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first {
+        if remote.pairReadiness == .ready,
+           let failure = remote.listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first {
             statusLabel(Text(failure == "Port in use" ? "Port \(String(remote.port)) is in use by another app" : "Side A couldn't listen: \(failure)"),
                    "exclamationmark.triangle.fill", .yellow)
-        } else if remote.endpoints == nil {
-            statusLabel(Text(lan ? "Waiting for a network" : "Turn on Wi-Fi below, or Tailscale"), "clock", .secondary)
-        } else if remote.error == RemoteController.keyWaiting {
-            LabeledContent {} label: {
-                statusLabel(Text("Waiting for keychain access"), "lock", .secondary)
-                Text("Look for a macOS dialog asking about Side A.")
-            }
-        } else if !states.values.contains(.ready) {
-            statusLabel(Text("Starting…"), "ellipsis.circle", .secondary)
         }
     }
 
@@ -263,31 +301,47 @@ struct RemoteSettings: View {
 }
 
 /// Pair iPhone: one fixed-size sheet whose phases crossfade in place, so the window never jumps. The QR is the hero,
-/// then the six digits, then a check. QR only: typing the code would skip the key pin the QR carries.
+/// then the six digits, then the iPhone turning into a check. QR only: typing the code would skip the key pin the QR carries.
 struct PairingSheet: View {
     var remote: RemoteController
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    static let size = CGSize(width: 420, height: 520)
+    static let size = CGSize(width: 440, height: 540)
 
     var body: some View {
+        let key = remote.pairing.map { Self.key($0.phase) }
         ZStack {
             if let session = remote.pairing {
                 phase(session)
                     .id(Self.key(session.phase))
-                    .transition(.opacity)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.97)))
             }
         }
         .frame(width: Self.size.width, height: Self.size.height)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: remote.pairing.map { Self.key($0.phase) })
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .smooth(duration: 0.35), value: key)
+        .onChange(of: key) {
+            if let text = remote.pairing.flatMap({ Self.announcement($0.phase) }) { AccessibilityNotification.Announcement(text).post() }
+        }
     }
 
+    /// Pairing and paired share one key, so the iPhone turns into the check instead of crossfading.
     private static func key(_ phase: PairingSession.Phase) -> String {
         switch phase {
         case .code: "code"
         case .confirm(let attempt): "confirm-\(attempt.id)"
-        case .paired: "paired"
+        case .pairing, .paired: "done"
         case .stopped(let reason): "stopped-\(reason)"
+        }
+    }
+
+    static func announcement(_ phase: PairingSession.Phase) -> String? {
+        switch phase {
+        case .code, .pairing: nil
+        case .confirm(let attempt) where attempt.keyMatches:
+            "Pair \(attempt.request.device.name)? Check that your iPhone shows \(attempt.comparison.filter(\.isNumber).map(String.init).joined(separator: " "))."
+        case .confirm: "Different security key."
+        case .paired(let name): "Paired with \(name)."
+        case .stopped(let reason): reason.rawValue
         }
     }
 
@@ -295,49 +349,48 @@ struct PairingSheet: View {
         switch session.phase {
         case .code: code(session)
         case .confirm(let attempt): confirm(session, attempt)
-        case .paired(let name): Paired(name: name) { remote.endPairing() }
+        case .pairing(let attempt): Done(name: attempt.request.device.name, paired: false) { remote.endPairing() }
+        case .paired(let name): Done(name: name, paired: true) { remote.endPairing() }
         case .stopped(let reason):
             frame {
-                Image(systemName: Self.symbol(reason))
-                    .font(.system(size: 64, weight: .regular))
-                    .foregroundStyle(.secondary)
-                    .symbolRenderingMode(.hierarchical)
-                Text(reason).font(.title2.weight(.semibold))
+                Hero(symbol: Self.symbol(reason), color: Self.warns(reason) ? .orange : .secondary)
+                heading(reason.rawValue, Self.advice(reason))
             } buttons: {
-                Button("Close") { remote.endPairing() }.keyboardShortcut(.cancelAction).controlSize(.large).buttonStyle(.borderless)
+                Spacer()
+                Button("Close") { remote.endPairing() }.keyboardShortcut(.cancelAction).controlSize(.large)
                 Button("Start Again") { session.restart() }.keyboardShortcut(.defaultAction).controlSize(.large).buttonStyle(.borderedProminent)
             }
         }
     }
 
-    /// The content centred, the buttons on one row along the bottom, in the same place in every phase.
+    /// The content a little above centre, the buttons along the bottom, in the same place in every phase.
     private func frame(@ViewBuilder _ content: () -> some View, @ViewBuilder buttons: () -> some View) -> some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
-            VStack(spacing: 20) { content() }
+            VStack(spacing: 22) { content() }
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
-            // A little above centre, as the eye expects; the buttons hold the bottom.
             Spacer(minLength: 0)
-            Spacer(minLength: 0).frame(maxHeight: 24)
-            HStack(spacing: 12) { buttons() }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            Spacer(minLength: 0).frame(maxHeight: 20)
+            HStack(spacing: 10) { buttons() }
         }
-        .padding(24)
+        .padding(.horizontal, 28)
+        .padding(.top, 28)
+        .padding(.bottom, 22)
+    }
+
+    private func heading(_ title: String, _ detail: String?) -> some View {
+        VStack(spacing: 6) {
+            Text(title).font(.title2.weight(.semibold)).lineLimit(2)
+            if let detail { Text(detail).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+        }
     }
 
     @ViewBuilder private func code(_ session: PairingSession) -> some View {
         frame {
-            Text("Scan with your iPhone").font(.title2.weight(.semibold))
+            heading("Scan with your iPhone", "Use the Camera or Side A Remote.")
             QRCard(link: remote.qrLink, icon: NSApp?.applicationIconImage)
         } buttons: {
-            // Codes renew on their own; how long this one has shows only once it's short.
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let left = max(0, Int(session.code.expiresAt - context.date.timeIntervalSince1970))
-                Text(left <= 60 ? "New code in \(left) s" : " ")
-                    .monospacedDigit().font(.callout).foregroundStyle(.secondary)
-                    .contentTransition(.numericText(countsDown: true))
-            }
             Spacer()
             Button("Cancel") { remote.endPairing() }.keyboardShortcut(.cancelAction).controlSize(.large)
         }
@@ -346,70 +399,135 @@ struct PairingSheet: View {
     @ViewBuilder private func confirm(_ session: PairingSession, _ attempt: PairingSession.Attempt) -> some View {
         if attempt.keyMatches {
             frame {
-                Image(systemName: "iphone.gen3").font(.system(size: 56)).foregroundStyle(.tint).symbolRenderingMode(.hierarchical)
-                Text("Pair “\(attempt.request.device.name)”?").font(.title2.weight(.semibold)).lineLimit(2)
+                Hero(symbol: "iphone.gen3", color: .accentColor)
+                heading("Pair “\(attempt.request.device.name)”?", "Check that your iPhone shows the same code.")
                 Digits(code: attempt.comparison)
             } buttons: {
                 Button("Don’t Match") { session.decide(.mismatch) }.controlSize(.large)
+                Spacer()
+                Escape { remote.endPairing() }
                 // Prominent, but never the default: Return mustn't approve a pairing; the digits are read, then clicked.
                 Button("Pair") { session.decide(.pair) }.controlSize(.large).buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Pair \(attempt.request.device.name)")
             }
         } else {
             frame {
-                Image(systemName: "exclamationmark.shield.fill").font(.system(size: 64)).foregroundStyle(.orange).symbolRenderingMode(.hierarchical)
-                Text("Different Security Key").font(.title2.weight(.semibold))
+                Hero(symbol: "exclamationmark.shield.fill", color: .orange)
+                heading("Different Security Key", "Your iPhone reached something other than this Mac. Try another network.")
             } buttons: {
-                Button("Close") { session.decide(.mismatch); remote.endPairing() }.keyboardShortcut(.defaultAction).controlSize(.large)
+                Spacer()
+                Button("Close") { session.decide(.mismatch); remote.endPairing() }.keyboardShortcut(.cancelAction).controlSize(.large)
+                Button("Start Again") { session.decide(.mismatch); session.restart() }.keyboardShortcut(.defaultAction).controlSize(.large)
                     .buttonStyle(.borderedProminent)
             }
         }
     }
 
-    /// Each way a pairing stops, as a symbol; its title says the rest.
-    static func symbol(_ reason: String) -> String {
+    static func symbol(_ reason: PairingSession.Stop) -> String {
         switch reason {
-        case "Code Expired": "clock.badge.xmark"
-        case "Too Many Wrong Codes": "lock.trianglebadge.exclamationmark"
-        case "Two Devices Used This Code": "iphone.gen3.badge.exclamationmark"
-        case "Codes Didn’t Match", "Codes Didn't Match": "xmark.shield"
-        case "Nobody Clicked Pair in Time": "hourglass"
-        case "Pairing Cancelled": "xmark.circle"
-        default: "exclamationmark.circle"
+        case .expired: "clock.badge.xmark"
+        case .wrongCodes: "lock.trianglebadge.exclamationmark"
+        case .twoDevices: "iphone.gen3.badge.exclamationmark"
+        case .mismatch: "xmark.shield"
+        case .timeout: "hourglass"
+        case .cancelled: "xmark.circle"
+        case .unsaved: "exclamationmark.triangle"
+        }
+    }
+
+    /// Stops that may mean someone else tried to pair.
+    static func warns(_ reason: PairingSession.Stop) -> Bool { [.wrongCodes, .twoDevices, .mismatch].contains(reason) }
+
+    /// Only where Start Again alone wouldn't be enough.
+    static func advice(_ reason: PairingSession.Stop) -> String? {
+        switch reason {
+        case .twoDevices: "Scan with one iPhone at a time."
+        case .mismatch: "Pair only when both show the same code."
+        default: nil
         }
     }
 }
 
-/// The QR on a white card whatever the appearance, so every camera reads it, with the app's icon in its centre
-/// (error correction H keeps it readable under the icon).
+/// Escape for a phase whose visible buttons mustn't take it.
+private struct Escape: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button("Cancel", action: action)
+            .keyboardShortcut(.cancelAction)
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A phase's symbol, bouncing once as it arrives.
+private struct Hero: View {
+    let symbol: String
+    let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var arrived = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 60))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(color)
+            .symbolEffect(.bounce, value: arrived)
+            .frame(height: 72)
+            .accessibilityHidden(true)
+            .onAppear { if !reduceMotion { arrived = true } }
+    }
+}
+
+/// The QR on a white card whatever the appearance, so every camera reads it, drawn at a whole number of pixels per
+/// module so no edge blurs, with the app's icon in its centre (error correction H keeps it readable under the icon).
 private struct QRCard: View {
     let link: String?
     let icon: NSImage?
+    @Environment(\.displayScale) private var scale
+
+    static let side: CGFloat = 292
+    static let most: CGFloat = 252
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .fill(.white)
-                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
-                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.black.opacity(0.06)))
-            if let link, let image = PairingSession.qr(link, correction: "H") {
-                Image(decorative: image, scale: 2)
-                    .interpolation(.none)
-                    .resizable()
-                    .frame(width: 240, height: 240)
-                if let icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 56, height: 56)
-                        .padding(4)
-                        .background(RoundedRectangle(cornerRadius: 15, style: .continuous).fill(.white))
+                .shadow(color: .black.opacity(0.08), radius: 1, y: 0.5)
+                .shadow(color: .black.opacity(0.12), radius: 22, y: 8)
+                .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).strokeBorder(.black.opacity(0.07)))
+            if let link, let image = Self.image(link, scale: scale) {
+                ZStack {
+                    Image(decorative: image, scale: scale).interpolation(.none)
+                    if let icon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 54, height: 54)
+                            .padding(5)
+                            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.white))
+                    }
                 }
+                .id(link)
+                .transition(.opacity)
             } else {
-                ProgressView()
+                Label("Connect this Mac to Wi-Fi or Tailscale", systemImage: "wifi.slash")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.black.opacity(0.5))
+                    .padding(24)
             }
         }
-        .frame(width: 272, height: 272)
+        .frame(width: Self.side, height: Self.side)
+        .animation(.easeInOut(duration: 0.3), value: link)
         .accessibilityElement()
         .accessibilityLabel("Pairing QR code")
+    }
+
+    /// The largest whole pixels per module that fits `most` points.
+    static func image(_ link: String, scale: CGFloat) -> CGImage? {
+        guard let modules = PairingSession.qr(link, scale: 1, correction: "H")?.width, modules > 0 else { return nil }
+        let perModule = max(1, (most * scale / CGFloat(modules)).rounded(.down))
+        return PairingSession.qr(link, scale: perModule, correction: "H")
     }
 }
 
@@ -419,14 +537,15 @@ private struct Digits: View {
 
     var body: some View {
         let digits = code.filter(\.isNumber).map(String.init)
-        HStack(spacing: 14) {
+        HStack(spacing: 16) {
             ForEach([0, 1], id: \.self) { group in
                 HStack(spacing: 6) {
                     ForEach(Array(digits.dropFirst(group * 3).prefix(3).enumerated()), id: \.offset) { _, digit in
                         Text(digit)
-                            .font(.system(size: 48, weight: .semibold, design: .rounded).monospacedDigit())
-                            .frame(width: 46, height: 64)
-                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.quaternary))
+                            .font(.system(size: 44, weight: .semibold, design: .rounded).monospacedDigit())
+                            .frame(width: 46, height: 62)
+                            .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(.quaternary.opacity(0.7)))
+                            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(.separator.opacity(0.6)))
                     }
                 }
             }
@@ -436,31 +555,54 @@ private struct Digits: View {
     }
 }
 
-/// A check that springs in, then the sheet closes itself.
-private struct Paired: View {
+/// Pair clicked: the iPhone pulses until it has its token, then turns into a check and the sheet closes itself.
+private struct Done: View {
     let name: String
+    let paired: Bool
     let close: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var shown = false
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 96))
-                .foregroundStyle(.white, .green)
-                .symbolEffect(.bounce, value: shown)
-                .scaleEffect(shown || reduceMotion ? 1 : 0.6)
-                .opacity(shown || reduceMotion ? 1 : 0)
-            Text("Paired with \(name)").font(.title2.weight(.semibold)).multilineTextAlignment(.center)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(spacing: 22) {
+                Image(systemName: paired ? "checkmark.circle.fill" : "iphone.gen3")
+                    .font(.system(size: 76))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(paired ? Color.white : Color.accentColor, paired ? Color.green : Color.accentColor.opacity(0.3))
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.pulse, options: .repeating, isActive: !paired && !reduceMotion)
+                    .symbolEffect(.bounce, value: reduceMotion ? false : paired)
+                    .frame(height: 92)
+                    .accessibilityHidden(true)
+                VStack(spacing: 6) {
+                    Text(name).font(.title2.weight(.semibold)).lineLimit(2)
+                    Text(paired ? "Paired" : "Pairing…").foregroundStyle(.secondary).contentTransition(.opacity)
+                }
+                .multilineTextAlignment(.center)
+            }
+            .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: paired)
+            Spacer(minLength: 0)
+            Spacer(minLength: 0).frame(maxHeight: 20)
+            HStack(spacing: 10) {
+                Spacer()
+                if paired {
+                    Escape(action: close)
+                    Button("Done", action: close).keyboardShortcut(.defaultAction).controlSize(.large).buttonStyle(.borderedProminent)
+                } else {
+                    Button("Cancel", action: close).keyboardShortcut(.cancelAction).controlSize(.large)
+                }
+            }
         }
-        .padding(24)
+        .padding(.horizontal, 28)
+        .padding(.top, 28)
+        .padding(.bottom, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
-            if reduceMotion { shown = true } else { withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) { shown = true } }
-        }
-        .task {
+        .task(id: paired) {
+            guard paired else { return }
             try? await Task.sleep(for: .seconds(1.6))
             close()
         }
     }
 }
+

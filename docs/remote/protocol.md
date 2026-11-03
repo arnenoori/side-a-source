@@ -928,7 +928,7 @@ public struct NotificationPrefs: Codable, Hashable, Sendable {
 
 1. The Mac's pairing sheet makes a code and shows a QR code (format v2):
    `https://getsidea.com/pair#v=2&a=<tailnet address:port>[&l=<LAN address:port>[,<LAN address:port>…]]&fp=<base64url SHA-256 of the SPKI>&n=<Mac name>&m=<MacInfo.id>&t=<tailnet name>&c=<code>`
-   (today the Mac shows the same fragment under `sidea-remote://pair#…`; phones take both).
+   (before 0.5.47 the Mac showed the same fragment under `sidea-remote://pair#…`; phones take both).
    `l` lists every LAN address, comma-separated, best first. With no Tailscale on the Mac, `a` is
    the best LAN address. A code whose `i`, `r` and `p` name the relay (see tunnel.md) may leave out
    `a` and `l`; `fp` is still required, and the relay origin must pass `RelayRoute.allowed`.

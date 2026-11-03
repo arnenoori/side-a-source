@@ -565,8 +565,8 @@ checks for push-to-start.
   (scan the pairing QR code, take a photo for a prompt), `NSSupportsLiveActivities`,
   `NSSupportsLiveActivitiesFrequentUpdates`, `ITSAppUsesNonExemptEncryption` (see Open questions),
   `NSLocalNetworkUsageDescription` (Wi-Fi addresses come from the QR code; there's no Bonjour).
-- Associated Domains `applinks:getsidea.com`: the app takes `getsidea.com/pair#…` (Site), but the
-  Mac's QR code (format v2) is still `sidea-remote://pair#…`.
+- Associated Domains `applinks:getsidea.com`: the app takes `getsidea.com/pair#…` (Site), the form
+  the Mac's QR code (format v2) shows since 0.5.47.
 - Info.plist `SideAPushEnvironment` per configuration (Sandbox and production).
 
 ### App Review
@@ -744,8 +744,8 @@ minutes, a JWT signature), and about one row write (the `state` row).
 4. **Category in the clear.** Encrypting the category too (the extension sets it) hides the kind
    of event from the relay, at the cost of no action buttons when decryption fails. Worth it?
 5. **Universal-link pairing.** The site serves the association file and the app takes the link;
-   the Mac still shows `sidea-remote://`, so scanning before installing does nothing. Switch when
-   a phone has confirmed the link opens the app.
+   the Mac shows it since 0.5.47. Still to confirm on a phone: a Camera scan opens the app rather
+   than Safari when it's installed.
 6. **Privacy label edge.** Whether relayed Live Activity counts count as "collected" under Apple's
    definition (transient, not stored). The draft says no; a reviewer could disagree.
 7. **Contact address.** `privacy@getsidea.com` doesn't exist yet; Cloudflare Email Routing to the

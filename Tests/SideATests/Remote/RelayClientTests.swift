@@ -54,3 +54,12 @@ import Testing
     let limit = RemotePushPayload.limit(account, window: UsageWindow(id: "five_hour", label: "5-hour", percent: 100.4, resetsAt: 99), mac: "m", now: 1)
     #expect(limit.t == "limit" && limit.percent == 100 && limit.window == "5-hour" && limit.resetsAt == 99 && limit.account == account.name)
 }
+
+@Test func aSendNamesNoMoreDevicesThanTheRelayTakes() throws {
+    let relay = TranscriptFixture.bridge.deletingLastPathComponent().appendingPathComponent("../relay/src/send.ts").standardized
+    #expect(try String(contentsOf: relay, encoding: .utf8).contains("export const MAX_DEVICES = \(RelayClient.maxDevices);"))
+    let devices = (1...23).map { String(format: "d%02d", $0) }
+    let batches = RemotePush.batches(devices)
+    #expect(batches.map(\.count) == [10, 10, 3] && Array(batches.joined()) == devices)
+    #expect(RemotePush.batches(["a"]) == [["a"]] && RemotePush.batches([]).isEmpty)
+}

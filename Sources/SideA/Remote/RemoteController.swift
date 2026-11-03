@@ -200,7 +200,7 @@ final class RemoteController {
             self.identity = identity
             keyID = SPKI.keyID(identity.spkiHash.base64URL)
         } catch {
-            self.error = "Side A can't read its security key."
+            self.error = Self.keyUnreadable
             return
         }
         guard keyChecked else { return checkKey() }
@@ -308,6 +308,8 @@ final class RemoteController {
 
     static let keyWaiting = "Side A is waiting for macOS to let it use its security key. Look for a keychain dialog."
     static let keyRefused = "Side A can't use its security key. Make New Key… replaces it, and every iPhone pairs again."
+    static let keyUnreadable = "Side A can't read its security key."
+    static func portBusy(_ port: UInt16) -> String { "Port \(port) is in use by another app." }
 
     /// One signature off the main thread before anything listens. Past five seconds the Remote tab says what it
     /// waits for; when it ends, Remote comes up or says why it can't.
@@ -424,7 +426,7 @@ final class RemoteController {
                     guard busySince != nil, listening.values.contains(.failed("Port in use")) else { return }
                     busySince = nil
                     let next = port + 1
-                    guard next <= Self.basePort + 9 else { error = "Port \(port) is in use by another app."; return }
+                    guard next <= Self.basePort + 9 else { error = Self.portBusy(port); return }
                     port = next
                     UserDefaults.standard.set(Int(next), forKey: Self.portKey)
                     server?.serve(addresses: [], port: next)
@@ -472,6 +474,26 @@ final class RemoteController {
     var installID: String? { installKey.map { RelaySignature.installID($0.publicKey.rawRepresentation) } }
 
     // MARK: Pairing
+
+    /// Whether Pair iPhone can open now, and if not, what stands in the way.
+    enum PairReadiness: Equatable {
+        case ready, starting, keyWaiting, keyBroken, noNetwork, devicesUnreadable
+        case cantListen(String)
+    }
+
+    /// Ready exactly when a phone could reach the sheet: a listener is up or the relay tunnel is.
+    var pairReadiness: PairReadiness {
+        if devices.unreadable != nil { return .devicesUnreadable }
+        if listening.values.contains(.ready) || tunnel != nil { return .ready }
+        if error == Self.keyWaiting { return .keyWaiting }
+        if error == Self.keyRefused || error == Self.keyUnreadable { return .keyBroken }
+        if error == Self.portBusy(port) { return .cantListen(Self.portBusy(port)) }
+        if let failure = listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first, failure != "Port in use" {
+            return .cantListen("Side A couldn't listen: \(failure)")
+        }
+        if endpoints == nil, !(anywhereOn && relayURL != nil) { return .noNetwork }
+        return .starting
+    }
 
     func beginPairing() {
         guard on else { return }
@@ -526,8 +548,10 @@ final class RemoteController {
         do { try devices.add(device, replacing: request.replaces) } catch {
             RemoteLog.shared("pairing: \(device.name) approved, but saving it failed: \(error.localizedDescription)")
             self.error = error.localizedDescription
+            pairing?.finished(attemptID, saved: false)
             return nil
         }
+        pairing?.finished(attemptID, saved: true)
         RemoteLog.shared("pairing: paired \(device.name) (device \(device.id.prefix(6)))" + (request.replaces.map { ", replacing \($0.prefix(6))" } ?? ""))
         if let old = request.replaces, old != device.id { invalidate(old) }
         // Paired again under the same id: what the old token opened goes with it.
@@ -590,7 +614,7 @@ final class RemoteController {
         keyChecked = false
         keyCheck?.waited.cancel()
         keyCheck = nil
-        if error == Self.keyRefused || error == Self.keyWaiting { error = nil }
+        if [Self.keyRefused, Self.keyWaiting, Self.keyUnreadable].contains(error) { error = nil }
         for device in devices.devices {
             try? devices.remove(device.id)
             invalidate(device.id)

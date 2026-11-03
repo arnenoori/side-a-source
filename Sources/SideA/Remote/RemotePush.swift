@@ -166,8 +166,15 @@ final class RemotePush {
     func dismiss(_ request: RequestID, answeredBy: String? = nil) {
         let devices = dismissals.settled(Self.collapse(request), answeredBy: answeredBy)
         guard !devices.isEmpty, let relay else { return }
-        let body = RelayClient.Send(devices: devices, kind: "dismiss", collapseId: Self.collapse(request), priority: 5)
-        Task { await deliver(relay, body, doing: "clear a notification") }
+        for batch in Self.batches(devices) {
+            let body = RelayClient.Send(devices: batch, kind: "dismiss", collapseId: Self.collapse(request), priority: 5)
+            Task { await deliver(relay, body, doing: "clear a notification") }
+        }
+    }
+
+    /// One send names at most the relay's limit of devices; more go in further sends rather than fail together.
+    nonisolated static func batches(_ devices: [String]) -> [[String]] {
+        stride(from: 0, to: devices.count, by: RelayClient.maxDevices).map { Array(devices[$0..<min($0 + RelayClient.maxDevices, devices.count)]) }
     }
 
     /// Test Connection: one `TEST` push to one phone, with its result, and an id the phone acknowledges.
@@ -263,9 +270,11 @@ final class RemotePush {
             timeSensitive && controller?.devices.devices.first { $0.id == id }?.push?.prefs.timeSensitiveRequests == false ? "active" : level
         }
         for (level, ids) in groups {
-            let body = RelayClient.Send(devices: ids.sorted(), kind: "alert", category: category.rawValue, collapseId: collapse, priority: 10,
-                                        expiresIn: expiresIn, sound: true, level: level, sealed: sealed.filter { ids.contains($0.key) })
-            Task { await deliver(relay, body, doing: "send a notification") }
+            for batch in Self.batches(ids.sorted()) {
+                let body = RelayClient.Send(devices: batch, kind: "alert", category: category.rawValue, collapseId: collapse, priority: 10,
+                                            expiresIn: expiresIn, sound: true, level: level, sealed: sealed.filter { batch.contains($0.key) })
+                Task { await deliver(relay, body, doing: "send a notification") }
+            }
         }
         return Array(sealed.keys)
     }

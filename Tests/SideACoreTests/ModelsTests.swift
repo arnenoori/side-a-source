@@ -261,3 +261,10 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     config.forgetRemoval("work@EXAMPLE.com", .claude)
     #expect(config.removedLogins == nil && !config.wasRemoved("work@example.com", .claude))
 }
+
+@Test func autopilotMovesAt95UntilTheUserPicks() {
+    var config = Configuration()
+    #expect(config.moveAt == 95)
+    config.swapAt = 80
+    #expect(config.moveAt == 80)
+}

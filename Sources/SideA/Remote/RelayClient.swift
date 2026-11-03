@@ -26,6 +26,9 @@ final class RelayClient: @unchecked Sendable {
         let appVersion: String
     }
 
+    /// The most devices one send may name: the relay's MAX_DEVICES.
+    static let maxDevices = 10
+
     /// `POST /v1/send`, an alert or a dismissal.
     struct Send: Encodable, Sendable {
         let devices: [String]

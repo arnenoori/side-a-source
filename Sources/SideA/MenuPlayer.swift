@@ -75,7 +75,7 @@ struct MenuPlayer: View {
             if let version = updates.available {
                 Button { updates.install() } label: {
                     Label("Update to \(version)", systemImage: "arrow.down.circle.fill").font(.system(size: 11, weight: .medium))
-                }.buttonStyle(.borderless).help("Restart Side A with the new version")
+                }.buttonStyle(.borderless).disabled(!updates.canCheck).help("Restart Side A with the new version")
             }
             if updates.failure != nil {
                 Link(destination: URL(string: "https://getsidea.com")!) {
