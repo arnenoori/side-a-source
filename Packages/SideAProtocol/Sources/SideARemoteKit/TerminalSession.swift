@@ -14,6 +14,8 @@ public actor TerminalSession {
         case exit(status: Int?, reason: TermExitReason)
         /// Something to show in the terminal view, e.g. keys that may not have arrived.
         case notice(String)
+        /// Acks made room after `input` was refused for having 256 KiB unacked.
+        case drained
         case closed(code: Int)
     }
 
@@ -38,6 +40,7 @@ public actor TerminalSession {
     /// The current socket's `ready` arrived: until then nothing is sent, so no frame goes out under an epoch
     /// the Mac hasn't confirmed and nothing is replayed except by `ready` itself.
     private var isReady = false
+    private var refusedFull = false
     /// What the last `open` asked for, to open again the same way when the path moves.
     private var opened: (cols: Int, rows: Int, theme: TermTheme?)?
 
@@ -83,7 +86,11 @@ public actor TerminalSession {
     /// Sends keys or a paste, split into frames of at most 16 KiB. False when the view must stop
     /// taking keys: not connected yet, or 256 KiB already wait for acks.
     @discardableResult public func input(_ bytes: Data) async -> Bool {
-        guard let socket, isReady, let epoch, unacked.reduce(0, { $0 + $1.bytes.count }) + bytes.count <= Self.maxUnacked else { return false }
+        guard let socket, isReady, let epoch else { return false }
+        guard unacked.reduce(0, { $0 + $1.bytes.count }) + bytes.count <= Self.maxUnacked else {
+            refusedFull = true
+            return false
+        }
         for frame in TermFrame.inputs(bytes, from: nextSeq) {
             guard case .input(let seq, let part) = frame else { continue }
             unacked.append((seq, epoch, part))
@@ -130,6 +137,10 @@ public actor TerminalSession {
             unacked.removeAll { $0.seq <= seq }
             await outbox.dropTerminalInput(viewer: viewer, through: seq)
             if error == "too_large" { continuation.yield(.notice("That paste was too large to send.")) }
+            if refusedFull {
+                refusedFull = false
+                continuation.yield(.drained)
+            }
         case .size(let cols, let rows, let owner):
             continuation.yield(.size(cols: cols, rows: rows, owner: owner))
         case .mode(let copy):

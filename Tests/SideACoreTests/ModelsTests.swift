@@ -73,50 +73,50 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
                  later.id: usage(0, nil, 10, now + 6 * 24 * hour),            // 90% left, 6 days
                  full.id: usage(99, now + hour, 50, now + 24 * hour)]         // 5-hour limit hit
     let accounts = [later, soon, full]
-    #expect(Planner.best(accounts, usage: table, active: full.id, now: now) == soon.id)
+    #expect(Planner.best(accounts, usage: table, active: full.id, full: 97, now: now) == soon.id)
     // Hysteresis keeps a usable active account unless the pick is clearly more urgent.
-    #expect(Planner.best(accounts, usage: table, active: later.id, now: now) == soon.id)
+    #expect(Planner.best(accounts, usage: table, active: later.id, full: 97, now: now) == soon.id)
     table[soon.id] = usage(10, now + 2 * hour, 40, now + 6 * 24 * hour)
-    #expect(Planner.best(accounts, usage: table, active: later.id, now: now) == later.id)
+    #expect(Planner.best(accounts, usage: table, active: later.id, full: 97, now: now) == later.id)
     // Never move to an account that is already close to its 5-hour limit.
     table[soon.id] = usage(93, now + 2 * hour, 40, now + 24 * hour)
-    #expect(Planner.best([soon, full], usage: table, active: full.id, now: now) == nil)
-    #expect(Planner.best([soon, full], usage: table, active: soon.id, now: now) == soon.id)
+    #expect(Planner.best([soon, full], usage: table, active: full.id, full: 97, now: now) == nil)
+    #expect(Planner.best([soon, full], usage: table, active: soon.id, full: 97, now: now) == soon.id)
     // From brandedDaniel's fork: a target nearly out of weekly quota would be left again minutes
     // later, so an account with room on every limit wins; one is still used when it is all there is.
     table[soon.id] = usage(10, now + 2 * hour, 93, now + 2 * hour)
-    #expect(Planner.best(accounts, usage: table, active: full.id, now: now) == later.id)
-    #expect(Planner.best([soon, full], usage: table, active: full.id, now: now) == soon.id)
+    #expect(Planner.best(accounts, usage: table, active: full.id, full: 97, now: now) == later.id)
+    #expect(Planner.best([soon, full], usage: table, active: full.id, full: 97, now: now) == soon.id)
     table[soon.id] = usage(10, now + 2 * hour, 40, now + 6 * 24 * hour)
     // An expired window counts as not started.
-    #expect(Planner.shouldPrime(later, usage: table[later.id], now: now))
-    #expect(Planner.shouldPrime(soon, usage: usage(80, now - 1, 40, now + hour), now: now))
-    #expect(!Planner.shouldPrime(soon, usage: table[soon.id], now: now))
-    #expect(!Planner.shouldPrime(Account(name: "Off", ready: true), usage: table[later.id], now: now))
+    #expect(Planner.shouldPrime(later, usage: table[later.id], full: 97, now: now))
+    #expect(Planner.shouldPrime(soon, usage: usage(80, now - 1, 40, now + hour), full: 97, now: now))
+    #expect(!Planner.shouldPrime(soon, usage: table[soon.id], full: 97, now: now))
+    #expect(!Planner.shouldPrime(Account(name: "Off", ready: true), usage: table[later.id], full: 97, now: now))
     // Review: a Codex plan with no 5-hour window was primed every 30 minutes forever.
-    #expect(!Planner.shouldPrime(Account(name: "Codex", ready: true, allowAuto: true, provider: .codex), usage: usage(nil, nil, 10, now + hour), now: now))
+    #expect(!Planner.shouldPrime(Account(name: "Codex", ready: true, allowAuto: true, provider: .codex), usage: usage(nil, nil, 10, now + hour), full: 97, now: now))
     // Claude's plans may omit an idle window, Ultra's included; a Last account's waits until it's needed.
     var ultra = usage(nil, nil, 10, now + hour); ultra.capacity = 20
-    #expect(Planner.shouldPrime(Account(name: "Claude", ready: true, allowAuto: true), usage: ultra, now: now))
-    #expect(!Planner.shouldPrime(Account(name: "Reserve", ready: true, allowAuto: true, priority: .last), usage: ultra, now: now))
+    #expect(Planner.shouldPrime(Account(name: "Claude", ready: true, allowAuto: true), usage: ultra, full: 97, now: now))
+    #expect(!Planner.shouldPrime(Account(name: "Reserve", ready: true, allowAuto: true, priority: .last), usage: ultra, full: 97, now: now))
     let top = Account(name: "Top", ready: true, allowAuto: true, priority: .first), low = Account(name: "Low", ready: true, allowAuto: true, priority: .last)
-    #expect(Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 60, now: now))
-    #expect(!Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 2 * hour, now: now))
-    #expect(!Planner.priorityMoveWaits(from: top, to: low, usage: table[soon.id], movedAt: now - 60, now: now))
+    #expect(Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 60, full: 97, now: now))
+    #expect(!Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 2 * hour, full: 97, now: now))
+    #expect(!Planner.priorityMoveWaits(from: top, to: low, usage: table[soon.id], movedAt: now - 60, full: 97, now: now))
     // A Max 20x account's remaining weekly quota outweighs a Pro account's.
     var big = table[later.id]!; big.capacity = 20
     #expect(Planner.urgency(big, now: now) > Planner.urgency(table[soon.id]!, now: now))
     // Forecast needs at least five minutes of rising samples.
-    #expect(Planner.minutesToLimit([(0, 50), (600, 60)]) == 37)
-    #expect(Planner.minutesToLimit([(0, 50), (120, 60)]) == nil)
+    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], full: 97) == 37)
+    #expect(Planner.minutesToLimit([(0, 50), (120, 60)], full: 97) == nil)
     // The estimate counts down between readings, and stale readings give none.
-    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], now: 600 + 7 * 60) == 30)
-    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], now: 600 + 11 * 60) == nil)
+    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], full: 97, now: 600 + 7 * 60) == 30)
+    #expect(Planner.minutesToLimit([(0, 50), (600, 60)], full: 97, now: 600 + 11 * 60) == nil)
     let blocked = [soon.id: usage(99, now + hour, 40, now + 24 * hour), full.id: usage(10, now + hour, 99, now + 3 * hour)]
-    #expect(Planner.nextAvailable([soon, full], usage: blocked, now: now)?.0.id == soon.id)
+    #expect(Planner.nextAvailable([soon, full], usage: blocked, full: 97, now: now)?.0.id == soon.id)
     // A 5-hour window above the switch target blocks until it resets, even below the hard limit.
     let nearly = [soon.id: usage(93, now + 600, 40, now + 24 * hour), full.id: usage(10, now + hour, 99, now + 3 * hour)]
-    #expect(Planner.nextAvailable([soon, full], usage: nearly, now: now)?.1 == now + 600)
+    #expect(Planner.nextAvailable([soon, full], usage: nearly, full: 97, now: now)?.1 == now + 600)
 }
 
 @Test func scheduleIgnoresLightOvernightAgentTraffic() {
@@ -140,13 +140,13 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     let all = [spent.id: usage(weekly: 40, fable: 100, capacity: 20), room.id: usage(weekly: 60, fable: 20, capacity: 5),
                pro.id: usage(weekly: 0, fable: nil, capacity: 1), almost.id: usage(weekly: 99, fable: 0, capacity: 20)]
     let accounts = [spent, room, pro, almost]
-    #expect(Planner.best(accounts, usage: all, active: spent.id, now: now) == spent.id)
+    #expect(Planner.best(accounts, usage: all, active: spent.id, full: 97, now: now) == spent.id)
     // Weekly room caps Fable room: an account 99% through its week has almost no Fable left.
     #expect(all[almost.id]!.forFable!.weekly!.percent == 98)
     // A Max plan with no Fable cap listed yet still has its Fable share; a Pro plan has none.
     #expect(usage(weekly: 10, fable: nil, capacity: 20).forFable?.weekly?.percent == 0)
     #expect(all[pro.id]!.forFable == nil)
-    #expect(Planner.best(accounts, usage: all.compactMapValues(\.forFable), active: spent.id, now: now) == room.id)
+    #expect(Planner.best(accounts, usage: all.compactMapValues(\.forFable), active: spent.id, full: 97, now: now) == room.id)
 }
 
 @Test func weekForecastFollowsAWeekdayRhythmNotAStraightLine() throws {
@@ -182,11 +182,27 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     let five = reading.hitting("five_hour", at: now)
     #expect(five.fiveHour == UsageWindow(id: "five_hour", label: "5-hour", percent: 100, resetsAt: now + 3600))
     #expect(reading.hitting("seven_day", at: now).weekly?.resetsAt == now + 7 * 86_400)
-    #expect(!Planner.hasHeadroom(five, now: now))
+    #expect(!Planner.hasHeadroom(five, full: 97, now: now))
     // A model cap the reading did not list yet is added, and Fable planning sees it spent.
     let fable = reading.hitting("model:fable", at: now)
     #expect(fable.modelLimits.map(\.label) == ["Weekly Fable"])
-    #expect(fable.forFable.map { Planner.hasHeadroom($0, now: now) } == false)
+    #expect(fable.forFable.map { Planner.hasHeadroom($0, full: 97, now: now) } == false)
+}
+
+/// The bridge, the pool's headers and Codex's app server name Codex's windows alike.
+@Test func everyReaderNamesAWindowTheSameWay() throws {
+    #expect(UsageWindow.codex(key: "primary", minutes: 300, percent: 42, resetsAt: 9) == UsageWindow(id: "five_hour", label: "5-hour", percent: 42, resetsAt: 9))
+    #expect(UsageWindow.codex(key: "secondary", minutes: 10_080, percent: 101, resetsAt: nil) == UsageWindow(id: "seven_day", label: "Weekly", percent: 100, resetsAt: nil))
+    #expect(UsageWindow.codex(key: "primary", minutes: 120, percent: 5, resetsAt: nil) == UsageWindow(id: "primary", label: "2-hour", percent: 5, resetsAt: nil))
+    #expect(UsageWindow.codex(key: "secondary", minutes: 0, percent: 5, resetsAt: nil) == nil)
+    let headers = HTTPHeaders([("x-codex-primary-used-percent", "7"), ("x-codex-primary-window-minutes", "300"),
+                               ("x-codex-secondary-used-percent", "3"), ("x-codex-secondary-window-minutes", "0")])
+    let snapshot = try JSONDecoder().decode(CodexAppServer.JSON.self, from: Data(#"{"primary":{"usedPercent":7,"windowDurationMins":300},"secondary":{"usedPercent":3}}"#.utf8))
+    #expect(Pool.codexLimits(headers) == CodexAppServer.windows(snapshot))
+    #expect(CodexAppServer.windows(snapshot).map(\.id) == ["five_hour"])
+
+    #expect(["five_hour", "seven_day", "seven_day_opus", "model:fable"].map(UsageWindow.label(of:)) == ["5-hour", "Weekly", "Weekly Opus", "Weekly Fable"])
+    #expect(UsageWindow.seconds(of: "five_hour") == 5 * 3600 && UsageWindow.seconds(of: "model:fable") == 7 * 86_400)
 }
 
 @Test func fableSessionsTradeWithALoginOnlyOpusSessionsUse() {
@@ -199,17 +215,17 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
                  opus.id: AccountUsage(windows: [window("five_hour", 20), window("seven_day", 20), window("model:fable", 10)], capacity: 20)]
     let slots = ["mac": spent.id, "p1": opus.id]
     let pick = Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-opus-5-5", "claude-opus-5-5"]],
-                                  accounts: [spent, opus, idle], usage: usage, excluded: [], now: now)
+                                  accounts: [spent, opus, idle], usage: usage, excluded: [], full: 97, now: now)
     #expect(pick?.slot == "p1" && pick?.account == opus.id)
     // A partner whose session model is unknown, or one running Fable itself, never takes a spent login.
     #expect(Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-opus-5-5", nil]],
-                               accounts: [spent, opus], usage: usage, excluded: [], now: now) == nil)
+                               accounts: [spent, opus], usage: usage, excluded: [], full: 97, now: now) == nil)
     #expect(Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-fable-5-1"]],
-                               accounts: [spent, opus], usage: usage, excluded: [], now: now) == nil)
+                               accounts: [spent, opus], usage: usage, excluded: [], full: 97, now: now) == nil)
     // The Opus sessions must have room on the login they'd get.
     var full = usage; full[spent.id] = AccountUsage(windows: [window("five_hour", 100), window("seven_day", 30), window("model:fable", 100)])
     #expect(Planner.fableShare(for: "mac", slots: slots, models: ["mac": ["claude-fable-5-1"], "p1": ["claude-opus-5-5"]],
-                               accounts: [spent, opus], usage: full, excluded: [], now: now) == nil)
+                               accounts: [spent, opus], usage: full, excluded: [], full: 97, now: now) == nil)
     #expect(Planner.needsFable(nil) == nil && Planner.needsFable(["claude-opus-5-5", nil]) == nil && Planner.needsFable(["claude-sonnet-5-5"]) == false)
 }
 
@@ -217,10 +233,10 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     let now = 1_000_000.0
     let room = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 60, resetsAt: now + 3600)])
     let full = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 99, resetsAt: now + 3600)])
-    #expect(Planner.waitsForPause(room, quiet: 30, now: now))
-    #expect(!Planner.waitsForPause(room, quiet: 600, now: now))
-    #expect(!Planner.waitsForPause(full, quiet: 30, now: now))
-    #expect(!Planner.waitsForPause(room, quiet: nil, now: now))
+    #expect(Planner.waitsForPause(room, quiet: 30, full: 97, now: now))
+    #expect(!Planner.waitsForPause(room, quiet: 600, full: 97, now: now))
+    #expect(!Planner.waitsForPause(full, quiet: 30, full: 97, now: now))
+    #expect(!Planner.waitsForPause(room, quiet: nil, full: 97, now: now))
 }
 
 @Test func usageReadingsStayWithinTheCap() throws {

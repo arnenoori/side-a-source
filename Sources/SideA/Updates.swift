@@ -41,6 +41,75 @@ enum StagedUpdate {
     }
 }
 
+/// When a downloaded update may restart Side A by itself: nobody at the Mac, and nothing a relaunch would cut off.
+enum QuietInstall {
+    /// No keyboard or pointer input for this long, unless the screen is locked.
+    static let away: TimeInterval = 10 * 60
+    /// How often a waiting update looks again.
+    static let interval: TimeInterval = 60
+
+    /// What Side A is in the middle of.
+    struct Activity: Equatable, Sendable {
+        /// Requests, questions and plans waiting in the island.
+        var pending = 0
+        /// Pool requests being answered.
+        var poolInFlight = 0
+        /// Anything else a relaunch would break, by name: a sign-in, a login renewal, an unsent reply.
+        var busy: [String] = []
+    }
+
+    enum Hold: Equatable {
+        case off, nothingStaged, someoneHere, waiting(Int), pool(Int), busy(String)
+    }
+
+    /// Why not now, or nil when the update may install and relaunch.
+    static func hold(automatic: Bool, staged: Bool, presence: UserPresence, activity: Activity) -> Hold? {
+        guard automatic else { return .off }
+        guard staged else { return .nothingStaged }
+        guard presence.away(for: away) else { return .someoneHere }
+        if activity.pending > 0 { return .waiting(activity.pending) }
+        if activity.poolInFlight > 0 { return .pool(activity.poolInFlight) }
+        if let first = activity.busy.first { return .busy(first) }
+        return nil
+    }
+
+    /// Whether Side A keeps Sparkle's install-now block for a download. Off, or critical: Sparkle's own way, as before.
+    static func takesOver(automatic: Bool, critical: Bool) -> Bool { automatic && !critical }
+}
+
+/// The version this Mac last ran, so the menu can say "Updated to X" for a day afterwards.
+struct UpdateHistory {
+    static let shown: TimeInterval = 24 * 3600
+    private static let lastKey = "SideALastLaunchedVersion", toKey = "SideAUpdatedTo", atKey = "SideAUpdatedAt"
+    let defaults: UserDefaults
+
+    /// Records a launch of `version`; newer than the last one launched counts as an update.
+    func launched(_ version: String, now: Date = Date()) {
+        let last = defaults.string(forKey: Self.lastKey)
+        defaults.set(version, forKey: Self.lastKey)
+        guard let last, last != version else { return }
+        if version.compare(last, options: .numeric) == .orderedDescending {
+            defaults.set(version, forKey: Self.toKey)
+            defaults.set(now.timeIntervalSince1970, forKey: Self.atKey)
+        } else {
+            defaults.removeObject(forKey: Self.toKey)
+        }
+    }
+
+    /// The version this Mac updated to within the last day, while it is still the one running.
+    func recent(_ current: String, now: Date = Date()) -> String? {
+        guard let version = defaults.string(forKey: Self.toKey), version == current,
+              let at = defaults.object(forKey: Self.atKey) as? Double else { return nil }
+        let age = now.timeIntervalSince1970 - at
+        return age >= 0 && age < Self.shown ? version : nil
+    }
+
+    /// The release on GitHub, made from releases/vX.Y.Z.md.
+    static func notes(_ version: String) -> URL {
+        URL(string: "https://github.com/arnenoori/side-a-releases/releases/tag/v\(version)")!
+    }
+}
+
 /// Sparkle's own windows, except that an update it resumes from disk goes to `resumed` first.
 @MainActor
 final class UpdateUserDriver: NSObject, SPUUserDriver {
@@ -85,30 +154,83 @@ final class UpdateUserDriver: NSObject, SPUUserDriver {
 @MainActor
 final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var canCheck = false
-    @Published var automaticallyChecks = false { didSet { updater?.automaticallyChecksForUpdates = automaticallyChecks } }
-    /// Off: Side A still finds updates and shows them in the menu, but installs only when asked.
-    @Published var automaticallyInstalls = false { didSet { updater?.automaticallyDownloadsUpdates = automaticallyInstalls } }
+    /// Downloads in the background and installs at a quiet moment (`QuietInstall`). Off: Side A still finds updates and
+    /// shows them in the menu, but installs only when asked or on quit.
+    @Published var automaticallyUpdates = false {
+        didSet {
+            if enabled { updater?.automaticallyDownloadsUpdates = automaticallyUpdates }
+            if staged != nil { watchStaged() }
+        }
+    }
+    /// Who is at the Mac; tests put their own in.
+    var presence: () -> UserPresence = { UserPresence.now() }
+    /// What Side A is in the middle of; the app connects its store.
+    var activity: () -> QuietInstall.Activity = { QuietInstall.Activity() }
+    /// A packaged app with a feed; `swift run`, tests and the demo leave Sparkle and its settings alone.
+    private var enabled = false
     private let driver = UpdateUserDriver()
     private var updater: SPUUpdater!
     private var observation: AnyCancellable?
-    override init() {
+    private let history: UpdateHistory
+    private let version: String?
+    /// Set when the build installed was already superseded: the relaunched app looks for the newer one at once.
+    private static let checkAfterRelaunchKey = "SideACheckAfterUpdate"
+    init(history: UpdateHistory = UpdateHistory(defaults: .standard),
+         version: String? = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) {
+        self.history = history
+        self.version = version
         super.init()
-        let enabled = !ProcessInfo.processInfo.arguments.contains("--demo") && Bundle.main.bundleURL.pathExtension == "app"
+        enabled = !ProcessInfo.processInfo.arguments.contains("--demo") && Bundle.main.bundleURL.pathExtension == "app"
             && Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil
         updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
         driver.resumed = { [weak self] item, state, decide in
             guard let self else { return decide(nil) }
             resumed(item, state: state, decide: decide)
         }
-        if enabled { try? updater.start() }
-        automaticallyChecks = updater.automaticallyChecksForUpdates
-        automaticallyInstalls = updater.automaticallyDownloadsUpdates
+        if enabled {
+            // Checking is always on; the one switch decides what happens with what a check finds.
+            if !updater.automaticallyChecksForUpdates { updater.automaticallyChecksForUpdates = true }
+            if let version { history.launched(version) }
+            try? updater.start()
+        }
+        automaticallyUpdates = updater.automaticallyDownloadsUpdates
         observation = updater.publisher(for: \.canCheckForUpdates).receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.canCheck = $0 && enabled }
+            .sink { [weak self] in
+                guard let self else { return }
+                canCheck = $0 && enabled
+                if canCheck, UserDefaults.standard.bool(forKey: Self.checkAfterRelaunchKey) {
+                    UserDefaults.standard.removeObject(forKey: Self.checkAfterRelaunchKey)
+                    DispatchQueue.main.async { [weak self] in _ = self?.checkQuietly() }
+                }
+            }
     }
-    func check() { guard canCheck else { return }; NSApp.activate(ignoringOtherApps: true); updater.checkForUpdates() }
-    /// Without Sparkle's window: what it finds goes to `available`, and the menu shows it.
+    /// The version Side A updated to in the last day, for the menu.
+    func updated(now: Date = Date()) -> String? { version.flatMap { history.recent($0, now: now) } }
+    /// Sparkle's window, or, while Side A holds a downloaded update (and Sparkle can't check), an offer to install it.
+    func check() {
+        if let staged {
+            NSApp?.activate(ignoringOtherApps: true)
+            if confirmInstall(staged.version) { installStaged(asked: true) }
+            return
+        }
+        guard canCheck else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        updater.checkForUpdates()
+    }
+    /// Check for Updates… or Update to X can do something: Sparkle is free, or an update is waiting.
+    var canUpdate: Bool { canCheck || staged != nil }
+    /// Asks whether to restart into `version` now; tests answer for the user.
+    var confirmInstall: (String) -> Bool = { version in
+        let alert = NSAlert()
+        alert.messageText = "Side A \(version) Is Ready"
+        alert.addButton(withTitle: "Restart to Update")
+        alert.addButton(withTitle: "Later")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+    /// Without Sparkle's window: what it finds goes to `available`, and the menu shows it. A waiting update is already
+    /// in the menu, so there is nothing more to find until it installs.
     func checkQuietly() -> Bool {
+        if staged != nil { return true }
         guard canCheck else { return false }
         updater.checkForUpdatesInBackground()
         return true
@@ -121,6 +243,7 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
     private var drops = 0
     /// Restarts into a downloaded update once the feed confirms it is the newest, or shows Sparkle's dialog.
     func install() {
+        if staged != nil { return installStaged(asked: true) }
         guard canCheck else { return }
         installRequested = true
         check()
@@ -181,15 +304,115 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
     nonisolated func updaterWillRelaunchApplication(_ updater: SPUUpdater) {
         MainActor.assumeIsolated { willRelaunch?() }
     }
-    /// Not handled here, so Sparkle ends the session and later checks can still reach the feed.
+
+    // MARK: Quiet install
+
+    /// A download Sparkle handed over: `install` relaunches into it without any window.
+    struct Staged {
+        let build: String
+        let version: String
+        let install: () -> Void
+    }
+    /// Set until the app quits: Sparkle has no way to take the block back, and its session stays open until it's used.
+    @Published private(set) var staged: Staged?
+    private var watch: Timer?
+    private var installing = false
+    /// Someone asked for the waiting update while a quiet install was reading the feed.
+    private var installAsked = false
+    /// The block was called; another call would only ask Sparkle to relaunch twice.
+    private var installed = false
+
+    /// Update Automatically on: Side A keeps the install-now block and uses it at a quiet moment; Sparkle's later cycles
+    /// wait until then. Off, or a critical update: not handled here, so Sparkle ends the session, later checks can
+    /// still reach the feed, and the update installs on quit or from the menu as before.
+    /// Turned off after Side A took a block: Sparkle can't take it back, so it stays held. It installs when asked
+    /// (Update to X, Check for Updates…) or, as Sparkle does for any download it has prepared, when Side A quits.
     nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock: @escaping () -> Void) -> Bool {
-        let version = item.displayVersionString
-        MainActor.assumeIsolated { available = version }
-        return false
+        let version = item.displayVersionString, build = item.versionString, critical = item.isCriticalUpdate
+        nonisolated(unsafe) let block = immediateInstallationBlock
+        return MainActor.assumeIsolated {
+            available = version
+            guard QuietInstall.takesOver(automatic: automaticallyUpdates, critical: critical) else { return false }
+            staged = Staged(build: build, version: version, install: block)
+            installed = false
+            watchStaged()
+            return true
+        }
+    }
+
+    /// Looks each minute while the switch is on and the block unused; stops otherwise.
+    private func watchStaged() {
+        watch?.invalidate()
+        watch = nil
+        guard automaticallyUpdates, staged != nil, !installed else { return }
+        let timer = Timer(timeInterval: QuietInstall.interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.installIfQuiet() }
+        }
+        timer.tolerance = 10
+        RunLoop.main.add(timer, forMode: .common)
+        watch = timer
+    }
+
+    /// Why a waiting update isn't installing right now, or nil when it may.
+    var hold: QuietInstall.Hold? {
+        QuietInstall.hold(automatic: automaticallyUpdates, staged: staged != nil, presence: presence(), activity: activity())
+    }
+
+    /// Each minute while an update waits.
+    func installIfQuiet() {
+        guard hold == nil else { return }
+        installStaged(asked: false)
+    }
+
+    /// Reads the feed first. A waiting build it has superseded still installs, since Sparkle can't swap downloads while
+    /// it waits, and the relaunched app checks again straight away for the newer one.
+    /// The feed is read with Side A's own request, so it works while Sparkle's session is stalled; when it can't be
+    /// read, the update installs anyway.
+    private func installStaged(asked: Bool) {
+        guard let staged, !installed else { return }
+        if asked { installAsked = true }
+        guard !installing else { return }
+        installing = true
+        let feed = enabled ? updater.feedURL : nil
+        Task {
+            defer { installing = false; installAsked = false }
+            if let feed, await Self.feed(feed, supersedes: staged.build) {
+                UserDefaults.standard.set(true, forKey: Self.checkAfterRelaunchKey)
+            }
+            // The feed can take seconds, and someone may have come back meanwhile.
+            guard installAsked || hold == nil else { return }
+            fire()
+        }
+    }
+
+    /// Calls Sparkle's block once, on the main thread.
+    private func fire() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let staged, !installed else { return }
+        installed = true
+        watchStaged()
+        staged.install()
+    }
+}
+
+extension AccountStore {
+    /// What an automatic update waits for before relaunching Side A.
+    var relaunchActivity: QuietInstall.Activity {
+        var busy: [String] = []
+        if !signingIn.isEmpty || !adopting.isEmpty { busy.append("a sign-in") }
+        if !waking.isEmpty { busy.append("a login renewal") }
+        if bridgeChanges > 0 { busy.append("an account change") }
+        if poolTesting { busy.append("a pool test") }
+        if island.replying != nil { busy.append("a reply in the island") }
+        if sessions.drafts.values.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            || sessions.attachments.values.contains(where: { !$0.isEmpty }) { busy.append("an unsent message") }
+        if remote.pairing != nil { busy.append("pairing a phone") }
+        if keepAwake.busy { busy.append("Keep Awake's helper") }
+        return QuietInstall.Activity(pending: island.pending.count, poolInFlight: pool?.inFlight ?? 0, busy: busy)
     }
 }
 
 struct UpdateButton: View {
     @ObservedObject var updates: Updates
-    var body: some View { Button("Check for Updates…") { updates.check() }.disabled(!updates.canCheck) }
+    var body: some View { Button("Check for Updates…") { updates.check() }.disabled(!updates.canUpdate) }
 }

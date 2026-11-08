@@ -75,10 +75,8 @@ public enum Pool {
     public static func codexLimits(_ headers: HTTPHeaders) -> [UsageWindow] {
         ["primary", "secondary"].compactMap { key in
             guard let used = headers["x-codex-\(key)-used-percent"].flatMap(Double.init),
-                  let minutes = headers["x-codex-\(key)-window-minutes"].flatMap(Int.init), minutes > 0 else { return nil }
-            let reset = headers["x-codex-\(key)-reset-at"].flatMap(Double.init)
-            let (id, label) = minutes == 300 ? ("five_hour", "5-hour") : minutes == 10080 ? ("seven_day", "Weekly") : (key, "\(minutes / 60)-hour")
-            return UsageWindow(id: id, label: label, percent: used, resetsAt: reset)
+                  let minutes = headers["x-codex-\(key)-window-minutes"].flatMap(Int.init) else { return nil }
+            return UsageWindow.codex(key: key, minutes: minutes, percent: used, resetsAt: headers["x-codex-\(key)-reset-at"].flatMap(Double.init))
         }
     }
 
@@ -129,7 +127,7 @@ public struct PoolRoom: Equatable, Sendable {
     /// When the first of those gets room back, and which one.
     public var refill: (name: String, at: Double)?
 
-    public init?(_ members: [Account], usage: [String: AccountUsage], now: Double) {
+    public init?(_ members: [Account], usage: [String: AccountUsage], full: Double, now: Double) {
         let read = members.compactMap { account in usage[account.id].map { (account, $0) } }
         guard !read.isEmpty else { return nil }
         let size = { (value: AccountUsage) in max(value.capacity ?? 1, 0.01) }
@@ -140,8 +138,8 @@ public struct PoolRoom: Equatable, Sendable {
         accounts = read.count
         fiveHourLeft = read.contains { $0.1.fiveHour != nil } ? left(\.fiveHour) : nil
         weeklyLeft = left(\.weekly)
-        limited = read.filter { !Planner.hasHeadroom($0.1, now: now) }.count
-        refill = Planner.nextAvailable(read.map(\.0), usage: usage, now: now).map { ($0.0.name, $0.1) }
+        limited = read.filter { !Planner.hasHeadroom($0.1, full: full, now: now) }.count
+        refill = Planner.nextAvailable(read.map(\.0), usage: usage, full: full, now: now).map { ($0.0.name, $0.1) }
     }
 
     public static func == (a: PoolRoom, b: PoolRoom) -> Bool {

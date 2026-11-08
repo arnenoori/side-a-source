@@ -88,6 +88,26 @@ func aPushShowsTheActionsItsGateAllows(_ category: PushCategory, _ payload: Push
     #expect(category.local(for: payload) == local)
 }
 
+/// The kind travels as the plain string `t`, so a kind a phone doesn't know still decodes.
+@Test func aPushKindIsItsWireString() throws {
+    let kinds: [PushKind] = [.request, .question, .plan, .finished, .limit, .health, .rotation, .test]
+    #expect(kinds.map(\.rawValue) == ["request", "question", "plan", "finished", "limit", "health", "rotation", "test"])
+    #expect(kinds.filter(\.asks) == [.request, .question, .plan])
+    let decoded = try JSONDecoder().decode(PushPayload.self, from: JSONEncoder().encode(push("later")))
+    #expect(decoded.t == "later" && decoded.kind == PushKind(rawValue: "later"))
+}
+
+/// `quiet` is optional both ways: an older Mac's payload decodes to nil, and it's encoded only when set.
+@Test func quietIsOptionalOnTheWire() throws {
+    let old = try JSONDecoder().decode(PushPayload.self, from: Data(#"{"v":1,"t":"finished","mac":"m1","sent":0,"title":"side-a"}"#.utf8))
+    #expect(old.quiet == nil)
+    #expect(!String(decoding: try JSONEncoder().encode(old), as: UTF8.self).contains("quiet"))
+    let quiet = PushPayload(t: "finished", mac: "m1", sent: 0, title: "2 sessions ready", body: "side-a, relay", quiet: true)
+    let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(quiet)) as? [String: Any]
+    #expect(object?["quiet"] as? Bool == true)
+    #expect(try JSONDecoder().decode(PushPayload.self, from: JSONEncoder().encode(quiet)) == quiet)
+}
+
 @Test func theActivityCountsTimeFrom2001() {
     #expect(ActivityContentState(working: 0, waiting: 0, soonestResetAt: 978_307_200 + 10).soonestReset == 10)
 }

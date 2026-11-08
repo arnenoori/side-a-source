@@ -350,12 +350,13 @@ final class RemoteController {
         }
     }
 
-    private func tearDown() {
+    func tearDown() {
         sweeper?.cancel(); sweeper = nil
         stopTunnel()
         codex.stop()
         events?.stop()
         events = nil
+        push.stopScheduling()
         hub = nil
         transcripts?.stop()
         transcripts = nil
@@ -440,7 +441,7 @@ final class RemoteController {
 
     /// Recording, and the live loop behind it, run exactly while Remote is active.
     private func recordIfActive() {
-        if Self.active { events?.start(); codex.start(); Task { await inbox.refresh() } } else { events?.stop(); codex.stop() }
+        if Self.active { events?.start(); codex.start(); Task { await inbox.refresh() } } else { events?.stop(); codex.stop(); push.stopScheduling() }
     }
 
     func socketsChanged(_ counts: [String: Int]) {
@@ -659,9 +660,13 @@ final class RemoteController {
 
     /// Remembers what a phone's `hello` said it can show; the keychain is written only when that changes.
     func noteCapabilities(_ device: String, _ capabilities: Set<Capability>) {
-        let rotation = capabilities.contains(.rotation)
-        guard let known = devices.devices.first(where: { $0.id == device }), known.rotationPushes ?? false != rotation else { return }
-        try? devices.update(device) { $0.rotationPushes = rotation }
+        let rotation = capabilities.contains(.rotation), groups = capabilities.contains(.readyGroups)
+        guard let known = devices.devices.first(where: { $0.id == device }),
+              known.rotationPushes ?? false != rotation || known.readyGroups ?? false != groups else { return }
+        try? devices.update(device) {
+            $0.rotationPushes = rotation
+            $0.readyGroups = groups
+        }
     }
 
     /// Hosting only while tmux is there to host.

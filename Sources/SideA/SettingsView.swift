@@ -91,7 +91,7 @@ struct AccountsSettings: View {
                 Section("On your other Macs") {
                     ForEach(elsewhere, id: \.self) { remote in
                         LabeledContent {
-                            Button("Sign in here") {
+                            Button("Sign In Here") {
                                 if let id = store.addAccount(name: remote.name, email: remote.email, provider: remote.provider) { Task { await store.signIn(id) } }
                             }.disabled(!store.isInstalled(remote.provider) || store.python == nil)
                         } label: {
@@ -219,21 +219,24 @@ struct AccountSettingsRow: View {
                 ForEach(usage.modelLimits, id: \.id) { MiniBar(label: LimitText.name($0), window: $0, showsReset: true) }
             }
             Group {
-                if store.signingIn.contains(account.id) || store.waking.contains(account.id) {
+                switch store.waking.contains(account.id) ? .busy : store.rowAction(for: account) {
+                case .busy:
                     ProgressView().controlSize(.small)
-                } else if !account.ready || (store.health[account.id]?.takesWork == false && !isActive) {
-                    Button("Sign in") { Task { await store.signIn(account.id) } }
-                } else if store.health[account.id] == .idle && store.usage[account.id] == nil && account.provider == .claude {
+                case .signIn:
+                    Button("Sign In") { Task { await store.signIn(account.id) } }
+                case .renew:
                     Button("Renew") { Task { await store.wake(account.id) } }
                         .help("Has Claude Code renew this login; no model runs and no quota is used")
-                } else if isActive {
+                case .inUse:
                     // Which login new commands use; every signed-in account is healthy.
                     Text("In use").font(.caption.weight(.medium)).foregroundStyle(.green)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(.green.opacity(0.12), in: .capsule)
                         .help(account.provider == .claude ? "New claude commands use this account" : "Codex on this Mac is signed in to this account")
-                } else if account.provider == .claude {
+                case .use:
                     Button("Use") { Task { await store.activate(account.id) } }
+                case .none:
+                    EmptyView()
                 }
             }.frame(width: 64, alignment: .trailing)
             Menu {
@@ -246,8 +249,8 @@ struct AccountSettingsRow: View {
                     Button("Open Terminal on \(account.name)") { Task { await store.openTerminal(account.id) } }
                 }
                 Divider()
-                Button("Sign in again") { Task { await store.signIn(account.id) } }.disabled(isActive)
-                Button("Sign out") { store.signOut(account.id) }.disabled(isActive || !account.ready)
+                Button("Sign In Again") { Task { await store.signIn(account.id) } }.disabled(isActive)
+                Button("Sign Out") { store.signOut(account.id) }.disabled(isActive || !account.ready)
                 Divider()
                 Button("Remove…", role: .destructive) { removing = account }.disabled(isActive)
             } label: { Image(systemName: "ellipsis.circle") }
@@ -296,8 +299,6 @@ struct UsageSettings: View {
                     }
                 } header: {
                     Text("Paid usage")
-                } footer: {
-                    Text("Past a plan limit, accounts with usage credits on keep working and bill them. Side A warns before that happens and when it does.")
                 }
             }
             if let report = store.report {
@@ -358,10 +359,6 @@ struct UsageSettings: View {
                             ForEach(byModel, id: \.key) { model, dollars in
                                 LabeledContent(model) { Text(dollars, format: .currency(code: "USD").precision(.fractionLength(0))).monospacedDigit().foregroundStyle(.secondary) }
                             }
-                            let source = store.pricesUpdated.map { "list prices from LiteLLM's public price list, updated \($0.formatted(.relative(presentation: .named)))" }
-                                ?? "list prices as of October 2026"
-                            Text("What the same Claude tokens would cost on Anthropic's API, at \(source). Your plans cover them for a flat price. Most of it is cache reads and writes. Codex isn't included.")
-                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 } header: {
@@ -562,12 +559,8 @@ struct AutopilotSettings: View {
                     ForEach(SwapAtChange.choices.map { Double($0) }, id: \.self) { Text("\(Int($0))%").tag($0) }
                 } label: {
                     Text("Move at")
-                    Text("Of a 5-hour or weekly limit, before your sessions move to another account. Lower leaves room for a burst.")
                 }
-                Toggle(isOn: Binding(get: { store.config.followFable != false }, set: { store.setFollowFable($0) })) {
-                    Text("Follow Fable")
-                    Text("While you use Fable, pick the account with the most Fable left. Pro plans bill Fable as extra usage.")
-                }
+                Toggle("Follow Fable", isOn: Binding(get: { store.config.followFable != false }, set: { store.setFollowFable($0) }))
                 Toggle(isOn: Binding(get: { store.config.pool == true }, set: { value in Task { await store.setPool(value) } })) {
                     Text("Pool mode")
                     Text(poolStatus)
@@ -602,21 +595,9 @@ struct AutopilotSettings: View {
                 UpNext(store: store)
             } header: {
                 Text(store.fableMode ? "Up next for Fable" : "Up next")
-            } footer: {
-                Text("\(store.fableMode ? "Fable" : "weekly") % left ÷ hours until it resets × plan size")
-                    .font(.custom("Noteworthy-Bold", size: 13)).foregroundStyle(.secondary)
             }
-            Section {
+            Section("Your day") {
                 DayTimeline(store: store)
-                HStack(spacing: 8) {
-                    RuleChip(value: "\(Int(Planner.full))%", text: "leaves an account")
-                    RuleChip(value: "<\(Int(Planner.switchTarget))%", text: "moves only to one")
-                    RuleChip(value: "1.5×", text: "more urgent to switch")
-                }
-            } header: {
-                Text("Your day")
-            } footer: {
-                Text("Codex accounts are tracked and warmed up; switch Codex itself with codex login. Terminal switching is in Setup.")
             }
         }.formStyle(.grouped)
     }
@@ -625,7 +606,11 @@ struct AutopilotSettings: View {
         guard store.config.pool == true else {
             return "Claude Code and Codex in Terminal send their requests through Side A, which keeps each conversation on one account and moves it the moment that one is full. Logins never leave this Mac. Anthropic doesn't support this setup."
         }
-        guard store.poolPort != nil else { return "Starting…" }
+        switch store.poolRun {
+        case .off, .starting: return "Starting…"
+        case .failed(let why): return "Couldn't start: \(why) Turn it off and on again to retry."
+        case .running: break
+        }
         let conversations = store.poolConversations.values.reduce(0, +)
         return "On. \(conversations) conversation\(conversations == 1 ? "" : "s") in the last hour, on \(store.poolConversations.count) account\(store.poolConversations.count == 1 ? "" : "s"). New terminal commands use it; sidea use <name> keeps a tab on one account."
     }
@@ -648,7 +633,7 @@ struct PoolHealthRows: View {
         if store.config.pool == true {
             ForEach(AgentProvider.allCases) { provider in
                 let members = store.poolMembers(provider)
-                if let room = PoolRoom(members, usage: provider == .claude ? store.planning(store.usage) : store.usage, now: now) {
+                if let room = PoolRoom(members, usage: provider == .claude ? store.planning(store.usage) : store.usage, full: store.config.moveAt, now: now) {
                     LabeledContent(provider.title) {
                         Text(Self.summary(room)).multilineTextAlignment(.trailing)
                     }
@@ -704,7 +689,7 @@ struct UpNext: View {
             .compactMap { account in usage[account.id].map { (account, $0, Planner.urgency($0, now: now)) } }
             .sorted { $0.2 > $1.2 }
         let top = max(ranked.first?.2 ?? 1, 0.01)
-        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: usage, health: store.health, active: store.activeIDs[.claude], now: now)
+        let pick = Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: usage, health: store.health, active: store.activeIDs[.claude], full: store.config.moveAt, now: now)
         if ranked.isEmpty {
             Text("Add Claude accounts to see how Autopilot ranks them.").foregroundStyle(.secondary)
         }
@@ -716,7 +701,7 @@ struct UpNext: View {
                         .frame(width: max(proxy.size.width * score / top, 4))
                 }.frame(height: 8)
                 Text(score < 0.05 ? "–" : String(format: "%.1f/h", score)).font(.custom("Noteworthy-Bold", size: 13)).monospacedDigit().frame(width: 52, alignment: .trailing)
-                Text(account.id == pick ? (store.activeIDs[.claude] == account.id ? "In use" : "Next") : Planner.hasHeadroom(usage, now: now) ? "" : "Limited")
+                Text(account.id == pick ? (store.activeIDs[.claude] == account.id ? "In use" : "Next") : Planner.hasHeadroom(usage, full: store.config.moveAt, now: now) ? "" : "Limited")
                     .font(.caption.weight(.medium)).foregroundStyle(account.id == pick ? .green : .secondary).frame(width: 48, alignment: .trailing)
             }
         }
@@ -775,26 +760,12 @@ struct DayTimeline: View {
     }
 }
 
-struct RuleChip: View {
-    let value: String
-    let text: String
-    var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.custom("Noteworthy-Bold", size: 17))
-            Text(text).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 9))
-    }
-}
-
 struct GeneralSettings: View {
     @Bindable var store: AccountStore
     @ObservedObject var updates: Updates
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @AppStorage("tourSeen") private var tourSeen = false
-    @AppStorage("playerEnabled") private var playerEnabled = false
+    @AppStorage(MenuPlayer.enabledKey) private var playerEnabled: Bool = PreferencesMirror.fallback(MenuPlayer.enabledKey)
     @State private var indexBytes: Int64 = 0
     @State private var rebuilding = false
     var body: some View {
@@ -802,10 +773,7 @@ struct GeneralSettings: View {
             Section {
                 Toggle("Open at login", isOn: Binding(get: { launchAtLogin }, set: { store.setLaunchAtLogin($0); launchAtLogin = SMAppService.mainApp.status == .enabled }))
                 Toggle("Show only in the menu bar", isOn: Binding(get: { store.config.menuBarOnly }, set: { store.setMenuBarOnly($0) }))
-                Toggle(isOn: $playerEnabled) {
-                    Text("3D player")
-                    Text("A pocket disc player for your accounts, from the menu.")
-                }
+                Toggle("3D player", isOn: $playerEnabled)
             }
             KeepAwakeSettings(keepAwake: store.keepAwake)
             Section {
@@ -816,9 +784,7 @@ struct GeneralSettings: View {
                 }.disabled(store.syncFolder == nil && store.config.sync != true)
             }
             Section("Updates") {
-                Toggle("Automatically check for updates", isOn: $updates.automaticallyChecks)
-                Toggle("Install updates automatically", isOn: $updates.automaticallyInstalls)
-                    .disabled(!updates.automaticallyChecks)
+                Toggle("Update Automatically", isOn: $updates.automaticallyUpdates)
                 LabeledContent { UpdateButton(updates: updates) } label: {
                     Text("Side A \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
                 }
@@ -840,7 +806,7 @@ struct GeneralSettings: View {
             Section("Privacy") {
                 UsagePreference(analytics: store.analytics)
                 LabeledContent {
-                    Button("Save diagnostics…") { store.saveDiagnostics(updateError: updates.failure) }
+                    Button("Save Diagnostics…") { store.saveDiagnostics(updateError: updates.failure) }
                 } label: { Link("Privacy details", destination: URL(string: "https://getsidea.com/index.md")!) }
             }
             Section {
@@ -876,37 +842,29 @@ struct GeneralSettings: View {
 /// Everything that can interrupt you: the notch, banners and sounds.
 struct NotificationSettings: View {
     @Bindable var store: AccountStore
-    @AppStorage(Sounds.enabledKey) private var sounds = true
-    @AppStorage(Sounds.volumeKey) private var volume = 0.5
-    @AppStorage(WaitingNotifier.enabledKey) private var notifyWaiting = false
-    @AppStorage(AccountStore.weeklyAlertKey) private var weeklyAlert = 0.0
+    @AppStorage(Sounds.enabledKey) private var sounds: Bool = PreferencesMirror.fallback(Sounds.enabledKey)
+    @AppStorage(Sounds.volumeKey) private var volume: Double = PreferencesMirror.fallback(Sounds.volumeKey)
+    @AppStorage(WaitingNotifier.enabledKey) private var notifyWaiting: Bool = PreferencesMirror.fallback(WaitingNotifier.enabledKey)
+    @AppStorage(AccountStore.weeklyAlertKey) private var weeklyAlert: Double = PreferencesMirror.fallback(AccountStore.weeklyAlertKey)
 
     var body: some View {
         Form {
             IslandSettings(store: store)
             Section {
-                Toggle(isOn: $notifyWaiting) {
-                    Text("A session needs you")
-                    Text("When Claude Code asks for permission or input, even with Side A closed.")
-                }
+                Toggle("A session needs you", isOn: $notifyWaiting)
                 .onChange(of: notifyWaiting) {
                     if notifyWaiting { WaitingNotifier.requestPermission() }
                     store.startNotifications()
                 }
                 Picker("An account's week passes", selection: $weeklyAlert) {
                     Text("Off").tag(0.0)
-                    ForEach([50.0, 75.0, 90.0], id: \.self) { Text("\(Int($0))%").tag($0) }
+                    ForEach([50.0, 75.0, 80.0, 90.0], id: \.self) { Text("\(Int($0))%").tag($0) }
                 }
             } header: {
                 Text("Banners")
-            } footer: {
-                Text("One weekly banner per account.")
             }
             Section("Sound") {
-                Toggle(isOn: $sounds) {
-                    Text("Sound effects")
-                    Text("Clicks when the account changes, a session resumes or one needs you.")
-                }
+                Toggle("Sound effects", isOn: $sounds)
                 if sounds {
                     LabeledContent("Volume") {
                         Slider(value: $volume, in: 0.1...1) { editing in if !editing { Sounds.play(.trackChange) } }
@@ -924,21 +882,13 @@ struct KeepAwakeSettings: View {
 
     var body: some View {
         Section {
-            Toggle(isOn: Binding(get: { keepAwake.settings.enabled }, set: { keepAwake.setEnabled($0) })) {
-                Text("Keep awake while agents work")
-                Text("While a session works and for two minutes after. The display can still sleep.")
-            }
+            Toggle("Keep awake while agents work", isOn: Binding(get: { keepAwake.settings.enabled }, set: { keepAwake.setEnabled($0) }))
             if keepAwake.settings.enabled && keepAwake.offersLid || keepAwake.settings.lidClosed || keepAwake.busy {
-                Toggle(isOn: Binding(get: { keepAwake.settings.lidClosed }, set: { value in Task { await keepAwake.setLidClosed(value) } })) {
-                    Text("Also with the lid closed")
-                    Text("A small Side A helper turns sleep off while agents work, on power only.")
-                }.disabled(keepAwake.busy)
+                Toggle("Also with the lid closed", isOn: Binding(get: { keepAwake.settings.lidClosed }, set: { value in Task { await keepAwake.setLidClosed(value) } }))
+                    .disabled(keepAwake.busy)
                 if keepAwake.settings.lidClosed {
                     HelperApproval(keepAwake: keepAwake)
-                    Toggle(isOn: Binding(get: { keepAwake.settings.onBattery }, set: { keepAwake.setOnBattery($0) })) {
-                        Text("Also on battery")
-                        Text("Below \(KeepAwake.lowBattery)% the Mac sleeps as usual.")
-                    }
+                    Toggle("Also on battery", isOn: Binding(get: { keepAwake.settings.onBattery }, set: { keepAwake.setOnBattery($0) }))
                 }
             }
         } footer: {
@@ -988,13 +938,13 @@ private struct HelperApproval: View {
 
 struct IslandSettings: View {
     @Bindable var store: AccountStore
-    @AppStorage(Island.onKey) private var on = false
-    @AppStorage(Island.eventsKey) private var events = true
-    @AppStorage(Island.waitingKey) private var waiting = true
-    @AppStorage(Island.finishedKey) private var finished = true
-    @AppStorage(Island.finishedClearKey) private var clearFinished = 0
-    @AppStorage(Island.finishedAutomatedKey) private var finishedAutomated = false
-    @AppStorage(Island.screenKey) private var screen = "notch"
+    @AppStorage(Island.onKey) private var on: Bool = PreferencesMirror.fallback(Island.onKey)
+    @AppStorage(Island.eventsKey) private var events: Bool = PreferencesMirror.fallback(Island.eventsKey)
+    @AppStorage(Island.waitingKey) private var waiting: Bool = PreferencesMirror.fallback(Island.waitingKey)
+    @AppStorage(Island.finishedKey) private var finished: Bool = PreferencesMirror.fallback(Island.finishedKey)
+    @AppStorage(Island.finishedClearKey) private var clearFinished: Int = PreferencesMirror.fallback(Island.finishedClearKey)
+    @AppStorage(Island.finishedAutomatedKey) private var finishedAutomated: Bool = PreferencesMirror.fallback(Island.finishedAutomatedKey)
+    @AppStorage(Island.screenKey) private var screen: String = PreferencesMirror.fallback(Island.screenKey)
     @State private var showingKeys = false
 
     var body: some View {
@@ -1006,26 +956,16 @@ struct IslandSettings: View {
                 store.startNotifications()
             })) {
                 Text("Dynamic Island")
-                Text("Answer Claude Code and Codex from the notch.")
             }
             if on {
-                Toggle(isOn: hook(.claude)) {
-                    Text("Claude Code requests")
-                    Text("Allow, deny, answer questions and review plans. The terminal prompt stays open too.")
-                }
+                Toggle("Claude Code requests", isOn: hook(.claude))
                 Toggle(isOn: hook(.codex)) {
                     Text("Codex requests")
                     Text("Approve the hook once with /hooks in Codex.")
                 }
-                Toggle(isOn: $finished) {
-                    Text("Sessions that finish")
-                    Text("A chime and their last message, kept in Ready until you go to them.")
-                }
+                Toggle("Sessions that finish", isOn: $finished)
                 if finished {
-                    Toggle(isOn: $finishedAutomated) {
-                        Text("Include automated runs")
-                        Text("claude -p, scripts and the Agent SDK. Off, they finish quietly in the Done list.")
-                    }
+                    Toggle("Include automated runs", isOn: $finishedAutomated)
                     Picker("Clear finished sessions", selection: $clearFinished) {
                         Text("Never").tag(0)
                         Text("After 30 seconds").tag(30)
@@ -1044,11 +984,7 @@ struct IslandSettings: View {
                     Button("Show Shortcuts") { showingKeys = true }
                         .popover(isPresented: $showingKeys, arrowEdge: .trailing) { IslandShortcuts() }
                 }
-                LabeledContent("Try it") { Button("Show a sample request") { store.island.preview() } }
-            }
-        } footer: {
-            if on {
-                Text("Destructive commands, like rm -rf or a force push, need a click: no shortcut or Always approves them.")
+                LabeledContent("Try it") { Button("Show Sample Request") { store.island.preview() } }
             }
         }
     }
@@ -1064,17 +1000,14 @@ private struct IslandShortcuts: View {
                                ("⌃⌥G", "Go to the session that's done"), ("⌃⌥R", "Reply with its next task"), ("⌃⌥I", "Focus the island"),
                                ("⌃⌥T", "Show the terminal"), ("⌃⌥← →", "Switch requests")]
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
-                ForEach(Self.keys, id: \.0) { key, action in
-                    GridRow {
-                        Text(key).font(.system(size: 12).monospaced()).foregroundStyle(.secondary)
-                        Text(action)
-                    }
-                    .accessibilityElement(children: .combine)
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+            ForEach(Self.keys, id: \.0) { key, action in
+                GridRow {
+                    Text(key).font(.system(size: 12).monospaced()).foregroundStyle(.secondary)
+                    Text(action)
                 }
+                .accessibilityElement(children: .combine)
             }
-            Text("They work only while a request is waiting.").font(.caption).foregroundStyle(.secondary)
         }
         .padding(16)
     }

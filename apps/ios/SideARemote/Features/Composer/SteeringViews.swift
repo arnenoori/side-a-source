@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// Send a Note… (section 4.14): a focused field, the promise in the footer, Send in the toolbar.
+/// Send a Note…: a focused field, the promise in the footer, Send in the toolbar.
 struct NoteSheet: View {
     let sessionID: SessionKey
     @Environment(AppModel.self) private var model
@@ -19,8 +19,6 @@ struct NoteSheet: View {
                     TextField("What should it know?", text: $text, axis: .vertical)
                         .lineLimit(3...8)
                         .focused($focused)
-                } footer: {
-                    Text("\(session?.agent.title ?? "Claude") reads this after its current step.")
                 }
             }
             .navigationTitle("Note")
@@ -139,7 +137,7 @@ struct MailLine: View {
 
     var body: some View {
         Label(taking ? (mail.kind == .stop ? "Cancelling…" : "Deleting…")
-                     : mail.kind == .stop ? "Stops after this step" : "Note waiting · reads it after this step",
+                     : mail.kind == .stop ? "Stops after this step" : "Note waiting",
               systemImage: mail.kind == .stop ? "pause.circle" : "envelope")
             .foregroundStyle(.secondary)
             .font(.footnote)

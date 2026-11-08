@@ -251,7 +251,7 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     store.busyLogins = ["mac": work.id, "other": studio.id]
     let next = store.nextMoves(now: now)
     #expect(next.map(\.from) == [work.name, studio.name])
-    #expect(next.allSatisfy { $0.to == weekend.name && $0.atPercent == Int(Planner.full.rounded()) && !$0.held && $0.minutes == nil })
+    #expect(next.allSatisfy { $0.to == weekend.name && $0.atPercent == Int(store.config.moveAt.rounded()) && !$0.held && $0.minutes == nil })
 
     let since = Date()
     store.heldMoves = ["mac": .init(slot: "mac", from: work.id, to: weekend.id, share: false, reason: "Waiting for its sessions to pause.", since: since),
@@ -259,7 +259,10 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     let state = Autopilot.state(store, log: "")
     #expect(state.held?.map(\.from) == [studio.name, work.name] && state.pending == state.held?.first)
     #expect(state.next?.first { $0.id == work.id }?.held == true)
-    #expect(state.swapAt == Int(Planner.full.rounded()) && state.followFable == true && state.fableMode == false)
+    #expect(state.swapAt == Int(store.config.moveAt.rounded()) && state.followFable == true && state.fableMode == false)
+    store.config.swapAt = 80
+    #expect(Autopilot.state(store, log: "").swapAt == 80 && store.nextMoves(now: now).allSatisfy { $0.atPercent == 80 })
+    store.config.swapAt = nil
     // Nothing on the wire names a Keychain slot.
     #expect(state.held?.allSatisfy { !$0.id.contains("other") && !$0.id.contains("mac") } == true)
 

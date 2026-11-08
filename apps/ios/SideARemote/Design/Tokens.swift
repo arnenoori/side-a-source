@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-// Section 7 of docs/remote/ios-app.md. Surfaces and text use system colours only; the few custom
+// Surfaces and text use system colours only; the few custom
 // colours live in the asset catalog with light, dark and high-contrast variants.
 
 extension Color {
@@ -12,7 +12,6 @@ extension Color {
     static let done = Color.green
     static let destructive = Color.red
     static let lcdPlate = Color("LCDPlate")
-    static let lcdInk = Color("LCDInk")
     static let terminalBackground = Color("TerminalBackground")
     static let terminalForeground = Color("TerminalForeground")
 }
@@ -35,22 +34,21 @@ enum Space {
 
 /// Corner radii, all continuous.
 enum Radius {
-    static let accountCard: CGFloat = 22
     static let userBubble: CGFloat = 20
     static let questionCard: CGFloat = 20
     static let inlineCard: CGFloat = 14
     static let letterBadge: CGFloat = 6
-    static let lcd: CGFloat = 14
     static let block: CGFloat = 12
     static let thumbnail: CGFloat = 10
-    static let inlineCode: CGFloat = 4
 }
 
-/// System curves only (section 6.1). Every custom `withAnimation` goes through here so Reduce
-/// Motion turns it into nothing.
+/// System curves only. Every custom `withAnimation` goes through here so Reduce
+/// Motion turns it into a short fade.
 enum Motion {
-    static func smooth(_ reduceMotion: Bool) -> Animation? { reduceMotion ? nil : .smooth }
-    static func snappy(_ reduceMotion: Bool) -> Animation? { reduceMotion ? nil : .snappy }
+    static func smooth(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.35) }
+    static func snappy(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25) }
+    /// Rows moving between sections, which travel farther.
+    static func move(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.45) }
 }
 
 extension AgentProvider {
@@ -58,7 +56,7 @@ extension AgentProvider {
     var symbol: String { self == .claude ? "asterisk" : "chevron.left.forwardslash.chevron.right" }
 }
 
-/// Glyphs per tool (section 7.6).
+/// Glyphs per tool.
 enum ToolGlyph {
     static func symbol(for name: String) -> String {
         switch name {

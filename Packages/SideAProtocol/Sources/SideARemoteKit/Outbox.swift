@@ -55,6 +55,27 @@ public actor Outbox {
             let parts = path.split(separator: "/")
             return parts.count == 4 && parts[1] == "requests" && parts[3] == "answer" ? String(parts[2]).removingPercentEncoding : nil
         }
+
+        /// An answer's first key, `<rid>:<kind>`: the app and a notification action make the same one, so a second tap is a replay.
+        public static func answerID(_ request: RequestID, _ answer: RemoteAnswer, mode: PermissionMode? = nil) -> String {
+            "\(request):\((mode == nil ? answer.kind : .allowMode).rawValue)"
+        }
+
+        /// An answer, byte for byte the same from the app's engine and a notification action.
+        public static func answer(_ request: RequestID, _ answer: RemoteAnswer, mode: PermissionMode? = nil, id: String? = nil, macID: String,
+                                  now: Timestamp, confirm: String? = nil) -> Item {
+            let body = (try? RemoteClient.encoder.encode(AnswerBody(answer: answer, mode: mode))) ?? Data()
+            return Item(id: id ?? answerID(request, answer, mode: mode), macID: macID, path: "/v1/requests/\(request)/answer", body: body,
+                        createdAt: now, expiresAt: now + 86_400, confirm: confirm)
+        }
+
+        /// A reply to a session; a finished one needs its `FinishedSession.turnID`.
+        public static func reply(_ session: SessionKey, _ reply: RemoteReply, id: String = UUID().uuidString.lowercased(), macID: String,
+                                 now: Timestamp, confirm: String? = nil) -> Item {
+            let body = (try? RemoteClient.encoder.encode(reply)) ?? Data()
+            return Item(id: id, macID: macID, path: "/v1/sessions/\(session)/reply", body: body, createdAt: now, expiresAt: now + 600,
+                        confirm: confirm)
+        }
     }
 
     public enum Failure: Error { case open(String) }

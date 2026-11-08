@@ -50,6 +50,7 @@ ios_tests() {
 ran=0
 if touches '^(bridge|Sources|Tests|Packages|Package\.)'; then
   python3 -m unittest discover -s bridge/tests
+  rm -f Sources/SideA/Resources/*.py
   cp bridge/*.py Sources/SideA/Resources/
   swift test
   ran=1

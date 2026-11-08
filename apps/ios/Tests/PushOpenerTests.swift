@@ -108,6 +108,72 @@ final class PushOpenerTests: XCTestCase {
         }
     }
 
+    /// Each kind under the category the Mac seals it with, rotation included: opened here, it's the notification as shown.
+    func testEveryKindTheMacSendsIsShownAsSent() throws {
+        let sent: [(PushKind, PushCategory)] = [(.finished, .finished), (.limit, .limit), (.health, .health), (.rotation, .rotation), (.test, .test)]
+        for (kind, category) in sent {
+            let payload = PushPayload(t: kind.rawValue, mac: "spoof-mac", sent: 0, sid: "s1", title: "Now on Personal", body: "5-hour 96%", account: "Personal")
+            let filled = UNMutableNotificationContent()
+            PushOpener.fill(filled, with: payload, data: try JSONEncoder().encode(payload), category: category, identifier: "kind-\(kind.rawValue)")
+            defer { PushCache.remove("kind-\(kind.rawValue)") }
+            XCTAssertEqual(filled.categoryIdentifier, category.rawValue, kind.rawValue)
+            XCTAssertEqual(PushOpener.verified(UNNotificationRequest(identifier: "kind-\(kind.rawValue)", content: filled, trigger: nil)), payload,
+                           kind.rawValue)
+        }
+        let untitled = PushPayload(t: PushKind.rotation.rawValue, mac: "m", sent: 0)
+        XCTAssertEqual(PushOpener.words(untitled).title, "Autopilot moved your sessions")
+    }
+
+    /// Ready for several sessions has no one turn to reply to; an update to it comes without a sound.
+    func testReadyForSeveralSessionsIsOpenOnlyAndAnUpdateIsQuiet() throws {
+        let group = PushPayload(t: PushKind.finished.rawValue, mac: "m", sent: 0, title: "3 sessions ready", body: "side-a, relay, site", quiet: true)
+        let filled = UNMutableNotificationContent()
+        filled.sound = .default
+        PushOpener.fill(filled, with: group, data: try JSONEncoder().encode(group), category: .finished, identifier: "ready-group")
+        defer { PushCache.remove("ready-group") }
+        XCTAssertEqual(filled.categoryIdentifier, PushCategory.open.rawValue)
+        XCTAssertEqual(filled.title, "3 sessions ready")
+        XCTAssertEqual(filled.body, "side-a, relay, site")
+        XCTAssertNil(filled.sound)
+
+        let one = PushPayload(t: PushKind.finished.rawValue, mac: "m", sent: 0, sid: "s1", title: "side-a", turnID: "t1", summary: "Done.")
+        let single = UNMutableNotificationContent()
+        single.sound = .default
+        PushOpener.fill(single, with: one, data: try JSONEncoder().encode(one), category: .finished, identifier: "ready-one")
+        defer { PushCache.remove("ready-one") }
+        XCTAssertEqual(single.categoryIdentifier, PushCategory.finished.rawValue)
+        XCTAssertNotNil(single.sound)
+    }
+
+    /// Ready reuses one id per Mac. A later turn with the same words replaces the cache while the earlier one's Reply is
+    /// open: that Reply still goes to the session and turn it showed, never the later one's.
+    func testAReplacementReadyCantRedirectAnEarlierReply() throws {
+        func ready(_ session: String, turn: String) -> PushPayload {
+            PushPayload(t: PushKind.finished.rawValue, mac: "spoof-mac", sent: 0, sid: session, title: "side-a", turnID: turn, summary: "Done.")
+        }
+        let first = ready("s1", turn: "t1"), second = ready("s2", turn: "t2")
+        let shown = UNMutableNotificationContent()
+        PushOpener.fill(shown, with: first, data: try JSONEncoder().encode(first), category: .finished, identifier: "ready-same")
+        let replacement = UNMutableNotificationContent()
+        PushOpener.fill(replacement, with: second, data: try JSONEncoder().encode(second), category: .finished, identifier: "ready-same")
+        defer {
+            PushCache.remove("ready-same")
+            for content in [shown, replacement] { PushCache.remove("ready-same_" + (content.userInfo["h"] as? String ?? "")) }
+        }
+        XCTAssertEqual(PushOpener.words(first), PushOpener.words(second))
+        XCTAssertEqual(PushOpener.verified(UNNotificationRequest(identifier: "ready-same", content: shown, trigger: nil)), first)
+        XCTAssertEqual(PushOpener.verified(UNNotificationRequest(identifier: "ready-same", content: replacement, trigger: nil)), second)
+
+        // One filled before the digest, whose cache entry the replacement took: refused, not sent to s2.
+        guard let older = shown.mutableCopy() as? UNMutableNotificationContent else { return XCTFail() }
+        older.userInfo.removeValue(forKey: "h")
+        XCTAssertNil(PushOpener.verified(UNNotificationRequest(identifier: "ready-same", content: older, trigger: nil)))
+        // Nor can a push name a digest it wasn't filled with.
+        guard let swapped = shown.mutableCopy() as? UNMutableNotificationContent else { return XCTFail() }
+        swapped.userInfo["h"] = replacement.userInfo["h"]
+        XCTAssertNil(PushOpener.verified(UNNotificationRequest(identifier: "ready-same", content: swapped, trigger: nil)))
+    }
+
     func testASecondPushCantChangeTheCategory() throws {
         func shown(_ payload: PushPayload, as category: String) throws -> Bool {
             let filled = UNMutableNotificationContent()

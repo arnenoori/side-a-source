@@ -304,3 +304,43 @@ private actor Admitted {
     #expect((answered as? HTTPURLResponse)?.statusCode == 200)
     #expect(try JSONDecoder().decode([String: Int].self, from: body)["claude"] == 1)
 }
+
+@MainActor private final class HeldDecisions: PoolDecisions {
+    var open = false
+    func poolAccount(_ provider: AgentProvider, session: String?, excluding: Set<String>) -> String? { excluding.isEmpty ? "ok" : nil }
+    func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential {
+        while !open { try await Task.sleep(for: .milliseconds(10)) }
+        return PoolCredential(token: "tok-ok", accountID: nil)
+    }
+    func poolRefused(_ provider: AgentProvider?, status: Int, message: String) {}
+    func poolHealthReport() -> [String: Int] { [:] }
+    func poolTokenFailed(_ account: String, _ error: any Error) {}
+    func poolAnswered(_ account: String, status: Int, headers: HTTPHeaders) {}
+}
+
+/// An automatic update waits while the pool is answering anyone.
+@MainActor @Test func poolCountsTheRequestsItIsAnswering() async throws {
+    let upstream = try FakeAnthropic()
+    let base = try await upstream.start()
+    defer { upstream.stop() }
+    let decisions = HeldDecisions()
+    let proxy = PoolProxy(key: String(repeating: "k", count: 64), decisions: decisions, services: [
+        PoolService(provider: .claude, base: base, prefix: "/v1/", client: "Claude Code", admits: Pool.fromClaudeCode, session: Pool.session),
+    ])
+    let port = try await proxy.start(port: 0)
+    defer { proxy.stop() }
+    #expect(proxy.inFlight == 0)
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/messages")!)
+    request.httpMethod = "POST"
+    request.httpBody = Data("{}".utf8)
+    request.setValue("claude-cli/2.1.314 (external, cli)", forHTTPHeaderField: "User-Agent")
+    request.setValue("Bearer " + String(repeating: "k", count: 64), forHTTPHeaderField: "Authorization")
+    let sent = Task { try await URLSession.shared.data(for: request) }
+    for _ in 0..<500 where proxy.inFlight == 0 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(proxy.inFlight == 1)
+    decisions.open = true
+    let (_, response) = try await sent.value
+    #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    for _ in 0..<500 where proxy.inFlight != 0 { try await Task.sleep(for: .milliseconds(10)) }
+    #expect(proxy.inFlight == 0)
+}

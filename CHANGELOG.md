@@ -1,6 +1,46 @@
 # Changelog
 
-## Unreleased
+## 0.5.48 — 2026-11-08
+
+Pool mode keeps working when Side A is closed. Sessions started through the pool used to fail with "connection refused" the moment Side A quit or crashed, until you restarted them. A small helper now serves the pool on the same port whenever Side A isn't running, using the accounts and limits Side A last knew, and hands it back as soon as Side A opens again. New `claude` and `codex` commands keep using the pool too. macOS lists it under Login Items as Side A; turning pool mode off removes it. If pool mode can't start, Settings now says why instead of showing Starting… until Side A restarts.
+
+The menu is tidier: Today and 7 days now sit on the same line as Sessions, Settings and Quit, and the Autopilot switch is gone from it. Autopilot is on unless you turn it off in Settings > Autopilot; when it's off, the menu says so and opens that page.
+
+New installs start with sensible defaults. Pool mode turns on once your first account is signed in, Side A tells you when a session needs you, and it warns when an account passes 80% of its week (80% is new in the list). Side A Remote now sends limit warnings unless you turn them off. Settings you already changed stay as they are.
+
+Updates install on their own. Side A used to download an update and then wait for you to quit it, which for a menu-bar app could mean weeks. Now it installs and restarts while you're away from the Mac or it's locked, once nothing is waiting for you in the island, no pool request is running and no sign-in is under way. Your sessions keep running through the restart, and the menu shows "Updated to" for a day, linking to what's new. Settings > General > Updates has one switch, Update Automatically; if you had turned automatic installs off, it stays off.
+
+A full context no longer sends a notification to your iPhone. It still shows on the session.
+
+Your iPhone buzzes less, and mostly when something is waiting on you. While you're using the Mac, nothing goes to the phone; if you step away for a minute or lock the screen, whatever is still waiting goes then, and anything answered meanwhile never does. Requests wait 10 seconds first, so ones Autopilot or the Mac answers straight away don't reach the phone; ones that need Face ID go at once. Finished sessions share one Ready notification per Mac, such as "3 sessions ready" with their names, that updates in place and only makes a sound once every 5 minutes. A turn that took less than 30 seconds waits to be included in the next one. Autopilot moving your sessions arrives quietly; running out of accounts still alerts you. Nothing is sent to a phone that has Side A Remote open.
+
+Fixes:
+- An account whose name contains a word like "idle" or "429" no longer confuses Side A about its login. A revoked login on an account named dev429 showed as Ready in Test Pool, and one named bridle was renewed over and over instead of asking you to sign in.
+- Removing an account now forgets everything Side A had saved about it.
+- A Codex limit window with no length no longer shows up as a "0-hour" window.
+- The island's "hit its limit" line names the model that hit it, rather than always saying Fable.
+
+The Mac app is calmer and closer to the iPhone app:
+- Settings and the island no longer explain themselves in captions and footers.
+- The arrow keys move through the session list instantly.
+- The island opens only when the pointer rests on the notch, and stays a moment after it leaves. Notices wait while the pointer is on them.
+- Keyboard shortcuts moved from labels under each request into tooltips.
+- Sessions use the same names as on the iPhone: Needs You, Working, Ready and Idle. Buttons are in Title Case.
+- Text uses the system sizes. With Reduce Motion on, things fade briefly instead of jumping.
+
+Side A Remote:
+- A reply you had already dealt with no longer comes back as "Not sent" each time the app opens.
+- Moving to another session from a notification no longer makes the Mac think you've left the app, which sent you notifications for the session on screen.
+- While the app is open, notifications from that Mac no longer show banners or play sounds.
+- Autopilot's notifications now appear; the phone used to reject them.
+- If the app can't open its storage, changing a setting says so instead of looking like it worked.
+- New messages fade in quickly, and earlier messages load without moving what you're reading.
+- The microphone that didn't dictate is gone, so an empty message shows a dimmed send button.
+- Animations are shorter.
+- Question options highlight when you touch them and start on the recommended answer.
+- Quiet While Watching is gone, because the Mac now stays quiet whenever the app is open.
+
+Side A Remote: leaving Wi-Fi falls back to the relay instead of dropping the Mac. Test Connection tries again rather than reporting the Mac unreachable while it waits to reconnect, and tests the Mac it was opened for. Settings is a tab, and notifications and the Live Activity are set for each Mac. The tab bar keeps its shape when you scroll.
 
 ## 0.5.47 — 2026-11-03
 

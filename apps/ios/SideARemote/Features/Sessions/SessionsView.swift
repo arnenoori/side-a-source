@@ -69,7 +69,7 @@ struct SessionsView: View {
         .listStyle(.insetGrouped)
         .environment(\.defaultMinListRowHeight, 28)
         // Rows keep their ids across phases, so a change slides them between sections rather than fading out and in.
-        .animation(Motion.smooth(reduceMotion), value: layout)
+        .animation(Motion.move(reduceMotion), value: layout)
         .task(id: scenePhase) {
             notificationsUndetermined = await NotificationsCard.undetermined()
             notificationsDenied = await NotificationsCard.denied()
@@ -121,8 +121,6 @@ struct SessionsView: View {
                     }
                     .pickerStyle(.menu)
                     Toggle("Show Idle Sessions", systemImage: "circle.dashed", isOn: $idleExpanded)
-                    Divider()
-                    NavigationLink(value: Route.settings) { Label("Settings", systemImage: "gear") }
                 }
             }
         }
@@ -200,7 +198,7 @@ private struct MacSessions: View {
                     .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(model.mac.name), \(model.mac.state.title)")
+                .accessibilityLabel("\(model.mac.name), \(model.mac.status)")
                 .accessibilityHint("Shows the Mac's status")
             }
             .headerProminence(.increased)
@@ -253,7 +251,7 @@ private struct MacSessions: View {
                     Button("Open Tailscale", systemImage: "arrow.up.forward.app") { openURL(Tailscale.installed ? Tailscale.app : Tailscale.appStore) }
                 }
                 if let link = model.link {
-                    NavigationLink { TestConnectionView(mac: link.mac) } label: { Label("Test Connection", systemImage: "stethoscope") }
+                    NavigationLink { TestConnectionView(link: link) } label: { Label("Test Connection", systemImage: "stethoscope") }
                 }
                 if reason.offersPairAgain {
                     Button("Pair Again", systemImage: "qrcode.viewfinder") { pairingAgain = true }
@@ -429,7 +427,7 @@ extension MacConnection.Offline {
     }
 }
 
-/// The glass capsule naming the Mac, with its connection dot (section 4.2).
+/// The glass capsule naming the Mac, with its connection dot.
 struct MacChip: View {
     let mac: MacConnection
     let action: () -> Void
@@ -462,7 +460,7 @@ struct MacChip: View {
             try? await Task.sleep(for: .milliseconds(600))
             slow = true
         }
-        .accessibilityLabel("\(mac.name), \(mac.state.title)")
+        .accessibilityLabel("\(mac.name), \(mac.status)")
         .accessibilityHint("Shows the Mac's status")
     }
 
@@ -486,7 +484,7 @@ struct MacsMenu: View {
             ForEach(root.macs, id: \.macID) { mac in
                 pick(mac.macID) {
                     Text(mac.mac.name)
-                    Text(mac.mac.state.title)
+                    Text(mac.mac.status)
                 }
             }
         } label: {
@@ -501,7 +499,7 @@ struct MacsMenu: View {
             .fixedSize()
             .animation(Motion.smooth(reduceMotion), value: state)
         }
-        .accessibilityLabel(shown.wrappedValue.flatMap(root.model(for:)).map { "\($0.mac.name), \($0.mac.state.title)" } ?? "All Macs")
+        .accessibilityLabel(shown.wrappedValue.flatMap(root.model(for:)).map { "\($0.mac.name), \($0.mac.status)" } ?? "All Macs")
         .accessibilityHint("Chooses which Macs to show")
     }
 
@@ -544,7 +542,7 @@ extension MacConnection.State {
 }
 
 /// Controls that talk to the Mac: enabled while reconnecting (the outbox holds the action), off
-/// while offline with the reason as their hint (section 3).
+/// while offline with the reason as their hint.
 private struct NeedsMac: ViewModifier {
     @Environment(AppModel.self) private var model
 

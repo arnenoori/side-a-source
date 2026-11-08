@@ -4,4 +4,5 @@ set -euo pipefail
 app="${1:?Side A.app required}"
 shift
 codesign "$@" --options runtime --identifier com.sidea.keepawake "$app/Contents/MacOS/SideAKeepAwake"
+codesign "$@" --options runtime --identifier com.sidea.pool "$app/Contents/MacOS/SideAPool"
 codesign "$@" --options runtime --identifier com.sidea.tmux "$app/Contents/Helpers/tmux"

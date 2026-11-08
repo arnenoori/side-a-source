@@ -15,10 +15,24 @@ final class PushRegistrarTests: XCTestCase {
         defer { ["notify.health", "notify.limits"].forEach(defaults.removeObject) }
         defaults.set(false, forKey: "notify.health")
         defaults.set(true, forKey: "notify.limits")
-        let prefs = NotificationPrefs.stored
+        let prefs = NotificationPrefs.stored(for: "studio")
         XCTAssertFalse(prefs.health)
         XCTAssertTrue(prefs.limits)
         XCTAssertTrue(prefs.requests)
+    }
+
+    /// Each Mac keeps its own switches; one never set reads the switch from before there was one per Mac.
+    func testEachMacHasItsOwnSwitches() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PushRegistrarTests.\(UUID())"))
+        defaults.set(false, forKey: "notify.finished")
+        defaults.set(true, forKey: NotificationPrefs.Key.finished.key(mac: "studio"))
+        defaults.set(false, forKey: NotificationPrefs.Key.liveActivity.key(mac: "laptop"))
+        XCTAssertTrue(NotificationPrefs.stored(for: "studio", in: defaults).finished)
+        XCTAssertFalse(NotificationPrefs.stored(for: "laptop", in: defaults).finished)
+        XCTAssertTrue(NotificationPrefs.stored(for: "studio", in: defaults).liveActivity)
+        XCTAssertFalse(NotificationPrefs.stored(for: "laptop", in: defaults).liveActivity)
+        NotificationPrefs.forget(macID: "studio", in: defaults)
+        XCTAssertFalse(NotificationPrefs.stored(for: "studio", in: defaults).finished)
     }
 
     func testAVerifyPushForAnotherDeviceIsLeftAlone() async {

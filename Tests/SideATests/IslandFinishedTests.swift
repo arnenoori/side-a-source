@@ -251,7 +251,8 @@ import Testing
 
     /// Old phones must keep decoding the event and the push that say so.
     @Test func aDropIsSaidInWordsEveryPhoneDecodes() throws {
-        let event = ServerEvent.finishedResolve(sessionID: "s1", reason: Island.ReadyReason.queueDropped.rawValue)
+        #expect(Island.ReadyReason.queueDropped.rawValue == ServerEvent.finishedQueueDropped)
+        let event = ServerEvent.finishedResolve(sessionID: "s1", reason: ServerEvent.finishedQueueDropped)
         let decoded = try JSONDecoder().decode(ServerEvent.self, from: JSONEncoder().encode(event))
         #expect(decoded == event)
         let payload = RemotePushPayload.queuedDropped(session: "s1", title: "App", text: "after this", mac: "m", now: 1)

@@ -146,8 +146,10 @@ public enum ServerEvent: Hashable, Sendable {
     case requestAdd(RemoteRequest)
     case requestResolve(RequestResolution)
     case finishedAdd(FinishedSession)
-    /// replied, resumed, released, expired
+    /// replied, resumed, released, expired, sentQueued, queueDropped
     case finishedResolve(sessionID: SessionKey, reason: String)
+    /// The `finished.resolve` reason that says the Mac gave up on the session's queued follow-ups.
+    public static let finishedQueueDropped = "queueDropped"
     /// Only the accounts that changed.
     case usageUpdate([RemoteAccount])
     /// An account removed from the Mac's library. An older phone decodes it as `.unknown` and drops the row at its

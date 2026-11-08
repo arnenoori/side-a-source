@@ -5,7 +5,7 @@ import SwiftTerm
 import SwiftUI
 import UIKit
 
-/// The terminal (section 4.9): full bleed and always dark, SwiftTerm on the hosted session's
+/// The terminal: full bleed and always dark, SwiftTerm on the hosted session's
 /// `ws/term`, a glass key bar riding the keyboard, Chat and the session's name floating on top.
 struct TerminalScreen: View {
     let name: String
@@ -259,8 +259,6 @@ private struct TerminalHost: UIViewRepresentable {
 
         init(_ parent: TerminalHost) { self.parent = parent }
 
-        // TerminalViewDelegate
-
         nonisolated func send(source: TerminalView, data: ArraySlice<UInt8>) {
             let bytes = Data(data)
             MainActor.assumeIsolated {
@@ -297,8 +295,6 @@ private struct TerminalHost: UIViewRepresentable {
             MainActor.assumeIsolated { parent.onClipboard(String(decoding: content, as: UTF8.self)) }
         }
         nonisolated func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-
-        // KeyBarKeys
 
         var applicationCursor: Bool { view?.getTerminal().applicationCursor ?? false }
         var control: Bool {

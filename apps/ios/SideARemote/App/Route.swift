@@ -2,7 +2,7 @@ import SideAProtocol
 import SwiftUI
 
 /// Every destination a tab's `NavigationStack` can push. Notification taps, widgets and deep links
-/// resolve to one of these (M2).
+/// resolve to one of these.
 enum Route: Hashable {
     /// A session on one Mac: two Macs can't be told apart by a session id alone.
     case session(SessionKey, mac: String)
@@ -17,7 +17,6 @@ enum Route: Hashable {
     case account(String, mac: String)
     /// The sessions stopped on a limit, on one Mac.
     case waiting(mac: String)
-    case settings
 
     /// The session a page is about, which says which Mac it's on.
     var session: SessionKey? {
@@ -40,7 +39,7 @@ extension EnvironmentValues {
 }
 
 extension View {
-    /// A row or tile that a pushed page zooms out of (section 6.2).
+    /// A row or tile that a pushed page zooms out of.
     @ViewBuilder func zoomSource(_ id: String) -> some View {
         modifier(ZoomSource(id: id))
     }
@@ -105,7 +104,6 @@ struct RouteDestinations: ViewModifier {
         case .images(_, let images, let start): ImageViewer(images: images, start: start)
         case .account(let id, _): AccountDetailView(accountID: id)
         case .waiting: WaitingSessionsView()
-        case .settings: SettingsView()
         }
     }
 }

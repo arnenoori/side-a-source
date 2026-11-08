@@ -16,14 +16,14 @@ public struct TranscriptWindow: Sendable, Equatable {
 /// is for speed; whenever it skips, the window is repaired from `after` pages.
 public actor TranscriptFeed {
     public let sessionID: SessionKey
-    public nonisolated let updates: AsyncStream<TranscriptWindow>
     public private(set) var window = TranscriptWindow()
 
     typealias Fetch = @Sendable (RemoteClient.Page) async throws -> TranscriptPage
     private let fetch: Fetch
     private let subscribe: @Sendable (SessionKey, Cursor?) async -> Void
     private let unsubscribe: @Sendable (SessionKey) async -> Void
-    private let continuation: AsyncStream<TranscriptWindow>.Continuation
+    /// One per `windows()` stream still open.
+    private var watchers: [UUID: AsyncStream<TranscriptWindow>.Continuation] = [:]
     private var before: Cursor?
     /// The latest `after` cursor from a page or a delta; sent back unchanged, never built here.
     public private(set) var cursor: Cursor?
@@ -34,7 +34,6 @@ public actor TranscriptFeed {
     init(sessionID: SessionKey, fetch: @escaping Fetch, subscribe: @escaping @Sendable (SessionKey, Cursor?) async -> Void,
          unsubscribe: @escaping @Sendable (SessionKey) async -> Void) {
         self.sessionID = sessionID; self.fetch = fetch; self.subscribe = subscribe; self.unsubscribe = unsubscribe
-        (updates, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
     }
 
     /// The highest contiguous seq held; -1 before anything is.
@@ -66,9 +65,26 @@ public actor TranscriptFeed {
     public func close() async {
         closed = true
         repair?.cancel()
-        continuation.finish()
+        for watcher in watchers.values { watcher.finish() }
+        watchers = [:]
         await unsubscribe(sessionID)
     }
+
+    /// Each window from now on, until `close`. Every caller gets its own stream: one that ends, as when its task is
+    /// cancelled, ends no other's.
+    public func windows() -> AsyncStream<TranscriptWindow> {
+        let (stream, continuation) = AsyncStream.makeStream(of: TranscriptWindow.self, bufferingPolicy: .bufferingNewest(1))
+        guard !closed else {
+            continuation.finish()
+            return stream
+        }
+        let id = UUID()
+        watchers[id] = continuation
+        continuation.onTermination = { [weak self] _ in Task { await self?.drop(id) } }
+        return stream
+    }
+
+    private func drop(_ watcher: UUID) { watchers[watcher] = nil }
 
     /// Waits for a repair in progress, for tests and callers that need a settled window.
     public func settled() async { await repair?.value }
@@ -187,5 +203,5 @@ public actor TranscriptFeed {
         for message in messages where message.seq >= first && message.seq <= last { window.messages[message.seq - first] = message }
     }
 
-    private func publish() { continuation.yield(window) }
+    private func publish() { for watcher in watchers.values { watcher.yield(window) } }
 }

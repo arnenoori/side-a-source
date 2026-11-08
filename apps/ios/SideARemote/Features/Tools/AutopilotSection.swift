@@ -2,7 +2,7 @@ import SafariServices
 import SideAProtocol
 import SwiftUI
 
-/// Autopilot under the accounts (section 4.14): on or off, a move it's holding with Move Now, then its
+/// Autopilot under the accounts: on or off, a move it's holding with Move Now, then its
 /// decisions, newest first, each opening to the sessions it moved. A section for a `List`.
 struct AutopilotLiveSection: View {
     @Environment(AppModel.self) private var model

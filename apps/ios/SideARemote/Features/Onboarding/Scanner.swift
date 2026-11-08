@@ -173,7 +173,7 @@ struct ScannerScreen: View {
     }
 }
 
-/// setup.md §D: two Macs on different tailnets, and no relay to reach across them.
+/// Two Macs on different tailnets, and no relay to reach across them.
 struct OtherTailnet: Identifiable {
     let invitation: PairingClient.Invitation
     let title: String
@@ -246,12 +246,16 @@ private struct QRScanner: UIViewControllerRepresentable {
 /// the Mac's key hash: without one the connection can't be pinned, and the 6 digits alone could be ground by a
 /// machine in the middle.
 enum PairingLink {
-    static func invitation(_ url: URL) -> PairingClient.Invitation? {
+    /// One of the two forms, with nothing beside the fragment: no user, port or query.
+    static func isForm(_ url: URL) -> Bool {
         let scheme = url.scheme?.lowercased(), host = url.host()?.lowercased()
         let form = (scheme == "sidea-remote" && host == "pair" && ["", "/"].contains(url.path()))
             || (scheme == "https" && host == "getsidea.com" && ["/pair", "/pair/"].contains(url.path()))
-        guard form, url.user() == nil, url.port == nil, url.query() == nil,
-              let invitation = PairingClient.Invitation(url: url), !invitation.fp.isEmpty,
+        return form && url.user() == nil && url.port == nil && url.query() == nil
+    }
+
+    static func invitation(_ url: URL) -> PairingClient.Invitation? {
+        guard isForm(url), let invitation = PairingClient.Invitation(url: url), !invitation.fp.isEmpty,
               !invitation.code.isEmpty, invitation.addresses.allSatisfy({ !$0.hasPrefix(":") }) else { return nil }
         return invitation
     }

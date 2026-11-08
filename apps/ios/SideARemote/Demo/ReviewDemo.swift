@@ -14,10 +14,7 @@ enum ReviewDemo {
 
     /// A pairing link, in any of its forms, carrying the review code.
     static func matches(_ url: URL) -> Bool {
-        let scheme = url.scheme?.lowercased(), host = url.host()?.lowercased()
-        let form = (scheme == "sidea-remote" && host == "pair" && ["", "/"].contains(url.path()))
-            || (scheme == "https" && host == "getsidea.com" && ["/pair", "/pair/"].contains(url.path()))
-        guard form, let fragment = url.fragment(), fragment.hasPrefix("review=") else { return false }
+        guard PairingLink.isForm(url), let fragment = url.fragment(), fragment.hasPrefix("review=") else { return false }
         let code = fragment.dropFirst("review=".count).uppercased()
         let hash = SHA256.hash(data: Data(code.utf8)).map { String(format: "%02x", $0) }.joined()
         return hash == codeHash

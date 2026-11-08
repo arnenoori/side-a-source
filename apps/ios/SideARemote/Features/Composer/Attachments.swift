@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// Photos waiting to go with a session's next reply (section 4.4): each one downscaled to 2048 px on
+/// Photos waiting to go with a session's next reply: each one downscaled to 2048 px on
 /// its long edge, re-encoded as JPEG (which drops EXIF and turns HEIC into something every agent
 /// reads), and uploaded at once; the reply carries the Mac's upload ids. The demo keeps them here.
 @Observable
@@ -69,7 +69,7 @@ final class ComposerAttachments {
 
     private func upload(_ id: UUID, in session: SessionKey) async {
         guard let item = items(session).first(where: { $0.id == id }) else { return }
-        guard let tools, tools.isLive else {
+        guard let tools, !tools.isDemo else {
             // The demo keeps the photo and sends nothing.
             set(id, in: session, .ready("demo-\(id.uuidString)"))
             return

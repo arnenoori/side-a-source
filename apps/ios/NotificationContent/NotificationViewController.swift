@@ -4,7 +4,7 @@ import UIKit
 import UserNotifications
 import UserNotificationsUI
 
-/// The long-press view for QUESTION, PLAN and the REQUEST categories (section 5.3). SwiftUI in a
+/// The long-press view for QUESTION, PLAN and the REQUEST categories. SwiftUI in a
 /// hosting controller, sized by the content's own height. A question answers from here; a plan and
 /// a request keep the category's actions below.
 final class NotificationViewController: UIViewController, UNNotificationContentExtension {

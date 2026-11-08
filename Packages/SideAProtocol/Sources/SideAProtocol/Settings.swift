@@ -92,7 +92,6 @@ public struct TurnPlan: Codable, Hashable, Sendable {
 }
 
 extension TurnPlan {
-    /// How many steps are done.
     public var done: Int { steps.filter { $0.status == .completed }.count }
     /// The step in progress, else the first one left.
     public var current: TranscriptTodo? { steps.first { $0.status == .inProgress } ?? steps.first { $0.status != .completed } }

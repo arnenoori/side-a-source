@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 import Observation
-import SideACore
 import SideAProtocol
 
 /// Phone messages for Claude sessions started in a terminal (opt-in). The bridge's `inbox on` adds SessionStart and

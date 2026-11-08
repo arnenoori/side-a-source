@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteKit
 import SwiftUI
 
-/// New Session (section 4.8): a prompt that fills the sheet, recent folders under it until the user
+/// New Session: a prompt that fills the sheet, recent folders under it until the user
 /// types, and chips riding the keyboard for folder, agent, model and effort, worktree and account.
 /// Start posts `/v1/hosted` under one key per sheet, so a second tap can't make a second session.
 /// With several Macs, the first chip asks which one, unless Sessions already shows only one.

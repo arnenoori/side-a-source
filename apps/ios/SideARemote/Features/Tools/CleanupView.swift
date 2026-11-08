@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// The Mac's Clean Up (section 4.14), pushed inside the Mac sheet: what conversations take on disk,
+/// The Mac's Clean Up, pushed inside the Mac sheet: what conversations take on disk,
 /// Archive Older Than, Restore Archived, and the worktrees no session uses. Removal never forces; a
 /// worktree the Mac keeps says why instead of offering Remove.
 struct CleanupView: View {
@@ -72,14 +72,14 @@ struct CleanupView: View {
                 }
             } footer: {
                 if let archivable, archivable.count > 0 {
-                    Text("Frees \(Self.bytes(archivable.bytes)) on \(model.mac.name). Pinned and running ones stay.")
+                    Text("Frees \(Self.bytes(archivable.bytes))")
                 }
             }
             .confirmationDialog("Archive ^[\(archivable?.count ?? 0) conversation](inflect: true) older than \(days) days?",
                                 isPresented: $confirmingArchive, titleVisibility: .visible) {
                 Button("Archive") { run { "Archived \(try await model.tools.archive(olderThanDays: days))." } }
             } message: {
-                Text("Pinned and running ones stay. Restore Archived brings them back.")
+                Text("Restore Archived brings them back.")
             }
             .confirmationDialog("Restore ^[\(report.archived) archived conversation](inflect: true)?",
                                 isPresented: $confirmingRestore, titleVisibility: .visible) {

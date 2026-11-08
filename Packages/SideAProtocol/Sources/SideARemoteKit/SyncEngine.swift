@@ -68,10 +68,9 @@ public struct RemoteState: Sendable, Equatable {
     public var outcomes: [String: OutboxOutcome] = [:]
     /// The retries the user tapped, by the first attempt's id, oldest first.
     public var retries: [String: [String]] = [:]
-    /// The address that answered last, one of the endpoint's.
+    /// Where the engine's rotation through the endpoint's addresses stood at the last hello. The routed transport picks
+    /// the path each request takes, so the one that answered may be another address or the relay.
     public var address: URL?
-    /// The endpoint with the addresses learned since pairing, to store in place of the paired one; nil until one changes it.
-    public var endpoint: Endpoint?
     /// The Mac said goodbye because it is going to sleep; true until it next answers.
     public var macAsleep = false
     /// Round after round no direct path answered and the relay turned this phone away; false once the Mac answers.
@@ -128,6 +127,8 @@ public actor SyncEngine {
     private var feeds: [SessionKey: TranscriptFeed] = [:]
     private var foreground = true
     private var viewing: SessionKey?
+    /// How many screens `watch` each session.
+    private var watchers: [SessionKey: Int] = [:]
     private var run: Task<Void, Never>?
     private var socket: (any SocketConnection)?
     private var waiting: Task<Void, Never>?
@@ -203,6 +204,24 @@ public actor SyncEngine {
         await sendPresence()
     }
 
+    /// A transcript on screen: its feed, and presence saying it's the one being read. Each call needs its own `unwatch`.
+    public func watch(_ session: SessionKey) async -> TranscriptFeed {
+        watchers[session, default: 0] += 1
+        let feed = transcript(session)
+        await setViewing(session)
+        return feed
+    }
+
+    /// The screen that called `watch` went away. The feed closes with the last screen on its session, and presence
+    /// clears only if no other session took over in the meantime.
+    public func unwatch(_ session: SessionKey) async {
+        let left = (watchers[session] ?? 1) - 1
+        watchers[session] = left > 0 ? left : nil
+        guard left <= 0 else { return }
+        await feeds.removeValue(forKey: session)?.close()
+        if viewing == session, watchers[session] == nil { await setViewing(nil) }
+    }
+
     // MARK: Transcripts
 
     public func transcript(_ session: SessionKey) -> TranscriptFeed {
@@ -230,6 +249,8 @@ public actor SyncEngine {
     }
 
     private func unsubscribe(_ session: SessionKey) async {
+        // Watched again while the last feed closed: the new one keeps the subscription.
+        guard watchers[session] == nil else { return }
         feeds[session] = nil
         if stored.connection.isLive { await send(.unsubscribe(sessions: [session])) }
     }
@@ -241,18 +262,14 @@ public actor SyncEngine {
     /// `ConfirmMessage.subject(requestID:allowMode:)`.
     @discardableResult public func answer(_ request: RequestID, _ answer: RemoteAnswer, mode: PermissionMode? = nil,
                                           confirm: String? = nil) async -> Outbox.Item {
-        let body = (try? RemoteClient.encoder.encode(AnswerBody(answer: answer, mode: mode))) ?? Data()
         // The same key a notification action uses, so a retried tap is a replay. A tap after a refusal is a new attempt:
         // that key could only replay the refusal, or read as its outcome here.
-        let kind = mode == nil ? answer.kind : .allowMode
-        let first = "\(request):\(kind.rawValue)"
+        let first = Outbox.Item.answerID(request, answer, mode: mode)
         let id = switch stored.outcomes[first] {
         case .failed?, .unknown?, .notDelivered?: "\(first):a\(clockKey())"
         default: first
         }
-        return await enqueue(Outbox.Item(id: id, macID: endpoint.macID,
-                                         path: "/v1/requests/\(request)/answer", body: body, createdAt: now(), expiresAt: now() + 86_400,
-                                         confirm: confirm))
+        return await enqueue(.answer(request, answer, mode: mode, id: id, macID: endpoint.macID, now: now(), confirm: confirm))
     }
 
     /// A reply to a finished session needs its `FinishedSession.turnID`.
@@ -260,9 +277,7 @@ public actor SyncEngine {
     /// `id` is the Idempotency-Key, for a caller that recorded it first.
     @discardableResult public func reply(_ session: SessionKey, _ reply: RemoteReply, confirm: String? = nil,
                                          id: String = UUID().uuidString.lowercased()) async -> Outbox.Item {
-        let body = (try? RemoteClient.encoder.encode(reply)) ?? Data()
-        return await enqueue(Outbox.Item(id: id, macID: endpoint.macID, path: "/v1/sessions/\(session)/reply", body: body, createdAt: now(),
-                                         expiresAt: now() + 600, confirm: confirm))
+        await enqueue(.reply(session, reply, id: id, macID: endpoint.macID, now: now(), confirm: confirm))
     }
 
     /// `.nextStep` is Stop Before Next Step: stop mail, hosted or not.
@@ -471,7 +486,6 @@ public actor SyncEngine {
             let learned = endpoint.updated(with: hello.endpoints)
             if learned != endpoint {
                 endpoint = learned
-                stored.endpoint = learned
                 addressIndex = learned.addresses.firstIndex(of: client.address) ?? 0
             }
         }
@@ -652,7 +666,7 @@ public actor SyncEngine {
         case .finishedAdd(let finished): stored.finished[finished.sessionID] = finished
         case .finishedResolve(let session, let reason):
             stored.finished[session] = nil
-            if reason == "queueDropped" { stored.queueDrops[session, default: 0] += 1 }
+            if reason == ServerEvent.finishedQueueDropped { stored.queueDrops[session, default: 0] += 1 }
         case .usageUpdate(let accounts): for account in accounts { stored.accounts[account.id] = account }
         case .accountRemove(let id): stored.accounts[id] = nil
         case .hostedUpsert(let hosted): stored.hosted[hosted.name] = hosted; stored.attention[hosted.name] = nil

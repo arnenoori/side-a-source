@@ -243,7 +243,9 @@ Choosing a path, with `Paths` as one actor per Mac per process:
 3. **Re-race** on an `NWPathMonitor` change (interface added or lost, Wi-Fi ↔ cellular), on a
    connection-level failure of the current path, and every 30 s while on the relay. Promotion has
    hysteresis: a direct path must answer two probes in a row before it replaces the relay. That is
-   DERP's rule in miniature.
+   DERP's rule in miniature. A relay that doesn't answer sits out races for 30 s, doubling to 5 min,
+   except within 10 s of a network change: then its probe is tried once more and a miss doesn't
+   count, since the bridge socket may still have been on the interface that went.
 4. **Migrate make-before-break:** the new path has answered a pinned hello before anything moves.
    New requests go to it at once, in-flight REST calls finish where they are, and sockets opened on
    the old path close with `SocketClosed(4008, "path changed")`. `SyncEngine` already treats 4008 as
@@ -256,7 +258,9 @@ Choosing a path, with `Paths` as one actor per Mac per process:
 
 `SyncEngine` keeps its address rotation for transports that aren't routed. With `RoutedTransport`
 the rotation is harmless, because every address routes to the chosen path. Test Connection asks
-`Paths` for the current path and shows "via relay" in its detail line, nothing more.
+`Paths.retest()` for the path and names it ("through the relay"), and checks the relay on its own with
+`Paths.checkRelay()`: the bridge says whether the Mac is on the relay, then a pinned hello goes through
+it, so a broken relay shows while a direct path still carries everything. The path in use doesn't move.
 
 ### Path-agnostic everywhere
 
@@ -267,7 +271,7 @@ the rotation is harmless, because every address routes to the chosen path. Test 
 | Images (`RemoteClient.image`) | `client.address` | Routed, and retried once across a switch |
 | Notification answers (`Linked/NotificationAnswer.swift`) | `endpoint.baseURL` only | Routed: races every path in the extension, relay included |
 | Widget refresh (`WidgetPublisher`, widget timeline) | The app's last state | Unchanged: the app writes snapshots. Any widget fetch uses the default transport |
-| Test Connection | `.at(address)` per address | Also probes the relay row: "via relay" |
+| Test Connection | `.at(address)` per address | Routed, and a Relay row of its own: `Paths.checkRelay()` |
 | Pairing | `a`, then each `l` | Adds the relay as the last candidate when the QR carries `i` and `r` |
 
 ## Pairing over the relay

@@ -2,7 +2,32 @@
 
 Side A 0.4.0 introduces Sparkle 2.9.6 (exact SPM version, artifact checksum pinned upstream and in Package.resolved). Version 0.3.1 needs one manual download; it does not contain an updater.
 
-The app checks `https://getsidea.com/appcast.xml`, requires an Ed25519-signed feed and validates the update archive before extraction. Installer downloads are also signed with Developer ID and Apple notarized. Sparkle's optional system-profile submission is disabled. Background checks/downloads are enabled by default and can be disabled in Settings. When an update is downloaded, the menu shows "Update to X.Y.Z"; clicking it relaunches into the new version, otherwise it installs on quit.
+The app checks `https://getsidea.com/appcast.xml`, requires an Ed25519-signed feed and validates the update archive before extraction. Installer downloads are also signed with Developer ID and Apple notarized. Sparkle's optional system-profile submission is disabled.
+
+## Automatic updates
+
+Side A always checks for updates in the background (`SUEnableAutomaticChecks`; a Mac that had turned checks off gets them back on). Settings › General › Updates has one switch, **Update Automatically**, on by default. It is Sparkle's `automaticallyDownloadsUpdates`, so a Mac that had turned "Install updates automatically" off keeps it off.
+
+**On.** Sparkle downloads the update and offers its install-now block (`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`). `Updates` keeps it and returns true, then once a minute asks `QuietInstall.hold`, a pure function, whether now is safe. It is safe only when all of these hold:
+
+- nobody is at the Mac: no keyboard or pointer input for 10 minutes, or the screen is locked (`UserPresence`);
+- nothing waits in the island: no permission request, question or plan (`Island.pending`);
+- the pool is answering no request, streams included (`PoolProxy.inFlight`);
+- nothing a relaunch would cut off is under way (`AccountStore.relaunchActivity`): a sign-in or adoption (`signingIn`, `adopting`), a login renewal (`waking`), a bridge command that changes logins, the Keychain or files (`bridgeChanges`: login, logout, adopt, renew, activate, swap, forget, prime, codex-pool-home, cleanup archive/remove-worktree/restore), Test Pool, an open reply field in the island, an unsent message or photo in a Sessions composer (drafts live only in memory), a phone pairing sheet, or Keep Awake's helper being removed.
+
+Before calling the block, Side A reads the feed. Holding the block stalls Sparkle's later cycles, so a waiting build can't be swapped for a newer one: if the feed has superseded it, the waiting build installs anyway and the relaunched app checks again at once, and the newer build follows at the next quiet moment. The block installs and relaunches without any Sparkle window. "Update to X.Y.Z" in the menu uses the same block straight away, even though Sparkle's stalled session keeps `canCheckForUpdates` false. While a block is held, Check for Updates… asks whether to restart into the waiting version instead of opening Sparkle's window (Sparkle couldn't check anyway), and the phone's update check answers that the update is already found. The block is called at most once, on the main thread.
+
+Turning the switch off after a block was taken stops the quiet-install timer but keeps the block: Sparkle has no way to take it back, and its session stays stalled until the block runs or the app quits. Nothing installs by itself; "Update to X.Y.Z" and Check for Updates… still install it, and on quit Sparkle installs it as it does any prepared download (`SPUUpdaterDelegate`: "Sparkle will always attempt to install the update when the app terminates"). The relaunched app checks the feed as usual. Turning the switch back on resumes the timer.
+
+Critical updates and user-initiated checks with nothing held behave as Sparkle does on its own: a critical download is not taken over, and Check for Updates… shows Sparkle's window.
+
+**Off.** Nothing changes from before: Side A returns false from the delegate, Sparkle ends the session so later checks still reach the feed, the menu shows "Update to X.Y.Z" when a check finds one, and the update installs when clicked or on quit. A waiting build the feed has superseded is dropped (`StagedUpdate.superseded`) and the newest one fetched.
+
+**After the relaunch.** For 24 hours the menu shows "Updated to X.Y.Z", which opens that version's GitHub release (made from `releases/vX.Y.Z.md`). `UpdateHistory` records each launched version in user defaults; only a newer version than the last one launched counts. What survives the relaunch:
+
+- hosted sessions run in Side A's own tmux server (`tmux -L sidea`), which nothing stops on quit; tmux holds their metadata and the relaunched app adopts them (`HostedSessions`, docs/remote/hosting.md);
+- the pool helper (`SideAPool`) takes the pool port once Side A's claim file goes on `willTerminate`, serves with the last plan, and hands the port back when the new app starts; an updated helper restarts itself once it isn't serving (`PoolHelper.tick`);
+- Remote says goodbye before the relaunch (`willRelaunch` → `RemoteController.handOff`), so phones reconnect quietly; Keep Awake hands sleep to its helper the same way.
 
 ## Local release
 

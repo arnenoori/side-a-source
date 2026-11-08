@@ -8,7 +8,7 @@ app_path="$PWD/dist/universal/Side A.app"
 if [[ -d "$app_path" ]]; then rm -rf "$app_path"; fi
 mkdir -p "$(dirname "$app_path")"
 ditto "dist/arm64/Side A.app" "$app_path"
-for executable in SideA SideAKeepAwake; do
+for executable in SideA SideAKeepAwake SideAPool; do
   lipo -create "dist/arm64/Side A.app/Contents/MacOS/$executable" \
     "dist/x86_64/Side A.app/Contents/MacOS/$executable" -output "$app_path/Contents/MacOS/$executable"
 done

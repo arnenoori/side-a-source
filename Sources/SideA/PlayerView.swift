@@ -2,8 +2,6 @@ import SwiftUI
 import SideACore
 
 extension Color {
-    static let deckInk = Color(red: 0.13, green: 0.15, blue: 0.14)
-    static let deckPaper = Color(red: 0.91, green: 0.92, blue: 0.91)
     static let deckOrange = Color(red: 0.88, green: 0.29, blue: 0.10)
 }
 

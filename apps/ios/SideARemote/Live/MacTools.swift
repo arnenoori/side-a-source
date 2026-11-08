@@ -40,20 +40,21 @@ final class MacTools {
     /// Photos waiting for each session's next reply.
     let attachments = ComposerAttachments()
 
-    @ObservationIgnored var engine: SyncEngine?
-    /// The Mac these tools act on, for the device keys that sign its terminal.
-    @ObservationIgnored var paired: PairedMac? {
-        didSet { keyless = paired.map { !DeviceKeys.has(.confirm, for: $0.endpoint.macID) || !DeviceKeys.has(.unlock, for: $0.endpoint.macID) } ?? false }
-    }
+    @ObservationIgnored private let mode: Mode
     /// No keys to sign with: this iPhone has none for the Mac (a pairing from before them), or the Mac said it has
     /// none (`details.hint = pairAgain`).
     private var keyless = false
     /// The id the Mac at this pairing's address answers to, when it isn't the one this pairing signs for: its signatures
     /// can't verify, whatever the keys. Side A Dev under the id it shared with release before it got its own, say.
     private(set) var answersAs: String?
-    /// Where terminal input waits for its ack, shared with the extensions.
-    @ObservationIgnored var outbox: Outbox?
-    @ObservationIgnored private let demo: Demo?
+
+    /// Set once. `unavailable`: no Mac to act on, before pairing or when the outbox can't open, so every change fails
+    /// instead of pretending as the demo does.
+    enum Mode {
+        case demo(Demo)
+        case live(Live)
+        case unavailable
+    }
 
     struct Demo {
         var options: OptionsList
@@ -62,15 +63,52 @@ final class MacTools {
         var outlook: UsageOutlook?
     }
 
-    init(engine: SyncEngine? = nil, demo: Demo? = nil) {
-        self.engine = engine; self.demo = demo
-        capabilities = demo == nil ? [] : Self.everything
-        if let demo { options = demo.options; projects = demo.projects; autopilot = demo.autopilot; outlook = demo.outlook }
+    struct Live {
+        let engine: SyncEngine
+        /// The Mac these tools act on, for the device keys that sign for it.
+        let paired: PairedMac
+        /// Where terminal input waits for its ack, shared with the extensions.
+        let outbox: Outbox
+        /// `paired.sign`, unless a test stands in for Face ID, which needs a person.
+        let sign: (DeviceKeys.Signer, ConfirmPurpose, _ subject: String, _ reason: String) async -> String?
+
+        init(engine: SyncEngine, paired: PairedMac, outbox: Outbox,
+             sign: ((DeviceKeys.Signer, ConfirmPurpose, String, String) async -> String?)? = nil) {
+            self.engine = engine; self.paired = paired; self.outbox = outbox
+            self.sign = sign ?? { await paired.sign($0, purpose: $1, subject: $2, reason: $3) }
+        }
+    }
+
+    init(_ mode: Mode = .unavailable) {
+        self.mode = mode
+        capabilities = []
+        switch mode {
+        case .demo(let demo):
+            capabilities = Self.everything
+            options = demo.options; projects = demo.projects; autopilot = demo.autopilot; outlook = demo.outlook
+        case .live(let live):
+            let macID = live.paired.endpoint.macID
+            keyless = !DeviceKeys.has(.confirm, for: macID) || !DeviceKeys.has(.unlock, for: macID)
+        case .unavailable:
+            break
+        }
         attachments.tools = self
     }
 
     /// Talking to a real Mac, not the demo.
-    var isLive: Bool { engine != nil }
+    var isLive: Bool { live != nil }
+    var isDemo: Bool { if case .demo = mode { true } else { false } }
+    private var live: Live? { if case .live(let live) = mode { live } else { nil } }
+    private var paired: PairedMac? { live?.paired }
+
+    /// The Mac to act on, or why there's none.
+    private func connection() throws -> Live {
+        switch mode {
+        case .live(let live): live
+        case .demo: throw ToolError.demo
+        case .unavailable: throw ToolError.unavailable
+        }
+    }
 
     static let everything: Set<Capability> = [.hosted, .terminal, .continueOnPhone, .uploads, .options, .history, .search, .restart, .ports,
                                               .quit, .mac, .cleanup, .autopilot, .incidents, .interrupt, .interruptNextStep, .replyNote,
@@ -96,25 +134,29 @@ final class MacTools {
 
     /// Runs a call the Mac may want signed. The unlock key signs silently, or Face ID when `level` asks and this Mac wants
     /// it; a Mac that wants more than the phone thought says so, and Face ID signs it again. With nothing to sign with
-    /// the call goes as it is: an older Mac takes it, and a newer one's refusal is what the user reads.
+    /// the call goes as it is: an older Mac takes it, and a newer one's refusal is what the user reads. `mustSign`: it
+    /// never goes unsigned, a locked phone throws `.locked`, and Face ID is asked for `level` whatever the Mac lists.
     private func guarded<T>(_ purpose: ConfirmPurpose = .action, subject: String, level: ConfirmLevel = .unlock, reason: String,
-                            _ call: (String?) async throws -> T) async throws -> T {
-        guard let paired else { throw ToolError.demo }
+                            mustSign: Bool = false, _ call: (String?) async throws -> T) async throws -> T {
+        let live = try connection()
         if needsKeys {
+            if mustSign { throw ToolError.pairAgain }
             do { return try await signed { try await call(nil) } } catch let failure as RemoteFailure where [.confirmRequired, .confirmInvalid].contains(failure.error.code) {
                 throw ToolError.pairAgain
             }
         }
-        func signature(_ signer: DeviceKeys.Signer) async -> String? {
-            await DeviceKeys.header(signer, macID: paired.endpoint.macID, deviceID: paired.deviceID, purpose: purpose, subject: subject, reason: reason)
+        func signature(_ signer: DeviceKeys.Signer) async throws -> String? {
+            let header = await live.sign(signer, purpose, subject, reason)
+            if header == nil, mustSign { throw signer == .confirm ? ToolError.cancelled : ToolError.locked }
+            return header
         }
-        let faceID = level == .biometric && can(.confirmActions)
-        let first = await signature(faceID ? .confirm : .unlock)
+        let faceID = level == .biometric && (mustSign || can(.confirmActions))
+        let first = try await signature(faceID ? .confirm : .unlock)
         if faceID, first == nil { throw ToolError.cancelled }
         do {
             return try await signed { try await call(first) }
         } catch let failure as RemoteFailure where !faceID && failure.error.confirmLevel == .biometric && !failure.error.pairAgain {
-            guard let stronger = await signature(.confirm) else { throw ToolError.cancelled }
+            guard let stronger = try await signature(.confirm) else { throw ToolError.cancelled }
             return try await signed { try await call(stronger) }
         }
     }
@@ -144,7 +186,7 @@ final class MacTools {
 
     /// The demo's Autopilot and combined room.
     func showDemoRotation(_ state: AutopilotState, outlook: UsageOutlook?) {
-        guard !isLive else { return }
+        guard isDemo else { return }
         autopilot = state
         self.outlook = outlook
     }
@@ -165,15 +207,14 @@ final class MacTools {
     }
 
     private func client() async throws -> RemoteClient {
-        guard let engine else { throw ToolError.demo }
-        return await engine.client
+        await (try connection()).engine.client
     }
 
     // MARK: Options and projects
 
     /// Once per launch, again on demand; a Mac without `options` leaves the composer's own list.
     func loadOptions(force: Bool = false) async {
-        guard demo == nil, can(.options), force || options == nil else { return }
+        guard !isDemo, can(.options), force || options == nil else { return }
         if let list = try? await client().options() { options = list }
     }
 
@@ -184,7 +225,7 @@ final class MacTools {
     func agent(_ agent: AgentProvider) -> AgentOptions? { options?.agents.first { $0.agent == agent } }
 
     func loadProjects() async throws {
-        guard demo == nil else { return }
+        guard !isDemo else { return }
         projects = try await client().projects().projects
     }
 
@@ -232,18 +273,12 @@ final class MacTools {
             try await client().quitIdle(olderThanMinutes: olderThanMinutes, confirm: $0).quit
         }
     }
-    func endHosted(_ name: String) async throws {
-        try await guarded(subject: ConfirmMessage.subject(action: .endHosted, target: name), reason: "End this session") { try await client().endHosted(name, confirm: $0) }
-    }
 
     /// Trust and Start: after Face ID the confirm key signs the folder the user saw, and the Mac answers its trust
     /// dialog. A dialog that's already gone (409 `cannot_deliver`) just clears the card.
     func trust(_ name: String) async throws {
-        guard let hosted = hosted[name], let paired else { throw ToolError.demo }
-        guard !needsKeys else { throw ToolError.pairAgain }
-        guard let confirm = await DeviceKeys.header(.confirm, macID: paired.endpoint.macID, deviceID: paired.deviceID, purpose: .trust,
-                                                    subject: try ConfirmMessage.subject(trust: name, cwd: hosted.cwd),
-                                                    reason: "Trust \(hosted.project) and start") else { throw ToolError.cancelled }
+        guard let hosted = hosted[name] else { throw ToolError.demo }
+        let confirm = try await faceID(.trust, subject: ConfirmMessage.subject(trust: name, cwd: hosted.cwd), reason: "Trust \(hosted.project) and start")
         do {
             self.hosted[name] = try await signed { try await client().trust(hosted, confirm: confirm) }
         } catch let failure as RemoteFailure where failure.error.code == .cannotDeliver {}
@@ -282,27 +317,15 @@ final class MacTools {
     /// for a change the phone took as safe says so (`confirm_required`, level biometric), and Face ID signs it again.
     /// `title` names the change for the Face ID prompt.
     func change(_ session: RemoteSession, _ change: SettingsChange, title: String) async throws -> SettingsResult {
-        guard isLive else {
+        if isDemo {
             let result = SettingsResult(settings: SessionSettings(model: change.model, effort: change.effort, mode: change.mode, fast: change.fast),
                                         nextTurn: session.agent == .codex)
             changed[session.id] = (changed[session.id] ?? SessionSettings()).merging(result.settings)
             return result
         }
-        guard let paired else { throw ToolError.demo }
-        guard !needsKeys else { throw ToolError.pairAgain }
-        let subject = try ConfirmMessage.subject(sessionID: session.id, settings: change)
-        func send(_ signer: DeviceKeys.Signer) async throws -> SettingsResult {
-            guard let confirm = await DeviceKeys.header(signer, macID: paired.endpoint.macID, deviceID: paired.deviceID, purpose: .settings,
-                                                        subject: subject, reason: "Switch to \(title)") else {
-                throw signer == .confirm ? ToolError.cancelled : ToolError.locked
-            }
-            return try await signed { try await client().settings(session.id, change, confirm: confirm) }
-        }
-        let result: SettingsResult
-        do {
-            result = try await send(change.raises ? .confirm : .unlock)
-        } catch let failure as RemoteFailure where !change.raises && failure.error.confirmLevel == .biometric && !failure.error.pairAgain {
-            result = try await send(.confirm)
+        let result = try await guarded(.settings, subject: ConfirmMessage.subject(sessionID: session.id, settings: change),
+                                       level: change.raises ? .biometric : .unlock, reason: "Switch to \(title)", mustSign: true) { confirm in
+            try await client().settings(session.id, change, confirm: confirm)
         }
         // The Mac's own reading where it has one ("claude-opus-5-5" for "opus"), so the row's catches up with it.
         let done = result.settings
@@ -314,13 +337,13 @@ final class MacTools {
 
     /// Compacts an idle session's context; the demo pretends.
     func compact(_ session: SessionKey) async throws {
-        guard isLive else { return }
+        if isDemo { return }
         try await guarded(subject: ConfirmMessage.subject(action: .compact, target: session), reason: "Compact this session") { try await client().compact(session, confirm: $0) }
     }
 
     /// Starts a review of an idle Codex session's uncommitted changes; the demo pretends.
     func review(_ session: SessionKey) async throws {
-        guard isLive else { return }
+        if isDemo { return }
         try await guarded(subject: ConfirmMessage.subject(action: .review, target: session, body: ReviewRequest()), reason: "Review this session's changes") {
             try await client().review(session, confirm: $0)
         }
@@ -328,7 +351,7 @@ final class MacTools {
 
     /// What a turn changed. The demo gathers its transcript's diffs, as the Mac would for a Claude turn.
     func turnDiff(_ session: SessionKey, turn: String, demo messages: [TranscriptMessage]) async throws -> TurnDiff {
-        guard isLive else {
+        if isDemo {
             var files = messages.flatMap(\.tools).flatMap(\.diffs)
             #if DEBUG
             // `--cut-diff`: each file as the Mac sends one over 2,000 lines.
@@ -346,11 +369,12 @@ final class MacTools {
 
     /// A terminal view of a hosted session; the demo's shows a still screen.
     func terminal(_ name: String) async -> TerminalModel {
-        guard let engine, let outbox else { return TerminalModel(name: name, session: nil) }
+        guard let live else { return TerminalModel(name: name, session: nil) }
+        let paired = live.paired
         // Each open is signed with the Face ID key, which the Mac requires for a terminal; one Face ID holds for 5 minutes.
-        let confirm = needsKeys ? nil : paired.map { DeviceKeys.terminal(macID: $0.endpoint.macID, deviceID: $0.deviceID) }
-        let session = TerminalSession(client: await engine.client, name: name, viewer: TerminalModel.viewer(for: name, mac: paired?.endpoint.macID),
-                                      outbox: outbox,
+        let confirm = needsKeys ? nil : DeviceKeys.terminal(macID: paired.endpoint.macID, deviceID: paired.deviceID)
+        let session = TerminalSession(client: await live.engine.client, name: name, viewer: TerminalModel.viewer(for: name, mac: paired.endpoint.macID),
+                                      outbox: live.outbox,
                                       confirm: confirm)
         return TerminalModel(name: name, session: session)
     }
@@ -358,7 +382,7 @@ final class MacTools {
     // MARK: Ports
 
     /// The key pinned at pairing, which the preview's WebView holds the Mac to as well.
-    func serverKeyHash() async -> String? { await engine?.endpoint.serverKeyHash }
+    func serverKeyHash() async -> String? { await live?.engine.endpoint.serverKeyHash }
 
     func preview(_ session: SessionKey, port: Int) async throws -> URL {
         let preview = try await guarded(subject: ConfirmMessage.subject(action: .preview, target: "\(session):\(port)"), reason: "Preview this server") {
@@ -394,7 +418,7 @@ final class MacTools {
         try await guarded(subject: ConfirmMessage.subject(action: .removeWorktree, target: id), reason: "Remove this worktree") { try await client().removeWorktree(id, confirm: $0) }
     }
     func loadAutopilot() async throws {
-        guard demo == nil, can(.autopilot) else { return }
+        guard !isDemo, can(.autopilot) else { return }
         autopilot = try await client().autopilot()
     }
 
@@ -405,7 +429,7 @@ final class MacTools {
     /// Autopilot on or off, after Face ID either way: the confirm key signs it. The demo just flips it.
     func setAutopilot(_ enabled: Bool) async throws {
         let change = AutopilotChange(enabled: enabled)
-        guard isLive else {
+        if isDemo {
             autopilot = autopilot?.changing(enabled: enabled) ?? AutopilotState(enabled: enabled)
             return
         }
@@ -417,7 +441,7 @@ final class MacTools {
     /// Answering with the recommended choice after a minute, on or off, after Face ID like Autopilot. The demo just flips it.
     func setAnswersRecommended(_ enabled: Bool) async throws {
         let change = AutopilotChange(enabled: enabled)
-        guard isLive else {
+        if isDemo {
             autopilot = autopilot?.changing(answersRecommended: enabled) ?? AutopilotState(enabled: true, answersRecommended: enabled)
             return
         }
@@ -435,14 +459,14 @@ final class MacTools {
 
     /// The percentage at which Autopilot moves off an account, after Face ID. The demo just changes it.
     func setSwapAt(_ percent: Int) async throws {
-        guard isLive else { autopilot = autopilot?.changing(swapAt: percent); return }
+        if isDemo { autopilot = autopilot?.changing(swapAt: percent); return }
         let confirm = try await faceID(.rotation, subject: ConfirmMessage.subject(swapAt: percent), reason: "Move at \(percent)%")
         autopilot = try await signed { try await client().setSwapAt(percent, confirm: confirm) }
     }
 
     /// Ranking accounts by Fable's room while Fable runs, after Face ID. The demo just changes it.
     func setFollowFable(_ enabled: Bool) async throws {
-        guard isLive else { autopilot = autopilot?.changing(followFable: enabled); return }
+        if isDemo { autopilot = autopilot?.changing(followFable: enabled); return }
         let confirm = try await faceID(.rotation, subject: ConfirmMessage.subject(followFable: enabled),
                                        reason: enabled ? "Follow Fable" : "Stop following Fable")
         autopilot = try await signed { try await client().setFollowFable(enabled, confirm: confirm) }
@@ -450,7 +474,7 @@ final class MacTools {
 
     /// First, Normal or Last, after Face ID; the engine applies the list the Mac answers.
     func setPriority(_ account: RemoteAccount, _ level: PriorityLevel) async throws {
-        guard let engine else { throw ToolError.demo }
+        let engine = try connection().engine
         let confirm = try await faceID(.rotation, subject: ConfirmMessage.subject(account: account.id, priority: level),
                                        reason: "Use \(account.name) \(RotationText.priority(level).lowercased())")
         try await signed { try await engine.setPriority(account.id, level, confirm: confirm) }
@@ -458,7 +482,7 @@ final class MacTools {
 
     /// Whether Autopilot may use an account, after Face ID; the engine applies the list the Mac answers.
     func setAuto(_ account: RemoteAccount, _ enabled: Bool) async throws {
-        guard let engine else { throw ToolError.demo }
+        let engine = try connection().engine
         let confirm = try await faceID(.rotation, subject: ConfirmMessage.subject(account: account.id, auto: enabled),
                                        reason: enabled ? "Let Autopilot use \(account.name)" : "Keep Autopilot off \(account.name)")
         try await signed { try await engine.setAuto(account.id, enabled, confirm: confirm) }
@@ -468,17 +492,16 @@ final class MacTools {
 
     /// Makes an account its provider's login on the Mac, after Face ID; the engine applies the list the Mac answers.
     func useAccount(_ account: RemoteAccount) async throws {
-        guard let engine else { throw ToolError.demo }
+        let engine = try connection().engine
         let confirm = try await faceID(.account, subject: ConfirmMessage.subject(useAccount: account.id), reason: "Use \(account.name)")
         try await signed { try await engine.useAccount(account.id, confirm: confirm) }
     }
 
     /// The confirm key's signature after Face ID; a cancel throws `ToolError.cancelled`.
     private func faceID(_ purpose: ConfirmPurpose, subject: String, reason: String) async throws -> String {
-        guard let paired else { throw ToolError.demo }
+        let live = try connection()
         guard !needsKeys else { throw ToolError.pairAgain }
-        guard let confirm = await DeviceKeys.header(.confirm, macID: paired.endpoint.macID, deviceID: paired.deviceID, purpose: purpose,
-                                                    subject: subject, reason: reason) else { throw ToolError.cancelled }
+        guard let confirm = await live.sign(.confirm, purpose, subject, reason) else { throw ToolError.cancelled }
         return confirm
     }
 
@@ -488,7 +511,7 @@ final class MacTools {
     func search(_ query: String, cursor: Cursor?) async throws -> SearchResults { try await client().search(query, cursor: cursor, limit: 30) }
     func change(_ conversation: String, _ change: HistoryChange) async throws -> PastSession {
         // The demo keeps a live session's pin and title here; it has no History to change.
-        if demo != nil {
+        if isDemo {
             let updated = (past[conversation] ?? PastSession(id: conversation, agent: .claude, title: "", project: "")).applying(change)
             past[conversation] = updated
             return updated
@@ -507,15 +530,14 @@ final class MacTools {
 
     /// The first page of History, for which live sessions are pinned and renamed.
     func loadPast() async {
-        guard demo == nil, can(.history), past.isEmpty, let page = try? await history(archived: false, cursor: nil) else { return }
+        guard !isDemo, can(.history), past.isEmpty, let page = try? await history(archived: false, cursor: nil) else { return }
         for row in page.sessions where row.isPinned || row.customTitle != nil { past[row.id] = row }
     }
 
     // MARK: Uploads
 
     func upload(_ data: Data, mime: String) async throws -> Upload {
-        guard let engine else { throw ToolError.demo }
-        return try await engine.upload(data, mime: mime)
+        try await connection().engine.upload(data, mime: mime)
     }
 
     /// The Mac's own words when it sent some.
@@ -523,6 +545,7 @@ final class MacTools {
         switch error {
         case let failure as RemoteFailure: failure.error.message
         case ToolError.demo: "The demo doesn't change anything."
+        case ToolError.unavailable: "Side A can't open its storage on this iPhone. Reinstall it to make changes."
         case ToolError.badURL: "The Mac sent an address the phone can't open."
         case ToolError.cancelled: "Cancelled."
         case ToolError.locked: "Unlock your iPhone to do this."
@@ -543,6 +566,8 @@ extension AutopilotState {
 
 enum ToolError: Error {
     case demo, badURL
+    /// No Mac to act on: not paired, or the outbox couldn't open (`MacTools.Mode.unavailable`).
+    case unavailable
     /// Face ID was cancelled: nothing to report.
     case cancelled
     /// The unlock key wouldn't sign: the phone locked, or it has no keys for this Mac.

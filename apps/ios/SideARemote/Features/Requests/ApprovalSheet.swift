@@ -3,8 +3,8 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// The approval sheet (section 4.5): context, headline, risk, payload, then Allow / Deny right under it, the sheet
-/// as tall as that and no taller. Pages between requests when several wait. A plan gets the review of section 4.7
+/// The approval sheet: context, headline, risk, payload, then Allow / Deny right under it, the sheet
+/// as tall as that and no taller. Pages between requests when several wait. A plan gets its own review
 /// instead: the Markdown, then Keep Planning and Approve.
 struct ApprovalSheet: View {
     @Environment(AppModel.self) private var model
@@ -250,11 +250,8 @@ struct ApprovalSheet: View {
                             Text("Approve").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 34)
                         }
                         Menu {
-                            Button {
+                            Button("Approve and Accept Edits") {
                                 answer(request, .approvePlan(acceptEdits: true))
-                            } label: {
-                                Text("Approve and Accept Edits")
-                                Text("Edits won't ask again in this session.")
                             }
                         } label: {
                             Image(systemName: "chevron.down").fontWeight(.semibold).frame(minHeight: 34)
@@ -330,8 +327,7 @@ struct ApprovalSheet: View {
         if model.tools.needsKeys { return answer(request, allow) }
         if let mac = model.link?.mac, DeviceKeys.has(.confirm, for: mac.endpoint.macID),
            let subject = try? ConfirmMessage.subject(requestID: request.id, answer: allow) {
-            guard let confirm = await DeviceKeys.header(.confirm, macID: mac.endpoint.macID, deviceID: mac.deviceID, purpose: .allow,
-                                                        subject: subject, reason: "Allow \(RequestText.visible(request.detail))") else {
+            guard let confirm = await mac.sign(.confirm, purpose: .allow, subject: subject, reason: "Allow \(RequestText.visible(request.detail))") else {
                 failures += 1
                 return
             }

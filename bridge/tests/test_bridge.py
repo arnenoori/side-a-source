@@ -40,6 +40,29 @@ class BridgeTests(unittest.TestCase):
         versions=patch.object(bridge,'claude_versions',return_value=[(2,1,303)]); versions.start(); self.addCleanup(versions.stop); self.versions_stop=versions.stop
     def tearDown(self):
         self.temp.cleanup()
+    def test_failures_carry_a_code_the_account_name_cant_fake(self):
+        sys.path.insert(0,str(Path(bridge.__file__).parent)); import codex_bridge
+        self.assertEqual(bridge.failure_line(bridge.SignInAgain("Sign in to bridle again.")), "Side A[signin]: Sign in to bridle again.")
+        self.assertEqual(bridge.failure_line(codex_bridge.SignInAgain("Sign in to dev429 again.")), "Side A[signin]: Sign in to dev429 again.")
+        self.assertEqual(bridge.failure_line(bridge.LoginIdle("Login idle; its last reading still applies.")),
+                         "Side A[idle]: Login idle; its last reading still applies.")
+        self.assertEqual(bridge.failure_line(codex_bridge.RateLimited("Codex usage is rate-limited (429).")),
+                         "Side A[rate-limited]: Codex usage is rate-limited (429).")
+        self.assertEqual(bridge.failure_line(bridge.Unconfirmed("Can't confirm whose login this is yet; retrying later.")),
+                         "Side A[unconfirmed]: Can't confirm whose login this is yet; retrying later.")
+        self.assertEqual(bridge.failure_line(ValueError("idle 429")), "Side A: idle 429")
+        self.assertEqual(bridge.failure_line(bridge.urllib.error.HTTPError("u", 500, "x", {}, None)), "Side A: HTTP Error 500: x")
+
+    def test_only_a_429_from_the_usage_endpoint_is_a_rate_limit(self):
+        blob = {"claudeAiOauth": {"accessToken": "t", "expiresAt": (time.time() + 3600) * 1000}}
+        account = {"id": "a", "name": "idle 429", "email": "a@example.com"}
+        for status, kind in [(429, bridge.RateLimited), (500, ValueError), (401, bridge.SignInAgain)]:
+            error = bridge.urllib.error.HTTPError("u", status, "x", {}, None)
+            with patch.object(bridge, "owned_login", return_value=blob), patch.object(bridge, "post_json", side_effect=error):
+                with self.assertRaises(ValueError) as caught:
+                    bridge.claude_usage(Path("/nonexistent"), {}, account)
+            self.assertIs(type(caught.exception), kind)
+
     def test_corrupt_config_is_not_treated_as_empty(self):
         path = self.root / 'config.json'; path.write_text('{broken')
         with self.assertRaises(json.JSONDecodeError): bridge.read_json(path, {})

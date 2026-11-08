@@ -3,7 +3,7 @@ import Observation
 import SideAProtocol
 import SideARemoteKit
 
-/// One History list from the Mac (section 4.14), the past conversations or the archive, paged by the
+/// One History list from the Mac, the past conversations or the archive, paged by the
 /// Mac's cursors. Pins, titles and archives are the Mac's; each change replaces the row with its answer.
 /// The demo lists its own sample and changes it here only.
 @Observable

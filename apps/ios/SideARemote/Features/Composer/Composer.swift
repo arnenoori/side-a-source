@@ -7,7 +7,7 @@ enum FollowBadge: Equatable {
     case none, newMessages(Int), waiting
 }
 
-/// The stop button's long-press menu, the toolbar's Steer section and a row's context menu (section 4.14).
+/// The stop button's long-press menu, the toolbar's Steer section and a row's context menu.
 enum Steer: Hashable, CaseIterable {
     case interruptNow, stopBeforeNextStep, note
 
@@ -43,7 +43,7 @@ enum Steer: Hashable, CaseIterable {
     }
 }
 
-/// The floating composer (section 4.4): a round `+`, a pill field with its trailing control, and
+/// The floating composer: a round `+`, a pill field with its trailing control, and
 /// the follow-mode button, all one `GlassEffectContainer` so they blend and morph.
 struct Composer: View {
     @Binding var text: String
@@ -201,12 +201,12 @@ struct Composer: View {
     }
 
     @ViewBuilder private var trailingControl: some View {
-        let mode: TrailingMode = hasText ? .send : (canInterrupt ? .interrupt : .dictate)
+        let mode: TrailingMode = hasText || !canInterrupt ? .send : .interrupt
+        let idle = mode == .send && (!hasText || uploading)
         Button {
             switch mode {
             case .send: send()
             case .interrupt: onInterrupt()
-            case .dictate: focused.wrappedValue = true
             }
         } label: {
             Image(systemName: mode.symbol)
@@ -221,14 +221,14 @@ struct Composer: View {
                 .compositingGroup()
         }
         .buttonStyle(.plain)
-        .disabled(mode == .send && uploading)
-        .opacity(mode == .send && uploading ? 0.4 : 1)
+        .disabled(idle)
+        .opacity(idle ? 0.3 : 1)
         .contextMenu {
             if mode == .interrupt {
                 ForEach(steers, id: \.self) { steer in
                     Button(steer.title, systemImage: steer.symbol) { onSteer(steer) }
                 }
-            } else if mode == .send, let onQueue {
+            } else if mode == .send, hasText, let onQueue {
                 Button("Send Now", systemImage: "arrow.up") { send() }
                 Button("Send After This Turn", systemImage: "clock") {
                     sends += 1
@@ -241,19 +241,17 @@ struct Composer: View {
     }
 
     private enum TrailingMode {
-        case send, interrupt, dictate
+        case send, interrupt
         var symbol: String {
             switch self {
             case .send: "arrow.up"
             case .interrupt: "stop.fill"
-            case .dictate: "mic"
             }
         }
         var accessibilityLabel: String {
             switch self {
             case .send: "Send"
             case .interrupt: "Interrupt session"
-            case .dictate: "Dictate"
             }
         }
     }
@@ -329,7 +327,7 @@ struct Composer: View {
 }
 
 /// v0's Add to Chat: Camera / Photos / Files / Paste tiles, then Model, Effort and Commands from the
-/// Mac's `/v1/options` (section 4.4).
+/// Mac's `/v1/options`.
 struct AddSheet: View {
     let session: RemoteSession?
     /// A command picked from the list goes into the field.

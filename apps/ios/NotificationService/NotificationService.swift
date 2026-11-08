@@ -30,7 +30,7 @@ final class NotificationService: UNNotificationServiceExtension {
         // and category show as sent; `PushOpener.verified` is what keeps them from being acted on.
         guard let sealed = content.userInfo["e"] as? String else {
             #if DEBUG
-            if (content.userInfo["p"] as? [String: Any])?["mac"] as? String == "demo" { return contentHandler(content) }
+            if (content.userInfo["p"] as? [String: Any])?["mac"] as? String == PushOpener.demoMac { return contentHandler(content) }
             #endif
             RemoteLog.error(.push, "unsealed \(content.categoryIdentifier) \(request.identifier): Open only")
             PushOpener.generic(content, body: nil)

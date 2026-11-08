@@ -199,8 +199,7 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     let sync = try engine(mac)
     await sync.start()
     try await until("unpaired") { await sync.state.connection == .unpaired }
-    let state = await sync.state
-    #expect(await sync.endpoint == endpoint && state.endpoint == nil && mac.learned.isEmpty)
+    #expect(await sync.endpoint == endpoint && mac.learned.isEmpty)
     #expect(endpoint.updated(with: Endpoints(tailnet: "")) == endpoint)
 }
 

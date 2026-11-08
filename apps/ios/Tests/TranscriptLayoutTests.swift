@@ -256,5 +256,16 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertEqual(DeepLink(URL(string: "sidea-remote://accounts")!), .accounts)
         XCTAssertNil(DeepLink(URL(string: "sidea-remote://session/abc")!))
         XCTAssertNil(DeepLink(URL(string: "https://session/mac/abc")!))
+        XCTAssertEqual(DeepLink(URL(string: "sidea-remote://mac/mac1")!), .mac("mac1"))
+        XCTAssertNil(DeepLink(URL(string: "sidea-remote://mac")!))
+    }
+
+    /// Open on a grouped Ready, which names no session, goes to that Mac's sessions; one turn's goes to its session.
+    func testOpenOnReadyGoesToTheMacOrTheSession() {
+        let grouped = PushPayload(t: PushKind.finished.rawValue, mac: "mac1", sent: 0, title: "3 sessions ready", body: "a, b, c")
+        XCTAssertEqual(AppDelegate.link(for: grouped).flatMap(DeepLink.init), .mac("mac1"))
+        let one = PushPayload(t: PushKind.finished.rawValue, mac: "mac1", sent: 0, sid: "s1", title: "a", turnID: "t1", summary: "Done.")
+        XCTAssertEqual(AppDelegate.link(for: one).flatMap(DeepLink.init), .session("s1", mac: "mac1"))
+        XCTAssertNil(AppDelegate.link(for: PushPayload(t: PushKind.limit.rawValue, mac: "mac1", sent: 0)))
     }
 }

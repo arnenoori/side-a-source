@@ -58,14 +58,6 @@ final class IslandServer: @unchecked Sendable {
         }
     }
 
-    func stop() {
-        queue.sync {
-            acceptSource?.cancel(); acceptSource = nil
-            if listener >= 0 { close(listener); listener = -1; unlink(path) }
-            for id in Array(connections.keys) { drop(id, notify: false) }
-        }
-    }
-
     func reply(_ id: UInt64, _ line: Data) {
         queue.async { [self] in
             guard let connection = connections[id] else { return }

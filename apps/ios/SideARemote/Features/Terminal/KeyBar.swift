@@ -10,7 +10,7 @@ protocol KeyBarKeys: AnyObject {
     func hideKeyboard()
 }
 
-/// The keys a phone keyboard lacks, as glass capsules riding it (section 4.9): Esc, a sticky Control,
+/// The keys a phone keyboard lacks, as glass capsules riding it: Esc, a sticky Control,
 /// Tab, the arrows (they repeat on hold), ⌃C, the shell's punctuation, and hide the keyboard.
 struct KeyBar: View {
     let keys: any KeyBarKeys

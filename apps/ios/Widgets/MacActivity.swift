@@ -5,7 +5,7 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// The Live Activity (section 5.4): counts from the push, words from the phone's own caches. The top
+/// The Live Activity: counts from the push, words from the phone's own caches. The top
 /// request's words come from the Service Extension's decrypted copy; without one it says "1 needs you"
 /// and opens the app.
 struct MacActivityWidget: Widget {

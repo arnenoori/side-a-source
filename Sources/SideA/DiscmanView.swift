@@ -47,8 +47,6 @@ final class DiscSceneView: SCNView {
         guard !hitTest(point).isEmpty else { return }
         let node = control(at: point)
         let action = node?.name.map { String($0.dropFirst(7)) }
-        // The shell can be clicked to open or dragged to reposition the object.
-        // Transport buttons activate on press, just like the physical controls.
         if action == nil || action == "open" {
             housingMouseDown = event
             housingClick = action
@@ -283,7 +281,6 @@ struct DiscmanView: NSViewRepresentable {
             ambient.light?.intensity = 170
             ambient.light?.color = NSColor.white
             scene.rootNode.addChildNode(ambient)
-            // A neutral studio environment gives the aluminum actual reflections.
             let environment = NSImage(size: NSSize(width: 512, height: 256), flipped: false) { rect in
                 NSGradient(colors: [NSColor(white: 0.32, alpha: 1), .white, NSColor(white: 0.6, alpha: 1)])!.draw(in: rect, angle: 90)
                 return true

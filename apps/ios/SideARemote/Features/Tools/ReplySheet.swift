@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// Reply from the list (section 4.14): a short sheet with the field focused, for a session that has
+/// Reply from the list: a short sheet with the field focused, for a session that has
 /// finished its turn; the reply goes the way the composer's would.
 struct ReplySheet: View {
     let sessionID: SessionKey

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ServiceManagement
 import SideACore
 
 enum PoolShareState: Equatable {
@@ -9,8 +10,15 @@ enum PoolShareState: Equatable {
 }
 
 extension AccountStore: PoolDecisions {
-    var poolFile: URL { root.appendingPathComponent("runtime/pool") }
-    private var poolKeyFile: URL { root.appendingPathComponent("runtime/pool-key") }
+    var poolFiles: PoolFiles { PoolFiles(root: root) }
+    var poolFile: URL { poolFiles.pool }
+    private var poolKeyFile: URL { poolFiles.key }
+    /// SideAPool: serves the pool on its port while the app isn't running.
+    private var poolHelper: SMAppService { Self.poolHelper() }
+    /// A local build registers its own, so it never stops or replaces the installed app's.
+    nonisolated static func poolHelper() -> SMAppService {
+        SMAppService.agent(plistName: Bundle.main.bundleIdentifier == "com.arnenoori.sidea.dev" ? "com.sidea.pool.dev.plist" : "com.sidea.pool.plist")
+    }
     private var poolShareKeyFile: URL { root.appendingPathComponent("runtime/pool-share-key") }
 
     func setPoolShare(_ enabled: Bool) async {
@@ -84,22 +92,39 @@ extension AccountStore: PoolDecisions {
         guard !isDemo || checksLogins else { return }
         guard config.pool == true else {
             pool?.stop()
-            pool = nil
-            poolPort = nil
+            // A start under way sees pool mode off when it finishes, and stops.
+            if case .starting = poolRun {} else { poolRun = .off }
             poolShareGeneration += 1
             poolShareState = .off
-            try? FileManager.default.removeItem(at: poolFile)
+            // The plan first: a helper that finds none leaves for good.
+            for file in [poolFiles.plan, poolFiles.app, poolFile] { try? FileManager.default.removeItem(at: file) }
+            lastPoolPlan = nil
+            if poolHelper.status != .notRegistered {
+                try? await poolHelper.unregister()
+                // Turned back on while it went: that start found it still registered and left it.
+                if config.pool == true { registerPoolHelper() }
+            }
             await syncCodexPoolHomes()
             return
         }
-        guard pool == nil, !poolStarting else { return }
-        poolStarting = true
-        defer { poolStarting = false }
+        switch poolRun {
+        case .starting, .running: return
+        case .off, .failed: poolRun = .starting
+        }
         do {
             let proxy = PoolProxy(key: try poolKey(), decisions: self)
-            let port = try await proxy.start(port: poolPreferredPort)
+            // Claimed before the port: the helper lets it go within a second of seeing this process named here.
+            try writePrivate(PoolFiles.claim(), to: poolFiles.app)
+            let port: UInt16
+            do { port = try await takePoolPort(proxy) } catch {
+                // Nobody serves under this claim, so the helper mustn't stand down for it.
+                try? FileManager.default.removeItem(at: poolFiles.app)
+                throw error
+            }
             // Turned off while it started.
-            guard config.pool == true else { proxy.stop(); return }
+            guard config.pool == true else { proxy.stop(); poolRun = .off; return }
+            // Turning pool mode off and on while the port opened removed the claim.
+            try writePrivate(PoolFiles.claim(), to: poolFiles.app)
             // The file first: a pool with no file to find would serve nobody and block every retry.
             do {
                 try writePrivate("http://127.0.0.1:\(port) \(proxy.key) \(ProcessInfo.processInfo.processIdentifier)\n", to: poolFile)
@@ -107,20 +132,60 @@ extension AccountStore: PoolDecisions {
                 proxy.stop()
                 throw error
             }
-            pool = proxy
+            poolRun = .running(proxy, port: port)
             if poolQuitObserver == nil {
-                // A quit leaves no file behind for shells to find: commands use logins again at once.
-                let file = poolFile
+                // The helper takes over once the claim is gone. Without one, no pool file is left for shells to find, so
+                // commands use logins again at once.
+                let files = poolFiles
                 poolQuitObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-                    try? FileManager.default.removeItem(at: file)
+                    try? FileManager.default.removeItem(at: files.app)
+                    if Self.poolHelper().status != .enabled { try? FileManager.default.removeItem(at: files.pool) }
                 }
             }
-            poolPort = port
             autopilotLog.write("Pool mode on, at 127.0.0.1:\(port).")
+            writePoolPlan()
+            registerPoolHelper()
             await syncPoolShare()
             await syncCodexPoolHomes()
         } catch {
+            poolRun = config.pool == true ? .failed(error.localizedDescription) : .off
             self.error = "Pool mode couldn't start: \(error.localizedDescription)"
+        }
+    }
+
+    /// The fixed port, waiting up to 10 s for the helper to let it go; any free port if something else holds it.
+    private func takePoolPort(_ proxy: PoolProxy) async throws -> UInt16 {
+        for _ in 0..<50 {
+            if let port = try? await proxy.start(port: poolPreferredPort, exactly: true) { return port }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+        return try await proxy.start(port: poolPreferredPort)
+    }
+
+    /// What the helper serves by while the app is gone, rewritten as accounts and their usage change.
+    func writePoolPlan() {
+        guard pool != nil, !isDemo, let python, let bridgeURL else { return }
+        let members = AgentProvider.allCases.flatMap(poolMembers).filter { health[$0.id]?.takesWork != false }.map { account in
+            PoolPlan.Member(id: account.id, provider: account.provider, name: account.name, priority: account.priority, usage: usage[account.id])
+        }
+        let plan = PoolPlan(python: python, bridge: bridgeURL.path, members: members, full: config.moveAt)
+        guard plan != lastPoolPlan || !FileManager.default.fileExists(atPath: poolFiles.plan.path),
+              let data = try? JSONEncoder().encode(plan) else { return }
+        do {
+            try writePrivate(String(decoding: data, as: UTF8.self), to: poolFiles.plan)
+            lastPoolPlan = plan
+        } catch {
+            autopilotLog.note("pool plan", "Pool: the plan for while Side A is closed couldn't be saved: \(error.localizedDescription)")
+        }
+    }
+
+    private func registerPoolHelper() {
+        guard !isDemo, poolHelper.status != .enabled else { return }
+        do {
+            try poolHelper.register()
+        } catch {
+            // A build run outside its app bundle has no agent to register; the pool still works while the app runs.
+            autopilotLog.note("pool helper", "Pool: the helper that serves while Side A is closed couldn't start: \(error.localizedDescription)")
         }
     }
 
@@ -154,15 +219,16 @@ extension AccountStore: PoolDecisions {
 
     func poolAccount(_ provider: AgentProvider, session: String?, excluding: Set<String>) -> String? {
         let now = Date().timeIntervalSince1970
+        let full = config.moveAt
         let planned = provider == .claude ? planning(usage) : usage
         let members = poolMembers(provider).filter { account in
             !excluding.contains(account.id) && (poolBlocked[account.id] ?? 0) <= now && health[account.id]?.takesWork != false
         }.sorted { ($0.priority ?? .normal).rank < ($1.priority ?? .normal).rank }
         let usable = { (id: String) in
-            members.contains { $0.id == id } && planned[id].map { Planner.hasHeadroom($0, now: now) } ?? true
+            members.contains { $0.id == id } && planned[id].map { Planner.hasHeadroom($0, full: full, now: now) } ?? true
         }
         let chosen = poolRouter.route(session: session, now: now, usable: usable) {
-            Planner.best(members, usage: planned, health: health, active: activeIDs[provider], now: now)
+            Planner.best(members, usage: planned, health: health, active: activeIDs[provider], full: full, now: now)
                 // Unread or stale accounts are still worth a try before refusing the request.
                 ?? members.first { usable($0.id) }?.id
                 // Codex serves a full account from its credits and says 429 if it has none, so that call is OpenAI's.
@@ -173,30 +239,17 @@ extension AccountStore: PoolDecisions {
     }
 
     func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential {
-        let now = Date().timeIntervalSince1970
-        // The bridge renews five minutes ahead, so a token kept until four minutes ahead is never one it would keep too.
-        if !refused, let cached = poolTokens[account], cached.expires - 240 > now { return cached.credential }
-        // A session's subagents ask at once; one bridge run answers them all.
-        if let pending = poolTokenReads[account] { return try await pending.value }
         let codex = config.accounts.first { $0.id == account }?.provider == .codex
-        let args = [codex ? "codex-pool-token" : "pool-token", account] + (refused ? poolTokens[account].map { ["--refused", $0.hash] } ?? [] : [])
-        let read = Task { [unowned self] in
-            struct Token: Decodable { let accessToken: String; let accountId: String?; let expiresAt: Double; let hash: String }
-            let token = try JSONDecoder().decode(Token.self, from: try await bridgeOutput(args))
-            let credential = PoolCredential(token: token.accessToken, accountID: token.accountId)
-            poolTokens[account] = (credential, token.expiresAt / 1000, token.hash)
-            return credential
+        return try await poolTokens.token(account, refused: refused, codex: codex, now: Date().timeIntervalSince1970) { [unowned self] in
+            try await self.bridgeOutput($0)
         }
-        poolTokenReads[account] = read
-        defer { poolTokenReads[account] = nil }
-        return try await read.value
     }
 
     func poolTokenFailed(_ account: String, _ error: any Error) {
         let message = error.localizedDescription
         let name = config.accounts.first { $0.id == account }?.name ?? account
-        poolTokens[account] = nil
-        if message.contains("Sign in") {
+        poolTokens.forget(account)
+        if BridgeErrorKind(error) == .signIn {
             poolBlocked[account] = Date().timeIntervalSince1970 + 600
             if health[account]?.takesWork != false { health[account] = .signIn() }
             warnSignIn(account, message)
@@ -221,7 +274,7 @@ extension AccountStore: PoolDecisions {
             poolBlocked[account] = now + 600
             autopilotLog.note("pool \(account)", "Pool: \(name) refused a request (403); trying it again in 10 minutes.")
         case 401:
-            poolTokens[account] = nil
+            poolTokens.forget(account)
             poolBlocked[account] = now + 600
             if health[account]?.takesWork != false { health[account] = .signIn() }
             warnSignIn(account, "Sign in")
@@ -248,11 +301,12 @@ extension AccountStore: PoolDecisions {
 
     func poolHealthReport() -> [String: Int] {
         let now = Date().timeIntervalSince1970
+        let full = config.moveAt
         var health: [String: Int] = [:]
         for provider in AgentProvider.allCases {
             // A full Codex account can still answer from its credits.
             let ready = poolMembers(provider).filter { account in
-                self.health[account.id]?.takesWork != false && (provider == .codex || usage[account.id].map { Planner.hasHeadroom($0, now: now) } ?? true)
+                self.health[account.id]?.takesWork != false && (provider == .codex || usage[account.id].map { Planner.hasHeadroom($0, full: full, now: now) } ?? true)
             }
             health[provider.rawValue] = ready.count
         }
@@ -274,7 +328,7 @@ extension AccountStore: PoolDecisions {
                 _ = try await bridgeOutput(["usage", account.id])
                 if health[account.id]?.takesWork == false { health[account.id] = nil; poolBlocked[account.id] = nil }
                 results[account.id] = (poolBlocked[account.id] ?? 0) > Date().timeIntervalSince1970 ? "Login works; resting after a refusal" : "Ready"
-            } catch where error.localizedDescription.contains("429") || error.localizedDescription.contains("idle") {
+            } catch where [.rateLimited, .idle].contains(BridgeErrorKind(error)) {
                 results[account.id] = "Ready"
             } catch {
                 poolTokenFailed(account.id, error)
@@ -341,7 +395,6 @@ actor PoolPeers {
 
     func admits(_ address: String) async -> Bool {
         if let known = seen[address], Date().timeIntervalSince(known.at) < Self.remembered { return known.admitted }
-        // Many connections from one address share one question.
         if let task = asking[address] { return await task.value }
         let whois = whois, login = login
         let task = Task { Pool.admits(peer: await whois(address), login: login) }

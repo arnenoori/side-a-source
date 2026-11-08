@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// The folder list (section 4.8): searchable, recent first, then every folder the Mac offers.
+/// The folder list: searchable, recent first, then every folder the Mac offers.
 struct ProjectPicker: View {
     @Binding var selection: RemoteProject?
     @Environment(AppModel.self) private var model

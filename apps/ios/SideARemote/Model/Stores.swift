@@ -84,8 +84,6 @@ final class SessionsStore {
         return order.map { ($0, byKey[$0]!) }
     }
 
-    var waitingCount: Int { rows(.needsYou).count }
-
     /// The demo's stand-in for the Mac leaving or clearing mail.
     func setMail(_ mail: MailState?, for id: SessionKey) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
@@ -158,7 +156,7 @@ final class RequestsStore {
     /// Open requests, oldest first.
     var open: [RemoteRequest] { requests.values.sorted { $0.arrivedAt < $1.arrivedAt } }
 
-    /// Optimistic: the request leaves at once. The real outbox (M1) keeps it as "Sending…" until the
+    /// Optimistic: the request leaves at once. The real outbox keeps it as "Sending…" until the
     /// Mac accepts, and turns a 409 into "Answered on Mac".
     /// `mode` goes with `.allow` only: Allow + Accept Edits.
     func answer(_ id: RequestID, _ answer: RemoteAnswer, mode: PermissionMode? = nil, confirm: String? = nil) {

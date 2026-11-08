@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// A fenced code block: language and Copy in the header, folded past 20 lines (section 4.3).
+/// A fenced code block: language and Copy in the header, folded past 20 lines.
 struct CodeBlockView: View {
     let payload: CodePayload
     static let foldAfter = 20

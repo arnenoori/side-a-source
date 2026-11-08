@@ -50,9 +50,10 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var followFable: Bool?
     /// Live limits from Claude Code's statusline; nil means not yet decided (on by default).
     public var liveLimits: Bool?
-    /// The 5-hour or weekly percentage at which Autopilot moves off an account. Nil means 95.
+    /// The 5-hour or weekly percentage at which Autopilot moves off an account. Nil means `defaultMoveAt`.
     public var swapAt: Double?
-    public var moveAt: Double { swapAt ?? 95 }
+    public static let defaultMoveAt = 95.0
+    public var moveAt: Double { swapAt ?? Self.defaultMoveAt }
     /// A question with a recommended choice, or a plan, is answered after a minute unanswered. Nil means off.
     public var answerRecommended: Bool?
     /// Claude Code in Terminal goes through Side A's local proxy, which picks an account per conversation. Nil means off.
@@ -99,7 +100,30 @@ public struct Configuration: Codable, Equatable, Sendable {
     }
 }
 
-// UsageWindow, ExtraUsage and AccountUsage live in SideAProtocol; these rules are Autopilot policy.
+public extension UsageWindow {
+    /// A window's label by its id, as the bridge names Claude's.
+    static func label(of id: String) -> String {
+        switch id {
+        case "five_hour": "5-hour"
+        case "seven_day": "Weekly"
+        case "seven_day_opus": "Weekly Opus"
+        case "seven_day_sonnet": "Weekly Sonnet"
+        default: id.hasPrefix("model:") ? "Weekly " + id.dropFirst(6).capitalized : "Weekly"
+        }
+    }
+
+    /// How long a window runs: five hours for the 5-hour one, a week for every other.
+    static func seconds(of id: String) -> Double { id == "five_hour" ? 5 * 3600 : 7 * 86_400 }
+
+    /// One of Codex's two windows (`key` "primary" or "secondary"), which only its length in minutes names:
+    /// 300 is the 5-hour window and 10,080 the weekly one. Nil without a length.
+    static func codex(key: String, minutes: Int, percent: Double, resetsAt: Double?) -> UsageWindow? {
+        guard minutes > 0 else { return nil }
+        let id = minutes == 300 ? "five_hour" : minutes == 10_080 ? "seven_day" : key
+        return UsageWindow(id: id, label: id == key ? "\(minutes / 60)-hour" : label(of: id), percent: percent, resetsAt: resetsAt)
+    }
+}
+
 public extension AccountUsage {
     /// The reading after a session reported hitting the limit `id` at `at`. The reply says when it
     /// resets only in words, so a known future reset is kept, else the longest it could take.
@@ -107,9 +131,8 @@ public extension AccountUsage {
         var copy = self
         let index = copy.windows.firstIndex { $0.id == id }
         let known = index.flatMap { copy.windows[$0].resetsAt }.flatMap { $0 > at ? $0 : nil }
-        let label = ["five_hour": "5-hour", "seven_day": "Weekly"][id] ?? "Weekly " + id.dropFirst(6).capitalized
-        let window = UsageWindow(id: id, label: index.map { copy.windows[$0].label } ?? label, percent: 100,
-                                 resetsAt: known ?? at + (id == "five_hour" ? 5 * 3600 : 7 * 86_400))
+        let window = UsageWindow(id: id, label: index.map { copy.windows[$0].label } ?? UsageWindow.label(of: id), percent: 100,
+                                 resetsAt: known ?? at + UsageWindow.seconds(of: id))
         if let index { copy.windows[index] = window } else { copy.windows.append(window) }
         copy.stale = false
         return copy
@@ -179,9 +202,6 @@ public struct Machine: Codable, Hashable, Sendable {
     public var tokens: Int
     public var updated: Double
     public var current: Bool
-    public init(name: String, tokens: Int, updated: Double, current: Bool) {
-        self.name = name; self.tokens = tokens; self.updated = updated; self.current = current
-    }
 }
 
 /// An account set up on another Mac, from iCloud sync.
@@ -217,7 +237,6 @@ public struct WorkSchedule: Equatable, Sendable {
         start = (best.start + best.length) % 24 * 60
         end = best.start * 60
     }
-    public init(start: Int, end: Int) { self.start = start; self.end = end }
 
     /// Priming starts two hours before the usual start, so the first window resets mid-session,
     /// and continues through the working day. Overnight windows would only lapse unused.
@@ -314,12 +333,10 @@ public enum Planner {
         accounts.filter { $0.id != id && $0.allowAuto && (!$0.ready || health[$0.id]?.takesWork == false) }
     }
 
-    /// Where Autopilot leaves an account; the app sets it from Settings.
-    nonisolated(unsafe) public static var full = 97.0
     /// Where an account shows as limited.
     public static let limited = 97.0
-    /// Autopilot moves only to an account below this; it follows a lower Move at setting.
-    public static var switchTarget: Double { min(90, full - 5) }
+    /// Autopilot moves only to an account below this; it follows a lower Move at setting (`full`, where it leaves one).
+    public static func switchTarget(full: Double) -> Double { min(90, full - 5) }
     static let week = 7 * 24 * 3600.0
 
     static func live(_ window: UsageWindow?, _ now: Double) -> UsageWindow? {
@@ -327,7 +344,7 @@ public enum Planner {
         return window
     }
 
-    public static func hasHeadroom(_ usage: AccountUsage, now: Double) -> Bool {
+    public static func hasHeadroom(_ usage: AccountUsage, full: Double, now: Double) -> Bool {
         (live(usage.fiveHour, now)?.percent ?? 0) < full && (live(usage.weekly, now)?.percent ?? 0) < full
     }
 
@@ -340,11 +357,11 @@ public enum Planner {
     }
 
     /// Earliest moment any account regains headroom, for when every account is limited.
-    public static func nextAvailable(_ candidates: [Account], usage: [String: AccountUsage], now: Double) -> (Account, Double)? {
+    public static func nextAvailable(_ candidates: [Account], usage: [String: AccountUsage], full: Double, now: Double) -> (Account, Double)? {
         candidates.filter { $0.ready }.compactMap { account -> (Account, Double)? in
             guard let value = usage[account.id] else { return nil }
             // Same bars as switching: a 5-hour window counts as blocked from the switch target.
-            let blocking = [live(value.fiveHour, now).flatMap { $0.percent >= switchTarget ? $0 : nil },
+            let blocking = [live(value.fiveHour, now).flatMap { $0.percent >= switchTarget(full: full) ? $0 : nil },
                             live(value.weekly, now).flatMap { $0.percent >= full ? $0 : nil }].compactMap { $0 }
             guard let reset = blocking.compactMap(\.resetsAt).max() else { return nil }
             return (account, reset)
@@ -353,7 +370,7 @@ public enum Planner {
 
     /// Minutes until a window reaches the limit at the observed pace, from (time, percent) samples.
     /// Counts down from the last sample; samples older than ten minutes say nothing about the pace now.
-    public static func minutesToLimit(_ samples: [(Double, Double)], now: Double? = nil) -> Double? {
+    public static func minutesToLimit(_ samples: [(Double, Double)], full: Double, now: Double? = nil) -> Double? {
         guard let first = samples.first, let last = samples.last, last.0 - first.0 >= 300,
               last.1 > first.1, last.1 < full else { return nil }
         let since = ((now ?? last.0) - last.0) / 60
@@ -362,18 +379,19 @@ public enum Planner {
         return max((full - last.1) / perMinute - since, 0)
     }
 
-    public static func best(_ candidates: [Account], usage: [String: AccountUsage], health: [String: LoginHealth] = [:], active: String?, now: Double) -> String? {
+    public static func best(_ candidates: [Account], usage: [String: AccountUsage], health: [String: LoginHealth] = [:], active: String?, full: Double, now: Double) -> String? {
         let usable = candidates.filter { account in
             guard account.ready, account.allowAuto, health[account.id]?.takesWork != false,
                   let value = usage[account.id], !value.stale else { return false }
-            return hasHeadroom(value, now: now)
+            return hasHeadroom(value, full: full, now: now)
         }
         // Only move to an account with real room on every limit, so it is not left again minutes
         // later; the active one may run up to the limit. With none, any 5-hour room will do.
+        let target = switchTarget(full: full)
         let roomy = { (account: Account, weekly: Bool) in
             let value = usage[account.id]!
-            return account.id == active || ((live(value.fiveHour, now)?.percent ?? 0) < switchTarget
-                && (!weekly || (live(value.weekly, now)?.percent ?? 0) < switchTarget))
+            return account.id == active || ((live(value.fiveHour, now)?.percent ?? 0) < target
+                && (!weekly || (live(value.weekly, now)?.percent ?? 0) < target))
         }
         var eligible = usable.filter { roomy($0, true) }
         if eligible.isEmpty { eligible = usable.filter { roomy($0, false) } }
@@ -395,8 +413,8 @@ public enum Planner {
     /// limits coming and going (Fable above all) can't bounce its sessions between tiers and cost their cache each time.
     public static let priorityDwell = 3600.0
 
-    public static func priorityMoveWaits(from: Account, to: Account, usage: AccountUsage?, movedAt: Double?, now: Double) -> Bool {
-        guard let usage, let movedAt, hasHeadroom(usage, now: now),
+    public static func priorityMoveWaits(from: Account, to: Account, usage: AccountUsage?, movedAt: Double?, full: Double, now: Double) -> Bool {
+        guard let usage, let movedAt, hasHeadroom(usage, full: full, now: now),
               (to.priority ?? .normal).rank < (from.priority ?? .normal).rank else { return false }
         return now - movedAt < priorityDwell
     }
@@ -405,9 +423,9 @@ public enum Planner {
     /// waits until its sessions have been quiet this long; one that is out of room moves at once.
     public static let pause = 300.0
 
-    public static func waitsForPause(_ usage: AccountUsage?, quiet: Double?, now: Double) -> Bool {
+    public static func waitsForPause(_ usage: AccountUsage?, quiet: Double?, full: Double, now: Double) -> Bool {
         guard let usage, let quiet else { return false }
-        return quiet < pause && hasHeadroom(usage, now: now)
+        return quiet < pause && hasHeadroom(usage, full: full, now: now)
     }
 
     /// Whether a running login's sessions need Fable: true if any runs it, false only when every model is known.
@@ -421,16 +439,16 @@ public enum Planner {
     /// running login with Fable room whose sessions all use other models, provided `slot`'s account still has room
     /// for them. Trading the two keeps the Fable sessions going and hands the others a login they can still use.
     public static func fableShare(for slot: String, slots: [String: String], models: [String: [String?]], accounts: [Account],
-                                  usage: [String: AccountUsage], health: [String: LoginHealth] = [:], excluded: Set<String>, now: Double) -> (slot: String, account: String)? {
+                                  usage: [String: AccountUsage], health: [String: LoginHealth] = [:], excluded: Set<String>, full: Double, now: Double) -> (slot: String, account: String)? {
         guard needsFable(models[slot]) == true, let id = slots[slot], let mine = accounts.first(where: { $0.id == id }),
-              best([mine], usage: usage, health: health, active: nil, now: now) == id else { return nil }
+              best([mine], usage: usage, health: health, active: nil, full: full, now: now) == id else { return nil }
         let fable = usage.compactMapValues(\.forFable)
         let partners = slots.filter { other, account in
             other != slot && account != id && !excluded.contains(account) && needsFable(models[other]) == false
                 && slots.values.filter { $0 == account }.count == 1
         }
         let candidates = accounts.filter { account in partners.values.contains(account.id) }
-        guard let pick = best(candidates, usage: fable, health: health, active: nil, now: now),
+        guard let pick = best(candidates, usage: fable, health: health, active: nil, full: full, now: now),
               let partner = partners.first(where: { $0.value == pick })?.key else { return nil }
         return (partner, pick)
     }
@@ -444,7 +462,7 @@ public enum Planner {
     }
 
     /// A 5-hour window only starts on the first message; starting it early makes it reset early.
-    public static func shouldPrime(_ account: Account, usage: AccountUsage?, now: Double) -> Bool {
+    public static func shouldPrime(_ account: Account, usage: AccountUsage?, full: Double, now: Double) -> Bool {
         guard account.ready, account.allowAuto, let usage, !usage.stale else { return false }
         // A Last account isn't meant to be spent yet, so its window waits until it is.
         guard account.priority != .last else { return false }

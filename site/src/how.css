@@ -12,10 +12,8 @@
 .how .lead { font-size: clamp(36px, 5vw, 56px); line-height: 1.04; letter-spacing: -.04em; font-weight: 650; margin: 0 0 20px; }
 .how .eyebrow { margin: 0 0 14px; font-size: 13px; line-height: 1; font-weight: 600; letter-spacing: .06em; color: var(--orange); font-variant-numeric: tabular-nums; }
 
-/* Hero: headline, one subline, one picture. */
 .hero { text-align: center; }
 .how .subline { max-width: 540px; margin: 0 auto; font-size: clamp(18px, 1.8vw, 21px); line-height: 1.45; color: var(--muted); text-wrap: balance; }
-/* Pillars: eyebrow, heading, one line, its demo. Sides alternate on wide screens. */
 .pillar { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(40px, 6vw, 80px); align-items: center; }
 .pillar:nth-of-type(odd) { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 .pillar:nth-of-type(odd) .pillar-text { order: 2; }
@@ -29,7 +27,6 @@
 .frac span:first-child { border-bottom: 2px solid currentColor; padding: 0 6px 2px; }
 .frac span:last-child { padding-top: 2px; }
 
-/* Trust strip and the one CTA. */
 .trust-strip { border-top: 1px solid var(--line); padding-top: 40px !important; }
 .how .trust-strip .eyebrow { font-size: 13px; letter-spacing: .06em; margin: 0 0 20px; }
 .trust { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 40px; }
@@ -53,7 +50,6 @@
 @media(prefers-reduced-motion:reduce) { .note-mark path { transition: none; } }
 
 
-/* Switch timeline */
 .timeline { --label: 130px; position: relative; margin: 0; padding: 18px 20px; border-radius: 14px; background: #fff; box-shadow: 0 1px 0 var(--line), 0 14px 36px #2028200d; }
 .lane { display: grid; grid-template-columns: var(--label) minmax(0, 1fr); align-items: center; gap: 0; padding: 10px 0; }
 .lane + .lane { border-top: 1px solid #eef0ee; }
@@ -80,7 +76,6 @@
 [data-demo].playing .eq i, [data-demo].playing .track::after, [data-demo].playing .trade { animation-play-state: running; }
 
 
-/* ---------- Dynamic Island, from IslandView.swift ---------- */
 .how {
   /* SwiftUI .spring(duration: 0.46, bounce: 0.2) for the large card, .spring(duration: 0.4, bounce: 0) for the rest, sampled. */
   --spring-open: cubic-bezier(.2, .9, .25, 1.02);

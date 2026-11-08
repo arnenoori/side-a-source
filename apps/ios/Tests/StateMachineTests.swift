@@ -110,6 +110,70 @@ final class StateMachineTests: XCTestCase {
         XCTAssertNil(settled.next)
     }
 
+    // MARK: Signed calls
+
+    /// Refuses the first call for Face ID, then takes any; keeps each call's signature.
+    private final class WantsFaceID: Transport, @unchecked Sendable {
+        private let lock = NSLock()
+        private var seen: [String?] = []
+        var confirms: [String?] { lock.withLock { seen } }
+
+        func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+            let count = lock.withLock {
+                seen.append(request.value(forHTTPHeaderField: ConfirmSignature.header))
+                return seen.count
+            }
+            let refusal = ErrorBody(error: APIError(code: .confirmRequired, message: "Confirm with Face ID on your iPhone.", details: ["level": "biometric"]))
+            let body = try count == 1 ? JSONEncoder().encode(refusal) : JSONEncoder().encode(SettingsResult(settings: SessionSettings(model: "claude-sonnet-5-5")))
+            return (body, HTTPURLResponse(url: request.url!, statusCode: count == 1 ? 403 : 200, httpVersion: nil, headerFields: nil)!)
+        }
+
+        func socket(_ request: URLRequest) -> any SocketConnection { fatalError("no socket") }
+    }
+
+    private func tools(_ transport: some Transport, sign: @escaping (DeviceKeys.Signer) -> String?) throws -> MacTools {
+        let outbox = try outbox()
+        let engine = SyncEngine(endpoint: endpoint, credentials: KeychainCredentials(), outbox: outbox, transport: transport)
+        return MacTools(.live(.init(engine: engine, paired: PairedMac(endpoint: endpoint, deviceID: "d", deviceName: "iPhone"), outbox: outbox) {
+            signer, _, _, _ in sign(signer)
+        }))
+    }
+
+    /// The phone took the change as safe and the Mac wants Face ID for it: the confirm key signs it again, and it lands.
+    func testASettingsChangeTheMacWantsFaceIDForGoesAgainAfterFaceID() async throws {
+        let transport = WantsFaceID()
+        var asked: [DeviceKeys.Signer] = []
+        let tools = try tools(transport) { signer in
+            asked.append(signer)
+            return signer == .confirm ? "c" : "u"
+        }
+        let row = RemoteSession(id: "s", agent: .claude, title: "s", project: "p", status: .idle)
+        let result = try await tools.change(row, SettingsChange(model: "claude-sonnet-5-5"), title: "Sonnet 5.5")
+        XCTAssertEqual(asked, [.unlock, .confirm])
+        XCTAssertEqual(transport.confirms, ["u", "c"])
+        XCTAssertEqual(result.settings.model, "claude-sonnet-5-5")
+        XCTAssertEqual(tools.settings(of: row).model, "claude-sonnet-5-5")
+    }
+
+    /// Face ID cancelled on the way up: nothing goes again, and nothing reads as changed.
+    func testACancelledFaceIDForASettingsChangeSendsNothingMore() async throws {
+        let transport = WantsFaceID()
+        let tools = try tools(transport) { $0 == .confirm ? nil : "u" }
+        let row = RemoteSession(id: "s", agent: .claude, title: "s", project: "p", status: .idle)
+        do {
+            _ = try await tools.change(row, SettingsChange(model: "claude-sonnet-5-5"), title: "Sonnet 5.5")
+            XCTFail("changed without Face ID")
+        } catch ToolError.cancelled {}
+        XCTAssertEqual(transport.confirms, ["u"])
+        XCTAssertNil(tools.changed["s"])
+
+        let locked = try self.tools(WantsFaceID()) { _ in nil }
+        do {
+            _ = try await locked.change(row, SettingsChange(model: "claude-sonnet-5-5"), title: "Sonnet 5.5")
+            XCTFail("changed unsigned")
+        } catch ToolError.locked {}
+    }
+
     // MARK: Replies
 
     /// Cancelled Face ID, first send and Retry alike: nothing goes, and what was typed and attached stays.
@@ -118,7 +182,7 @@ final class StateMachineTests: XCTestCase {
         let (link, model) = try await link(outbox)
         link.apply(signing(link))
         let turn = model.transcripts.send("!rm -rf build", to: "s")
-        link.reply(turn.text, turn: turn.id, to: "s", mode: .note, submit: .steer, resending: ["up1"])
+        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .note, submit: .steer, resending: ["up1"])
         try await until("not sent") { model.transcripts.unsent["s"] != nil }
         let count = await items(outbox).count
         XCTAssertEqual(count, 0)
@@ -128,7 +192,7 @@ final class StateMachineTests: XCTestCase {
         XCTAssertEqual(saved[item]?.body.attachments, ["up1"])
 
         let retried = model.transcripts.send("!rm -rf build", to: "s")
-        link.retry(item: item, text: retried.text, turn: retried.id, session: "s")
+        link.flights.retry(item: item, text: retried.text, turn: retried.id, session: "s")
         try await until("not sent again") { model.transcripts.unsent["s"] != nil }
         let afterRetry = await items(outbox).count
         XCTAssertEqual(afterRetry, 0)
@@ -146,7 +210,7 @@ final class StateMachineTests: XCTestCase {
         let outbox = try outbox()
         let (link, model) = try await link(outbox)
         let turn = model.transcripts.send("hello", to: "s")
-        link.reply(turn.text, turn: turn.id, to: "s", mode: .auto, resending: ["up1", "up2"])
+        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto, resending: ["up1", "up2"])
         try await until("queued") { await !self.items(outbox).isEmpty }
         let first = await items(outbox)[0]
 
@@ -160,7 +224,7 @@ final class StateMachineTests: XCTestCase {
         XCTAssertEqual(unsent.reason, needsFaceID.message)
 
         let retried = model.transcripts.send("hello", to: "s")
-        link.retry(item: first.id, text: "hello", turn: retried.id, session: "s")
+        link.flights.retry(item: first.id, text: "hello", turn: retried.id, session: "s")
         try await until("not sent again") { model.transcripts.unsent["s"] != nil }
         let queued = await items(outbox)
         XCTAssertEqual(queued.map(\.id), [first.id], "only the first, unsigned one the Mac refused")
@@ -188,7 +252,7 @@ final class StateMachineTests: XCTestCase {
         XCTAssertEqual(model.transcripts.drafts["s"], "Before the kill")
 
         let retried = model.transcripts.send("Before the kill", to: "s")
-        link.retry(item: "item", text: "Before the kill", turn: retried.id, session: "s")
+        link.flights.retry(item: "item", text: "Before the kill", turn: retried.id, session: "s")
         try await until("sent again") { await self.items(outbox).count == 2 }
         let again = try await sent(items(outbox).last { $0.id != "item" }!)
         XCTAssertEqual(again.attachments, ["up1"])
@@ -225,11 +289,145 @@ final class StateMachineTests: XCTestCase {
         try await until("restored") { model.transcripts.unsent["s"] != nil }
         let turn = model.transcripts.send("Old, edited", to: "s")
         XCTAssertNil(model.transcripts.unsent["s"])
-        link.reply(turn.text, turn: turn.id, to: "s", mode: .auto)
+        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto)
         try await until("queued") { await !self.items(outbox).isEmpty }
         let body = try await sent(items(outbox)[0])
         XCTAssertEqual(body.attachments, ["up1"])
         try await until("one flight") { await outbox.flights(for: "flights")["old"] == nil }
+    }
+
+    /// The outbox item `start` queues, once it's there.
+    private func queued(_ outbox: Outbox, by start: () -> Void) async throws -> Outbox.Item {
+        let before = Set(await items(outbox).map(\.id))
+        start()
+        try await until("queued") { await self.items(outbox).contains { !before.contains($0.id) } }
+        let added = await items(outbox).first { !before.contains($0.id) }
+        return try XCTUnwrap(added)
+    }
+
+    private func settle(_ link: LiveLink, _ item: Outbox.Item, _ outcome: OutboxOutcome) {
+        var state = link.state
+        state.outcomes[item.id] = outcome
+        link.apply(state)
+    }
+
+    /// The signature ran out in the queue: signed again once, and a second refusal stands.
+    func testAReplyWhoseSignatureRanOutIsSignedAgainOnce() async throws {
+        guard DeviceKeys.create(for: endpoint.macID) != nil else { throw XCTSkip("no keys on this simulator") }
+        DeviceKeys.promote(for: endpoint.macID)
+        addTeardownBlock { [endpoint] in DeviceKeys.delete(for: endpoint.macID) }
+        let expired = APIError(code: .confirmInvalid, message: "That confirmation expired.", details: ["level": "unlock"])
+        let outbox = try outbox()
+        let (link, model) = try await link(outbox)
+        let turn = model.transcripts.send("hello", to: "s")
+        let first = try await queued(outbox) { link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto, resending: ["up1"]) }
+        try await until("in flight") { await outbox.flights(for: "flights")[first.id]?.phase == .queued(resigned: false) }
+
+        let again = try await queued(outbox) { settle(link, first, .failed(expired)) }
+        XCTAssertNotNil(again.confirm)
+        XCTAssertEqual(try sent(again).attachments, ["up1"])
+        try await until("resigned") { await outbox.flights(for: "flights")[again.id]?.phase == .queued(resigned: true) }
+        XCTAssertNil(model.transcripts.unsent["s"])
+
+        settle(link, again, .failed(expired))
+        XCTAssertEqual(model.transcripts.unsent["s"]?.reason, "That confirmation expired.")
+        let count = await items(outbox).count
+        XCTAssertEqual(count, 2)
+    }
+
+    func testTakeBackReturnsTheNoteOrSaysWhyItCouldnt() async throws {
+        let outbox = try outbox()
+        let (link, model) = try await link(outbox)
+        let transcripts = model.transcripts
+        func note(_ text: String, in session: SessionKey) -> String {
+            let turn = transcripts.send(text, to: session)
+            transcripts.mark(turn.id, in: session, .note)
+            return turn.id
+        }
+
+        let taken = note("Use port 5433", in: "a")
+        settle(link, try await queued(outbox) { link.flights.takeBack("a", turn: taken) }, .delivered(Data()))
+        try await until("withdrawn") { transcripts.outgoing["a"]?.isEmpty == true }
+        XCTAssertEqual(transcripts.drafts["a"], "Use port 5433")
+
+        // The session read it first: an Edit keeps its text as a new message.
+        let read = note("Skip the seed", in: "b")
+        let notFound = APIError(code: .notFound, message: "No mail.")
+        settle(link, try await queued(outbox) { link.flights.takeBack("b", turn: read) }, .failed(notFound))
+        try await until("read") { transcripts.outgoing["b"]?.first?.state == .read }
+        XCTAssertEqual(transcripts.drafts["b"], "Skip the seed")
+        XCTAssertEqual(transcripts.notices["b"], "Already sent. Your text is in the field as a new message.")
+
+        let withdrawn = note("Never mind", in: "c")
+        settle(link, try await queued(outbox) { link.flights.takeBack("c", turn: withdrawn, keepText: false) }, .failed(notFound))
+        try await until("read") { transcripts.outgoing["c"]?.first?.state == .read }
+        XCTAssertNil(transcripts.drafts["c"])
+        XCTAssertNil(transcripts.notices["c"])
+
+        let kept = note("Still here", in: "d")
+        settle(link, try await queued(outbox) { link.flights.takeBack("d", turn: kept) }, .failed(refused))
+        try await until("noticed") { transcripts.notices["d"] != nil }
+        XCTAssertEqual(transcripts.notices["d"], "Couldn't take it back. Try again.")
+        XCTAssertEqual(transcripts.outgoing["d"]?.first?.state, .note)
+        XCTAssertNil(transcripts.drafts["d"])
+    }
+
+    func testAStopThatDidntLandSaysSoUnderTheField() async throws {
+        let outbox = try outbox()
+        let (link, model) = try await link(outbox)
+        let transcripts = model.transcripts
+        settle(link, try await queued(outbox) { link.flights.interrupt("a", when: .now) }, .failed(refused))
+        try await until("refused") { transcripts.notices["a"] != nil }
+        XCTAssertEqual(transcripts.notices["a"], "Couldn't stop it. No.")
+
+        settle(link, try await queued(outbox) { link.flights.interrupt("b", when: .nextStep) }, .unknown)
+        try await until("unknown") { transcripts.notices["b"] != nil }
+        XCTAssertEqual(transcripts.notices["b"], "Couldn't reach the Mac to stop it.")
+
+        settle(link, try await queued(outbox) { link.flights.interrupt("c", when: .now) }, .notDelivered)
+        try await until("not delivered") { transcripts.notices["c"] != nil }
+        XCTAssertEqual(transcripts.notices["c"], "Couldn't reach the Mac to stop it.")
+
+        let landed = try await queued(outbox) { link.flights.interrupt("d", when: .now) }
+        settle(link, landed, .delivered(Data()))
+        settle(link, try await queued(outbox) { link.flights.interrupt("e", when: .now) }, .answeredElsewhere(nil))
+        // A later refusal shows, so the two before it had their turn.
+        settle(link, try await queued(outbox) { link.flights.interrupt("f", when: .now) }, .failed(refused))
+        try await until("later refusal") { transcripts.notices["f"] != nil }
+        XCTAssertNil(transcripts.notices["d"])
+        XCTAssertNil(transcripts.notices["e"])
+    }
+
+    /// A note reads as read once the Mac stops showing it as mail; one never seen as mail, only after half a minute.
+    func testANoteIsReadOnceItsMailGoes() async throws {
+        let outbox = try outbox()
+        let (link, model) = try await link(outbox)
+        let transcripts = model.transcripts
+        let note = Data(#"{"delivery":"note","sessionID":"s"}"#.utf8)
+        func asNote(_ session: SessionKey) async throws -> String {
+            let turn = transcripts.send("Use the staging DB", to: session)
+            let item = try await queued(outbox) { link.flights.reply(turn.text, turn: turn.id, to: session, mode: .note) }
+            try await until("in flight") { await outbox.flights(for: "flights")[item.id]?.phase == .queued(resigned: false) }
+            settle(link, item, .delivered(note))
+            XCTAssertEqual(transcripts.outgoing[session]?.first?.state, .note)
+            return turn.id
+        }
+        func mail(_ sessions: [SessionKey: MailState?]) {
+            var state = link.state
+            for (id, mail) in sessions {
+                state.sessions[id] = RemoteSession(id: id, agent: .claude, title: id, project: "p", status: .working, mail: mail)
+            }
+            link.apply(state)
+        }
+        _ = try await asNote("s")
+        _ = try await asNote("t")
+        mail(["s": MailState(kind: .note, at: 1), "t": nil])
+        XCTAssertEqual(transcripts.outgoing["s"]?.first?.state, .note)
+        XCTAssertEqual(transcripts.outgoing["t"]?.first?.state, .note, "never seen as mail, and sent just now")
+
+        mail(["s": MailState(kind: .stop, at: 2)])
+        XCTAssertEqual(transcripts.outgoing["s"]?.first?.state, .read)
+        XCTAssertEqual(transcripts.outgoing["t"]?.first?.state, .note)
     }
 
     func testForgettingAMacForgetsWhatWaitedForRetry() async throws {
@@ -238,7 +436,7 @@ final class StateMachineTests: XCTestCase {
                                            phase: .unsent(reason: "No.")), item: "old", mac: "flights")
         let (link, model) = try await link(outbox)
         try await until("restored") { model.transcripts.unsent["s"] != nil }
-        link.forgetFlights()
+        link.flights.forgetFlights()
         try await until("gone") { await outbox.flights(for: "flights").isEmpty }
     }
 
@@ -312,6 +510,26 @@ final class StateMachineTests: XCTestCase {
         XCTAssertEqual(store.settle([], device: "d1", settled: settled), [], "forgotten once the Mac has")
     }
 
+    /// A cold launch's states before the first snapshot carry no drops: what this phone settled stays settled.
+    func testADropSettledBeforeALaunchStaysSettledUntilTheSnapshot() async throws {
+        let key = "settledDrops.flights"
+        UserDefaults.standard.set(["a"], forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let (link, model) = try await link(outbox())
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: key), ["a"])
+
+        var state = link.state
+        state.epoch = "e"
+        state.droppedReplies = [DroppedReply(id: "a", sessionID: "s", text: "one", at: 20, device: "d", reason: .sessionEnded)]
+        link.apply(state)
+        XCTAssertNil(model.transcripts.unsent["s"], "handled before the relaunch")
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: key), ["a"])
+
+        state.droppedReplies = []
+        link.apply(state)
+        XCTAssertEqual(UserDefaults.standard.stringArray(forKey: key), [], "forgotten once the Mac has")
+    }
+
     /// The same words queued again after the drop are a new promise.
     func testADroppedReplyLeavesALaterTurnWithTheSameWordsAlone() {
         let store = TranscriptStore([:])
@@ -323,9 +541,10 @@ final class StateMachineTests: XCTestCase {
 
     /// The Mac at this pairing's address answers to another id, so nothing this pairing signs can verify.
     func testAPairingForAnIdTheMacNoLongerAnswersToAsksToPairAgain() async throws {
-        let tools = MacTools()
-        tools.paired = PairedMac(endpoint: Endpoint(macID: "old", baseURL: URL(string: "https://100.64.0.1:47800")!, serverKeyHash: "k", name: "Studio"),
-                                 deviceID: "d", deviceName: "iPhone")
+        let old = Endpoint(macID: "old", baseURL: URL(string: "https://100.64.0.1:47800")!, serverKeyHash: "k", name: "Studio")
+        let outbox = try outbox()
+        let engine = SyncEngine(endpoint: old, credentials: KeychainCredentials(), outbox: outbox, transport: Silent())
+        let tools = MacTools(.live(.init(engine: engine, paired: PairedMac(endpoint: old, deviceID: "d", deviceName: "iPhone"), outbox: outbox)))
         func answering(_ id: String) -> RemoteState {
             var state = RemoteState()
             state.hello = Hello(app: "1", build: 1, mac: MacInfo(id: id, name: "Studio"), capabilities: [.confirmSigned], epoch: "e", serverTime: 0,

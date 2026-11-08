@@ -1,4 +1,3 @@
-import SideACore
 import SwiftUI
 
 /// What `setup overview` reports. Env and header values never leave the bridge, only their names; URLs come

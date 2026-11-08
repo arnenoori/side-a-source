@@ -471,21 +471,17 @@ characters of the pinned key hash; never tokens, hashes of tokens, keys or sessi
 Settings › Macs › MacBook Pro › **Test Connection**, also offered on every failure card and
 connection banner as a text button.
 
-| # | Step | How | Pass line | First failure says |
-|---|---|---|---|---|
-| 1 | Tailscale on this iPhone | a VPN interface is up and the 100.x address has a route | "Tailscale is on" | the matching route card above |
-| 2 | Reaching the Mac | TCP connect to the stored address and port, 5 s | "Reached MacBook Pro in 38 ms · 100.101.12.4" | "MacBook Pro isn't answering. It may be asleep, or the macOS firewall may be blocking Side A." / refused: "MacBook Pro is on, but Side A isn't answering." |
-| 3 | Security key | TLS handshake, SPKI hash equals the pinned one | "Security key matches the one from pairing" | "MacBook Pro has a new security key, so this iPhone has to pair again." [Pair Again] |
-| 4 | Side A | `GET /v1/hello` | "Side A 0.6.1 · protocol 1 · Remote on" | "Remote is off in Side A on MacBook Pro." / the update copy |
-| 5 | This iPhone | `GET /v1/state` with the token | "Paired as Arne’s iPhone" | "MacBook Pro doesn't accept this iPhone any more." [Pair Again] |
-| 6 | Live updates | open the events socket on the same port, `hello`, wait 5 s for a snapshot or replay | "Live updates connected" | "Connected, but live updates are blocked." · "Update Side A on MacBook Pro, then try again." |
-| 7 | Notifications on this iPhone | `UNUserNotificationCenter` settings | "Allowed · Time Sensitive on" | "Notifications are off for Side A Remote." [Open Settings] |
-| 8 | Notifications from the Mac | `GET /v1/setup` push fields for this device | "MacBook Pro has this iPhone's push token" | "MacBook Pro can't reach the notification relay." / "MacBook Pro hasn't got this iPhone's push token yet." [Send Again] |
-| 9 | Test notification | `POST /v1/diagnostics/push`, wait up to 20 s for the Service Extension's receipt in the App Group (or `willPresent` in the foreground) | "Test notification arrived in 1.2 s" | "MacBook Pro sent it, but it didn't arrive." · "Check Focus and Notification settings for Side A Remote." Relay results map: `gone` "Apple says this iPhone's push token is no longer valid. Open the app again to renew it."; `rejected` "The relay rejected it. Copy the report and send it to us." |
-| 10 | Live Activities | `ActivityAuthorizationInfo` | "Live Activities on" | informational only: "Live Activities are off for Side A Remote." [Open Settings] |
+Four rows, each one plain sentence with a check or a cross, naming the first thing wrong in it. The
+relay row runs beside the others and doesn't wait on them; the rest need the Mac reached first.
 
-With Wi-Fi pairing on, step 2 tries the tailnet address, then the LAN address, and the pass line
-names which answered ("· over Wi-Fi").
+| # | Row | How | Pass line | Failure says |
+|---|---|---|---|---|
+| 1 | Reaching the Mac | `Paths.retest()`: the path in use, or a fresh race of every address and the relay. A path that answered a pinned hello is reachability, so there's no separate TCP step | "Reached MacBook Pro over Wi‑Fi · 192.168.1.20" / "over Tailscale · 100.101.12.4" / "through the relay" | the race's reason: a new security key, Local Network denied, the relay turning this iPhone away, else "Couldn't reach MacBook Pro." with "Tailscale looks off on this iPhone." when a tailnet address needs it and no VPN shows |
+| 2 | Relay | `Paths.checkRelay()`: the relay socket says whether the Mac is on it, then a pinned hello through it, whichever path won row 1 | "The relay works: MacBook Pro is online on it" | "MacBook Pro isn't on the relay." / the relay's refusal / "The relay couldn't reach MacBook Pro." with why. No relay in the pairing: "Not set up" |
+| 3 | Paired and live | `GET /v1/hello` (key, Remote on), `GET /v1/sessions` (token), then the engine's events socket, asked to reconnect now and given 6 s | "Paired as Arne’s iPhone, with live updates · Side A 0.6.1" | the first of: "MacBook Pro has a new security key…", the hello's own message, "Remote is off in Side A on MacBook Pro.", "MacBook Pro doesn't accept this iPhone any more.", "Connected, but live updates are blocked." |
+| 4 | Notifications | `UNUserNotificationCenter` settings, then `GET /v1/setup`'s push line for this device | "MacBook Pro can reach this iPhone" | "Notifications are off for Side A Remote." / the relay's last result (`gone`, unreachable, rejected). **Send Test Notification** sits in the row; its result replaces it |
+
+The demo's Macs show a made-up passing run and send nothing.
 
 The test notification is category `TEST`, no actions, body "Test notification from MacBook Pro."
 It is collapsed by its id, so running the test twice leaves one.

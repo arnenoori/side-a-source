@@ -1343,7 +1343,7 @@ answer).
 | Worth at API prices | M4 | `worth` | `MacState.worth` (in StateSnapshot.mac and event mac.update) | | | |
 | Claude incidents | M4 | `incidents` | `StateSnapshot.incidents`, event `incident.update` (the full open list; `[]` clears it) | | | |
 | Clean Up | M4 | `cleanup` | `GET /v1/cleanup`; `POST /v1/cleanup/archive` `{olderThanDays}`; `POST /v1/cleanup/restore`; `DELETE /v1/worktrees/{id}` | | 200 `CleanupReport`; restore 200 `{count}`; delete 204 | 409 `worktree_kept` |
-| Health push | M2 | `push` | push category `HEALTH` (Push payloads), once per session per hour when a flag starts | | | |
+| Health push | M2 | `push` | push category `HEALTH` (Push payloads), once per session per hour when a flag other than `bloated` starts | | | |
 | Update Side A | M4 | `update.check` | `POST /v1/update/check` (Sparkle's check) | | 202 | |
 | Remote approvals log | M4 | `history` | `GET /v1/approvals?cursor=` | | `ApprovalsPage {approvals: [{resolution: RequestResolution, request: RequestSummary}], next}` | |
 

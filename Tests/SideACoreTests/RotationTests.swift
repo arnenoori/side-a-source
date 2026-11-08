@@ -69,9 +69,9 @@ private let flat = WeekRhythm((0..<30).map { offset in
     let work = account("Work"), personal = account("Personal"), off = account("Off", auto: false), busy = account("Busy"), last = account("Last", priority: .last)
     let values = ["Work": usage(five: 50), "Personal": usage(five: 10), "Off": usage(five: 1), "Busy": usage(five: 1), "Last": usage(five: 1)]
     let everyone = [work, personal, off, busy, last]
-    #expect(Planner.next(after: work, among: everyone, usage: values, busy: ["Busy"], now: now) == "Personal")
-    #expect(Planner.next(after: work, among: [work, off], usage: values, busy: [], now: now) == nil)
-    #expect(Planner.next(after: work, among: [work, last], usage: values, busy: [], now: now) == "Last")
+    #expect(Planner.next(after: work, among: everyone, usage: values, busy: ["Busy"], full: 97, now: now) == "Personal")
+    #expect(Planner.next(after: work, among: [work, off], usage: values, busy: [], full: 97, now: now) == nil)
+    #expect(Planner.next(after: work, among: [work, last], usage: values, busy: [], full: 97, now: now) == "Last")
 }
 
 @Test func aMoveSaysWhichLimitWhyPriorityOrPace() {

@@ -395,11 +395,8 @@ public enum CodexAppServer {
         if let id = snapshot["limitId"]?.string, id != "codex" { return [] }
         return ["primary", "secondary"].compactMap { key in
             guard let window = snapshot[key], let used = window["usedPercent"], case .number(let percent) = used else { return nil }
-            let minutes = window["windowDurationMins"]?.int ?? 0
-            let id = minutes == 300 ? "five_hour" : minutes == 10_080 ? "seven_day" : key
-            let label = minutes == 300 ? "5-hour" : minutes == 10_080 ? "Weekly" : "\(minutes / 60)-hour"
             let resets: Double? = if case .number(let at)? = window["resetsAt"] { at > 1e11 ? at / 1000 : at } else { nil }
-            return UsageWindow(id: id, label: label, percent: percent, resetsAt: resets)
+            return UsageWindow.codex(key: key, minutes: window["windowDurationMins"]?.int ?? 0, percent: percent, resetsAt: resets)
         }
     }
 

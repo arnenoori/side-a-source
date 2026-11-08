@@ -1,6 +1,5 @@
 import Foundation
 import SideAProtocol
-import SideARemoteShared
 
 /// What the phone last saw of one Mac: its sessions, accounts and the newest page of the transcripts it opened, so a
 /// launch draws them at once and the Mac's snapshot replaces them when it lands. Open requests are never kept: one

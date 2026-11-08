@@ -10,6 +10,11 @@ import SideARemoteShared
 /// through the engine's outbox, so a dropped connection doesn't lose them.
 @Observable
 final class LiveLink {
+    /// The Macs whose socket is live right now, by id.
+    static var liveMacs: Set<String> { Set(liveOwners.keys) }
+    /// Which link made each Mac live: a stopped link takes away only its own, never a replacement's for the same Mac.
+    @ObservationIgnored private static var liveOwners: [String: ObjectIdentifier] = [:]
+    @ObservationIgnored private var stopped = false
     private(set) var mac: PairedMac
     private(set) var state = RemoteState()
     let engine: SyncEngine
@@ -23,6 +28,10 @@ final class LiveLink {
     @ObservationIgnored private var following: Set<SessionKey> = []
     /// Each prefetched session's `statusAt` then, so it's fetched again only once it has moved on.
     @ObservationIgnored private var prefetched: [SessionKey: Timestamp?] = [:]
+    /// The engine goes through `Paths` only when no transport was handed in; a test's own transport has no path to show.
+    @ObservationIgnored private let routed: Bool
+    @ObservationIgnored private var routeWatch: Task<Void, Never>?
+    let flights: ReplyFlights
 
     private struct Sent {
         var attempt: AnswerAttempt
@@ -33,41 +42,30 @@ final class LiveLink {
         let signer: DeviceKeys.Signer
     }
 
-    /// Replies from the tap until they settle, by outbox item, and in the outbox's file beside the item.
-    @ObservationIgnored private var flights: [String: ReplyFlight] = [:]
     @ObservationIgnored private var seenQueueDrops: [SessionKey: Int] = [:]
     @ObservationIgnored private var dropsRefresh: Task<Void, Never>?
-    private let outbox: Outbox
-    /// Flight writes, in order.
-    @ObservationIgnored private var flightWrites: Task<Void, Never>?
-    @ObservationIgnored private var takeBacks: [String: (session: SessionKey, turn: String?, keepText: Bool)] = [:]
-    @ObservationIgnored private var steers: [String: SessionKey] = [:]
-    /// Sessions whose waiting note this phone has seen as mail, so mail going away reads as taken.
-    @ObservationIgnored private var mailSeen: [SessionKey: Date] = [:]
-
-    private enum ReplySignature {
-        case signed(String)
-        /// Nothing asked for one: it goes as it is, and an older Mac takes it.
-        case notRequired
-        /// Asked for, and not made: Face ID was cancelled, the app is locked, or there's no key. Nothing goes.
-        case declined
-    }
 
     init(mac: PairedMac, outbox: Outbox, transport: (any Transport)? = nil) {
         self.mac = mac
-        self.outbox = outbox
+        routed = transport == nil
         engine = SyncEngine(endpoint: mac.endpoint, credentials: KeychainCredentials(), outbox: outbox, transport: transport)
+        flights = ReplyFlights(engine: engine, outbox: outbox, mac: mac)
+        flights.link = self
     }
 
     deinit {
         updates?.cancel()
+        routeWatch?.cancel()
         path.cancel()
     }
 
     /// Forgotten or replaced: nothing of this link keeps running.
     func stop() {
+        stopped = true
+        setLive(false)
         updates?.cancel()
         saving?.cancel()
+        routeWatch?.cancel()
         path.cancel()
         if PushRegistrar.shared.observers[mac.endpoint.macID] != nil { PushRegistrar.shared.observers[mac.endpoint.macID] = nil }
         Task { [engine] in await engine.stop() }
@@ -75,13 +73,14 @@ final class LiveLink {
 
     func attach(_ model: AppModel) {
         self.model = model
+        flights.model = model
         let engine = engine
         model.requests.onAnswer = { [weak self] request, answer, mode, confirm in self?.send(request, answer, mode: mode, confirm: confirm) }
         model.transcripts.onRetry = { [weak self] answered in self?.retry(answered) }
         PushRegistrar.shared.observers[mac.endpoint.macID] = { [weak self] in self?.reportPush() }
         model.transcripts.onLoadEarlier = { session in Task { try? await engine.transcript(session).loadEarlier() } }
         model.transcripts.onLoadWhole = { session, seq in try await engine.message(session, seq: seq) }
-        // A network change retries at once instead of waiting out the backoff (section 3).
+        // A network change retries at once instead of waiting out the backoff.
         path.pathUpdateHandler = { [weak model] update in
             let vpn = update.availableInterfaces.contains { $0.type == .other }
             Task { @MainActor in
@@ -90,7 +89,8 @@ final class LiveLink {
             }
         }
         path.start(queue: .global(qos: .utility))
-        Task { await restoreFlights() }
+        if routed { watchRoute(model) }
+        Task { await flights.restoreFlights() }
         // Off the main actor, so the hello goes out now rather than once the first frames are drawn.
         Task.detached(priority: .userInitiated) { await engine.start() }
         updates = Task { [weak self] in
@@ -98,6 +98,20 @@ final class LiveLink {
                 guard let self else { return }
                 self.apply(state)
             }
+        }
+    }
+
+    /// Through a stream, so switches reach the model in the order `Paths` made them.
+    private func watchRoute(_ model: AppModel) {
+        let paths = Paths.shared(for: mac.endpoint, credentials: KeychainCredentials())
+        let (changes, continuation) = AsyncStream.makeStream(of: Paths.Path?.self, bufferingPolicy: .bufferingNewest(1))
+        routeWatch = Task { [weak model] in
+            let id = await paths.observe { continuation.yield($0) }
+            for await path in changes {
+                let route = MacConnection.Route(path)
+                if model?.mac.route != route { model?.mac.route = route }
+            }
+            await paths.stopObserving(id)
         }
     }
 
@@ -115,18 +129,17 @@ final class LiveLink {
     func follow(_ session: SessionKey) async {
         following.insert(session)
         defer { following.remove(session) }
-        let feed = await engine.transcript(session)
-        await engine.setViewing(session)
+        let feed = await engine.watch(session)
+        let windows = await feed.windows()
         let start = ContinuousClock.now
         try? await feed.loadLatest()
         let shown = model?.transcripts.messages[session]?.count ?? 0
         RemoteLog.log(.sync, "transcript \(session.prefix(8)) latest page in \(Launch.ms(since: start)) ms, \(shown) shown before it")
-        for await window in feed.updates {
+        for await window in windows {
             model?.transcripts.set(window.messages, hasEarlier: window.hasEarlier, for: session)
             saveSoon()
         }
-        await feed.close()
-        await engine.setViewing(nil)
+        await engine.unwatch(session)
     }
 
     private func send(_ request: RemoteRequest, _ answer: RemoteAnswer, mode: PermissionMode?, confirm: String?) {
@@ -136,7 +149,7 @@ final class LiveLink {
             let signer: DeviceKeys.Signer = confirm == nil ? .unlock : .confirm
             var confirm = confirm
             if confirm == nil, let subject = try? Self.subject(request.id, answer, mode: mode) {
-                confirm = await DeviceKeys.header(.unlock, macID: mac.endpoint.macID, deviceID: mac.deviceID, purpose: .allow, subject: subject)
+                confirm = await mac.sign(.unlock, purpose: .allow, subject: subject)
             }
             let item = await engine.answer(request.id, answer, mode: mode, confirm: confirm)
             guard let session = request.sessionID else { return }
@@ -155,8 +168,7 @@ final class LiveLink {
             // A signature is good for its moment only, so the retry is signed again by the same key: Face ID asks again.
             var confirm: String?
             if let subject = try? Self.subject(answered.id, entry.answer, mode: entry.mode) {
-                confirm = await DeviceKeys.header(entry.signer, macID: mac.endpoint.macID, deviceID: mac.deviceID, purpose: .allow,
-                                                  subject: subject, reason: "Allow \(RequestText.visible(answered.request.detail))")
+                confirm = await mac.sign(entry.signer, purpose: .allow, subject: subject, reason: "Allow \(RequestText.visible(answered.request.detail))")
                 guard confirm != nil || entry.signer == .unlock else {
                     if case .retrying = sent[answered.id]?.attempt { sent[answered.id]?.attempt = .unknown(item: item) }
                     return model?.transcripts.deliver(answered.id, in: entry.session, .unknown) ?? ()
@@ -190,7 +202,7 @@ final class LiveLink {
             }
         }
         guard let transcripts = model?.transcripts else { return }
-        settleDropped(state.droppedReplies, in: transcripts)
+        settleDropped(state, in: transcripts)
         for (id, entry) in sent {
             if case .sending(let item, _) = entry.attempt, case .failed(let error)? = state.outcomes[item] { model?.tools.noteRefusal(error) }
             let (delivery, next) = entry.attempt.advanced(in: state, request: id)
@@ -201,7 +213,7 @@ final class LiveLink {
             }
             if let next { sent[id]?.attempt = next } else { sent[id] = nil }
         }
-        trackSteering(state)
+        flights.trackSteering(state)
     }
 
     /// A live drop says only which session: the snapshot says which reply, so a phone that heard it and one that was away
@@ -217,268 +229,14 @@ final class LiveLink {
         }
     }
 
-    private func settleDropped(_ dropped: [DroppedReply], in transcripts: TranscriptStore) {
+    /// Until the first snapshot the state has no drops to read, and settling against none would forget them all.
+    private func settleDropped(_ state: RemoteState, in transcripts: TranscriptStore) {
+        guard state.epoch != nil else { return }
+        let dropped = state.droppedReplies
         let key = "settledDrops." + mac.endpoint.macID
         let settled = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
         let now = transcripts.settle(dropped, device: mac.deviceID, settled: settled)
         if now != settled { UserDefaults.standard.set(Array(now), forKey: key) }
-    }
-
-    /// `resending` is what an earlier attempt took from the tray, in place of what's there now.
-    func reply(_ text: String, turn: String, to session: SessionKey, mode: ReplyMode, submit: ReplySubmit? = nil, resending: [String]? = nil) {
-        // Sending again from the field, past "Not sent · Retry": the photos that reply carried go with this one.
-        let unsent = flights.filter { $0.value.session == session && $0.value.isUnsent }
-        for (item, flight) in unsent {
-            model?.tools.attachments.carry(from: flight.turn, to: turn)
-            setFlight(nil, item: item)
-        }
-        let attachments = resending ?? Array(((model?.tools.attachments.take(session, for: turn) ?? []) + unsent.values.flatMap(\.body.attachments))
-            .prefix(ComposerAttachments.limit))
-        // A finished session takes the reply as a follow-up to its last turn.
-        let body = RemoteReply(text: text, mode: mode, attachments: attachments, turnID: state.finished[session]?.turnID, submit: submit)
-        fly(body, turn: turn, session: session)
-    }
-
-    /// A new flight: signed first, and in the queue only if that's settled.
-    private func fly(_ body: RemoteReply, turn: String, session: SessionKey, needs: ConfirmLevel? = nil) {
-        let item = UUID().uuidString.lowercased()
-        setFlight(ReplyFlight(session: session, turn: turn, body: body, at: Date.now.timeIntervalSince1970, needs: needs), item: item)
-        Task { [engine] in
-            let signed = await signature(body, session: session, level: needs)
-            guard flights[item] != nil else { return }
-            let confirm: String?
-            switch signed {
-            case .declined: return settleUnsent(item, reason: "Not confirmed.")
-            case .notRequired: confirm = nil
-            case .signed(let header): confirm = header
-            }
-            flights[item]?.phase = .queued(resigned: false)
-            setFlight(flights[item], item: item)
-            await flightWrites?.value
-            await engine.reply(session, body, confirm: confirm, id: item)
-            track(state)
-        }
-    }
-
-    /// The reply's signature, by what the session's mode asks of it here (the Mac decides again from its own), or by
-    /// `level` when the Mac has said. Asked for means no send without it; a Mac without `confirmActions` asks for nothing.
-    private func signature(_ body: RemoteReply, session: SessionKey, level: ConfirmLevel? = nil) async -> ReplySignature {
-        if model?.tools.needsKeys == true { return .notRequired }
-        let signs = state.hello?.capabilities.contains(.confirmActions) == true
-        let required = level ?? (signs ? ConfirmPolicy.reply(body, sessionMode: state.sessions[session]?.settings?.mode) : nil)
-        guard let subject = try? ConfirmMessage.subject(action: .reply, target: session, body: body) else {
-            return required == nil ? .notRequired : .declined
-        }
-        let signed = await DeviceKeys.header((required ?? .unlock) == .unlock ? .unlock : .confirm, macID: mac.endpoint.macID, deviceID: mac.deviceID,
-                                             purpose: .action, subject: subject, reason: "Send this reply")
-        if let signed { return .signed(signed) }
-        return required == nil ? .notRequired : .declined
-    }
-
-    /// An unknown or undelivered reply again under a new key; one the Mac refused goes fresh. Either way it carries what
-    /// it did and signs again, since a signature is good for its moment only.
-    func retry(item: String, text: String, turn: String, session: SessionKey) {
-        guard var flight = flights[item] else {
-            return reply(text, turn: turn, to: session, mode: model?.replyMode(session) ?? .auto)
-        }
-        model?.tools.attachments.carry(from: flight.turn, to: turn)
-        flight.turn = turn
-        switch state.outcomes[item] {
-        case .unknown?, .notDelivered?:
-            flight.phase = .signing
-            setFlight(flight, item: item)
-            Task { [engine, flight] in
-                let signed = await signature(flight.body, session: session, level: flight.needs)
-                let confirm: String?
-                switch signed {
-                case .declined: return settleUnsent(item, reason: "Not confirmed.")
-                case .notRequired: confirm = nil
-                case .signed(let header): confirm = header
-                }
-                if let again = await engine.retry(itemID: item, confirm: confirm) {
-                    var queued = flight
-                    queued.phase = .queued(resigned: false)
-                    setFlight(nil, item: item)
-                    setFlight(queued, item: again.id)
-                    track(self.state)
-                } else {
-                    setFlight(nil, item: item)
-                    refly(flight, turn: turn, session: session)
-                }
-            }
-        default:
-            setFlight(nil, item: item)
-            refly(flight, turn: turn, session: session)
-        }
-    }
-
-    /// A note stays a note; `auto` is decided afresh, since the session may have moved on.
-    private func refly(_ flight: ReplyFlight, turn: String, session: SessionKey) {
-        let body = flight.body
-        let mode = body.mode == .auto ? model?.replyMode(session) ?? .auto : body.mode
-        fly(RemoteReply(text: body.text, mode: mode, keys: body.keys, attachments: body.attachments, turnID: state.finished[session]?.turnID, submit: body.submit),
-            turn: turn, session: session, needs: flight.needs)
-    }
-
-    /// Once more, signed as the Mac asked; cancelled, nothing goes and the reply waits for Retry at that level.
-    private func resign(_ item: String, _ flight: ReplyFlight, level: ConfirmLevel, refused: APIError) {
-        if model?.tools.needsKeys == true { return settleUnsent(item, reason: "Pair this iPhone again to do this from it.") }
-        var waiting = flight
-        waiting.phase = .resigning
-        waiting.needs = level
-        setFlight(waiting, item: item)
-        Task { [engine, waiting] in
-            guard case .signed(let confirm) = await signature(flight.body, session: flight.session, level: level) else {
-                return settleUnsent(item, reason: refused.message)
-            }
-            let again = UUID().uuidString.lowercased()
-            var queued = waiting
-            queued.phase = .queued(resigned: true)
-            setFlight(nil, item: item)
-            setFlight(queued, item: again)
-            await flightWrites?.value
-            await engine.reply(flight.session, flight.body, confirm: confirm, id: again)
-            track(state)
-        }
-    }
-
-    /// Back into the field with "Not sent · Retry". That shows one reply per session; a turn no longer there shows none.
-    private func settleUnsent(_ item: String, reason: String) {
-        guard var flight = flights[item] else { return }
-        for (other, earlier) in flights where other != item && earlier.session == flight.session && earlier.isUnsent {
-            setFlight(nil, item: other)
-        }
-        flight.phase = .unsent(reason: reason)
-        setFlight(flight, item: item)
-        if model?.transcripts.fail(flight.turn, in: flight.session, reason: reason, item: item) == false { setFlight(nil, item: item) }
-    }
-
-    private func setFlight(_ flight: ReplyFlight?, item: String) {
-        flights[item] = flight
-        let previous = flightWrites
-        flightWrites = Task { [outbox, mac] in
-            await previous?.value
-            await outbox.setFlight(flight, item: item, mac: mac.endpoint.macID)
-        }
-    }
-
-    /// What a kill left: turns still in the outbox show as sending and settle as usual, and the rest wait for Retry.
-    private func restoreFlights() async {
-        let macID = mac.endpoint.macID
-        let saved = await outbox.flights(for: macID)
-        guard !saved.isEmpty, let transcripts = model?.transcripts else { return }
-        let queued = Set(await outbox.items(for: macID).map(\.id))
-        let settled = await engine.state.outcomes
-        let now = Date.now.timeIntervalSince1970
-        for (item, var flight) in saved.sorted(by: { $0.value.at < $1.value.at }) where flights[item] == nil {
-            if flight.expired(now: now) {
-                setFlight(nil, item: item)
-                continue
-            }
-            let phase = flight.restored(inQueue: queued.contains(item) || settled[item] != nil)
-            flight.phase = phase
-            flights[item] = flight
-            transcripts.adopt(flight.turn, text: flight.body.text, at: Date(timeIntervalSince1970: flight.at), to: flight.session)
-            if case .unsent(let reason) = phase { settleUnsent(item, reason: reason) } else { setFlight(flight, item: item) }
-        }
-        track(state)
-    }
-
-    /// This Mac is forgotten: what it was sent or refused goes too.
-    func forgetFlights() {
-        flights = [:]
-        let previous = flightWrites
-        flightWrites = Task { [outbox, mac] in
-            await previous?.value
-            await outbox.removeFlights(for: mac.endpoint.macID)
-        }
-    }
-
-    func interrupt(_ session: SessionKey, when: InterruptRequest.When) {
-        Task { [engine] in
-            let item = await engine.interrupt(session, when: when)
-            steers[item.id] = session
-            track(state)
-        }
-    }
-
-    func takeBack(_ session: SessionKey, turn: String?, keepText: Bool = true) {
-        Task { [engine] in
-            let item = await engine.takeBack(sessionID: session)
-            takeBacks[item.id] = (session, turn, keepText)
-            track(state)
-        }
-    }
-
-    /// Replies become sent turns or waiting notes, or go back to the field; Take Back returns a note's
-    /// text; a refused steer says so under the field.
-    private func trackSteering(_ state: RemoteState) {
-        guard let transcripts = model?.transcripts else { return }
-        for (item, flight) in flights {
-            guard case .queued = flight.phase, let outcome = state.outcomes[item] else { continue }
-            switch flight.next(after: outcome) {
-            // The signature ran out in the queue, or the session's mode asks for more than this phone knew: once more, signed as asked.
-            case .resign(let level):
-                if case .failed(let error) = outcome { resign(item, flight, level: level, refused: error) }
-            case .delivered(let body):
-                setFlight(nil, item: item)
-                let result = body.flatMap { try? JSONDecoder().decode(ReplyResult.self, from: $0) }
-                if result?.delivery == .note {
-                    transcripts.mark(flight.turn, in: flight.session, .note)
-                    mailSeen[flight.session] = mailSeen[flight.session] ?? .distantFuture
-                } else if result?.delivery == .inbox {
-                    // The hook took it at once, which is as read as a note gets.
-                    transcripts.mark(flight.turn, in: flight.session, .read)
-                } else if result?.delivery == .queued {
-                    transcripts.mark(flight.turn, in: flight.session, .queued)
-                } else {
-                    transcripts.mark(flight.turn, in: flight.session, .sent)
-                }
-            case .unsent(let reason):
-                settleUnsent(item, reason: reason)
-            }
-        }
-        for (item, back) in takeBacks {
-            guard let outcome = state.outcomes[item] else { continue }
-            takeBacks[item] = nil
-            switch outcome {
-            case .delivered:
-                if let turn = back.turn { transcripts.withdraw(turn, in: back.session, restoring: back.keepText) }
-            // Nothing left to take: the session read it first. An Edit keeps its text as a new message.
-            case .failed(let error) where error.code == .notFound:
-                if let turn = back.turn {
-                    if back.keepText { transcripts.editTooLate(turn, in: back.session) }
-                    transcripts.mark(turn, in: back.session, .read)
-                }
-            default:
-                if let turn = back.turn { transcripts.mark(turn, in: back.session, .note) }
-                transcripts.notice("Couldn't take it back. Try again.", in: back.session)
-            }
-        }
-        for (item, session) in steers {
-            guard let outcome = state.outcomes[item] else { continue }
-            steers[item] = nil
-            switch outcome {
-            case .delivered, .answeredElsewhere: break
-            case .failed(let error): transcripts.notice("Couldn't stop it. \(error.message)", in: session)
-            case .unknown, .notDelivered: transcripts.notice("Couldn't reach the Mac to stop it.", in: session)
-            }
-        }
-        // A note the Mac showed as mail and no longer does was read. One read before the phone ever saw
-        // the mail counts after half a minute.
-        for (session, seen) in mailSeen {
-            guard let transcripts = model?.transcripts, let note = transcripts.pendingNote(session), note.state == .note else {
-                mailSeen[session] = nil
-                continue
-            }
-            let mail = state.sessions[session]?.mail
-            if mail?.kind == .note {
-                mailSeen[session] = .now
-            } else if seen != .distantFuture || Date.now.timeIntervalSince(note.at) > 30 {
-                transcripts.noteRead(in: session)
-                mailSeen[session] = nil
-            }
-        }
     }
 
     /// A burst of updates saves once, a few seconds after it settles.
@@ -504,9 +262,20 @@ final class LiveLink {
         Task { [engine] in await PushRegistrar.shared.report(to: await engine.client) }
     }
 
+    /// Live for its Mac until it drops or stops; a state that arrives after `stop` doesn't make it live again.
+    private func setLive(_ live: Bool) {
+        let macID = mac.endpoint.macID, me = ObjectIdentifier(self)
+        if live, !stopped {
+            Self.liveOwners[macID] = me
+        } else if Self.liveOwners[macID] == me {
+            Self.liveOwners[macID] = nil
+        }
+    }
+
     func apply(_ state: RemoteState) {
         let connected = state.connection.isLive && !self.state.connection.isLive
         self.state = state
+        setLive(state.connection.isLive)
         if connected {
             Launch.mark("live")
             reportPush()
@@ -587,10 +356,6 @@ enum AnswerAttempt: Equatable {
             }
         }
     }
-}
-
-extension ReplyFlight {
-    var isUnsent: Bool { if case .unsent = phase { true } else { false } }
 }
 
 extension TranscriptStore.Delivery {

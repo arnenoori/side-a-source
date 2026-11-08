@@ -1,5 +1,4 @@
 import AppKit
-import SideACore
 import SideAProtocol
 import SwiftUI
 
@@ -41,11 +40,10 @@ struct SessionComposer: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Ink.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(alignment: .bottomLeading) {
-                        // Above the field: its bottom sits 6 points over the field's top.
                         if let open = suggestions {
                             SuggestionList(options: open.options, highlighted: min(highlighted, open.options.count - 1)) { choose($0, in: open.range) }
                                 .offset(y: -(height + 16 + 6))
-                                .transition(.opacity.combined(with: .offset(y: 4)))
+                                .transition(Ink.rise(4))
                         }
                     }
                 trailing
@@ -228,7 +226,7 @@ struct SessionComposer: View {
     private func waitingMail(_ live: LiveSession, kind: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: kind == "note" ? "envelope" : "pause.circle").foregroundStyle(.secondary)
-            Text(kind == "note" ? "Note waiting · it reads it after its current step" : "Stopping before its next step").foregroundStyle(.secondary)
+            Text(kind == "note" ? "Note waiting" : "Stopping before its next step").foregroundStyle(.secondary)
             if kind == "note" {
                 Menu {
                     Button("Edit") { model.editNote(live) }

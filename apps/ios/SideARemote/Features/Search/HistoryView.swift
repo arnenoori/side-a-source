@@ -1,5 +1,4 @@
 import SideAProtocol
-import SideARemoteShared
 import SwiftUI
 
 /// The Search tab is History (sections 4.11, 4.14). Before typing: Pinned, then Recent by project with

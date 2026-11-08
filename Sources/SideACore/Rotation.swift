@@ -3,18 +3,18 @@ import Foundation
 public extension Planner {
     /// Out on a 5-hour or weekly limit: Autopilot won't use it, and it is really at the limit, not just past a low Move at.
     /// A cap on one model alone never counts; see `isFableOut`.
-    static func isLimited(_ usage: AccountUsage, now: Double, full: Double = Planner.full) -> Bool {
+    static func isLimited(_ usage: AccountUsage, now: Double, full: Double) -> Bool {
         (tightest(usage, now: now)?.percent ?? 0) >= max(full, limited)
     }
 
     /// Has room for other models but none for Fable. False on a plan without a Fable cap, which bills Fable as extra usage.
-    static func isFableOut(_ usage: AccountUsage, now: Double, full: Double = Planner.full) -> Bool {
+    static func isFableOut(_ usage: AccountUsage, now: Double, full: Double) -> Bool {
         guard !isLimited(usage, now: now, full: full), let fable = usage.forFable else { return false }
         return isLimited(fable, now: now, full: full)
     }
 
     /// When an account that `isLimited` or `isFableOut` gets its room back: the last of its full windows to reset.
-    static func backAt(_ usage: AccountUsage, now: Double, full: Double = Planner.full) -> Double? {
+    static func backAt(_ usage: AccountUsage, now: Double, full: Double) -> Double? {
         let plain = isLimited(usage, now: now, full: full) ? usage : usage.forFable
         guard let plain, isLimited(plain, now: now, full: full) else { return nil }
         return [live(plain.fiveHour, now), live(plain.weekly, now)].compactMap { $0 }.filter { $0.percent >= max(full, limited) }.compactMap(\.resetsAt).max()
@@ -26,15 +26,15 @@ public extension Planner {
     }
 
     /// The account a login's sessions would go to once it fills up: never itself, never one in `busy`.
-    static func next(after login: Account, among accounts: [Account], usage: [String: AccountUsage], health: [String: LoginHealth] = [:], busy: Set<String>, now: Double) -> String? {
-        best(accounts.filter { $0.id != login.id && !busy.contains($0.id) }, usage: usage, health: health, active: nil, now: now)
+    static func next(after login: Account, among accounts: [Account], usage: [String: AccountUsage], health: [String: LoginHealth] = [:], busy: Set<String>, full: Double, now: Double) -> String? {
+        best(accounts.filter { $0.id != login.id && !busy.contains($0.id) }, usage: usage, health: health, active: nil, full: full, now: now)
     }
 }
 
 /// Why Autopilot moved a login, in the few words a row can hold.
 public enum MoveReason {
     /// `usage` is the reading Autopilot planned with, so in Fable mode the window it names is Fable's.
-    public static func text(from: Account, to: Account, usage: AccountUsage?, now: Double, full: Double = Planner.full) -> String {
+    public static func text(from: Account, to: Account, usage: AccountUsage?, now: Double, full: Double) -> String {
         if let usage, let window = Planner.tightest(usage, now: now), window.percent >= full {
             return "\(window.label) \(window.text(at: now))"
         }

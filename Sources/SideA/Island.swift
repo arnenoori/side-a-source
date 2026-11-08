@@ -172,7 +172,9 @@ final class Island {
     @ObservationIgnored private weak var store: AccountStore?
     @ObservationIgnored private var server: IslandServer?
     @ObservationIgnored private let hotKeys = HotKeys()
-    @ObservationIgnored private var eventTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var timers = IslandTimers()
+    @ObservationIgnored private var timerTask: Task<Void, Never>?
+    @ObservationIgnored private(set) var hovering = false
     @ObservationIgnored private lazy var panel = IslandPanel(island: self)
     @ObservationIgnored private var keys: KeySet = .none
     private enum KeySet { case none, ready, requests }
@@ -191,8 +193,6 @@ final class Island {
             })
         do { try server.start(); self.server = server } catch { store.error = error.localizedDescription }
     }
-
-    func stop() { server?.stop(); server = nil }
 
     private func receive(_ connection: UInt64, _ line: Data) {
         if let finish = IslandFinish(message: line) {
@@ -241,13 +241,13 @@ final class Island {
         pending.append(item)
         if first { index = 0 }
         expanded = true
-        if event?.kind == .waiting { event = nil }
+        if event?.kind == .waiting { event = nil; timers.clearEvent() }
         watcher?.requestAdded(item)
         if Self.on {
             Sounds.play(.nudge)
             announce(item.request.announcement, high: true)
         }
-        if WaitingNotifier.enabled { WaitingNotifier.deliver(item) }
+        if WaitingNotifier.enabled, Bundle.main.bundleURL.pathExtension == "app" { WaitingNotifier.deliver(item) }
         if let handBack = item.handBackAt {
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(handBack.timeIntervalSinceNow))
@@ -342,7 +342,7 @@ final class Island {
         if !item.request.accepts(answer, confirmed: confirmed) {
             if case .remote = by { return false }
             NSSound.beep()
-            announce("\(item.request.riskReason ?? "This request is destructive"). Click Allow anyway to approve it.", high: true)
+            announce("\(item.request.riskReason ?? "This request is destructive"). Click Allow Anyway to approve it.", high: true)
             return false
         }
         if let connection = item.connection { server?.reply(connection, answer.line) } else { responders.removeValue(forKey: item.id)?(answer) }
@@ -404,6 +404,44 @@ final class Island {
 
     func collapse() { expanded = false; changed() }
 
+    /// The pointer over the island. A brush past the notch doesn't open it, and leaving the Ready list has a moment to come back.
+    func hover(_ inside: Bool, now: Date = Date()) {
+        guard inside != hovering else { return }
+        hovering = inside
+        if inside { timers.entered(expands: folded, now: now) } else { timers.left(collapses: foldsOnLeave, now: now) }
+        schedule()
+    }
+
+    /// Runs what's due; the timer task calls it, and tests call it with their own clock.
+    func tick(now: Date = Date()) {
+        for action in timers.due(now: now) {
+            switch action {
+            case .expand: if folded { expand() }
+            case .collapse: if foldsOnLeave { collapse() }
+            case .dismissEvent: event = nil; changed()
+            }
+        }
+        schedule()
+    }
+
+    private var folded: Bool { !expanded && event == nil && (!pending.isEmpty || !ready.isEmpty) }
+    private var foldsOnLeave: Bool { expanded && event == nil && pending.isEmpty && replying == nil && !ready.isEmpty }
+
+    private func timeEvent(_ seconds: TimeInterval) {
+        timers.showEvent(for: seconds, now: Date(), hovered: hovering)
+        schedule()
+    }
+
+    private func schedule() {
+        timerTask?.cancel()
+        guard let next = timers.next else { timerTask = nil; return }
+        timerTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(next.timeIntervalSinceNow, 0)))
+            guard !Task.isCancelled else { return }
+            self?.tick()
+        }
+    }
+
     func expand() { expanded = true; changed() }
 
     func focus() {
@@ -448,14 +486,7 @@ final class Island {
         if kind == .waiting, pending.contains(where: { $0.request.cwd == cwd && cwd != nil }) { return }
         event = Event(kind: kind, title: title, detail: detail, pid: pid, cwd: cwd)
         announce("\(title). \(detail)", high: false)
-        eventTask?.cancel()
-        let seconds: Double = kind == .waiting ? 8 : 5
-        eventTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard let self, !Task.isCancelled else { return }
-            self.event = nil
-            self.changed()
-        }
+        timeEvent(kind == .waiting ? 8 : 5)
         changed()
     }
 
@@ -504,20 +535,14 @@ final class Island {
         event = Event(kind: .finished, title: "\(title) is done", detail: finish.summary.isEmpty ? "Ready for what's next." : finish.summary,
                       pid: finish.pid, cwd: finish.cwd)
         announce("\(title) is done. \(finish.summary) Control Option G goes to it.", high: false)
-        eventTask?.cancel()
-        eventTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(7))
-            guard let self, !Task.isCancelled else { return }
-            self.event = nil
-            self.changed()
-        }
+        timeEvent(7)
         changed()
     }
 
     /// Opens the session's terminal for its next task; with no argument, the one that finished last.
     func go(_ item: Ready? = nil) {
         guard let item = item ?? ready.first else { return }
-        if event?.kind == .finished { event = nil; eventTask?.cancel() }
+        if event?.kind == .finished { event = nil; timers.clearEvent() }
         reveal(pid: item.finish.pid, cwd: item.finish.cwd, title: item.title)
         leave([item], .released)
     }
@@ -791,19 +816,13 @@ final class Island {
     private func notice(_ title: String, _ detail: String) {
         event = Event(kind: .limit, title: title, detail: detail)
         announce("\(title). \(detail)", high: true)
-        eventTask?.cancel()
-        eventTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(8))
-            guard let self, !Task.isCancelled else { return }
-            self.event = nil
-            self.changed()
-        }
+        timeEvent(8)
         changed()
     }
 
-    func dismissEvent() { eventTask?.cancel(); event = nil; changed() }
+    func dismissEvent() { timers.clearEvent(); schedule(); event = nil; changed() }
 
-    static func setting(_ key: String) -> Bool { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
+    static func setting(_ key: String) -> Bool { PreferencesMirror.value(key) }
 
     func preview() {
         let request = IslandRequest(agent: .claude, cwd: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("code/web-app").path,
@@ -858,5 +877,57 @@ final class Island {
     func announce(_ text: String, high: Bool) {
         NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
                              userInfo: [.announcement: text, .priority: (high ? NSAccessibilityPriorityLevel.high : .medium).rawValue])
+    }
+}
+
+/// When the notch opens, folds and lets an event go, as times. Island runs one task to the next of them.
+struct IslandTimers: Equatable {
+    enum Action: Equatable { case expand, collapse, dismissEvent }
+
+    /// How long the pointer rests on the folded notch before it opens.
+    static let hoverIntent: TimeInterval = 0.15
+    /// How long the Ready list waits for the pointer to come back before it folds.
+    static let collapseGrace: TimeInterval = 0.3
+    /// The least an event strip has left once the pointer leaves it.
+    static let afterHover: TimeInterval = 2
+
+    private(set) var expandAt: Date?
+    private(set) var collapseAt: Date?
+    private(set) var eventAt: Date?
+    /// The event's time left, held while the pointer is over the island.
+    private(set) var eventLeft: TimeInterval?
+
+    var next: Date? { [expandAt, collapseAt, eventAt].compactMap { $0 }.min() }
+
+    mutating func entered(expands: Bool, now: Date) {
+        collapseAt = nil
+        if expands, expandAt == nil { expandAt = now.addingTimeInterval(Self.hoverIntent) }
+        if let eventAt {
+            eventLeft = max(eventAt.timeIntervalSince(now), 0)
+            self.eventAt = nil
+        }
+    }
+
+    mutating func left(collapses: Bool, now: Date) {
+        expandAt = nil
+        if collapses { collapseAt = now.addingTimeInterval(Self.collapseGrace) }
+        if let eventLeft {
+            eventAt = now.addingTimeInterval(max(eventLeft, Self.afterHover))
+            self.eventLeft = nil
+        }
+    }
+
+    mutating func showEvent(for seconds: TimeInterval, now: Date, hovered: Bool) {
+        if hovered { eventLeft = seconds; eventAt = nil } else { eventAt = now.addingTimeInterval(seconds); eventLeft = nil }
+    }
+
+    mutating func clearEvent() { eventAt = nil; eventLeft = nil }
+
+    mutating func due(now: Date) -> [Action] {
+        var actions: [Action] = []
+        if let at = expandAt, at <= now { expandAt = nil; actions.append(.expand) }
+        if let at = collapseAt, at <= now { collapseAt = nil; actions.append(.collapse) }
+        if let at = eventAt, at <= now { eventAt = nil; actions.append(.dismissEvent) }
+        return actions
     }
 }

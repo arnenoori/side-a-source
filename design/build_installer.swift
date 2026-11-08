@@ -32,7 +32,6 @@ func line(_ points: [NSPoint], color: NSColor, width: CGFloat) {
 label("Side A", x: 36, top: 20, width: 260, font: .systemFont(ofSize: 32, weight: .bold), color: ink)
 label("SA–01  /  MAC EDITION", x: 465, top: 32, width: 200, font: .monospacedSystemFont(ofSize: 10, weight: .medium), color: muted)
 line([NSPoint(x: 36, y: 328), NSPoint(x: 644, y: 328)], color: .init(calibratedWhite: 0.86, alpha: 1), width: 1)
-// A quiet pair of concentric grooves ties the install insert to the physical player.
 for radius in [CGFloat(77), 83] {
     let path = NSBezierPath(ovalIn: NSRect(x: 174-radius, y: 210-radius, width: radius*2, height: radius*2))
     NSColor(calibratedWhite: 0.91, alpha: 1).setStroke()

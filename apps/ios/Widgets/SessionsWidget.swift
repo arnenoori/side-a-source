@@ -2,7 +2,7 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// What's working and what needs you (section 5.5). Rows open their session; no Allow buttons on
+/// What's working and what needs you. Rows open their session; no Allow buttons on
 /// the Home Screen, where they're too easy to tap by accident.
 struct SessionsWidget: Widget {
     var body: some WidgetConfiguration {

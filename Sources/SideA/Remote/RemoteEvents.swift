@@ -20,6 +20,10 @@ final class RemoteEvents: Island.Watcher {
     private var autopilotTask: Task<Void, Never>?
     private var mac: MacState?
     private var macTask: Task<Void, Never>?
+    /// When each session was first seen working since its last finished turn, and when that turn finished: what's known
+    /// of how long a turn ran. The Stop hook doesn't say when the turn began.
+    private var working: [SessionKey: Date] = [:]
+    private var lastFinished: [SessionKey: Date] = [:]
     private(set) var recording = false
 
     init(store: AccountStore, hub: EventHub, queue: DispatchQueue) {
@@ -119,12 +123,21 @@ final class RemoteEvents: Island.Watcher {
         for row in new where !before.contains(row.id) {
             guard let finished = WireBuilders.finished(row, island: island) else { continue }
             record(.finishedAdd(finished))
-            store?.remote.push.finished(finished)
+            store?.remote.push.finished(finished, ran: ran(finished.sessionID, at: row.at))
         }
         for row in old where !after.contains(row.id) {
             if let session = row.finish.sessionID { record(.finishedResolve(sessionID: session, reason: reason.rawValue)) }
+            store?.remote.push.finishedResolved(row.id.uuidString.lowercased())
         }
         liveChanged()
+    }
+
+    /// From when the session was first seen working, else from its last finished turn, which can only make it longer.
+    /// Nil when neither is known.
+    private func ran(_ session: SessionKey, at end: Date) -> TimeInterval? {
+        let start = working.removeValue(forKey: session) ?? lastFinished[session]
+        lastFinished[session] = end
+        return start.map { end.timeIntervalSince($0) }
     }
 
     func queued(session: String, text: String, became outcome: Island.QueuedFollowUp) {
@@ -132,7 +145,7 @@ final class RemoteEvents: Island.Watcher {
         case .waiting: break
         case .delivered: record(.finishedResolve(sessionID: session, reason: Island.ReadyReason.sentQueued.rawValue))
         case .dropped:
-            record(.finishedResolve(sessionID: session, reason: Island.ReadyReason.queueDropped.rawValue))
+            record(.finishedResolve(sessionID: session, reason: ServerEvent.finishedQueueDropped))
             store?.remote.push.queuedDropped(session: session, title: store?.sessions.title(of: session), text: text)
         }
     }
@@ -163,7 +176,15 @@ final class RemoteEvents: Island.Watcher {
         // A flag that starts; `start` took in the ones already up.
         for session in next {
             if let flag = session.flag, sessions[session.id].map({ $0.flag?.kind != flag.kind }) ?? true { store.remote.push.health(session, flag) }
+            if session.status == .working, working[session.id] == nil {
+                working[session.id] = session.statusAt.map { Date(timeIntervalSince1970: $0) } ?? Date()
+            }
         }
+        for (id, session) in sessions where session.flag != nil && next.first(where: { $0.id == id })?.flag == nil {
+            store.remote.push.healthEnded(id)
+        }
+        working = working.filter { ids.contains($0.key) }
+        lastFinished = lastFinished.filter { ids.contains($0.key) }
         sessions = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         keys = nextKeys
         store.remote.previews.prune(listening: RemotePreviews.listening(store))

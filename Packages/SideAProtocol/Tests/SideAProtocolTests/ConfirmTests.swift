@@ -75,6 +75,13 @@ private func vector() throws -> ConfirmVector {
     #expect(again.code == .confirmInvalid && again.confirmLevel == .unlock && again.pairAgain)
 }
 
+@Test func theMacsConfirmDetailsAreTheOnesThePhoneReads() throws {
+    let required = try JSONDecoder().decode(APIError.self, from: Fixtures.data("APIError.confirm-required"))
+    let again = try JSONDecoder().decode(APIError.self, from: Fixtures.data("APIError.confirm-pair-again"))
+    #expect(APIError.confirmDetails(level: .biometric, pairAgain: false) == required.details)
+    #expect(APIError.confirmDetails(level: .unlock, pairAgain: true) == again.details)
+}
+
 private let knownSubjects: [(String, @Sendable () throws -> String, String)] = [
     ("account", { try ConfirmMessage.subject(useAccount: "acct-1") }, "acct-1:use"),
     ("autopilot off", { ConfirmMessage.subject(autopilot: AutopilotChange(enabled: false)) }, "enabled:false"),

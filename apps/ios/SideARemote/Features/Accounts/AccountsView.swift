@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// Accounts (section 4.10): what's left on each account. Accounts at 90% or limited come first, soonest
+/// Accounts: what's left on each account. Accounts at 90% or limited come first, soonest
 /// reset on top; then each provider, most left first. The clock moves once a minute, never in seconds.
 struct AccountsView: View {
     @Environment(AppRoot.self) private var root

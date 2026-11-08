@@ -18,20 +18,6 @@ enum HostedError: LocalizedError {
     /// Continue on phone ended the Mac process, but the agent didn't come back up under this session within 20 s.
     case notResumed(name: String, command: String)
 
-    /// protocol.md's error code for the phone.
-    var code: String {
-        switch self {
-        case .unavailable: "tmux_missing"
-        case .alreadyLive: "already_live"
-        case .sessionWaiting: "session_waiting"
-        case .composerBusy: "composer_busy"
-        case .notHosted: "not_hosted"
-        case .refused: "cannot_deliver"
-        case .failed: "internal"
-        case .notResumed: "not_resumed"
-        }
-    }
-
     var errorDescription: String? {
         switch self {
         case .unavailable: "Hosted sessions need tmux 3.4 or later (brew install tmux)."
@@ -1005,7 +991,6 @@ final class HostedSessions {
     }
 
     nonisolated static func repository(of worktree: String) -> String? {
-        // <repo>/.sidea-worktrees/<name>
         let url = URL(fileURLWithPath: worktree)
         return url.deletingLastPathComponent().lastPathComponent == ".sidea-worktrees" ? url.deletingLastPathComponent().deletingLastPathComponent().path : nil
     }

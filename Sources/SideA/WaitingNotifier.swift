@@ -6,7 +6,7 @@ import UserNotifications
 @MainActor
 final class WaitingNotifier {
     static let enabledKey = "notifyWaiting"
-    static var enabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+    static var enabled: Bool { PreferencesMirror.value(enabledKey) }
 
     private let store: AccountStore
     private var watcher: FolderWatcher?

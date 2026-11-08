@@ -1,8 +1,7 @@
 import Foundation
 import Network
-import SideACore
 
-@MainActor protocol PoolDecisions: AnyObject {
+@MainActor public protocol PoolDecisions: AnyObject {
     func poolAccount(_ provider: AgentProvider, session: String?, excluding: Set<String>) -> String?
     /// `refused`: the service turned the last token down, so renew it unless a session already did.
     func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential
@@ -14,53 +13,71 @@ import SideACore
     func poolHealthReport() -> [String: Int]
 }
 
-struct PoolCredential: Equatable, Sendable {
-    let token: String
+public struct PoolCredential: Equatable, Sendable {
+    public let token: String
     /// Codex's ChatGPT workspace, sent as chatgpt-account-id.
-    var accountID: String?
+    public var accountID: String?
+    public init(token: String, accountID: String? = nil) { self.token = token; self.accountID = accountID }
 }
 
 /// One service the pool serves: where its requests go and how its client is told apart.
-struct PoolService: Sendable {
-    let provider: AgentProvider
-    let base: URL
-    let prefix: String
-    let client: String
-    let admits: @Sendable (HTTPHeaders) -> Bool
-    let session: @Sendable (HTTPHeaders, Data) -> String?
+public struct PoolService: Sendable {
+    public let provider: AgentProvider
+    public let base: URL
+    public let prefix: String
+    public let client: String
+    public let admits: @Sendable (HTTPHeaders) -> Bool
+    public let session: @Sendable (HTTPHeaders, Data) -> String?
 
-    static let claude = PoolService(provider: .claude, base: URL(string: "https://api.anthropic.com")!, prefix: "/v1/", client: "Claude Code",
+    public init(provider: AgentProvider, base: URL, prefix: String, client: String, admits: @escaping @Sendable (HTTPHeaders) -> Bool,
+                session: @escaping @Sendable (HTTPHeaders, Data) -> String?) {
+        self.provider = provider; self.base = base; self.prefix = prefix; self.client = client; self.admits = admits; self.session = session
+    }
+
+    public static let claude = PoolService(provider: .claude, base: URL(string: "https://api.anthropic.com")!, prefix: "/v1/", client: "Claude Code",
                                     admits: Pool.fromClaudeCode, session: Pool.session)
-    static let codex = PoolService(provider: .codex, base: URL(string: "https://chatgpt.com/backend-api")!, prefix: "/codex/", client: "Codex",
+    public static let codex = PoolService(provider: .codex, base: URL(string: "https://chatgpt.com/backend-api")!, prefix: "/codex/", client: "Codex",
                                    admits: Pool.fromCodex, session: { headers, _ in Pool.codexSession(headers) })
 }
 
 /// Who may use a listener: its key, and for a shared one, which peers.
-struct PoolGate: Sendable {
-    let key: String
-    let admit: (@Sendable (String) async -> Bool)?
-    /// Its connections come through SocketFront, so the peer is the one it recorded, never the loopback relay.
-    var spliced = false
+public struct PoolGate: Sendable {
+    public let key: String
+    public let admit: (@Sendable (String) async -> Bool)?
+    /// The real peer of a connection that reached the listener through a splice, by its loopback port: the one the
+    /// splice recorded, never the loopback relay. Nil for a listener clients reach directly.
+    public var peer: (@Sendable (UInt16) -> String?)?
     /// How long a client has to send its whole request.
-    var patience: TimeInterval = PoolProxy.requestTime
+    public var patience: TimeInterval = PoolProxy.requestTime
+
+    public init(key: String, admit: (@Sendable (String) async -> Bool)?, peer: (@Sendable (UInt16) -> String?)? = nil,
+                patience: TimeInterval = PoolProxy.requestTime) {
+        self.key = key; self.admit = admit; self.peer = peer; self.patience = patience
+    }
 }
 
-final class PoolProxy: @unchecked Sendable {
-    static let preferredPort: UInt16 = 47317
-    static let bodyLimit = 40 << 20
+/// What carries a shared pool's outside connections to its loopback listener.
+public protocol PoolFront: AnyObject, Sendable {
+    var port: UInt16 { get }
+    func cancel()
+}
+
+public final class PoolProxy: @unchecked Sendable {
+    public static let preferredPort: UInt16 = 47317
+    public static let bodyLimit = 40 << 20
     /// What a caller without the key may send: its refusal needs nothing more.
-    static let strangerBody = 64 << 10
+    public static let strangerBody = 64 << 10
     /// 40 MiB at about 3 Mbit/s.
-    static let requestTime: TimeInterval = 120
+    public static let requestTime: TimeInterval = 120
     static let dropped: Set<String> = ["host", "authorization", "x-api-key", "connection", "content-length", "accept-encoding",
                                        "transfer-encoding", "keep-alive", "proxy-authorization", "proxy-connection", "te", "upgrade",
                                        "chatgpt-account-id"]
 
-    let key: String
+    public let key: String
     private let services: [PoolService]
     private let queue = DispatchQueue(label: "sidea.pool")
     private var listener: NWListener?
-    private var shared: (front: SocketFront, inner: NWListener)?
+    private var shared: (front: any PoolFront, inner: NWListener)?
     private weak var decisions: (any PoolDecisions)?
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -71,30 +88,37 @@ final class PoolProxy: @unchecked Sendable {
         return URLSession(configuration: configuration)
     }()
 
-    init(key: String, decisions: any PoolDecisions, services: [PoolService] = [.claude, .codex]) {
+    private let servingLock = NSLock()
+    private var serving = 0
+    /// Requests being answered right now, streams included; a relaunch would cut them off.
+    public var inFlight: Int { servingLock.withLock { serving } }
+
+    public init(key: String, decisions: any PoolDecisions, services: [PoolService] = [.claude, .codex]) {
         self.key = key
         self.services = services
         self.decisions = decisions
     }
 
-    /// A fixed port, so sessions started before an update reach the relaunched app.
-    func start(port preferred: UInt16 = PoolProxy.preferredPort) async throws -> UInt16 {
+    /// A fixed port, so sessions started before an update reach the relaunched app. `exactly`: fail rather than take
+    /// another port when it's in use.
+    public func start(port preferred: UInt16 = PoolProxy.preferredPort, exactly: Bool = false) async throws -> UInt16 {
         let gate = PoolGate(key: key, admit: nil)
         let port = try await { () async throws -> (NWListener, UInt16) in
-            do { return try await listen(.ipv4(.loopback), NWEndpoint.Port(rawValue: preferred)!, gate) } catch { return try await listen(.ipv4(.loopback), .any, gate) }
+            do { return try await listen(.ipv4(.loopback), NWEndpoint.Port(rawValue: preferred)!, gate) } catch {
+                if exactly { throw error }
+                return try await listen(.ipv4(.loopback), .any, gate)
+            }
         }()
         listener = port.0
         return port.1
     }
 
-    /// Also listens on `address` (this Mac's Tailscale address) for the user's other Macs, behind its own key and `admit`.
-    /// Network.framework never finishes a connection on a Tailscale address (see SocketFront), so a BSD socket there
-    /// hands each one to a loopback listener, which learns the real peer from SplicedPeers.
-    func share(on address: String, port: UInt16 = PoolProxy.preferredPort, gate: PoolGate) async throws -> UInt16 {
+    /// Also serves the connections `front` carries to a loopback listener, behind `gate`, which names their real peers.
+    public func share(gate: PoolGate, front: (_ queue: DispatchQueue, _ innerPort: UInt16) throws -> any PoolFront) async throws -> UInt16 {
         unshare()
-        let (inner, innerPort) = try await listen(.ipv4(.loopback), .any, PoolGate(key: gate.key, admit: gate.admit, spliced: true, patience: gate.patience))
+        let (inner, innerPort) = try await listen(.ipv4(.loopback), .any, gate)
         do {
-            let front = try SocketFront(address: address, port: port, queue: queue) { innerPort }
+            let front = try front(queue, innerPort)
             shared = (front, inner)
             return front.port
         } catch {
@@ -103,15 +127,17 @@ final class PoolProxy: @unchecked Sendable {
         }
     }
 
-    var isShared: Bool { shared != nil }
+    public var isShared: Bool { shared != nil }
 
-    func unshare() {
+    public func unshare() {
         shared?.front.cancel()
         shared?.inner.cancel()
         shared = nil
     }
 
-    func stop() {
+    /// Replies already streaming finish; nothing new is accepted. The session stays valid: a request between retries still
+    /// opens tasks on it, and a task on an invalidated session aborts the process.
+    public func stop() {
         unshare()
         listener?.cancel()
         listener = nil
@@ -145,7 +171,7 @@ final class PoolProxy: @unchecked Sendable {
         }
         var peer = ""
         if case .hostPort(let host, let port) = connection.endpoint {
-            peer = gate.spliced ? SplicedPeers.shared.take(port.rawValue)?.source ?? "" : "\(host)".components(separatedBy: "%").first ?? ""
+            peer = gate.peer.map { $0(port.rawValue) ?? "" } ?? "\(host)".components(separatedBy: "%").first ?? ""
         }
         client.onRequest = { [weak self, weak client] request in
             guard let self, let client else { return }
@@ -173,6 +199,8 @@ final class PoolProxy: @unchecked Sendable {
     }
 
     private func serve(_ request: HTTPRequest, to client: PoolClient, key: String) async {
+        servingLock.withLock { serving += 1 }
+        defer { servingLock.withLock { serving -= 1 } }
         let service = services.first { request.target.hasPrefix($0.prefix) }
         let refuse = { [weak self] (status: Int, type: String, message: String) async in
             await self?.decisions?.poolRefused(service?.provider, status: status, message: message)
@@ -265,7 +293,7 @@ final class PoolProxy: @unchecked Sendable {
     }
 
     /// The routes that produce a turn. Nothing else admitted is resent on a lost connection.
-    static func resends(_ target: String) -> Bool {
+    public static func resends(_ target: String) -> Bool {
         ["/v1/messages", "/codex/responses"].contains(target.split(separator: "?", omittingEmptySubsequences: false).first.map(String.init) ?? "")
     }
 

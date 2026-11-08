@@ -3,7 +3,7 @@ import SideARemoteShared
 import SwiftUI
 
 /// An open request as the transcript's last item: an amber-tinted card with the headline, the
-/// command, and Allow / Deny inline. Tapping elsewhere on it opens the approval sheet (section 4.3).
+/// command, and Allow / Deny inline. Tapping elsewhere on it opens the approval sheet.
 struct RequestCard: View {
     @Environment(AppModel.self) private var model
     @Environment(ApprovalPresenter.self) private var approvals

@@ -13,7 +13,8 @@ struct MenuPlayer: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openURL) private var openURL
     @AppStorage("tourSeen") private var tourSeen = false
-    @AppStorage("playerEnabled") private var playerEnabled = false
+    static let enabledKey = "playerEnabled"
+    @AppStorage(MenuPlayer.enabledKey) private var playerEnabled: Bool = PreferencesMirror.fallback(MenuPlayer.enabledKey)
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -50,23 +51,10 @@ struct MenuPlayer: View {
             .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: 440)
             .fixedSize(horizontal: false, vertical: true)
-            if store.unknownLogins[.claude] == nil, let next = Planner.nextAvailable(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, now: Date().timeIntervalSince1970),
-               Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, health: store.health, active: nil, now: Date().timeIntervalSince1970) == nil {
+            if store.unknownLogins[.claude] == nil, let next = Planner.nextAvailable(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, full: store.config.moveAt, now: Date().timeIntervalSince1970),
+               Planner.best(store.config.accounts.filter { $0.provider == .claude }, usage: store.usage, health: store.health, active: nil, full: store.config.moveAt, now: Date().timeIntervalSince1970) == nil {
                 Text("All limited. \(next.0.name) is back \(UsageBar.format(next.1)).")
                     .font(.system(size: 11)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
-            }
-            if let report = store.report, !report.days.isEmpty {
-                // Calendar days: an idle day counts as zero, not as the last active day.
-                let today = report.days.first { $0.date == Self.day(0) }?.total ?? 0
-                Button { store.settingsTab = .usage; store.openSettings() } label: {
-                    HStack(spacing: 4) {
-                        Text("Today \(TokenCount.short(today))")
-                        Text("· 7 days \(TokenCount.short(report.days.filter { ($0.date ?? "") >= Self.day(-6) }.map(\.total).reduce(0, +)))").foregroundStyle(.secondary)
-                        if let top = report.projects.first?.project { Text("· \(URL(fileURLWithPath: top).lastPathComponent)").foregroundStyle(.secondary).lineLimit(1) }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                    }.font(.system(size: 11)).contentShape(.rect)
-                }.buttonStyle(.plain).help("Tokens by day, project and model").tourAnchor(.usage)
             }
             if let error = store.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(.red).lineLimit(4)
@@ -75,7 +63,11 @@ struct MenuPlayer: View {
             if let version = updates.available {
                 Button { updates.install() } label: {
                     Label("Update to \(version)", systemImage: "arrow.down.circle.fill").font(.system(size: 11, weight: .medium))
-                }.buttonStyle(.borderless).disabled(!updates.canCheck).help("Restart Side A with the new version")
+                }.buttonStyle(.borderless).disabled(!updates.canUpdate).help("Restart Side A with the new version")
+            } else if let version = updates.updated() {
+                Link(destination: UpdateHistory.notes(version)) {
+                    Label("Updated to \(version)", systemImage: "checkmark.circle").font(.system(size: 11, weight: .medium))
+                }.buttonStyle(.borderless).foregroundStyle(.secondary).help("What's new in \(version)")
             }
             if updates.failure != nil {
                 Link(destination: URL(string: "https://getsidea.com")!) {
@@ -83,21 +75,20 @@ struct MenuPlayer: View {
                 }.help("Download the latest Side A and replace this copy")
             }
             Divider()
-            HStack(spacing: 14) {
-                HStack(spacing: 8) {
-                    Text("Autopilot").font(.system(size: 13))
-                    Toggle("Autopilot", isOn: Binding(get: { store.config.smartMode }, set: { _ in store.toggleSmart() }))
-                        .labelsHidden().toggleStyle(.switch).controlSize(.small)
-                }.tourAnchor(.autopilot)
-                Spacer()
-                if playerEnabled {
-                    Button { openPlayer() } label: { Image(systemName: "opticaldisc") }.help("Show the player").accessibilityLabel("Show the player")
+            // Autopilot is on unless turned off in Settings > Autopilot, so the footer carries usage instead of its switch.
+            HStack(spacing: 0) {
+                usage
+                Spacer(minLength: 10)
+                HStack(spacing: 14) {
+                    if playerEnabled {
+                        Button { openPlayer() } label: { Image(systemName: "opticaldisc") }.help("Show the player").accessibilityLabel("Show the player")
+                    }
+                    Button { openSessions() } label: { Image(systemName: "text.bubble") }.help("Sessions").accessibilityLabel("Sessions")
+                    Button { store.openSettings() } label: { Image(systemName: "gearshape") }
+                        .help("Settings").accessibilityLabel("Settings")
+                        .modifier(TourAnchorIf(step: .add, active: !store.config.accounts.isEmpty))
+                    Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Side A").accessibilityLabel("Quit Side A")
                 }
-                Button { openSessions() } label: { Image(systemName: "text.bubble") }.help("Sessions").accessibilityLabel("Sessions")
-                Button { store.openSettings() } label: { Image(systemName: "gearshape") }
-                    .help("Settings").accessibilityLabel("Settings")
-                    .modifier(TourAnchorIf(step: .add, active: !store.config.accounts.isEmpty))
-                Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Side A").accessibilityLabel("Quit Side A")
             }.buttonStyle(.borderless).font(.system(size: 12))
         }.padding(16).frame(width: 320)
         .guidedTour(isPresented: Binding(get: { !tourSeen && !store.isDemo }, set: { if !$0 { tourSeen = true } }))
@@ -107,6 +98,23 @@ struct MenuPlayer: View {
             store.showSessions = { openWindow(id: "sessions") }
         }
     }
+    /// "Today 905.7M · 7 days 28.3B", opening Settings > Usage.
+    @ViewBuilder private var usage: some View {
+        if let report = store.report, !report.days.isEmpty {
+            // Calendar days: an idle day counts as zero, not as the last active day.
+            let today = report.days.first { $0.date == Self.day(0) }?.total ?? 0
+            let week = report.days.filter { ($0.date ?? "") >= Self.day(-6) }.map(\.total).reduce(0, +)
+            Button { store.settingsTab = .usage; store.openSettings() } label: {
+                HStack(spacing: 4) {
+                    Text("Today \(TokenCount.short(today))")
+                    Text("· 7 days \(TokenCount.short(week))").foregroundStyle(.secondary)
+                }.font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.8).contentShape(.rect)
+            }.buttonStyle(.plain).layoutPriority(1).help("Tokens by day, project and model").tourAnchor(.usage)
+            .accessibilityLabel("Usage: today \(TokenCount.short(today)), 7 days \(TokenCount.short(week))")
+            .accessibilityHint("Opens Usage in Settings")
+        }
+    }
+
     /// One line at most, so the menu never stacks banners; the rest stay visible in Sessions.
     @ViewBuilder private var statusLine: some View {
         let waiting = store.island.pending.count, finished = store.island.ready.count
@@ -125,6 +133,10 @@ struct MenuPlayer: View {
             status("cup.and.saucer.fill", .secondary, awake, help: "Keep awake while agents work, in Settings > General",
                    label: store.keepAwake.accessibilityLine) { store.settingsTab = .general; store.openSettings() }
                 .foregroundStyle(.secondary)
+        } else if !store.config.smartMode {
+            status("pause.circle", .secondary, "Autopilot is off", help: "Turn it on in Settings > Autopilot") {
+                store.settingsTab = .autopilot; store.openSettings()
+            }.foregroundStyle(.secondary)
         }
     }
     private func status(_ symbol: String, _ tint: Color, _ text: String, help: String, label: String? = nil, action: @escaping () -> Void) -> some View {
@@ -193,7 +205,6 @@ struct AccountUsageRow: View {
     @Bindable var store: AccountStore
     let account: Account
     var body: some View {
-        // Redraws every 30 seconds so countdowns move while the menu stays open.
         TimelineView(.periodic(from: .now, by: 30)) { _ in row }
     }
     private var row: some View {
@@ -221,18 +232,19 @@ struct AccountUsageRow: View {
                 MiniBar(label: "wk", window: usage.weekly)
             }
             Group {
-                if store.signingIn.contains(account.id) {
+                switch store.rowAction(for: account) {
+                case .busy:
                     ProgressView().controlSize(.mini)
-                } else if !account.ready || (store.health[account.id]?.takesWork == false && !isActive) {
+                case .signIn:
                     Button("Sign in") { Task { await store.signIn(account.id) } }
-                } else if store.health[account.id] == .idle && usage == nil && account.provider == .claude {
+                case .renew:
                     Button("Renew") { Task { await store.wake(account.id) } }
                         .disabled(store.waking.contains(account.id))
                         .help("Has Claude Code renew this login; no model runs and no quota is used")
-                } else if !isActive && account.provider == .claude {
+                case .use:
                     Button("Use") { Task { await store.activate(account.id) } }.tourAnchor(.use)
                         .help("New claude commands use this account")
-                } else {
+                case .inUse, .none:
                     Color.clear
                 }
             }.controlSize(.mini).frame(width: 44)
@@ -241,7 +253,7 @@ struct AccountUsageRow: View {
         .contextMenu {
             if !isActive && account.ready && account.provider == .claude { Button("Use") { Task { await store.activate(account.id) } } }
             if account.ready && account.provider == .claude { Button("Open Terminal on \(account.name)") { Task { await store.openTerminal(account.id) } } }
-            if !isActive { Button("Sign in again") { Task { await store.signIn(account.id) } } }
+            if !isActive { Button("Sign In Again") { Task { await store.signIn(account.id) } } }
             Button("Settings…") { store.settingsTab = .accounts; store.openSettings() }
         }
     }

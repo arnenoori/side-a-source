@@ -515,8 +515,7 @@ final class RemoteServer: @unchecked Sendable {
     static func confirm(_ header: String?, macID: String, device: String, purpose: ConfirmPurpose, subject: String, needs: ConfirmProof,
                         keys: ConfirmGate.Keys, replay: ConfirmGate.ReplayCache) -> HTTPResponse? {
         guard needs > .none else { return nil }
-        var details = ["level": needs.level?.rawValue ?? "unlock"]
-        if keys.isEmpty { details["hint"] = "pairAgain" }
+        var details = APIError.confirmDetails(level: needs.level ?? .unlock, pairAgain: keys.isEmpty)
         let what = needs == .biometric ? "Confirm with Face ID on your iPhone." : "Unlock your iPhone to do this."
         switch ConfirmGate.verify(header, macID: macID, deviceID: device, purpose: purpose, subject: subject, keys: keys, replay: replay) {
         case .success(let level) where level >= needs: return nil

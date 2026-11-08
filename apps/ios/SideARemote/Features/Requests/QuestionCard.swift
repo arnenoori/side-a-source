@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// Claude's `AskUserQuestion`, inline in the transcript (section 4.6): one question at a time,
+/// Claude's `AskUserQuestion`, inline in the transcript: one question at a time,
 /// lettered options, answered questions folded into summary lines above the current one.
 struct QuestionCard: View {
     @Environment(AppModel.self) private var model
@@ -56,6 +56,7 @@ struct QuestionCard: View {
         .padding(Space.m)
         .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: Radius.questionCard, style: .continuous))
         .sensoryFeedback(.selection, trigger: selections)
+        .onAppear(perform: preselect)
         .task(id: pendingAdvance) {
             guard let pending = pendingAdvance else { return }
             try? await Task.sleep(for: .milliseconds(250))
@@ -96,7 +97,8 @@ struct QuestionCard: View {
                 OptionRow(letter: nil, option: IslandQuestion.Option(label: "Write your own…", description: nil),
                           picked: false, action: focusComposer)
             }
-            .background(Color(.systemBackground), in: .rect(cornerRadius: Radius.inlineCard, style: .continuous))
+            .background(Color(.systemBackground))
+            .clipShape(.rect(cornerRadius: Radius.inlineCard, style: .continuous))
 
             if question.multiSelect {
                 Button {
@@ -122,6 +124,13 @@ struct QuestionCard: View {
         .controlSize(.large)
         .needsMac()
         .padding(.top, Space.xs)
+    }
+
+    /// Starts each single-choice question on Claude's recommended answer, as the Mac does.
+    private func preselect() {
+        for (offset, question) in questions.enumerated() where !question.multiSelect && picks[offset] == nil {
+            if let option = question.options.first(where: \.recommended) { picks[offset] = [option.label] }
+        }
     }
 
     private func pick(_ label: String, in question: IslandQuestion) {
@@ -205,8 +214,17 @@ private struct OptionRow: View {
             .frame(minHeight: 48)
             .contentShape(.rect)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(Pressed())
         .accessibilityLabel([letter, option.title, option.recommended ? "recommended" : nil, option.description].compactMap { $0 }.joined(separator: ", "))
         .accessibilityAddTraits(picked ? .isSelected : [])
+    }
+}
+
+/// A row's highlight while a finger is on it: on at once, fading out once it lifts.
+private struct Pressed: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Color(.systemFill).opacity(configuration.isPressed ? 1 : 0))
+            .animation(configuration.isPressed ? nil : .easeOut(duration: 0.2), value: configuration.isPressed)
     }
 }

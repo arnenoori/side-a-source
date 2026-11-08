@@ -3,44 +3,28 @@ import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
-/// Settings, pushed from the Sessions menu (section 4.13). Toggles are green so amber keeps
+/// The Settings tab. Toggles are green so amber keeps
 /// meaning "needs you".
 struct SettingsView: View {
     @Environment(AppRoot.self) private var root
     @State private var pairing = false
-    @AppStorage("notify.requests") private var requests = true
-    @AppStorage("notify.questions") private var questions = true
-    @AppStorage("notify.plans") private var plans = true
-    @AppStorage("notify.finished") private var finished = true
-    @AppStorage("notify.limits") private var limits = false
-    /// NotificationPrefs.health: a session that's stuck, looping or failing.
-    @AppStorage("notify.health") private var health = true
-    @AppStorage("notify.rotation") private var rotation = false
-    @AppStorage("notify.timeSensitive") private var timeSensitive = true
-    @AppStorage("notify.quietWhileWatching") private var quietWhileWatching = true
-    @AppStorage("activity.enabled") private var liveActivity = true
-    @AppStorage("activity.limit") private var activityLimit = true
     @AppStorage("terminal.fontSize") private var fontSize = 13
     @AppStorage("terminal.predictiveEcho") private var predictiveEcho = true
     @AppStorage(AppLock.key) private var requireFaceID = true
-    @State private var notificationsDenied = false
-    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         // Switches are green as in Settings, so only their sections take the tint.
         Form {
-            Section("Macs") {
+            Section {
                 ForEach(root.macs, id: \.macID) { mac in
-                    if let link = mac.link {
-                        NavigationLink { MacDetailView(link: link) } label: { MacRow(mac: mac.mac, version: link.state.hello?.app) }
-                    } else {
-                        MacRow(mac: mac.mac, version: nil)
-                    }
+                    NavigationLink { MacDetailView(model: mac) } label: { MacRow(mac: mac.mac, version: mac.link?.state.hello?.app) }
                 }
                 Button("Pair Another Mac", systemImage: "plus") { pairing = true }
                 if root.reviewing {
                     Button("Leave Demo", systemImage: "rectangle.portrait.and.arrow.right") { root.leaveDemo() }
                 }
+            } header: {
+                Text("Macs")
             }
             Section("Appearance") {
                 VStack(alignment: .leading, spacing: Space.xxs) {
@@ -48,26 +32,6 @@ struct SettingsView: View {
                     AccentPicker()
                 }
             }
-            Section {
-                if notificationsDenied { OpenNotificationSettings() }
-                Toggle("Requests", isOn: $requests)
-                Toggle("Questions", isOn: $questions)
-                Toggle("Plans", isOn: $plans)
-                Toggle("Finished", isOn: $finished)
-                Toggle("Limit warnings", isOn: $limits)
-                Toggle("Stuck sessions", isOn: $health)
-                Toggle("Autopilot moves", isOn: $rotation)
-                Toggle("Time Sensitive for requests", isOn: $timeSensitive)
-                Toggle("Quiet while I'm watching the session", isOn: $quietWhileWatching)
-            } header: {
-                Text("Notifications")
-            }
-            .tint(.green)
-            Section("Live Activity") {
-                Toggle("On the Lock Screen", isOn: $liveActivity)
-                Toggle("Show the tightest limit", isOn: $activityLimit)
-            }
-            .tint(.green)
             Section("Security") {
                 Toggle("Require Face ID", isOn: $requireFaceID)
             }
@@ -93,12 +57,8 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .task(id: scenePhase) { notificationsDenied = await NotificationsCard.denied() }
-        // setup.md §D: straight to the scanner, no welcome or Tailscale step.
+        // Straight to the scanner, no welcome or Tailscale step.
         .fullScreenCover(isPresented: $pairing) { ScannerScreen(title: "Pair Another Mac") }
-        // Each Mac sends only what's on here, so each hears the switches once the user is done with them.
-        .onDisappear { for mac in root.macs { mac.link?.reportPush() } }
-        .onChange(of: liveActivity) { PushRegistrar.shared.endActivitiesIfOff() }
     }
 
     /// "1.0 (11) · Mac 1.0 (12) · protocol 1": this app, then each paired Mac its hello has described, by name when
@@ -151,7 +111,7 @@ private struct MacRow: View {
             Circle().fill(mac.state == .live ? Color.green : Color.secondary.opacity(0.5)).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(mac.name)
-                Text([version.map { "Side A \($0)" }, mac.state == .live ? "Connected" : Formatting.age(of: mac.lastSeen)]
+                Text([version.map { "Side A \($0)" }, mac.state == .live ? mac.status : Formatting.age(of: mac.lastSeen)]
                         .compactMap { $0 }.joined(separator: " · "))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -160,39 +120,57 @@ private struct MacRow: View {
     }
 }
 
-/// One paired Mac: where it is, Test Connection, and Forget.
+/// One paired Mac: where it is, what it may notify about, Test Connection, and Forget. The demo's Macs have no link,
+/// and still show how they're reached and what each may notify about.
 struct MacDetailView: View {
-    let link: LiveLink
+    let model: AppModel
     @Environment(AppRoot.self) private var root
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @State private var confirmsForget = false
+
+    private var link: LiveLink? { model.link }
 
     var body: some View {
         Form {
             Section {
-                LabeledContent("Address", value: (link.state.address ?? link.mac.endpoint.baseURL).host() ?? "")
-                if let hello = link.state.hello {
-                    LabeledContent("Side A", value: hello.versionLine)
-                }
-                LabeledContent("This iPhone", value: link.mac.deviceName)
-                LabeledContent("Security key") {
-                    Text(String(link.mac.endpoint.serverKeyHash.prefix(8)) + "…").monospaced()
+                LabeledContent("Connection", value: model.mac.state == .live ? model.mac.route?.title ?? "Connected" : model.mac.state.title)
+                if let link {
+                    LabeledContent("Address", value: (link.state.address ?? link.mac.endpoint.baseURL).host() ?? "")
+                    if let hello = link.state.hello {
+                        LabeledContent("Side A", value: hello.versionLine)
+                    }
+                    LabeledContent("This iPhone", value: link.mac.deviceName)
+                    LabeledContent("Security key") {
+                        Text(String(link.mac.endpoint.serverKeyHash.prefix(8)) + "…").monospaced()
+                    }
                 }
             }
+            MacNotificationSections(macID: model.macID)
             Section {
-                NavigationLink("Test Connection") { TestConnectionView(mac: link.mac) }
+                if let link {
+                    NavigationLink("Test Connection") { TestConnectionView(link: link) }
+                } else {
+                    NavigationLink("Test Connection") { TestConnectionView(demo: model.mac.name) }
+                }
             }
-            Section {
-                Button("Forget This Mac", role: .destructive) { confirmsForget = true }
+            if link != nil {
+                Section {
+                    Button("Forget This Mac", role: .destructive) { confirmsForget = true }
+                }
             }
         }
-        .navigationTitle(link.mac.endpoint.name)
+        .navigationTitle(model.mac.name)
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Forget \(link.mac.endpoint.name)?", isPresented: $confirmsForget, titleVisibility: .visible) {
+        // The Mac sends only what's on here, so it hears the switches once the user is done with them: on leaving the page,
+        // or the app, since Settings is a tab that can stay open.
+        .onDisappear { link?.reportPush() }
+        .onChange(of: scenePhase) { if $1 != .active { link?.reportPush() } }
+        .confirmationDialog("Forget \(model.mac.name)?", isPresented: $confirmsForget, titleVisibility: .visible) {
             Button("Forget This Mac", role: .destructive) {
                 // Back to the list first, so the row is seen leaving. No haptic: the dialog was the confirmation.
-                let macID = link.mac.endpoint.macID, animation = Motion.smooth(reduceMotion)
+                let macID = model.macID, animation = Motion.smooth(reduceMotion)
                 dismiss()
                 Task { [root] in
                     try? await Task.sleep(for: .milliseconds(400))
@@ -202,5 +180,52 @@ struct MacDetailView: View {
         } message: {
             Text("You'll need to pair again to use it.")
         }
+    }
+}
+
+/// A Mac's Notifications and Live Activity switches.
+private struct MacNotificationSections: View {
+    let macID: String
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var notificationsDenied = false
+
+    var body: some View {
+        Section {
+            if notificationsDenied { OpenNotificationSettings() }
+            PrefToggle("Requests", .requests, mac: macID)
+            PrefToggle("Questions", .questions, mac: macID)
+            PrefToggle("Plans", .plans, mac: macID)
+            PrefToggle("Finished", .finished, mac: macID)
+            PrefToggle("Limit warnings", .limits, mac: macID)
+            PrefToggle("Stuck sessions", .health, mac: macID)
+            PrefToggle("Autopilot moves", .rotation, mac: macID)
+            PrefToggle("Time Sensitive for requests", .timeSensitive, mac: macID)
+        } header: {
+            Text("Notifications")
+        }
+        .tint(.green)
+        .task(id: scenePhase) { notificationsDenied = await NotificationsCard.denied() }
+        Section("Live Activity") {
+            PrefToggle("On the Lock Screen", .liveActivity, mac: macID) { PushRegistrar.shared.endActivitiesIfOff() }
+        }
+        .tint(.green)
+    }
+}
+
+/// One of a Mac's notification switches, stored under its own key.
+private struct PrefToggle: View {
+    let title: String
+    let changed: (() -> Void)?
+    @AppStorage private var isOn: Bool
+
+    init(_ title: String, _ key: NotificationPrefs.Key, mac: String, changed: (() -> Void)? = nil) {
+        self.title = title
+        self.changed = changed
+        _isOn = AppStorage(wrappedValue: key.value(mac: mac), key.key(mac: mac))
+    }
+
+    var body: some View {
+        Toggle(title, isOn: $isOn)
+            .onChange(of: isOn) { changed?() }
     }
 }

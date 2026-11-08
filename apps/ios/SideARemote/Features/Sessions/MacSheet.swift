@@ -1,7 +1,6 @@
-import SideARemoteShared
 import SwiftUI
 
-/// The Mac chip's sheet (section 4.14): status, power, memory, Keep Awake, Quit Idle, Clean Up.
+/// The Mac chip's sheet: status, power, memory, Keep Awake, Quit Idle, Clean Up.
 struct MacSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -16,7 +15,7 @@ struct MacSheet: View {
                     LabeledContent("Status") {
                         HStack(spacing: 6) {
                             ConnectionDot(state: mac.state)
-                            Text(mac.state.title)
+                            Text(mac.status)
                         }
                     }
                     LabeledContent("Last seen") {

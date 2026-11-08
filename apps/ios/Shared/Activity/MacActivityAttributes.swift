@@ -1,7 +1,7 @@
 import ActivityKit
 import Foundation
 
-/// One Live Activity per Mac (section 5.4; protocol's `MacActivityAttributes`). The name is what the
+/// One Live Activity per Mac. The name is what the
 /// relay's push-to-start sends as `attributes-type`, so it must not change. Everything here reaches
 /// Apple and the relay in plaintext: counts, times and opaque ids, never words.
 public struct MacActivityAttributes: ActivityAttributes {

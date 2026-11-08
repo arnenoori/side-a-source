@@ -185,7 +185,7 @@ struct QuietDisclosureStyle: DisclosureGroupStyle {
     }
 }
 
-/// "Thinking · 4s" live, "Thought for 4s" when done; unfolds in place (section 4.3).
+/// "Thinking · 4s" live, "Thought for 4s" when done; unfolds in place.
 struct ThinkingRow: View {
     let tool: TranscriptTool
     @State private var expanded = false

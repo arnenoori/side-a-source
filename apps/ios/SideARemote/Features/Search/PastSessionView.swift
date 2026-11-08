@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// A past conversation, read-only (section 4.14): the transcript as in section 4.3, and in place of the
+/// A past conversation, read-only: the transcript, and in place of the
 /// composer Resume and Fork, which start it hosted in its own folder.
 struct PastSessionView: View {
     @Environment(AppModel.self) private var model

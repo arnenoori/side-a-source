@@ -16,16 +16,10 @@ node_modules/
 site/src/generated/
 site/public/player.png
 site/.wrangler/
-Sources/SideA/Resources/sidea_bridge.py
-Sources/SideA/Resources/codex_bridge.py
-Sources/SideA/Resources/sessions.py
-Sources/SideA/Resources/cleanup.py
-Sources/SideA/Resources/setup.py
-Sources/SideA/Resources/hosting.py
+Sources/SideA/Resources/*.py
 .vercel
 
 site/public/player-*.webp
-Sources/SideA/Resources/island_hook.py
 relay/.wrangler/
 relay/.dev.vars
 relay/worker-configuration.d.ts

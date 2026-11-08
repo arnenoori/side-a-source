@@ -4,7 +4,7 @@ import Foundation
 import SideAProtocol
 import SideARemoteShared
 
-// The Live Activity's buttons (section 5.4). Compiled into the app and the widgets; a
+// The Live Activity's buttons. Compiled into the app and the widgets; a
 // LiveActivityIntent runs in the app's process, which holds the token and the outbox.
 
 /// Deny never needs unlock: it can only stop something.

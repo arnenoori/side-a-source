@@ -25,6 +25,8 @@ struct RemoteDevice: Codable, Identifiable, Equatable, Sendable {
     var push: PushRegistration?
     /// The phone's latest `hello` listed `rotation`. Kept here because pushes go out while its socket is closed.
     var rotationPushes: Bool?
+    /// The phone's latest `hello` listed `ready.groups`: it gets Ready as one grouped push, not one per turn.
+    var readyGroups: Bool?
     /// The relay's last word on this device: ok, gone, retry, rejected, unverified.
     var pushResult: String?
     let created: Double

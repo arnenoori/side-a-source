@@ -2,7 +2,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// Claude's side of turn diffs, compact and review (L3: the bridge's turn diff; L4: compact in a hosted session).
 extension SessionCommands {
     /// The bridge reads the turn from the transcript: each edit that went through, from the turn's prompt to the next,
     /// with its note that a shell command's changes aren't among them.
@@ -26,7 +25,6 @@ extension SessionCommands {
         case .waiting?: throw Failure(status: 409, code: "session_waiting", message: "Answer the open request first.")
         default: throw Self.cannot("Claude is working. Try when it's idle.")
         }
-        // L3's bridge notes the compact boundary on the live row; it must move past where it was.
         let before = live.compactedAt ?? 0
         do {
             try await store.hosted.command(name, "/compact")

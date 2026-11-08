@@ -81,7 +81,6 @@ private func tailnet(login: String? = "me@example.com") -> TailscaleStatus {
     #expect(await quiet.value == false)
     #expect(await asked.value == false)
     #expect(calls == 1 && store.error == "Finish signing in, then return to Side A.")
-    // The check finished, so the next one is a new one.
     #expect(await store.verify(id, reportError: false) == false)
     #expect(calls == 2)
 }
@@ -104,8 +103,8 @@ private func room(at now: Double) -> [UsageWindow] {
     #expect(store.takeLive(room(at: now), for: out.id, at: now + 1))
     #expect(store.usage[out.id]?.stale == false)
     #expect(store.health[out.id] == .signIn(replacedBy: "Fine"))
-    #expect(Planner.best([out], usage: store.usage, health: store.health, active: nil, now: now) == nil)
-    #expect(Planner.best([out, fine], usage: store.usage, health: store.health, active: nil, now: now) == fine.id)
+    #expect(Planner.best([out], usage: store.usage, health: store.health, active: nil, full: store.config.moveAt, now: now) == nil)
+    #expect(Planner.best([out, fine], usage: store.usage, health: store.health, active: nil, full: store.config.moveAt, now: now) == fine.id)
     #expect(store.poolAccount(.claude, session: nil, excluding: [fine.id]) == nil)
     #expect(store.accountIssue(out, now: now) == AccountIssue(kind: .replaced, replacedBy: "Fine"))
 }
@@ -137,7 +136,7 @@ private func room(at now: Double) -> [UsageWindow] {
     let store = AccountStore(demo: true, root: temporaryRoot())
     let pool = PoolProxy(key: String(repeating: "a", count: 64), decisions: store)
     store.poolPreferredPort = 0
-    store.pool = pool
+    store.poolRun = .running(pool, port: 0)
     store.config.poolShare = true
     return (store, pool)
 }
@@ -203,7 +202,7 @@ private func room(at now: Double) -> [UsageWindow] {
     store.tailscaleStatus = { await slow.wait(); return tailnet() }
     let first = Task { await store.syncPoolShare() }
     try await until(await slow.waiting == 1)
-    store.pool = nil
+    store.poolRun = .off
     await slow.release()
     await first.value
     #expect(!pool.isShared)
@@ -286,12 +285,176 @@ private func room(at now: Double) -> [UsageWindow] {
     #expect(!StagedUpdate.superseded(build: "54", feed: Data("not a feed".utf8)))
 }
 
-/// Taking the install-now block keeps Sparkle's session open, and then no later check reaches the feed.
+/// Update Automatically off: taking the install-now block would keep Sparkle's session open, and then no later check
+/// reaches the feed, so it's left alone exactly as before.
 @MainActor @Test func aDownloadWaitingForQuitLeavesSparkleFreeToCheckAgain() {
     let updates = Updates()
+    updates.automaticallyUpdates = false
     let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
-    #expect(!updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: {}))
+    var installed = false
+    #expect(!updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installed = true }))
     #expect(updates.available != nil)
+    #expect(updates.staged == nil)
+    #expect(updates.hold == .off)
+    updates.installIfQuiet()
+    #expect(!installed)
+}
+
+/// Update Automatically on: the block is kept and used once nobody is at the Mac and nothing is under way.
+@MainActor @Test func aDownloadInstallsByItselfOnceTheMacIsQuiet() async throws {
+    let updates = Updates()
+    updates.automaticallyUpdates = true
+    var presence = UserPresence(idle: 5, locked: false)
+    var activity = QuietInstall.Activity(pending: 1)
+    updates.presence = { presence }
+    updates.activity = { activity }
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
+    var installs = 0
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installs += 1 }))
+    #expect(updates.staged != nil)
+    #expect(updates.hold == .someoneHere)
+    updates.installIfQuiet()
+    presence = UserPresence(idle: 1, locked: true)
+    #expect(updates.hold == .waiting(1))
+    updates.installIfQuiet()
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(installs == 0)
+    activity = QuietInstall.Activity()
+    #expect(updates.hold == nil)
+    updates.installIfQuiet()
+    try await until(installs == 1)
+}
+
+/// Holding the block stalls Sparkle, so canCheck stays false; Update to X still installs at once.
+@MainActor @Test func updateToXInstallsAHeldUpdateWhileSparkleIsStalled() async throws {
+    let updates = Updates()
+    updates.automaticallyUpdates = true
+    updates.presence = { UserPresence(idle: 0, locked: false) }
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
+    var installs = 0, onMain = true
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: {
+        installs += 1; onMain = onMain && Thread.isMainThread
+    }))
+    #expect(!updates.canCheck)
+    #expect(updates.canUpdate)
+    #expect(updates.hold == .someoneHere)
+    updates.install()
+    try await until(installs == 1)
+    #expect(onMain)
+}
+
+/// Turned off after the block was taken: nothing installs by itself, but asking still works, and so does checking.
+@MainActor @Test func turningUpdatesOffWhileOneWaitsKeepsItInstallableByHand() async throws {
+    let updates = Updates()
+    updates.automaticallyUpdates = true
+    updates.presence = { UserPresence(idle: 0, locked: true) }
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
+    var installs = 0
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installs += 1 }))
+    updates.automaticallyUpdates = false
+    #expect(updates.staged != nil)
+    #expect(updates.hold == .off)
+    updates.installIfQuiet()
+    #expect(updates.checkQuietly())
+    var asked: [String] = [], answer = false
+    updates.confirmInstall = { asked.append($0); return answer }
+    updates.check()
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(installs == 0)
+    #expect(asked == [updates.staged?.version ?? "?"])
+    answer = true
+    updates.check()
+    try await until(installs == 1)
+    #expect(asked.count == 2)
+}
+
+/// The quiet install, Update to X and Check for Updates… all at once: Sparkle's block runs once.
+@MainActor @Test func aHeldUpdateIsInstalledOnlyOnce() async throws {
+    let updates = Updates()
+    updates.automaticallyUpdates = true
+    updates.presence = { UserPresence(idle: 601, locked: false) }
+    updates.confirmInstall = { _ in true }
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
+    var installs = 0
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installs += 1 }))
+    updates.installIfQuiet()
+    updates.install()
+    updates.check()
+    try await until(installs == 1)
+    updates.install()
+    updates.installIfQuiet()
+    updates.check()
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(installs == 1)
+}
+
+@Test func aQuietInstallWaitsForEveryConditionAtOnce() {
+    let away = UserPresence(idle: 601, locked: false), quiet = QuietInstall.Activity()
+    func hold(automatic: Bool = true, staged: Bool = true, presence: UserPresence = away, activity: QuietInstall.Activity = quiet) -> QuietInstall.Hold? {
+        QuietInstall.hold(automatic: automatic, staged: staged, presence: presence, activity: activity)
+    }
+    #expect(hold() == nil)
+    #expect(hold(presence: UserPresence(idle: 5, locked: true)) == nil)
+    #expect(hold(presence: UserPresence(idle: 599, locked: false)) == .someoneHere)
+    #expect(hold(presence: UserPresence(idle: 0, locked: false)) == .someoneHere)
+    #expect(hold(activity: QuietInstall.Activity(pending: 2)) == .waiting(2))
+    #expect(hold(activity: QuietInstall.Activity(poolInFlight: 1)) == .pool(1))
+    #expect(hold(activity: QuietInstall.Activity(busy: ["a sign-in", "pairing a phone"])) == .busy("a sign-in"))
+    #expect(hold(staged: false) == .nothingStaged)
+    // Off: nothing installs on its own, whatever else is true.
+    #expect(hold(automatic: false) == .off)
+    #expect(hold(automatic: false, presence: UserPresence(idle: 0, locked: true)) == .off)
+}
+
+@Test func onlyANonCriticalUpdateWithTheSwitchOnIsTakenOver() {
+    #expect(QuietInstall.takesOver(automatic: true, critical: false))
+    #expect(!QuietInstall.takesOver(automatic: true, critical: true))
+    #expect(!QuietInstall.takesOver(automatic: false, critical: false))
+    #expect(!QuietInstall.takesOver(automatic: false, critical: true))
+}
+
+@Test func updatedToShowsForADayAfterANewerVersionLaunches() {
+    let history = UpdateHistory(defaults: temporaryDefaults())
+    let start = Date(timeIntervalSince1970: 2_000_000_000)
+    history.launched("0.5.47", now: start)
+    #expect(history.recent("0.5.47", now: start) == nil)
+    let updated = start.addingTimeInterval(3600)
+    history.launched("0.5.48", now: updated)
+    #expect(history.recent("0.5.48", now: updated) == "0.5.48")
+    #expect(history.recent("0.5.48", now: updated.addingTimeInterval(UpdateHistory.shown - 1)) == "0.5.48")
+    #expect(history.recent("0.5.48", now: updated.addingTimeInterval(UpdateHistory.shown)) == nil)
+    #expect(history.recent("0.5.48", now: updated.addingTimeInterval(-60)) == nil)
+    // A relaunch of the same version doesn't restart the day.
+    history.launched("0.5.48", now: updated.addingTimeInterval(7200))
+    #expect(history.recent("0.5.48", now: updated.addingTimeInterval(UpdateHistory.shown + 60)) == nil)
+    // An older copy opened afterwards isn't an update.
+    history.launched("0.5.10", now: updated)
+    #expect(history.recent("0.5.10", now: updated) == nil)
+    #expect(UpdateHistory.notes("0.5.48").absoluteString == "https://github.com/arnenoori/side-a-releases/releases/tag/v0.5.48")
+}
+
+@MainActor @Test func accountWorkInProgressHoldsAnUpdate() async throws {
+    let store = AccountStore(demo: true, root: temporaryRoot())
+    #expect(store.relaunchActivity == QuietInstall.Activity())
+    store.signingIn.insert("a")
+    #expect(store.relaunchActivity.busy == ["a sign-in"])
+    store.signingIn = []
+    store.waking.insert("a")
+    #expect(store.relaunchActivity.busy == ["a login renewal"])
+    store.waking = []
+    store.sessions.drafts["s"] = "half a thought"
+    #expect(store.relaunchActivity.busy == ["an unsent message"])
+    store.sessions.drafts["s"] = "  "
+    #expect(store.relaunchActivity.busy.isEmpty)
+    let gate = Gate()
+    store.testBridge = { (_: [String]) in await gate.wait(); return Data() }
+    let swap = Task { try await store.bridgeOutput(["swap", "slot", "b"]) }
+    try await until(store.relaunchActivity.busy == ["an account change"])
+    await gate.release()
+    _ = try await swap.value
+    #expect(store.relaunchActivity.busy.isEmpty)
+    _ = try await store.bridgeOutput(["usage", "a"])
+    #expect(!AccountStore.changes(["usage", "a"]) && !AccountStore.changes(["cleanup", "disk"]) && AccountStore.changes(["cleanup", "archive"]))
 }
 
 // MARK: Key check

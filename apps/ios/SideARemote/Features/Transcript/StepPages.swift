@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// The page a tool row zooms into: content by tool (section 4.3).
+/// The page a tool row zooms into: content by tool.
 struct ToolStepPage: View {
     let sessionID: SessionKey
     let tool: TranscriptTool

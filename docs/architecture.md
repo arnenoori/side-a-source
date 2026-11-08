@@ -117,8 +117,25 @@ that one is taken) and writes `runtime/pool`: its URL, the key in `runtime/pool-
 pid. The shell line reads that file before each command: while the pid is alive and the terminal
 isn't pinned with `sidea use`, a command that runs `claude` (as typed or alias-expanded) gets
 `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and `SIDE_A_POOL=1` without the login selector; any
-other command gets none of them, and a base URL or token the user exported is left alone. The app
-removes the file when it quits, so commands use logins again at once.
+other command gets none of them, and a base URL or token the user exported is left alone.
+
+A session keeps the base URL it started with, so the pool must outlive the app. `SideAPool`, embedded
+as `Contents/MacOS/SideAPool` and registered with `SMAppService.agent` from
+`Contents/Library/LaunchAgents/com.sidea.pool.plist` (`com.sidea.pool.dev.plist` in a local build, so
+the two never replace each other) while pool mode is on, serves the same port and key whenever the
+app's process is gone (`PoolHelper`, `PoolFiles`). The app names itself in `runtime/pool-app` (pid and
+process start time, so a reused pid doesn't count) before it opens the port, and the helper, checking
+every second, lets the port go within a second of seeing it; the app waits up to 10 s. While serving,
+the helper writes `runtime/pool` with its own pid, so new commands use the pool too. It picks accounts
+by `runtime/pool-plan.json`, which the app rewrites as accounts, usage and login health change:
+members in priority order with their last usage (a window past its reset stops counting), Autopilot's
+threshold, and the Python and bridge paths for `pool-token`. A 429 benches an account until its
+reset, as in the app. It doesn't serve the Tailscale share; other Macs fall back to their own logins
+while this app is closed. The helper never leaves on its own while pool mode is on: turning it off
+unregisters the agent. When its executable is replaced (an update or rebuild) it hands back, waits ten
+minutes for replies still streaming, and leaves with status 75, which launchd restarts with the new
+binary. Its log is `~/Library/Logs/SideA/pool-helper.log`. Without the helper (a build run outside
+its bundle), the app removes `runtime/pool` when it quits, so commands use logins again at once.
 
 The proxy answers only Claude Code's user agent and forwards only `/v1/` routes to
 `api.anthropic.com` (`Pool.upstream`). Behind it Claude Code takes itself for an API-key caller and

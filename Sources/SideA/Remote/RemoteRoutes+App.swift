@@ -2,8 +2,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// State, sessions, requests and accounts, and what the phone can do to them. Hosted sessions join the delivery table
-/// with the tmux lane; until then every session is unhosted.
 extension RemoteRoutes {
     /// Longest reply or note, in characters.
     static let maxReply = SessionCommands.maxReply
@@ -264,6 +262,4 @@ extension RemoteRoutes {
     }
 
     static func invalidReply(_ message: String, _ reason: String) -> HTTPResponse { response(.invalid(message, reason)) }
-
-    static func cannotDeliver(_ refusal: RemoteDelivery.Refusal) -> HTTPResponse { response(.cannotDeliver(refusal)) }
 }

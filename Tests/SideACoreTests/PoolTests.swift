@@ -93,13 +93,13 @@ import Testing
     let usage = [big.id: AccountUsage(windows: [UsageWindow(id: "seven_day", label: "Weekly", percent: 50, resetsAt: now + 3600)], capacity: 20),
                  small.id: AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 100, resetsAt: now + 600),
                                                   UsageWindow(id: "seven_day", label: "Weekly", percent: 0, resetsAt: now + 3600)], capacity: 1)]
-    let room = try #require(PoolRoom([big, small], usage: usage, now: now))
+    let room = try #require(PoolRoom([big, small], usage: usage, full: 97, now: now))
     #expect(room.accounts == 2 && room.limited == 1)
     #expect(abs(room.weeklyLeft - (20 * 50 + 100) / 21) < 0.001)
     #expect(abs((room.fiveHourLeft ?? 0) - 2000.0 / 21) < 0.001)
-    #expect(PoolRoom([big], usage: usage, now: now)?.fiveHourLeft == nil)
+    #expect(PoolRoom([big], usage: usage, full: 97, now: now)?.fiveHourLeft == nil)
     #expect(room.refill?.name == "Small" && room.refill?.at == now + 600)
-    #expect(PoolRoom([big], usage: [:], now: now) == nil)
+    #expect(PoolRoom([big], usage: [:], full: 97, now: now) == nil)
 }
 
 @Test func priorityDecidesBeforeUrgencyAndLastIsOnlyForWhenOthersAreOut() {
@@ -110,7 +110,7 @@ import Testing
     let reserve = Account(name: "Reserve", ready: true, allowAuto: true, priority: .last)
     let normal = Account(name: "Normal", ready: true, allowAuto: true)
     let first = Account(name: "First", ready: true, allowAuto: true, priority: .first)
-    #expect(Planner.best([reserve, normal], usage: [reserve.id: urgent, normal.id: relaxed], active: nil, now: now) == normal.id)
-    #expect(Planner.best([reserve, normal], usage: [reserve.id: urgent, normal.id: full], active: nil, now: now) == reserve.id)
-    #expect(Planner.best([first, normal], usage: [first.id: relaxed, normal.id: urgent], active: normal.id, now: now) == first.id)
+    #expect(Planner.best([reserve, normal], usage: [reserve.id: urgent, normal.id: relaxed], active: nil, full: 97, now: now) == normal.id)
+    #expect(Planner.best([reserve, normal], usage: [reserve.id: urgent, normal.id: full], active: nil, full: 97, now: now) == reserve.id)
+    #expect(Planner.best([first, normal], usage: [first.id: relaxed, normal.id: urgent], active: normal.id, full: 97, now: now) == first.id)
 }

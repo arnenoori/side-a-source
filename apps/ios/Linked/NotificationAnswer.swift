@@ -31,61 +31,52 @@ enum NotificationAnswer {
     }
 
     /// The demo's payloads name this Mac; answering them only pretends.
-    static let demoMac = "demo"
+    static let demoMac = PushOpener.demoMac
 
     static func send(_ answer: RemoteAnswer, to request: RequestID, macID: String) async -> Result {
-        let body = (try? encoder.encode(AnswerBody(answer: answer))) ?? Data()
         // Signed with the unlock key, which works only while the phone is unlocked: a Lock Screen allow goes unsigned,
         // and the Mac takes it only if the request's gate is the Lock Screen.
         var confirm: String?
         if let mac = PairedMac.load(macID), let subject = try? ConfirmMessage.subject(requestID: request, answer: answer) {
-            confirm = await DeviceKeys.header(.unlock, macID: macID, deviceID: mac.deviceID, purpose: .allow, subject: subject,
-                                            fromNotification: true)
+            confirm = await mac.sign(.unlock, purpose: .allow, subject: subject, fromNotification: true)
         }
-        return await post(id: "\(request):\(answer.kind.rawValue)", path: "/v1/requests/\(request)/answer", body: body,
-                          macID: macID, lifetime: 86_400, confirm: confirm)
+        return await post(item(answer, to: request, macID: macID, now: Date.now.timeIntervalSince1970, confirm: confirm))
+    }
+
+    /// The outbox item the app's engine makes for the same answer, so a tap in the app after this one is a replay.
+    static func item(_ answer: RemoteAnswer, to request: RequestID, macID: String, now: Timestamp, confirm: String?) -> Outbox.Item {
+        .answer(request, answer, macID: macID, now: now, confirm: confirm)
     }
 
     /// FINISHED's Reply: a follow-up to the turn the push named.
     static func reply(_ text: String, to session: SessionKey, turnID: String?, macID: String) async -> Result {
         let reply = RemoteReply(text: text, turnID: turnID)
-        let body = (try? encoder.encode(reply)) ?? Data()
         // The Reply action unlocks the phone first, so the unlock key signs. A session the Mac wants Face ID for refuses it,
         // and the app, which can ask, is where that reply goes.
         var confirm: String?
         if let mac = PairedMac.load(macID), let subject = try? ConfirmMessage.subject(action: .reply, target: session, body: reply) {
-            confirm = await DeviceKeys.header(.unlock, macID: macID, deviceID: mac.deviceID, purpose: .action, subject: subject)
+            confirm = await mac.sign(.unlock, purpose: .action, subject: subject)
         }
-        return await post(id: UUID().uuidString.lowercased(), path: "/v1/sessions/\(session)/reply", body: body,
-                          macID: macID, lifetime: 600, confirm: confirm)
+        return await post(.reply(session, reply, macID: macID, now: Date.now.timeIntervalSince1970, confirm: confirm))
     }
 
-    /// The engine's encoding, so a replayed key carries the same bytes.
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return encoder
-    }()
-
-    private static func post(id: String, path: String, body: Data, macID: String, lifetime: Double, confirm: String? = nil) async -> Result {
-        if macID == demoMac {
+    private static func post(_ item: Outbox.Item) async -> Result {
+        if item.macID == demoMac {
             try? await Task.sleep(for: .milliseconds(400))
             return .sent
         }
-        guard let mac = PairedMac.load(macID),
+        guard let mac = PairedMac.load(item.macID),
               let file = SharedStorage.database, let outbox = try? Outbox(file: file) else { return .noMac }
-        let now = Date.now.timeIntervalSince1970
-        let item = Outbox.Item(id: id, macID: macID, path: path, body: body, createdAt: now, expiresAt: now + lifetime, confirm: confirm)
         await outbox.enqueue(item)
         let client = RemoteClient(endpoint: mac.endpoint, credentials: KeychainCredentials())
         do {
-            var request = try await client.request("POST", path, body: body, idempotencyKey: id)
-            if let confirm { request.setValue(confirm, forHTTPHeaderField: ConfirmSignature.header) }
+            var request = try await client.request(item.method, item.path, body: item.body, idempotencyKey: item.id)
+            if let confirm = item.confirm { request.setValue(confirm, forHTTPHeaderField: ConfirmSignature.header) }
             _ = try await client.send(request)
-            await outbox.remove(id)
+            await outbox.remove(item.id)
             return .sent
         } catch let failure as RemoteFailure where !failure.error.retryable {
-            await outbox.remove(id)
+            await outbox.remove(item.id)
             return failure.error.code == .alreadyResolved ? .answeredElsewhere : .failed(failure.error.message)
         } catch {
             return .queued(mac: mac.endpoint.name)
@@ -104,7 +95,7 @@ extension PushPayload {
     }
 }
 
-/// The local categories (section 5.1). Actions that change something on the Mac need unlock, except
+/// The local categories. Actions that change something on the Mac need unlock, except
 /// `REQUEST_SAFE`'s Allow.
 enum NotificationCategories {
     enum Action {
@@ -193,7 +184,7 @@ enum DeliveredRequests {
         delivered.compactMap { note in
             guard note.date < asked else { return nil }
             let request: RequestID
-            if let payload = note.payload, ["request", "question", "plan"].contains(payload.t), let rid = payload.rid {
+            if let payload = note.payload, payload.kind.asks, let rid = payload.rid {
                 guard payload.mac == mac else { return nil }
                 request = rid
             } else if note.payload == nil, categories.contains(note.category), onlyMac {

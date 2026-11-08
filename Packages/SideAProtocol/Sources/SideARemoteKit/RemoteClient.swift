@@ -65,7 +65,7 @@ public struct ClientInfo: Sendable, Hashable {
         #endif
         return ClientInfo(version: info["CFBundleShortVersionString"] as? String ?? "0", build: Int(info["CFBundleVersion"] as? String ?? "") ?? 0,
                           system: "\(name) \(os.majorVersion).\(os.minorVersion)",
-                          capabilities: [.events, .transcriptStream, .images, .diffs, .answersQuestions, .answersPlans, .rotation])
+                          capabilities: [.events, .transcriptStream, .images, .diffs, .answersQuestions, .answersPlans, .rotation, .readyGroups])
     }()
 }
 
@@ -81,7 +81,6 @@ public struct RemoteFailure: Error, Sendable, Equatable {
     public var retryable: Bool { error.retryable }
 }
 
-/// REST calls to one Mac.
 public struct RemoteClient: Sendable {
     public let endpoint: Endpoint
     /// The address requests go to: one of `endpoint.addresses`.
@@ -219,9 +218,6 @@ public struct RemoteClient: Sendable {
     }
     public func approvals(cursor: Cursor? = nil) async throws -> ApprovalsPage {
         try await get("/v1/approvals", query: cursor.map { [URLQueryItem(name: "cursor", value: $0.raw)] } ?? [])
-    }
-    public func checkForUpdate() async throws {
-        _ = try await send(try await request("POST", "/v1/update/check", idempotencyKey: UUID().uuidString.lowercased()))
     }
 
     public func sessions() async throws -> SessionList { try await get("/v1/sessions") }

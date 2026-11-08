@@ -108,7 +108,7 @@ struct MarkdownTable: View {
     }
 }
 
-/// Streamed words still fading in (section 4.3): `count` characters revealed together, at `opacity`.
+/// Streamed words still fading in: `count` characters revealed together, at `opacity`.
 /// A list of them runs oldest to newest and ends at the end of the text.
 struct FadingWords: Equatable {
     var count: Int

@@ -103,12 +103,12 @@ final class RecoveryTests: XCTestCase {
     func testARetrySentFreshKeepsWhatTheReplyCarried() async throws {
         let outbox = try outbox()
         let link = LiveLink(mac: PairedMac(endpoint: endpoint, deviceID: "d", deviceName: "iPhone"), outbox: outbox, transport: Silent())
-        link.reply("hello", turn: "t1", to: "s1", mode: .note, submit: .steer, resending: ["up1", "up2"])
+        link.flights.reply("hello", turn: "t1", to: "s1", mode: .note, submit: .steer, resending: ["up1", "up2"])
         try await wait(outbox, for: 1)
         let items = await outbox.items(for: "recovery")
         let item = try XCTUnwrap(items.first).id
 
-        link.retry(item: item, text: "hello", turn: "t2", session: "s1")
+        link.flights.retry(item: item, text: "hello", turn: "t2", session: "s1")
         try await wait(outbox, for: 2)
         let sent = await replies(outbox)
         XCTAssertEqual(sent.count, 2)
@@ -121,7 +121,7 @@ final class RecoveryTests: XCTestCase {
     func testARetryOfAnItemItKnowsNothingAboutSendsPlainAuto() async throws {
         let outbox = try outbox()
         let link = LiveLink(mac: PairedMac(endpoint: endpoint, deviceID: "d", deviceName: "iPhone"), outbox: outbox, transport: Silent())
-        link.retry(item: "gone", text: "hello", turn: "t1", session: "s1")
+        link.flights.retry(item: "gone", text: "hello", turn: "t1", session: "s1")
         try await wait(outbox, for: 1)
         let sent = await replies(outbox)
         XCTAssertEqual(sent.first?.mode, .auto)
@@ -195,6 +195,29 @@ final class RecoveryTests: XCTestCase {
         XCTAssertEqual(ConnectionTest.testNotification(.ok, mac: "Studio"), .passed("Test notification sent"))
         for relay: DiagnosticPush.Relay in [.unverified, .gone, .retry, .unreachable, .rejected, DiagnosticPush.Relay(rawValue: "new")] {
             guard case .failed = ConnectionTest.testNotification(relay, mac: "Studio") else { return XCTFail("\(relay)") }
+        }
+    }
+
+    func testReachingTheMacNamesThePathOrWhyThereIsNone() {
+        XCTAssertEqual(ConnectionTest.reached(.relay, mac: "Studio"), "Reached Studio through the relay")
+        XCTAssertEqual(ConnectionTest.reached(.direct(URL(string: "https://100.101.12.4:47800")!), mac: "Studio"),
+                       "Reached Studio over Tailscale · 100.101.12.4")
+        XCTAssertEqual(ConnectionTest.reached(.direct(URL(string: "https://192.168.1.20:47800")!), mac: "Studio"),
+                       "Reached Studio over Wi\u{2011}Fi · 192.168.1.20")
+
+        let off = ConnectionTest.unreachable(nil, mac: "Studio", tailscaleOff: true, hasRelay: true)
+        XCTAssertEqual(off, .failed("Couldn't reach Studio.", detail: "Tailscale looks off on this iPhone."))
+        guard case .failed(let line, _) = ConnectionTest.unreachable(ServerKeyChanged(seen: "x"), mac: "Studio", tailscaleOff: false, hasRelay: false),
+              line.contains("new security key") else { return XCTFail("a new key isn't named") }
+        guard case .failed(_, let detail?) = ConnectionTest.unreachable(LocalNetworkDenied(), mac: "Studio", tailscaleOff: false, hasRelay: false),
+              detail.contains("Local Network") else { return XCTFail("Local Network isn't named") }
+    }
+
+    func testTheRelayRowSaysWhetherTheMacIsOnIt() {
+        XCTAssertEqual(ConnectionTest.relayOutcome(.notSetUp, mac: "Studio"), .notChecked("Not set up"))
+        XCTAssertEqual(ConnectionTest.relayOutcome(.answered, mac: "Studio"), .passed("The relay works: Studio is online on it"))
+        for check: Paths.RelayCheck in [.macOffline, .refused, .failed("timed out")] {
+            guard case .failed = ConnectionTest.relayOutcome(check, mac: "Studio") else { return XCTFail("\(check)") }
         }
     }
 }

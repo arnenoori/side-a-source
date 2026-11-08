@@ -42,9 +42,32 @@ public struct PushCategory: OpenEnum {
     /// The only changes decryption may make to a category: any request cut to fit becomes `OPEN`, and otherwise
     /// `REQUEST` becomes `REQUEST_SAFE` for a Lock Screen gate.
     public func local(for payload: PushPayload) -> PushCategory {
-        if payload.t == "request", payload.full == false, self == .request || self == .requestDestructive { return .open }
-        return self == .request && payload.t == "request" && payload.gate == .lockScreen ? .requestSafe : self
+        if payload.kind == .request, payload.full == false, self == .request || self == .requestDestructive { return .open }
+        return self == .request && payload.kind == .request && payload.gate == .lockScreen ? .requestSafe : self
     }
+}
+
+public extension Capability {
+    /// From a phone's `hello`: it shows a FINISHED push without `sid` as the Mac's grouped Ready, with Open only, and opens
+    /// that Mac's sessions from it. A phone without it gets one FINISHED push per turn.
+    static let readyGroups = Self(rawValue: "ready.groups")
+}
+
+/// `PushPayload.t`: what the push is about.
+public struct PushKind: OpenEnum {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let request = Self(rawValue: "request")
+    public static let question = Self(rawValue: "question")
+    public static let plan = Self(rawValue: "plan")
+    public static let finished = Self(rawValue: "finished")
+    public static let limit = Self(rawValue: "limit")
+    public static let health = Self(rawValue: "health")
+    public static let rotation = Self(rawValue: "rotation")
+    public static let test = Self(rawValue: "test")
+
+    /// Waiting on an answer: a request, question or plan.
+    public var asks: Bool { [.request, .question, .plan].contains(self) }
 }
 
 /// What the Mac seals into a push, at most 2,048 bytes before sealing. Tagged by `t`.
@@ -53,7 +76,7 @@ public struct PushPayload: Codable, Hashable, Sendable {
 
     /// 1
     public let v: Int
-    /// request, question, plan, finished, limit, health, rotation, test.
+    /// A `PushKind`.
     public let t: String
     /// `MacInfo.id`.
     public let mac: String
@@ -85,16 +108,21 @@ public struct PushPayload: Codable, Hashable, Sendable {
     public let window: String?
     public let percent: Int?
     public let resetsAt: Timestamp?
+    /// True: an update to a notification already shown, so it comes without a sound. Nil from a Mac that never says.
+    public let quiet: Bool?
+
+    public var kind: PushKind { PushKind(rawValue: t) }
 
     public init(t: String, mac: String, sent: Timestamp, rid: RequestID? = nil, sid: SessionKey? = nil, title: String? = nil,
                 subtitle: String? = nil, body: String? = nil, gate: AllowGate? = nil, risk: IslandRisk? = nil, riskReason: String? = nil,
                 agent: AgentProvider? = nil, questions: [IslandQuestion]? = nil, plan: String? = nil, full: Bool? = nil,
                 turnID: String? = nil, summary: String? = nil, account: String? = nil, window: String? = nil, percent: Int? = nil,
-                resetsAt: Timestamp? = nil) {
+                resetsAt: Timestamp? = nil, quiet: Bool? = nil) {
         v = 1; self.t = t; self.mac = mac; self.sent = sent; self.rid = rid; self.sid = sid; self.title = title
         self.subtitle = subtitle; self.body = body; self.gate = gate; self.risk = risk; self.riskReason = riskReason
         self.agent = agent; self.questions = questions; self.plan = plan; self.full = full; self.turnID = turnID
         self.summary = summary; self.account = account; self.window = window; self.percent = percent; self.resetsAt = resetsAt
+        self.quiet = quiet
     }
 }
 

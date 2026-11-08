@@ -107,7 +107,7 @@ final class RotationTests: XCTestCase {
     }
 
     func testADemoChangeWorksWithoutAMac() async throws {
-        let tools = MacTools(demo: .init(options: OptionsList(agents: []), projects: [], autopilot: AutopilotState(enabled: true, swapAt: 95, followFable: true)))
+        let tools = MacTools(.demo(.init(options: OptionsList(agents: []), projects: [], autopilot: AutopilotState(enabled: true, swapAt: 95, followFable: true))))
         XCTAssertTrue(tools.can(.rotation))
         try await tools.setSwapAt(90)
         try await tools.setFollowFable(false)
@@ -120,8 +120,8 @@ final class RotationTests: XCTestCase {
         let defaults = UserDefaults.standard
         defer { defaults.removeObject(forKey: "notify.rotation") }
         defaults.removeObject(forKey: "notify.rotation")
-        XCTAssertEqual(NotificationPrefs.stored.rotation, false)
+        XCTAssertEqual(NotificationPrefs.stored(for: "studio").rotation, false)
         defaults.set(true, forKey: "notify.rotation")
-        XCTAssertEqual(NotificationPrefs.stored.rotation, true)
+        XCTAssertEqual(NotificationPrefs.stored(for: "studio").rotation, true)
     }
 }

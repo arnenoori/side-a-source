@@ -35,9 +35,21 @@ enum Ink {
     static let surface = Color(nsColor: .controlBackgroundColor)
     static let selected = Color.accentColor.opacity(0.13)
     static let branch = Color.purple
+    /// The iPhone's Amber: a session waiting on you.
+    static let amber = Color(nsColor: NSColor(name: "SideA.amber") { appearance in
+        switch appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
+        case .darkAqua: NSColor(srgbRed: 1, green: 0.698, blue: 0.243, alpha: 1)
+        case .accessibilityHighContrastAqua: NSColor(srgbRed: 0.761, green: 0.478, blue: 0, alpha: 1)
+        case .accessibilityHighContrastDarkAqua: NSColor(srgbRed: 1, green: 0.761, blue: 0.4, alpha: 1)
+        default: NSColor(srgbRed: 0.949, green: 0.616, blue: 0.043, alpha: 1)
+        }
+    })
+    /// Read at each use, for animations started outside a view; views read the environment's.
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
-    static var ease: Animation { reduceMotion ? .linear(duration: 0.01) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.3) }
-    static var glide: Animation { reduceMotion ? .linear(duration: 0.01) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.22) }
+    static var ease: Animation { reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.3) }
+    static var glide: Animation { reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.22) }
+    /// A fade that drifts `y` points, or only fades under Reduce Motion.
+    static func rise(_ y: CGFloat) -> AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .offset(y: y)) }
 }
 
 struct ProjectGroup {
@@ -57,7 +69,7 @@ struct SessionsBrowser: View {
                 HStack(spacing: 6) {
                     SearchField(model: model)
                     Button { model.creating = true } label: {
-                        Image(systemName: "plus").font(.system(size: 13, weight: .medium)).frame(width: 30, height: 32).contentShape(.rect)
+                        Image(systemName: "plus").font(.body.weight(.medium)).frame(width: 30, height: 32).contentShape(.rect)
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
                     .modifier(HoverPlate())
@@ -67,7 +79,7 @@ struct SessionsBrowser: View {
                 .padding(.horizontal, 12).padding(.top, 12)
                 if model.filtered {
                     ActiveFilters(model: model).padding(.horizontal, 12).padding(.top, 8)
-                        .transition(.opacity.combined(with: .offset(y: -4)))
+                        .transition(Ink.rise(-4))
                 }
                 SessionList(model: model)
             }
@@ -92,16 +104,12 @@ struct SessionsBrowser: View {
             TextField("Name", text: $draft)
             Button("Rename") { if let session = model.renaming { model.rename(session, to: draft) } }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The new name shows only in Side A. Leave it empty to use the original.")
         }
         .onChange(of: model.renaming) { draft = model.renaming?.name ?? "" }
         .alert("Send a note", isPresented: Binding(get: { model.noting != nil }, set: { if !$0 { model.noting = nil } })) {
             TextField("Note", text: $note)
             Button("Send") { if let session = model.noting { model.note(note, to: session) } }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The session reads it after its current step and keeps working with it in mind.")
         }
         .onChange(of: model.noting) {
             note = model.noteDraft
@@ -110,8 +118,7 @@ struct SessionsBrowser: View {
         .confirmationDialog("Quit this session?", isPresented: Binding(get: { model.quitting != nil }, set: { if !$0 { model.quitting = nil } }), presenting: model.quitting) { session in
             Button("Quit Session", role: .destructive) { model.quit(session) }
         } message: { session in
-            Text(session.status == "idle" ? "It frees about \(Megabytes.text(session.memory ?? 0)). Anything it started stops too. Resume it later with claude --resume."
-                 : "It's working right now, and stops mid-step. It frees about \(Megabytes.text(session.memory ?? 0)); resume it later with claude --resume.")
+            Text("Frees about \(Megabytes.text(session.memory ?? 0)).")
         }
         .sheet(item: Binding(get: { model.restarting.map(Restarting.init) }, set: { if $0 == nil { model.restarting = nil } })) { item in
             RestartSheet(model: model, session: item.session)
@@ -135,19 +142,19 @@ struct SearchField: View {
     @FocusState private var focused: Bool
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(.tertiary)
+            Image(systemName: "magnifyingglass").font(.callout.weight(.medium)).foregroundStyle(.tertiary)
             TextField(placeholder, text: $model.query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.body)
                 .focused($focused)
                 .onChange(of: model.query) { model.queryChanged() }
                 .onExitCommand { model.query = "" }
                 .onKeyPress(.downArrow) { model.step(1); return .handled }
                 .onKeyPress(.upArrow) { model.step(-1); return .handled }
             if !model.query.isEmpty {
-                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").font(.system(size: 12)) }
+                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").font(.callout) }
                     .buttonStyle(.plain).foregroundStyle(.tertiary).help("Clear")
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                    .transition(Ink.reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.8)))
             }
             FilterMenu(model: model)
         }
@@ -202,7 +209,7 @@ struct FilterMenu: View {
             Toggle("Automated runs", isOn: $model.includeAutomated)
         } label: {
             Image(systemName: "line.3.horizontal.decrease")
-                .font(.system(size: 12, weight: .medium))
+                .font(.callout.weight(.medium))
                 .foregroundStyle(model.filtered ? Color.accentColor : .secondary)
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
@@ -233,7 +240,7 @@ struct ActiveFilters: View {
             Button("Clear") {
                 withAnimation(Ink.glide) { model.agent = nil; model.days = nil; model.project = nil; model.showArchived = false; model.includeAutomated = false }
             }
-            .buttonStyle(.plain).font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
+            .buttonStyle(.plain).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
         }
     }
 }
@@ -246,7 +253,7 @@ struct FilterToken: View {
     var body: some View {
         HStack(spacing: 4) {
             if let icon { Image(systemName: icon).font(.system(size: 9.5)).foregroundStyle(.secondary) }
-            Text(text).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
+            Text(text).font(.subheadline.weight(.medium)).lineLimit(1)
             Button { withAnimation(Ink.glide) { remove() } } label: {
                 Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(hovering ? .primary : .tertiary)
             }
@@ -263,17 +270,16 @@ struct RowPlate: ViewModifier {
     let id: String
     let selected: Bool
     @Binding var hovered: String?
-    let glide: Namespace.ID
     var radius: CGFloat = 8
     func body(content: Content) -> some View {
         content
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Ink.selected)
-                        .matchedGeometryEffect(id: "selection", in: glide)
-                } else if hovered == id {
+                } else {
                     RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Ink.hover)
-                        .matchedGeometryEffect(id: "hover", in: glide)
+                        .opacity(hovered == id ? 1 : 0)
+                        .animation(.easeOut(duration: 0.1), value: hovered == id)
                 }
             }
             .contentShape(Rectangle())
@@ -297,9 +303,10 @@ struct HoverPlate: ViewModifier {
 }
 
 struct Press: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: ButtonStyleConfiguration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed && !Ink.reduceMotion ? 0.96 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(Ink.glide, value: configuration.isPressed)
     }
 }
@@ -310,7 +317,6 @@ struct SessionList: View {
     @State private var expanded: Set<String> = []
     @State private var hovered: String?
     @FocusState private var focused: Bool
-    @Namespace private var glide
     var body: some View {
         let groups = model.groups
         let listed = model.showsSections ? model.listed : .init()
@@ -320,33 +326,34 @@ struct SessionList: View {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if model.searching {
                         ForEach(model.results) { session in
-                            SearchResultRow(model: model, session: session, hovered: $hovered, glide: glide)
-                                .transition(.opacity.combined(with: .offset(y: 6)))
+                            SearchResultRow(model: model, session: session, hovered: $hovered)
+                                .transition(Ink.rise(6))
                         }
                     } else {
                         if !listed.waiting.isEmpty {
                             SectionLabel(text: "Needs you")
                             ForEach(listed.waiting) { session in
-                                WaitingRow(model: model, session: session, hovered: $hovered, glide: glide)
-                                    .transition(.opacity.combined(with: .offset(y: -4)))
+                                WaitingRow(model: model, session: session, hovered: $hovered)
+                                    .transition(Ink.rise(-4))
                             }
                         }
                         if !listed.finished.isEmpty {
-                            SectionLabel(text: "Finished")
+                            SectionLabel(text: "Ready")
                             ForEach(listed.finished) { item in
-                                FinishedRow(model: model, item: item, hovered: $hovered, glide: glide)
-                                    .transition(.opacity.combined(with: .offset(y: -4)))
+                                FinishedRow(model: model, item: item, hovered: $hovered)
+                                    .transition(Ink.rise(-4))
                             }
                         }
                         if !listed.working.isEmpty || !listed.idle.isEmpty {
-                            RunningHeader(model: model, count: listed.working.count + listed.idle.count)
+                            RunningHeader(model: model, title: listed.working.isEmpty ? "Idle" : "Working",
+                                          count: listed.working.isEmpty ? listed.idle.count : listed.working.count)
                             // Project captions only help once sessions span more than one project.
                             let captions = Set((listed.working + listed.idle).map { model.project(of: $0.cwd) }).count > 1
                             ForEach(model.byProject(listed.working)) { group in
                                 if captions { ProjectCaption(name: group.project) }
                                 ForEach(group.sessions) { session in
-                                    RunningRow(model: model, session: session, hovered: $hovered, glide: glide)
-                                        .transition(.opacity.combined(with: .offset(y: -4)))
+                                    RunningRow(model: model, session: session, hovered: $hovered)
+                                        .transition(Ink.rise(-4))
                                 }
                             }
                             if !listed.idle.isEmpty {
@@ -355,8 +362,8 @@ struct SessionList: View {
                                     ForEach(model.byProject(listed.idle)) { group in
                                         if captions { ProjectCaption(name: group.project) }
                                         ForEach(group.sessions) { session in
-                                            RunningRow(model: model, session: session, hovered: $hovered, glide: glide)
-                                                .transition(.opacity.combined(with: .offset(y: -4)))
+                                            RunningRow(model: model, session: session, hovered: $hovered)
+                                                .transition(Ink.rise(-4))
                                         }
                                     }
                                 }
@@ -365,8 +372,8 @@ struct SessionList: View {
                         if model.showsSections && !model.visiblePins.isEmpty {
                             SectionLabel(text: "Pinned")
                             ForEach(model.visiblePins.filter { !finishedIDs.contains($0.id) }) { session in
-                                SessionRow(model: model, session: session, depth: 0, hovered: $hovered, glide: glide)
-                                    .transition(.opacity.combined(with: .offset(y: -4)))
+                                SessionRow(model: model, session: session, depth: 0, hovered: $hovered)
+                                    .transition(Ink.rise(-4))
                             }
                         }
                         ForEach(groups, id: \.path) { group in
@@ -378,8 +385,8 @@ struct SessionList: View {
                             if !folded {
                                 let limit = expanded.contains(group.path) ? rows.count : 5
                                 ForEach(rows.prefix(limit), id: \.session.id) { row in
-                                    SessionRow(model: model, session: row.session, depth: row.depth, hovered: $hovered, glide: glide)
-                                        .transition(.opacity.combined(with: .offset(y: -4)))
+                                    SessionRow(model: model, session: row.session, depth: row.depth, hovered: $hovered)
+                                        .transition(Ink.rise(-4))
                                 }
                                 if rows.count > limit {
                                     MoreButton(count: rows.count - limit) { withAnimation(Ink.ease) { _ = expanded.insert(group.path) } }
@@ -390,15 +397,13 @@ struct SessionList: View {
                     if model.results.isEmpty { EmptyList(model: model) }
                 }
                 .padding(.horizontal, 8).padding(.top, 4).padding(.bottom, 12)
-                .animation(Ink.glide, value: hovered)
-                .animation(Ink.glide, value: model.selectedID)
             }
             .onHover { inside in model.holding = inside }
             .onDisappear { model.holding = false }
             .overlay(alignment: .top) {
                 if model.heldBehind {
                     Button { model.showHeld() } label: {
-                        Label("Show updates", systemImage: "arrow.up").font(.system(size: 11.5, weight: .medium))
+                        Label("Show Updates", systemImage: "arrow.up").font(.subheadline.weight(.medium))
                             .padding(.horizontal, 10).frame(height: 24)
                             .background(.regularMaterial, in: Capsule())
                             .overlay(Capsule().strokeBorder(Ink.line))
@@ -406,7 +411,7 @@ struct SessionList: View {
                     .buttonStyle(Press())
                     .padding(.top, 6)
                     .help("The list holds still under the pointer. This puts changes in place now.")
-                    .transition(.opacity.combined(with: .offset(y: -6)))
+                    .transition(Ink.rise(-6))
                 }
             }
             .animation(Ink.glide, value: model.heldBehind)
@@ -428,12 +433,12 @@ struct SessionList: View {
                 if id != nil && !model.searching { focused = true }
                 if let id, !model.idleOpen, listed.idle.contains(where: { $0.sessionID == id }) { model.idleOpen = true }
                 guard let id, !model.searching, let group = groups.first(where: { $0.rows.contains { $0.session.id == id } }) else {
-                    if let id { withAnimation(Ink.ease) { proxy.scrollTo(id) } }
+                    if let id { proxy.scrollTo(id) }
                     return
                 }
                 collapsed.remove(group.path)
                 if let index = group.rows.firstIndex(where: { $0.session.id == id }), index >= 5 { expanded.insert(group.path) }
-                withAnimation(Ink.ease) { proxy.scrollTo(id) }
+                proxy.scrollTo(id)
             }
         }
     }
@@ -447,9 +452,9 @@ struct EmptyList: View {
                 .font(.system(size: 20, weight: .light)).foregroundStyle(.tertiary)
             Text(model.listError ?? (model.searching ? "Nothing matches “\(model.query)”" : model.filtered ? "Nothing matches these filters"
                     : model.remaining != 0 ? "Reading your conversations…" : "No conversations yet"))
-                .font(.system(size: 12.5)).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
             if model.searching && !model.includeAutomated {
-                Button("Include automated runs") { model.includeAutomated = true }.buttonStyle(.link).font(.system(size: 12))
+                Button("Include Automated Runs") { model.includeAutomated = true }.buttonStyle(.link).font(.callout)
             }
         }
         .frame(maxWidth: .infinity).padding(.top, 56).padding(.horizontal, 16)
@@ -465,9 +470,9 @@ struct ProjectHeader: View {
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: 6) {
-                Text(name.uppercased()).font(.system(size: 10.5, weight: .semibold)).tracking(0.6).lineLimit(1)
+                Text(name).font(.subheadline.weight(.semibold)).textCase(.uppercase).tracking(0.6).lineLimit(1)
                     .foregroundStyle(hovering ? .secondary : .tertiary)
-                Text(count.formatted()).font(.system(size: 10.5, weight: .medium)).monospacedDigit().foregroundStyle(.quaternary)
+                Text(count.formatted()).font(.subheadline.weight(.medium)).monospacedDigit().foregroundStyle(.quaternary)
                 Spacer()
                 Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold)).foregroundStyle(.tertiary)
                     .rotationEffect(.degrees(collapsed ? -90 : 0))
@@ -484,7 +489,7 @@ struct ProjectHeader: View {
 struct SectionLabel: View {
     let text: String
     var body: some View {
-        Text(text.uppercased()).font(.system(size: 10.5, weight: .semibold)).tracking(0.6).foregroundStyle(.tertiary)
+        Text(text).font(.subheadline.weight(.semibold)).textCase(.uppercase).tracking(0.6).foregroundStyle(.tertiary)
             .padding(.horizontal, 8).padding(.top, 16).padding(.bottom, 5)
     }
 }
@@ -499,7 +504,7 @@ struct MoreButton: View {
                 Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
                 Text("\(count.formatted()) more")
             }
-            .font(.system(size: 11.5, weight: .medium))
+            .font(.subheadline.weight(.medium))
             .foregroundStyle(hovering ? .secondary : .tertiary)
             .padding(.leading, 28).frame(height: 24)
             .contentShape(Rectangle())
@@ -522,35 +527,20 @@ enum When {
     }
 }
 
-struct Equalizer: View {
-    var color = Color.green
+/// The iPhone's working glyph; macOS 14 has no progress.indicator, so it shows a still one.
+struct WorkingMark: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 24, paused: Ink.reduceMotion)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 1.5) {
-                ForEach(0..<3, id: \.self) { bar in
-                    Capsule().fill(color)
-                        .frame(width: 2, height: 9 * (Ink.reduceMotion ? 0.6 : 0.35 + 0.65 * abs(sin(t * 3.4 + Double(bar) * 1.3))))
-                }
+        Group {
+            if #available(macOS 15, *) {
+                Image(systemName: "progress.indicator")
+                    .symbolEffect(.rotate, options: .repeat(.continuous), isActive: !reduceMotion)
+            } else {
+                Image(systemName: "ellipsis.circle")
             }
-            .frame(width: 10, height: 9)
         }
-    }
-}
-
-struct WaitingDot: View {
-    @State private var pulse = false
-    var body: some View {
-        Circle().fill(Color.orange).frame(width: 6, height: 6)
-            .background {
-                Circle().fill(Color.orange.opacity(0.35)).frame(width: 6, height: 6)
-                    .scaleEffect(pulse ? 2.4 : 1).opacity(pulse ? 0 : 1)
-            }
-            .frame(width: 10, height: 10)
-            .onAppear {
-                guard !Ink.reduceMotion else { return }
-                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { pulse = true }
-            }
+        .font(.subheadline).foregroundStyle(.secondary)
+        .accessibilityHidden(true)
     }
 }
 
@@ -558,10 +548,10 @@ struct LiveMark: View {
     let status: String
     var body: some View {
         switch status {
-        case "waiting": WaitingDot().help("Waiting on you")
+        case "waiting": Beacon(tint: Ink.amber).help("Waiting on you")
         // Codex's rollout showed no turn yet, so it may be working or not.
         case "unknown": Circle().strokeBorder(Color.secondary.opacity(0.6), lineWidth: 1).frame(width: 6, height: 6).help("Status unknown")
-        default: Equalizer().help("Working")
+        default: WorkingMark().help("Working")
         }
     }
 }
@@ -581,7 +571,6 @@ struct SessionRow: View {
     let session: SessionInfo
     let depth: Int
     @Binding var hovered: String?
-    let glide: Namespace.ID
     var body: some View {
         let selected = model.selectedID == session.id
         Button { model.open(session.id) } label: {
@@ -595,17 +584,17 @@ struct SessionRow: View {
                 }
                 .frame(width: 12)
                 .padding(.leading, CGFloat(max(depth - 1, 0)) * 12)
-                Text(session.name).font(.system(size: 13)).lineLimit(1)
+                Text(session.name).font(.body).lineLimit(1)
                     .foregroundStyle(Color.primary.opacity(selected ? 1 : 0.85))
                 Spacer(minLength: 8)
                 if let live = model.liveByID[session.id] {
                     LiveMark(status: live.status)
                 } else {
-                    Text(When.compact(session.lastTs)).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                    Text(When.compact(session.lastTs)).font(.subheadline).foregroundStyle(.tertiary).monospacedDigit()
                 }
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 28)
-            .modifier(RowPlate(id: session.id, selected: selected, hovered: $hovered, glide: glide))
+            .modifier(RowPlate(id: session.id, selected: selected, hovered: $hovered))
         }
         .buttonStyle(.plain)
         .contextMenu { SessionMenuItems(model: model, session: session) }
@@ -616,39 +605,39 @@ struct WaitingRow: View {
     let model: SessionStore
     let session: LiveSession
     @Binding var hovered: String?
-    let glide: Namespace.ID
     var body: some View {
         let id = session.sessionID ?? ""
         Button { model.open(id) } label: {
             HStack(spacing: 7) {
-                WaitingDot().frame(width: 12)
+                Beacon(tint: Ink.amber).frame(width: 12)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
-                        Text(model.names[id] ?? session.title ?? session.name ?? "Session").font(.system(size: 13)).lineLimit(1)
+                        Text(model.names[id] ?? session.title ?? session.name ?? "Session").font(.body).lineLimit(1)
                         if session.provider == .codex { CodexMark() }
                     }
                     Text(session.waitingFor.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Waiting for you")
-                        .font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1)
+                        .font(.subheadline).foregroundStyle(Ink.amber).lineLimit(1)
                 }
                 Spacer(minLength: 8)
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 40)
-            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered, glide: glide))
+            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered))
         }
         .buttonStyle(.plain)
     }
 }
 
-/// The Running label with how many sessions run and the memory they all hold, in one line.
+/// Working, or Idle when nothing works, with how many and the memory every live session holds, in one line.
 struct RunningHeader: View {
     let model: SessionStore
+    let title: String
     let count: Int
     var body: some View {
         HStack(spacing: 6) {
-            Text("RUNNING").font(.system(size: 10.5, weight: .semibold)).tracking(0.6).foregroundStyle(.tertiary)
-            Text(count.formatted()).font(.system(size: 10.5, weight: .medium)).monospacedDigit().foregroundStyle(.quaternary)
+            Text(title).font(.subheadline.weight(.semibold)).textCase(.uppercase).tracking(0.6).foregroundStyle(.tertiary)
+            Text(count.formatted()).font(.subheadline.weight(.medium)).monospacedDigit().foregroundStyle(.quaternary)
             Spacer()
-            Text(Megabytes.text(model.liveMemory)).font(.system(size: 10.5, weight: .medium)).monospacedDigit().foregroundStyle(.tertiary)
+            Text(Megabytes.text(model.liveMemory)).font(.subheadline.weight(.medium)).monospacedDigit().foregroundStyle(.tertiary)
                 .help("Memory held by all \(model.live.count) sessions and everything they started")
         }
         .padding(.horizontal, 8).padding(.top, 16).padding(.bottom, 5)
@@ -660,7 +649,7 @@ struct RunningHeader: View {
 struct ProjectCaption: View {
     let name: String
     var body: some View {
-        Text(name).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.tertiary).lineLimit(1)
+        Text(name).font(.subheadline.weight(.medium)).foregroundStyle(.tertiary).lineLimit(1)
             .padding(.leading, 23).padding(.top, 6).padding(.bottom, 2)
     }
 }
@@ -677,8 +666,8 @@ struct IdleFold: View {
                 HStack(spacing: 7) {
                     Image(systemName: "chevron.right").font(.system(size: 8.5, weight: .bold)).foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(model.idleOpen ? 90 : 0)).frame(width: 12)
-                    Text("\(sessions.count) idle").font(.system(size: 12.5)).foregroundStyle(hovering ? .primary : .secondary)
-                    Text(Megabytes.text(sessions.compactMap(\.memory).reduce(0, +))).font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
+                    Text("\(sessions.count) idle").font(.callout).foregroundStyle(hovering ? .primary : .secondary)
+                    Text(Megabytes.text(sessions.compactMap(\.memory).reduce(0, +))).font(.subheadline).monospacedDigit().foregroundStyle(.tertiary)
                     Spacer(minLength: 0)
                 }
                 .frame(maxHeight: .infinity).contentShape(Rectangle())
@@ -696,7 +685,7 @@ struct IdleFold: View {
         .confirmationDialog("Quit \(model.stale.count) idle sessions?", isPresented: $model.quittingStale) {
             Button("Quit \(model.stale.count) Sessions", role: .destructive) { model.quitStale() }
         } message: {
-            Text("They free about \(Megabytes.text(model.stale.compactMap(\.memory).reduce(0, +))). Anything they started stops too, including background commands. Each can be resumed later with claude --resume.")
+            Text("Frees about \(Megabytes.text(model.stale.compactMap(\.memory).reduce(0, +))).")
         }
     }
 }
@@ -712,26 +701,25 @@ struct FinishedRow: View {
     let model: SessionStore
     let item: Island.Ready
     @Binding var hovered: String?
-    let glide: Namespace.ID
     var body: some View {
         let id = item.finish.sessionID ?? ""
         Button { model.open(id) } label: {
             HStack(spacing: 7) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green).frame(width: 12)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.names[id] ?? item.title).font(.system(size: 13)).lineLimit(1)
+                    Text(model.names[id] ?? item.title).font(.body).lineLimit(1)
                     Text(item.finish.summary.isEmpty ? "Ready for its next task" : item.finish.summary)
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                Text(When.compact(item.at.timeIntervalSince1970)).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                Text(When.compact(item.at.timeIntervalSince1970)).font(.subheadline).foregroundStyle(.tertiary).monospacedDigit()
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 40)
-            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered, glide: glide))
+            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered))
         }
         .buttonStyle(.plain)
         .contextMenu { Button("Show in Terminal") { model.store.island.go(item) } }
-        .accessibilityLabel("\(model.names[id] ?? item.title) finished. \(item.finish.summary)")
+        .accessibilityLabel("\(model.names[id] ?? item.title) is ready. \(item.finish.summary)")
     }
 }
 
@@ -740,7 +728,6 @@ struct RunningRow: View {
     let model: SessionStore
     let session: LiveSession
     @Binding var hovered: String?
-    let glide: Namespace.ID
     var body: some View {
         let id = session.sessionID ?? ""
         let busy = session.status == "busy"
@@ -758,11 +745,11 @@ struct RunningRow: View {
         Button { model.open(id) } label: {
             HStack(spacing: 7) {
                 Group {
-                    if busy { Equalizer() } else { Circle().fill(Color.secondary.opacity(0.5)).frame(width: 5, height: 5) }
+                    if busy { WorkingMark() } else { Circle().fill(Color.secondary.opacity(0.5)).frame(width: 5, height: 5) }
                 }
                 .frame(width: 12)
                 let title = HStack(spacing: 4) {
-                    Text(model.names[id] ?? session.title ?? session.name ?? "Session").font(.system(size: 13)).lineLimit(1)
+                    Text(model.names[id] ?? session.title ?? session.name ?? "Session").font(.body).lineLimit(1)
                     if session.provider == .codex { CodexMark() }
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -773,12 +760,12 @@ struct RunningRow: View {
                         HStack(spacing: 4) { titleSlot(title); memory }
                         title
                     }
-                    detail.font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                    detail.font(.subheadline).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.leading, 4).padding(.trailing, 6).frame(height: 40)
-            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered, glide: glide))
+            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered))
         }
         .buttonStyle(.plain)
         .help(session.memory.map { "\(Megabytes.text($0)) in \(session.processes ?? 1) processes" } ?? "")
@@ -805,6 +792,7 @@ struct RunningRow: View {
                 .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.1), value: hovered == id)
         .contextMenu {
             if noting || stopping || escape || waiting != nil {
                 if noting { Button("Send a Note…") { model.noting = session } }
@@ -844,14 +832,14 @@ struct RunningRow: View {
         .accessibilityElement(children: .combine)
         // The same actions the row offers, and only those.
         .accessibilityActions {
-            if noting { Button("Send a note") { model.noting = session } }
-            if escape { Button("Stop now") { model.stop(session, now: true) } }
-            if stopping { Button("Stop before its next step") { model.stop(session, now: false) } }
-            Button("Show in terminal") { model.show(session) }
+            if noting { Button("Send a Note…") { model.noting = session } }
+            if escape { Button("Stop Now") { model.stop(session, now: true) } }
+            if stopping { Button("Stop Before Its Next Step") { model.stop(session, now: false) } }
+            Button("Show in Terminal") { model.show(session) }
             if let port = session.ports?.first {
                 Button("Open its server") { NSWorkspace.shared.open(URL(string: "http://localhost:\(port.port)")!) }
             }
-            if interactive { Button("Quit session") { model.quitting = session } }
+            if interactive { Button("Quit Session") { model.quitting = session } }
         }
     }
 
@@ -923,7 +911,7 @@ struct Chip: View {
     let text: String
     var tint: Color?
     var body: some View {
-        Text(text).font(.system(size: 10.5, weight: .medium)).monospacedDigit().lineLimit(1).fixedSize()
+        Text(text).font(.subheadline.weight(.medium)).monospacedDigit().lineLimit(1).fixedSize()
             .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
             .padding(.horizontal, 6).frame(height: 16)
             .background((tint ?? .primary).opacity(tint == nil ? 0.06 : 0.12), in: Capsule())
@@ -936,7 +924,7 @@ struct RowAction: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            Image(systemName: symbol).font(.callout.weight(.medium)).foregroundStyle(.secondary)
                 .frame(width: 24, height: 24).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -962,18 +950,17 @@ struct SearchResultRow: View {
     let model: SessionStore
     let session: SessionInfo
     @Binding var hovered: String?
-    let glide: Namespace.ID
     var body: some View {
         let selected = model.selectedID == session.id
         Button { model.open(session.id, at: session.snippets?.first?.uuid) } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(session.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Text(session.name).font(.body.weight(.medium)).lineLimit(1)
                     Spacer(minLength: 8)
                     if let live = model.liveByID[session.id] {
                         LiveMark(status: live.status)
                     } else {
-                        Text(When.compact(session.lastTs)).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                        Text(When.compact(session.lastTs)).font(.subheadline).foregroundStyle(.tertiary).monospacedDigit()
                     }
                 }
                 if let snippet = session.snippets?.first {
@@ -985,10 +972,10 @@ struct SearchResultRow: View {
                     if session.isCodex { Circle().fill(Color.teal).frame(width: 5, height: 5) }
                     Text(session.project.isEmpty ? (session.isCodex ? "Codex" : "Claude Code") : session.project)
                 }
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
+                .font(.subheadline).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 10).padding(.vertical, 9)
-            .modifier(RowPlate(id: session.id, selected: selected, hovered: $hovered, glide: glide, radius: 10))
+            .modifier(RowPlate(id: session.id, selected: selected, hovered: $hovered, radius: 10))
         }
         .buttonStyle(.plain)
         .contextMenu { SessionMenuItems(model: model, session: session) }

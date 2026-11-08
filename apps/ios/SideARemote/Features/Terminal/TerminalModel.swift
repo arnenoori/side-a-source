@@ -40,6 +40,8 @@ final class TerminalModel {
     @ObservationIgnored private var waiting: [Data] = []
     @ObservationIgnored private var waitingBytes = 0
     @ObservationIgnored private var sending = false
+    /// A `.drained` or `ready` that came while a send was running, which that send may have refused just before.
+    @ObservationIgnored private var sendAgain = false
     @ObservationIgnored private var pendingOutput: [UInt8] = []
     @ObservationIgnored private var flushScheduled = false
     @ObservationIgnored private var closed = false
@@ -126,8 +128,10 @@ final class TerminalModel {
             if phase != .live {
                 phase = .live
                 attempt = 0
-                sendWaiting()
             }
+            // Also after the Kit reopened on a new path by itself, where the phase never left live.
+            sendWaiting()
+        case .drained: sendWaiting()
         case .copyMode(let on): copyMode = on
         case .notice(let text): notice = text
         case .exit(_, let reason):
@@ -174,19 +178,22 @@ final class TerminalModel {
     func send(_ bytes: [UInt8]) { send(Data(bytes)) }
 
     private func sendWaiting() {
+        if sending { sendAgain = true }
         guard let session, !sending, phase == .live, !waiting.isEmpty else { return }
         sending = true
         Task { [weak self] in
             while let self, self.phase == .live, let next = self.waiting.first {
-                guard await session.input(next) else {
-                    // Not taken (the socket dropped, or 256 KiB wait for acks): keep it for the next ready.
-                    if self.phase == .live { self.phase = .reconnecting }
-                    break
-                }
+                // Not taken: kept until `.drained` (acks made room), or the next `ready` after a dropped socket's `.closed`.
+                guard await session.input(next) else { break }
                 self.waiting.removeFirst()
                 self.waitingBytes -= next.count
             }
-            self?.sending = false
+            guard let self else { return }
+            self.sending = false
+            if self.sendAgain {
+                self.sendAgain = false
+                self.sendWaiting()
+            }
         }
     }
 

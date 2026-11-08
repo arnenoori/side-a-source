@@ -2,7 +2,7 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// Up to four accounts as ring pairs (section 5.5): weekly outside, 5-hour inside, the tighter
+/// Up to four accounts as ring pairs: weekly outside, 5-hour inside, the tighter
 /// percent under the name.
 struct AccountsWidget: Widget {
     var body: some WidgetConfiguration {

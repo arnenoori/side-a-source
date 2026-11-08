@@ -465,7 +465,7 @@ enum Autopilot {
         return AutopilotState(enabled: store.config.smartMode, pending: held.first,
                               decisions: decisions(log, records: store.rotationRecords.records, store: store),
                               answersRecommended: store.config.answerRecommended == true, held: held, next: store.nextMoves(now: now),
-                              waiting: store.waitingSummary(limits: store.sessionLimits(now: now), now: now), swapAt: Int(Planner.full.rounded()),
+                              waiting: store.waitingSummary(limits: store.sessionLimits(now: now), now: now), swapAt: Int(store.config.moveAt.rounded()),
                               followFable: store.config.followFable != false, fableMode: store.fableMode)
     }
 

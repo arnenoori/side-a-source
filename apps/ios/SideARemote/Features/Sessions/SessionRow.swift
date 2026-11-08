@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// A Sessions row (section 4.2): title and age; the agent, project, account and model with any
+/// A Sessions row: title and age; the agent, project, account and model with any
 /// ports trailing; and one fact on line 3. Mono only for what's typed or counted.
 struct SessionRow: View {
     @Environment(AppModel.self) private var model
@@ -104,7 +104,7 @@ struct SessionRow: View {
                 .foregroundStyle(flag.kind == .failing ? AnyShapeStyle(Color.destructive) : AnyShapeStyle(.secondary))
         } else if let mail = session.mail {
             InlineFact(symbol: mail.kind == .note ? "envelope" : "pause.circle",
-                       text: mail.kind == .note ? "Note waiting · reads it after this step" : "Stops after this step")
+                       text: mail.kind == .note ? "Note waiting" : "Stops after this step")
                 .foregroundStyle(.secondary)
         } else if let step = session.step {
             Text(step)
@@ -131,7 +131,7 @@ struct SessionRow: View {
         return parts.joined(separator: ", ")
     }
 
-    // MARK: Actions (section 4.14 table)
+    // MARK: Actions
 
     private var steers: [Steer] { Steer.available(for: session) }
 

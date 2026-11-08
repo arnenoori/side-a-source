@@ -157,6 +157,22 @@ class KeychainBusy(ValueError):
     """The Keychain didn't answer. Says nothing about whether a login is there."""
 
 
+class SignInAgain(ValueError):
+    code = "signin"
+
+
+class LoginIdle(ValueError):
+    code = "idle"
+
+
+class RateLimited(ValueError):
+    code = "rate-limited"
+
+
+class Unconfirmed(ValueError):
+    code = "unconfirmed"
+
+
 # What `security` exits with when the item really isn't there (errSecItemNotFound).
 KEYCHAIN_NOT_FOUND = 44
 
@@ -267,7 +283,7 @@ def home_slot(root, account):
         if not mover:
             return slot
         slot = mover
-    raise ValueError(f"Sign in to {account['name']} again.")
+    raise SignInAgain(f"Sign in to {account['name']} again.")
 
 
 def slot_service(root, slot):
@@ -288,15 +304,15 @@ def owned_login(root, account, idle_ok=False):
     An expired login is only returned unverified when the caller treats it as idle."""
     blob = read_secret(home_service(root, account))
     if not blob or "claudeAiOauth" not in blob:
-        raise ValueError(f"Sign in to {account['name']} again.")
+        raise SignInAgain(f"Sign in to {account['name']} again.")
     owner = token_email(root, blob)
     if owner == account.get("email", "").casefold() and owner:
         return blob
     if not owner and expired(blob) and idle_ok:
         return blob
     if not owner:
-        raise ValueError("Can't confirm whose login this is yet; retrying later.")
-    raise ValueError(f"Sign in to {account['name']} again; its saved login is now {owner}'s.")
+        raise Unconfirmed("Can't confirm whose login this is yet; retrying later.")
+    raise SignInAgain(f"Sign in to {account['name']} again; its saved login is now {owner}'s.")
 
 
 def selection_path(root):
@@ -374,7 +390,7 @@ def claude_usage(root, config, account):
     blob = owned_login(root, account, idle_ok=True)
     if expired(blob):
         # Nobody has used this login since it expired, so its last reading still holds.
-        raise ValueError("Login idle; its last reading still applies.")
+        raise LoginIdle("Login idle; its last reading still applies.")
     oauth = blob["claudeAiOauth"]
     token = oauth["accessToken"]
     try:
@@ -382,8 +398,8 @@ def claude_usage(root, config, account):
                                            "anthropic-beta": "oauth-2025-04-20"}, method="GET")
     except urllib.error.HTTPError as error:
         if error.code == 401:
-            raise ValueError(f"Sign in to {account['name']} again; the login was rejected.") from None
-        raise ValueError(f"Usage is unavailable right now (HTTP {error.code}).") from None
+            raise SignInAgain(f"Sign in to {account['name']} again; the login was rejected.") from None
+        raise (RateLimited if error.code == 429 else ValueError)(f"Usage is unavailable right now (HTTP {error.code}).") from None
     windows = [{"id": key, "label": label, "percent": percent(data[key].get("utilization")),
                 "resetsAt": epoch(data[key].get("resets_at"))}
                for key, label in WINDOW_LABELS.items() if isinstance(data.get(key), dict)]
@@ -808,7 +824,7 @@ def swap(root, config, slot, other, share=False):
             read_secret.cache_clear()
             logins = [read_secret(slot_service(root, slot)), owned_login(root, other)]
             if token_email(root, logins[0]) != account.get("email", "").casefold():
-                raise ValueError("Can't confirm whose login this is yet; retrying later.")
+                raise Unconfirmed("Can't confirm whose login this is yet; retrying later.")
             # Where each account's own login ends up. A second sign-in of the same account
             # (not its home) is moved without becoming its home.
             moves = {other["id"]: slot}
@@ -1415,7 +1431,7 @@ def verify_idle_owner(root, account, blob):
     record of who signed in must name this account."""
     if not token_email(root, blob) and (not account.get("email") or
             auth_status(root, account).get("email", "").casefold() != account["email"].casefold()):
-        raise ValueError(f"Sign in to {account['name']} again.")
+        raise SignInAgain(f"Sign in to {account['name']} again.")
 
 
 # security -i reads commands in chunks; Claude Code writes through stdin up to this length, argv beyond.
@@ -1606,7 +1622,7 @@ def retry_generation(root, config, account, service, slot, due, blob, spent, ref
              f"other-generations={len(others)} newer={len(newer)}")
     if not newer:
         note(f"ended {facts}")
-        raise ValueError(ended)
+        raise SignInAgain(ended)
     source, other_slot, login = max(newer, key=lambda other: expiry_of(other[2]))
     folder = (slot_selector(root, other_slot) or str(Path.home() / ".claude")) if other_slot else None
     with claude_refresh_lock(folder) if folder else contextlib.nullcontext():
@@ -1621,7 +1637,7 @@ def retry_generation(root, config, account, service, slot, due, blob, spent, ref
         except RenewalRefused as error:
             note(f"retry-failed from={source} status={error.status} error={error.code} {facts}")
             if error.ended:
-                raise ValueError(ended) from None
+                raise SignInAgain(ended) from None
             raise
         note(f"recovered by={source} {facts}")
         save_renewal(account, service, blob, login, data, note)
@@ -2120,7 +2136,7 @@ def live_limits(root, config):
                 payload = json.load(stream)
             limits = payload.get("rate_limits") or {}
             # Every session on a slot writes this file, and an idle one redraws with the limits of its
-            # last reply, so the reading is as old as that reply. (Ported from brandeddaniel's fork.)
+            # last reply, so the reading is as old as that reply.
             with contextlib.suppress(OSError, TypeError, KeyError):
                 at = min(at, os.stat(payload["transcript_path"]).st_mtime)
             windows = [{"id": key, "label": label, "percent": percent(float(limits[key]["used_percentage"])),
@@ -2444,15 +2460,7 @@ def serve_sessions(root, parser):
         sys.stdout.flush()
 
 
-def main():
-    # The app's watchdog sends SIGTERM; exiting normally runs the finally blocks that release
-    # Claude Code's refresh lock, instead of leaving every session on that login waiting a minute.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
-    # Own process group, so the app's watchdog can stop any claude or codex child with us.
-    try:
-        os.setpgid(0, 0)
-    except OSError:
-        pass
+def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -2515,6 +2523,20 @@ def main():
     cleanup_command.add_argument("path", nargs="?")
     cleanup_command.add_argument("--days", type=float, default=90)
     cleanup_command.add_argument("--keep", action="append", default=[])
+    parser.sessions = sessions_command
+    return parser
+
+
+def main():
+    # The app's watchdog sends SIGTERM; exiting normally runs the finally blocks that release
+    # Claude Code's refresh lock, instead of leaving every session on that login waiting a minute.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    # Own process group, so the app's watchdog can stop any claude or codex child with us.
+    try:
+        os.setpgid(0, 0)
+    except OSError:
+        pass
+    parser = build_parser()
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
     os.umask(0o077)
@@ -2580,7 +2602,7 @@ def main():
         print(json.dumps(result))
         return
     if args.command == "sessions" and args.action == "serve":
-        serve_sessions(root, sessions_command)
+        serve_sessions(root, parser.sessions)
         return
     if args.command == "sessions":
         import sessions
@@ -2687,9 +2709,15 @@ def main():
         sys.exit(code)
 
 
+def failure_line(error):
+    """What the app reads on stderr; a bracketed code is what it acts on, so an account's name never decides."""
+    code = getattr(error, "code", None)
+    return f"Side A[{code}]: {error}" if isinstance(code, str) else f"Side A: {error}"
+
+
 if __name__ == "__main__":
     try:
         main()
     except (ValueError, KeyError, StopIteration, OSError, subprocess.TimeoutExpired) as error:
-        print(f"Side A: {error}", file=sys.stderr)
+        print(failure_line(error), file=sys.stderr)
         sys.exit(1)

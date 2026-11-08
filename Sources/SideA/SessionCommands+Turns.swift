@@ -1,5 +1,4 @@
 import Foundation
-import SideACore
 import SideAProtocol
 
 /// What a turn changed, and compact and review, by agent. Codex sessions on its app server are here; Claude's are in

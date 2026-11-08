@@ -274,15 +274,16 @@ shows a one-time row: "Run /hooks in Codex once on MacBook Pro to answer Codex r
 
 - **Toolbar leading:** the Mac chip, a glass capsule: green 6 pt dot + "MacBook Pro" in
   `.subheadline.weight(.medium)`. States: green (live), grey hollow (reconnecting, with a
-  three-dot glyph), red hollow (offline). Tap opens the Mac sheet: status, last seen, power,
+  three-dot glyph), red hollow (offline). Tap opens the Mac sheet: status with the path ("Connected
+  via Wi‑Fi", "via Tailscale", "via Relay"), last seen, power,
   memory, Keep Awake, Quit Idle, Clean Up, add a Mac (section 4.14).
   Reference: ChatGPT Codex's Mac with a green dot.
 - **Toolbar trailing:** `square.and.pencil` (New session), then `ellipsis.circle` menu: Group by
-  (Project / Account / None), Show idle sessions, Settings. Settings lives here, not in a tab.
+  (Project / Account / None), Show idle sessions. Settings is its own tab.
 - **Bottom accessory** (`tabViewBottomAccessory`): only while one or more requests wait and the
   user isn't on that session. A glass capsule: amber dot, "Allow Bash · npm test", trailing
-  "+2" when more wait. Tap opens the approval sheet. It collapses into the tab bar's inline
-  position when the bar minimizes. If the SDK can't hide the accessory cleanly when nothing
+  "+2" when more wait. Tap opens the approval sheet. The tab bar never minimizes on scroll
+  (`tabBarMinimizeBehavior(.never)`): minimized, it split into two pieces. If the SDK can't hide the accessory cleanly when nothing
   waits, use a `safeAreaInset(edge: .bottom)` glass capsule with the same look.
 
 **Sections, in order** (Side A's order: what needs you first):
@@ -1020,17 +1021,20 @@ References: v0's image in a user turn ([Mobbin](https://mobbin.com/screens/9ec98
 
 ### 4.13 Settings
 
-Pushed from the Sessions `⋯` menu. Inset grouped `Form`.
+The Settings tab, between Accounts and Search. Inset grouped `Form`.
 
-- **Macs:** each paired Mac: name, status dot, "Side A 0.6.1 · last seen now". Detail: rename on
+- **Macs:** each paired Mac: name, status dot, "Side A 0.6.1 · Connected via Relay" (Wi‑Fi, Tailscale or
+  Relay: the path `Paths` chose, a LAN address being Wi‑Fi), or how long ago it was seen. Detail: Connection, rename on
   phone, Tailscale address (copyable mono), **Remove this iPhone** (destructive, confirmation;
   revokes the token on the Mac when reachable). **Pair Another Mac** opens the scanner.
-- **Macs** detail also has **Test Connection** (setup, Diagnostics).
-- **Notifications:** toggles: Requests, Questions, Plans, Finished, Limit warnings. "Time
-  Sensitive for requests" toggle. "Don't notify while I'm watching the session" (on). Show
-  previews on the Lock Screen (system setting link). These are `NotificationPrefs`, sent in
-  `PushRegistration.prefs` with every push registration, so the Mac doesn't send what's off.
-- **Live Activity:** on/off (`prefs.liveActivity`), "Show the tightest limit".
+- **Macs** detail also has **Test Connection** (setup, Diagnostics), and that Mac's own
+  Notifications and Live Activity switches:
+  - **Notifications:** Requests, Questions, Plans, Finished, Limit warnings, Stuck sessions,
+    Autopilot moves, "Time Sensitive for requests", "Quiet while I'm watching the session".
+    These are `NotificationPrefs`, sent in `PushRegistration.prefs` with every push registration
+    to that Mac, so it doesn't send what's off. Stored as `<key>.<macID>`; a Mac never set reads
+    the switch from before there was one per Mac.
+  - **Live Activity:** on/off (`prefs.liveActivity`); off ends that Mac's running activity.
 - **Security:** a fixed explanation, not toggles: "From the Lock Screen you can allow reading and
   searching, and edits inside the project. Commands, MCP tools and anything that widens
   permissions need the iPhone unlocked. Destructive requests need Face ID in the app." The Mac
@@ -1057,7 +1061,7 @@ Toggles use system green explicitly (`.tint(.green)`) so amber stays meaning "ne
 │ │ Questions              (●)  │ │
 │ │ Plans                  (●)  │ │
 │ │ Finished               (●)  │ │
-│ │ Limit warnings         ( )  │ │
+│ │ Limit warnings         (●)  │ │
 │ └─────────────────────────────┘ │
 │ LIVE ACTIVITY · SECURITY ·      │
 │ TERMINAL · ABOUT                │
@@ -1174,7 +1178,7 @@ not, gated by `abilities`.
 
 **The Mac itself.** The Mac chip (section 4.2) opens the Mac sheet (`[.medium, .large]`):
 
-- Status (connected, last seen), **On power** or "On battery · 64%", memory in use and pressure.
+- Status (connected and how: Wi‑Fi, Tailscale or Relay; last seen), **On power** or "On battery · 64%", memory in use and pressure.
 - **Keep Awake While Agents Work** toggle (system green), mirroring the Mac's setting.
 - **Quit Idle Sessions…** (when any qualify).
 - **Clean Up…** pushes the Mac's Clean Up inside the sheet: what conversations take on disk,

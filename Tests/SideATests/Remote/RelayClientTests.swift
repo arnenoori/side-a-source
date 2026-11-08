@@ -63,3 +63,9 @@ import Testing
     #expect(batches.map(\.count) == [10, 10, 3] && Array(batches.joined()) == devices)
     #expect(RemotePush.batches(["a"]) == [["a"]] && RemotePush.batches([]).isEmpty)
 }
+
+/// A full context shows on the session's row but never notifies; the other health flags still do.
+@Test func aBloatedContextDoesntNotify() {
+    #expect(!RemotePush.notifies(SessionFlag(kind: .bloated, text: "Context is 182k tokens")))
+    for kind: SessionFlag.Kind in [.stuck, .loop, .failing, .unsent] { #expect(RemotePush.notifies(SessionFlag(kind: kind, text: ""))) }
+}

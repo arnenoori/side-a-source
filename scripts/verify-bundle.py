@@ -46,6 +46,14 @@ def main():
             "Packaged keep-awake daemon differs from release metadata")
     signature = subprocess.run(["codesign", "--display", "--verbose=2", str(helper)], capture_output=True, text=True).stderr
     require("Identifier=com.sidea.keepawake" in signature, "Keep-awake helper has the wrong signing identifier")
+    pool = contents / "MacOS/SideAPool"
+    pool_architectures = subprocess.check_output(["lipo", "-archs", str(pool)], text=True).split()
+    require(set(pool_architectures) == set(args.architectures), f"Unexpected pool helper architectures: {pool_architectures}")
+    agent = contents / "Library/LaunchAgents/com.sidea.pool.plist"
+    require(plistlib.loads(agent.read_bytes()) == plistlib.loads((root / "scripts/com.sidea.pool.plist").read_bytes()),
+            "Packaged pool agent differs from release metadata")
+    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(pool)], capture_output=True, text=True).stderr
+    require("Identifier=com.sidea.pool" in signature, "Pool helper has the wrong signing identifier")
     # tmux is built universal (scripts/build-tmux.sh) and goes into both single-architecture apps whole.
     tmux = contents / "Helpers/tmux"
     tmux_architectures = subprocess.check_output(["lipo", "-archs", str(tmux)], text=True).split()
@@ -55,6 +63,7 @@ def main():
     signature = subprocess.run(["codesign", "--display", "--verbose=2", str(tmux)], capture_output=True, text=True).stderr
     require("Identifier=com.sidea.tmux" in signature, "tmux helper has the wrong signing identifier")
     allowed = {"Info.plist", "MacOS/SideA", "MacOS/SideAKeepAwake", "Library/LaunchDaemons/com.sidea.keepawake.plist",
+               "MacOS/SideAPool", "Library/LaunchAgents/com.sidea.pool.plist",
                "Resources/SideA.icns", *expected_resources, "Helpers/tmux",
                "Resources/terminfo/74/tmux", "Resources/terminfo/74/tmux-256color"}
     allowed.update(f"Resources/Licenses/{name}.txt" for name in ["tmux", "libevent", "ncurses", "utf8proc", "jemalloc"])

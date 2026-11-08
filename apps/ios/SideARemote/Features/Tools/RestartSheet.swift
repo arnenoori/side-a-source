@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteKit
 import SwiftUI
 
-/// Restart Fresh (section 4.14): the handoff the Mac drafts, each part editable, a preview of it as the
+/// Restart Fresh: the handoff the Mac drafts, each part editable, a preview of it as the
 /// new session will read it, then a new hosted session in the same folder and the old one ended.
 struct RestartSheet: View {
     let session: RemoteSession

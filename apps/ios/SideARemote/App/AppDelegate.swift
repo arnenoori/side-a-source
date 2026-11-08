@@ -4,7 +4,7 @@ import SideARemoteShared
 import UIKit
 import UserNotifications
 
-/// Notification actions from a banner or the Lock Screen (section 5.1): an answer goes through the
+/// Notification actions from a banner or the Lock Screen: an answer goes through the
 /// shared outbox, Open goes to the request or session by its deep link.
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     nonisolated deinit {}
@@ -66,15 +66,27 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
-    /// The foreground's banners stay plain until the accessory takes them over (M2).
+    /// Open and connected to that Mac, the app already shows it: no banner, no sound.
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .list, .sound]
+        Self.presentation(for: PushPayload(userInfo: notification.request.content.userInfo), active: UIApplication.shared.applicationState == .active,
+                          live: LiveLink.liveMacs)
+    }
+
+    static func presentation(for payload: PushPayload?, active: Bool, live: Set<String>) -> UNNotificationPresentationOptions {
+        if active, let payload, live.contains(payload.mac) { return [] }
+        return [.banner, .list, .sound]
     }
 
     private func open(_ payload: PushPayload) {
-        let path = payload.rid.map { "request/\(payload.mac)/\($0)" } ?? payload.sid.map { "session/\(payload.mac)/\($0)" }
-        guard let path, let url = URL(string: "sidea-remote://\(path)") else { return }
+        guard let url = Self.link(for: payload) else { return }
         UIApplication.shared.open(url)
+    }
+
+    /// Open's destination: the request, else the session, else for a grouped Ready that Mac's sessions.
+    static func link(for payload: PushPayload) -> URL? {
+        let path = payload.rid.map { "request/\(payload.mac)/\($0)" } ?? payload.sid.map { "session/\(payload.mac)/\($0)" }
+            ?? (PushOpener.grouped(payload) ? "mac/\(payload.mac)" : nil)
+        return path.flatMap { URL(string: "sidea-remote://\($0)") }
     }
 
     /// "Couldn't reach MacBook Pro. Open to answer." in place of the one that failed.

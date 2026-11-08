@@ -276,7 +276,6 @@ public struct RemoteProject: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// A search result.
 public struct PastSession: Codable, Hashable, Sendable, Identifiable {
     public let id: String
     public let agent: AgentProvider

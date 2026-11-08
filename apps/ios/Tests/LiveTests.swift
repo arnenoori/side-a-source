@@ -90,6 +90,22 @@ final class LiveTests: XCTestCase {
         XCTAssertFalse(Tailscale.isTailnet("127.0.0.1"))
     }
 
+    func testPathNamesHowTheMacIsReached() {
+        XCTAssertEqual(MacConnection.Route(.relay), .relay)
+        XCTAssertEqual(MacConnection.Route(.direct(URL(string: "https://100.101.12.4:47800")!)), .tailscale)
+        XCTAssertEqual(MacConnection.Route(.direct(URL(string: "https://macbook.tail1234.ts.net:47800")!)), .tailscale)
+        XCTAssertEqual(MacConnection.Route(.direct(URL(string: "https://192.168.1.20:47801")!)), .wifi)
+        XCTAssertNil(MacConnection.Route(nil))
+        XCTAssertEqual([MacConnection.Route.wifi, .tailscale, .relay].map(\.title), ["Wi\u{2011}Fi", "Tailscale", "Relay"])
+
+        let mac = MacConnection(name: "MacBook", state: .live, lastSeen: .now)
+        XCTAssertEqual(mac.status, "Connected")
+        mac.route = .relay
+        XCTAssertEqual(mac.status, "Connected via Relay")
+        mac.state = .reconnecting(since: .now)
+        XCTAssertEqual(mac.status, "Reconnecting…")
+    }
+
     func testOnlyAPinnedLinkInTheMacsFormPairs() {
         let fragment = "#v=2&a=100.101.12.4:47800&fp=g1deSK0gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&n=MacBook&m=m1&c=ABCD2345"
         XCTAssertNotNil(PairingLink.invitation(URL(string: "sidea-remote://pair" + fragment)!))
@@ -111,6 +127,9 @@ final class LiveTests: XCTestCase {
         XCTAssertFalse(ReviewDemo.matches(URL(string: "https://getsidea.com/pair#review=WRONG12345")!))
         XCTAssertFalse(ReviewDemo.matches(URL(string: "https://evil.example/pair#review=WRONG12345")!))
         XCTAssertFalse(ReviewDemo.matches(URL(string: "sidea-remote://pair")!))
+        XCTAssertFalse(ReviewDemo.matches(URL(string: "https://getsidea.com:8443/pair#review=GVCDWQ37LE")!))
+        XCTAssertFalse(ReviewDemo.matches(URL(string: "https://user@getsidea.com/pair#review=GVCDWQ37LE")!))
+        XCTAssertFalse(ReviewDemo.matches(URL(string: "https://getsidea.com/pair?x=1#review=GVCDWQ37LE")!))
         // A review link is never an invitation.
         XCTAssertNil(PairingLink.invitation(URL(string: "https://getsidea.com/pair#review=WRONG12345")!))
     }
@@ -238,7 +257,7 @@ final class LiveTests: XCTestCase {
     }
 
     func testTheDemosTurnDiffGathersItsTranscriptsDiffs() async throws {
-        let tools = MacTools(demo: .init(options: OptionsList(agents: []), projects: []))
+        let tools = MacTools(.demo(.init(options: OptionsList(agents: []), projects: [])))
         let file = FileDiff(path: "/a.swift", change: .modified, additions: 1, deletions: 1, hunks: [])
         let edit = TranscriptTool(id: "e", name: "Edit", summary: "a.swift", action: .edit(path: "/a.swift", removed: "x", added: "y"),
                                   status: .ok, startedAt: 0, diffs: [file])
@@ -257,7 +276,7 @@ final class LiveTests: XCTestCase {
     }
 
     func testAModeChangedHereShowsUntilTheRowSaysSo() async throws {
-        let tools = MacTools(demo: .init(options: OptionsList(agents: []), projects: []))
+        let tools = MacTools(.demo(.init(options: OptionsList(agents: []), projects: [])))
         let row = RemoteSession(id: "s", agent: .codex, title: "s", project: "p", status: .idle, settings: SessionSettings(mode: .default))
         let result = try await tools.change(row, SettingsChange(mode: .plan), title: "Plan")
         XCTAssertTrue(result.nextTurn)
@@ -272,7 +291,7 @@ final class LiveTests: XCTestCase {
     }
 
     func testSettingsChangedHereClearFieldByField() async throws {
-        let tools = MacTools(demo: .init(options: OptionsList(agents: []), projects: []))
+        let tools = MacTools(.demo(.init(options: OptionsList(agents: []), projects: [])))
         let row = RemoteSession(id: "s", agent: .claude, title: "s", project: "p", model: "opus", status: .idle,
                                 settings: SessionSettings(model: "claude-opus-5-5", effort: .high, mode: .default))
         _ = try await tools.change(row, SettingsChange(model: "claude-sonnet-5-5"), title: "Sonnet 5.5")
@@ -345,15 +364,39 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(store.text(other, in: "s"), "Else")
     }
 
+    /// A paired Mac whose outbox couldn't open has no engine: nothing it's asked to change may report that it did.
+    func testWithoutAWayToTheMacNothingPretendsToChange() async throws {
+        let tools = MacTools()
+        let row = RemoteSession(id: "s", agent: .codex, title: "s", project: "p", status: .idle, settings: SessionSettings(mode: .default))
+        func fails(_ what: String, _ call: () async throws -> Void) async {
+            do {
+                try await call()
+                XCTFail("\(what) reported a change that never happened")
+            } catch {
+                XCTAssertEqual(MacTools.message(error), MacTools.message(ToolError.unavailable), what)
+            }
+        }
+        await fails("settings") { _ = try await tools.change(row, SettingsChange(mode: .plan), title: "Plan") }
+        await fails("autopilot") { try await tools.setAutopilot(false) }
+        await fails("answers") { try await tools.setAnswersRecommended(true) }
+        await fails("move at") { try await tools.setSwapAt(90) }
+        await fails("follow Fable") { try await tools.setFollowFable(false) }
+        await fails("compact") { try await tools.compact("s") }
+        await fails("review") { try await tools.review("s") }
+        await fails("turn diff") { _ = try await tools.turnDiff("s", turn: "t", demo: []) }
+        XCTAssertNil(tools.changed["s"])
+        XCTAssertNil(tools.autopilot)
+    }
+
     func testAutopilotAndAccountsWaitForTheirCapabilities() async throws {
         let live = MacTools()
         XCTAssertFalse(live.can(.accountsUse))
         XCTAssertFalse(live.can(.autopilotToggle))
         // No Mac to sign for: Use This Account says so rather than switching.
         let work = RemoteAccount(id: "w", name: "Work", provider: .claude, ready: true)
-        do { try await live.useAccount(work); XCTFail() } catch ToolError.demo {}
+        do { try await live.useAccount(work); XCTFail() } catch ToolError.unavailable {}
 
-        let demo = MacTools(demo: .init(options: OptionsList(agents: []), projects: []))
+        let demo = MacTools(.demo(.init(options: OptionsList(agents: []), projects: [])))
         XCTAssertTrue(demo.can(.accountsUse) && demo.can(.autopilotToggle))
         try await demo.setAutopilot(false)
         XCTAssertEqual(demo.autopilot?.enabled, false)

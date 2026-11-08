@@ -31,21 +31,24 @@ final class AppModel {
     var macID: String { link?.mac.endpoint.macID ?? demoID }
 
     init(mac: MacConnection, sessions: SessionsStore, requests: RequestsStore, transcripts: TranscriptStore,
-         accounts: AccountsStore, history: HistoryStore, isDemo: Bool, paired: Bool) {
+         accounts: AccountsStore, history: HistoryStore, isDemo: Bool, paired: Bool, live: MacTools.Live? = nil) {
         self.mac = mac; self.sessions = sessions; self.requests = requests; self.transcripts = transcripts
         self.accounts = accounts; self.history = history; self.isDemo = isDemo; self.paired = paired
         images = ImageStore(isDemo: isDemo)
-        tools = MacTools(demo: isDemo ? .sample(sessions.sessions) : nil)
+        tools = MacTools(isDemo ? .demo(.sample(sessions.sessions)) : live.map(MacTools.Mode.live) ?? .unavailable)
     }
 
     static func demo(now: Date = .now) -> AppModel {
-        demo(DemoData(now: now), name: "MacBook Pro", now: now)
+        let model = demo(DemoData(now: now), name: "MacBook Pro", now: now)
+        model.mac.route = .wifi
+        return model
     }
 
     /// A second demo Mac, for the multi-Mac screens: a few of the first one's sessions on another machine.
     static func demoSecond(now: Date = .now) -> AppModel {
         let model = demo(DemoData(now: now).second, name: "Mac mini", now: now)
         model.demoID = "demo-2"
+        model.mac.route = .tailscale
         return model
     }
 
@@ -87,24 +90,24 @@ final class AppModel {
     #endif
 
     /// Fed by the Mac. Without the App Group (a build without its entitlement) the outbox can't
-    /// open, and the model stays empty and connecting.
+    /// open: the model stays empty and connecting, and its tools refuse every change.
     static func live(_ mac: PairedMac) -> AppModel {
+        let outbox = SharedStorage.database.flatMap { try? Outbox(file: $0) }
+        let link = outbox.map { LiveLink(mac: mac, outbox: $0) }
+        var live: MacTools.Live?
+        if let link, let outbox { live = MacTools.Live(engine: link.engine, paired: mac, outbox: outbox) }
         let model = AppModel(mac: MacConnection(name: mac.endpoint.name, state: .connecting, lastSeen: .now), sessions: SessionsStore([]),
                              requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
-                             history: HistoryStore([]), isDemo: false, paired: true)
+                             history: HistoryStore([]), isDemo: false, paired: true, live: live)
         model.foldAnswers()
         if let cache = StateCache.load(mac.endpoint.macID) {
             model.restore(cache)
             Launch.mark("sessions from cache", "\(cache.sessions.count) sessions, \(cache.transcripts.count) transcripts")
         }
-        if let file = SharedStorage.database, let outbox = try? Outbox(file: file) {
-            let link = LiveLink(mac: mac, outbox: outbox)
+        if let link {
             model.link = link
             link.attach(model)
             let engine = link.engine
-            model.tools.engine = engine
-            model.tools.paired = mac
-            model.tools.outbox = outbox
             model.images.fetch = { id, thumbnail in try await engine.client.image(id, thumbnail: thumbnail) }
         }
         return model
@@ -157,6 +160,34 @@ final class MacConnection: Identifiable {
     var keepAwake = true
     /// From the path monitor: a VPN interface (Tailscale) is up.
     var vpnUp = true
+    var route: Route?
+
+    enum Route: Equatable {
+        case wifi, tailscale, relay
+
+        /// Any direct address off the tailnet is one the phone can reach only on the Mac's own network.
+        init?(_ path: Paths.Path?) {
+            switch path {
+            case .relay?: self = .relay
+            case .direct(let url)?: self = Tailscale.isTailnet(url.host() ?? "") ? .tailscale : .wifi
+            case nil: return nil
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .wifi: "Wi\u{2011}Fi"
+            case .tailscale: "Tailscale"
+            case .relay: "Relay"
+            }
+        }
+    }
+
+    /// A path `Paths` still holds says nothing while the events socket is down.
+    var status: String {
+        guard state == .live, let route else { return state.title }
+        return "Connected via \(route.title)"
+    }
 
     init(name: String, state: State, lastSeen: Date) { self.name = name; self.state = state; self.lastSeen = lastSeen }
 }

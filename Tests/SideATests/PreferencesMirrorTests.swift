@@ -83,6 +83,27 @@ private let now = Date().timeIntervalSince1970
     #expect(try rig.storedValues()["playerEnabled"]?["value"] as? Bool == true)
 }
 
+/// Each shared setting has one default, in its spec, and an unset key reads as it.
+@MainActor @Test func anUnsetSettingReadsAsItsSpecsFallback() {
+    let defaults = temporaryDefaults()
+    for (key, spec) in PreferencesMirror.shared {
+        let read: PreferenceValue? = switch spec.kind {
+        case .bool: .bool(PreferencesMirror.value(key, in: defaults))
+        case .int: .int(PreferencesMirror.value(key, in: defaults))
+        case .double: .double(PreferencesMirror.value(key, in: defaults))
+        case .string: .string(PreferencesMirror.value(key, in: defaults))
+        }
+        #expect(read == spec.fallback, "\(key)")
+    }
+    #expect(PreferencesMirror.fallback(Sounds.enabledKey) == true && PreferencesMirror.fallback(Sounds.volumeKey) as Double == 0.5)
+    #expect(PreferencesMirror.fallback(WaitingNotifier.enabledKey) == true && PreferencesMirror.fallback(MenuPlayer.enabledKey) == false)
+    #expect([Island.eventsKey, Island.waitingKey, Island.finishedKey].allSatisfy { PreferencesMirror.fallback($0) == true })
+    #expect(PreferencesMirror.fallback(AccountStore.weeklyAlertKey) == AccountStore.weeklyAlertDefault)
+    defaults.set(false, forKey: Sounds.enabledKey)
+    defaults.set(0.2, forKey: Sounds.volumeKey)
+    #expect(PreferencesMirror.value(Sounds.enabledKey, in: defaults) == false && PreferencesMirror.value(Sounds.volumeKey, in: defaults) as Double == 0.2)
+}
+
 // MARK: Allowlist
 
 @MainActor @Test func theAllowlistIsExactAndLeavesOutPerMacKeys() {

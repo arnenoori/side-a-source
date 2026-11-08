@@ -2,8 +2,8 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// The tightest limit (section 5.5): the LCD plate on the Home Screen, a gauge and a line on the
-/// Lock Screen. Choosing an account arrives with the App Intent configuration (M2).
+/// The tightest limit: the LCD plate on the Home Screen, a gauge and a line on the
+/// Lock Screen. Choosing an account arrives with the App Intent configuration.
 struct LimitWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Limit", provider: SnapshotProvider()) { entry in

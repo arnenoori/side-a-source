@@ -46,9 +46,9 @@ extension AccountStore {
             guard seen.insert(login.id).inserted, let account = accounts.first(where: { $0.id == login.id }), account.allowAuto else { return nil }
             let held = login.slot.flatMap { heldMoves[$0] }
             let planned = usageForPlanning(slot: login.slot)
-            let to = held?.to ?? Planner.next(after: account, among: accounts, usage: planned, health: health, busy: busy, now: now)
+            let to = held?.to ?? Planner.next(after: account, among: accounts, usage: planned, health: health, busy: busy, full: config.moveAt, now: now)
             return NextMove(id: account.id, from: account.name, to: to.flatMap { id in config.accounts.first { $0.id == id }?.name },
-                            atPercent: Int(Planner.full.rounded()), minutes: minutesUntilSwap(account.id, now: now), held: held != nil)
+                            atPercent: Int(config.moveAt.rounded()), minutes: minutesUntilSwap(account.id, now: now), held: held != nil)
         }
     }
 
@@ -75,9 +75,9 @@ extension AccountStore {
             guard let value = usage[id] else { continue }
             let window = value.windows.first { $0.id == hit.limit }
             let reset = window?.resetsAt
-            let stillOut = hit.limit.hasPrefix("model:") ? (window?.used(at: now) ?? 0) >= Planner.limited : !Planner.hasHeadroom(value, now: now)
+            let stillOut = hit.limit.hasPrefix("model:") ? (window?.used(at: now) ?? 0) >= Planner.limited : !Planner.hasHeadroom(value, full: config.moveAt, now: now)
             guard stillOut, reset.map({ $0 > now }) ?? true else { continue }
-            let worst = hit.at + (hit.limit == "five_hour" ? 5 * 3600 : 7 * 86_400)
+            let worst = hit.at + UsageWindow.seconds(of: hit.limit)
             for session in hit.sessions {
                 found[session] = SessionLimit(window: hit.limit, accountID: id, until: reset, worstCase: reset == worst)
             }
@@ -92,7 +92,7 @@ extension AccountStore {
         guard !stopped.isEmpty else { return nil }
         let theirs = Set(stopped.values.map(\.accountID))
         let usable = config.accounts.filter { $0.provider == .claude && (theirs.contains($0.id) || (config.smartMode && $0.allowAuto)) }
-        guard let (account, at) = Planner.nextAvailable(usable, usage: plannable, now: now) else {
+        guard let (account, at) = Planner.nextAvailable(usable, usage: plannable, full: config.moveAt, now: now) else {
             guard let first = stopped.values.filter({ $0.until != nil }).min(by: { $0.until! < $1.until! }), let at = first.until,
                   let name = config.accounts.first(where: { $0.id == first.accountID })?.name else { return nil }
             return WaitingSummary(account: name, at: at, worstCase: first.worstCase)
@@ -132,14 +132,17 @@ extension AccountStore {
 
     /// A login moved; the phone says where to and why.
     func pushMoved(to: String, reason: String) {
-        remote.push.rotation(title: "Now on \(to)", body: reason.isEmpty ? nil : reason, account: nil, resetsAt: nil)
+        guard RemoteController.active else { return }
+        remote.push.rotation(title: "Now on \(to)", body: reason.isEmpty ? nil : reason, account: nil, resetsAt: nil, blocks: false)
     }
 
     func pushAllOut(fable: Bool, back: String, at: Double) {
-        remote.push.rotation(title: fable ? "Fable out" : "All out", body: nil, account: back, resetsAt: at)
+        guard RemoteController.active else { return }
+        remote.push.rotation(title: fable ? "Fable out" : "All out", body: nil, account: back, resetsAt: at, blocks: true)
     }
 
     func pushStuck(_ account: Account, reset: Double?) {
-        remote.push.rotation(title: "\(account.name) is full", body: reset == nil ? "No account free" : nil, account: reset == nil ? nil : account.name, resetsAt: reset)
+        guard RemoteController.active else { return }
+        remote.push.rotation(title: "\(account.name) is full", body: reset == nil ? "No account free" : nil, account: reset == nil ? nil : account.name, resetsAt: reset, blocks: true)
     }
 }

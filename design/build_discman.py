@@ -97,7 +97,6 @@ for obj in list(bpy.context.scene.objects):
  objects.append(dict(name=obj.name,vertices=verts,normals=normals,indices=inds,color=list(mat.diffuse_color),metallic=p.inputs['Metallic'].default_value,roughness=p.inputs['Roughness'].default_value,lid=bool(obj.get('lid',False)),action=obj.get('action')))
  evaluated.to_mesh_clear()
 path=ROOT/'Sources/SideA/Resources/discman.json'; path.write_text(json.dumps(objects,separators=(',',':')))
-# Studio render and reusable Blender source.
 world=bpy.context.scene.world; world.color=(.3,.3,.3)
 for name,loc,power,size in [('Key',(-3,-4,7),650,5),('Rim',(4,2,6),800,4),('Fill',(-4,4,3),450,3)]:
  bpy.ops.object.light_add(type='AREA',location=loc); o=bpy.context.object; o.name=name; o.data.energy=power; o.data.shape='DISK'; o.data.size=size; o.rotation_euler=(Vector((0,0,.3))-o.location).to_track_quat('-Z','Y').to_euler()

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import os
 import SideACore
 import ServiceManagement
 import UniformTypeIdentifiers
@@ -12,17 +13,20 @@ struct AuthStatus: Decodable, Sendable {
     let authMethod: String
 }
 
-struct BridgeFailure: LocalizedError, Sendable {
-    let message: String
-    var errorDescription: String? { message }
-}
+private let integrationLog = Logger(subsystem: "com.arnenoori.sidea", category: "integrations")
 
 @MainActor @Observable
 final class AccountStore {
     var config = Configuration() {
         didSet {
-            Planner.full = config.moveAt
             if config.accounts != oldValue.accounts || config.swapAt != oldValue.swapAt || config.followFable != oldValue.followFable { remoteUsageChanged() }
+            if config.accounts != oldValue.accounts || config.moveAt != oldValue.moveAt { writePoolPlan() }
+            // Pool mode is the default from the first signed-in account on; an empty pool would refuse every command,
+            // and installs that loaded with accounts keep what they had.
+            if config.pool == nil, !isDemo, !oldValue.accounts.isEmpty, !oldValue.accounts.contains(where: \.ready),
+               config.accounts.contains(where: \.ready) {
+                Task { await setPool(true) }
+            }
             if config.smartMode != oldValue.smartMode || config.swapAt != oldValue.swapAt || config.followFable != oldValue.followFable { remote.events?.autopilotChanged() }
         }
     }
@@ -86,10 +90,12 @@ final class AccountStore {
     @ObservationIgnored private var reportAt = Date.distantPast
     @ObservationIgnored private var sessionsIndexedAt = Date.distantPast
     @ObservationIgnored private var limitMarkerDate: Date?
-    var usage: [String: AccountUsage] = [:] { didSet { remoteUsageChanged() } }
+    var usage: [String: AccountUsage] = [:] { didSet { remoteUsageChanged(); writePoolPlan() } }
     var signingIn: Set<String> = []
+    /// Bridge commands under way that change logins or files; an update waits for them rather than cut one off.
+    @ObservationIgnored var bridgeChanges = 0
     /// Why an account's numbers are not current, or its login can't be used. Only accounts with something wrong have an entry.
-    var health: [String: LoginHealth] = [:] { didSet { remoteUsageChanged() } }
+    var health: [String: LoginHealth] = [:] { didSet { remoteUsageChanged(); writePoolPlan() } }
     var waking: Set<String> = []
     @ObservationIgnored private var primedAt: [String: Date] = [:]
     @ObservationIgnored private var usageAt: [String: Date] = [:]
@@ -143,12 +149,17 @@ final class AccountStore {
     @ObservationIgnored lazy var hosted = HostedSessions(root: root, bridge: { [unowned self] in try await self.bridgeOutput($0) },
                                                                       live: { [unowned self] in await self.sessions.freshLive() },
                                                                       changed: { [unowned self] in await self.sessions.refreshLive() })
-    @ObservationIgnored var pool: PoolProxy?
-    var poolPort: UInt16?
+    enum PoolRun {
+        case off, starting
+        case running(PoolProxy, port: UInt16)
+        case failed(String)
+    }
+    var poolRun: PoolRun = .off
+    var pool: PoolProxy? { if case .running(let proxy, _) = poolRun { proxy } else { nil } }
+    var poolPort: UInt16? { if case .running(_, let port) = poolRun { port } else { nil } }
     var poolConversations: [String: Int] = [:]
     @ObservationIgnored var poolRouter = PoolRouter()
-    @ObservationIgnored var poolTokens: [String: (credential: PoolCredential, expires: Double, hash: String)] = [:]
-    @ObservationIgnored var poolStarting = false
+    @ObservationIgnored let poolTokens = PoolTokenCache()
     var poolShareState: PoolShareState = .off
     var poolShareCommand: String? { if case .shared(let command) = poolShareState { command } else { nil } }
     var poolShareProblem: String? { if case .problem(let problem) = poolShareState { problem } else { nil } }
@@ -160,7 +171,7 @@ final class AccountStore {
     /// Tests stand in for tailscaled.
     @ObservationIgnored var tailscaleStatus: @Sendable () async -> TailscaleStatus = { await TailscaleCLI.shared.status() }
     @ObservationIgnored var poolQuitObserver: (any NSObjectProtocol)?
-    @ObservationIgnored var poolTokenReads: [String: Task<PoolCredential, any Error>] = [:]
+    @ObservationIgnored var lastPoolPlan: PoolPlan?
     /// What the pool last did for each service, for Settings and a joined Mac's health check.
     var poolHealth: [AgentProvider: PoolActivity] = [:]
     /// Results of Test Pool: each member's login, checked without spending quota.
@@ -186,6 +197,7 @@ final class AccountStore {
     func startNotifications() {
         guard Bundle.main.bundleURL.pathExtension == "app", !isDemo else { return }
         if notificationRouter == nil { notificationRouter = NotificationRouter(store: self) }
+        if WaitingNotifier.enabled { WaitingNotifier.requestPermission() }
         waitingNotifier.update()
     }
 
@@ -198,7 +210,6 @@ final class AccountStore {
             ? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("SideA-preview-\(ProcessInfo.processInfo.processIdentifier)")
             : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/SideA"))
         if isDemo {
-            // Fictional accounts for previews and website screenshots.
             config.accounts = [Account(name: "Personal", email: "you@example.com", ready: true, allowAuto: true),
                                Account(name: "Studio", email: "studio@example.com", ready: true, allowAuto: true),
                                Account(name: "Weekend", email: "weekend@example.com", ready: true, allowAuto: true),
@@ -210,7 +221,7 @@ final class AccountStore {
             activeIDs = [.claude: config.accounts[0].id, .codex: config.accounts[3].id]
             let now = Date().timeIntervalSince1970
             func window(_ id: String, _ percent: Double, _ reset: Double) -> UsageWindow {
-                UsageWindow(id: id, label: id == "five_hour" ? "5-hour" : "Weekly", percent: percent, resetsAt: now + reset)
+                UsageWindow(id: id, label: UsageWindow.label(of: id), percent: percent, resetsAt: now + reset)
             }
             let ids = config.accounts.map(\.id)
             usage = [ids[0]: AccountUsage(windows: [window("five_hour", 62, 7_400), window("seven_day", 41, 260_000)], capacity: 20),
@@ -293,7 +304,6 @@ final class AccountStore {
             await self?.loadIntegrations()
             while !Task.isCancelled {
                 await self?.tick()
-                // Wake early when the rate-limit hook fires, otherwise once a minute.
                 for _ in 0..<30 {
                     if self?.limitHit() == true || self?.liveChanged() == true { break }
                     try? await Task.sleep(for: .seconds(2))
@@ -305,21 +315,23 @@ final class AccountStore {
     private func loadIntegrations() async {
         // "live on" rewrites ~/.claude/settings.json to point at this root; a demo's root is a temporary folder.
         guard !isDemo else { return }
-        struct State: Decodable { let installed: Bool }
-        async let hook = try? bridgeOutput(["hook", "status"])
-        async let shell = try? bridgeOutput(["shell", "status"])
-        async let live = try? bridgeOutput(["live", config.liveLimits == false ? "status" : "on"])
-        if let data = await hook { limitHook = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
-        if let data = await shell { shellSwitching = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
-        if let data = await live { liveLimits = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
-        if let data = try? await bridgeOutput(["host-terminal", "status"]) { hostTerminal = (try? JSONDecoder().decode(State.self, from: data))?.installed ?? false }
+        async let hook = loadIntegration("hook", "status")
+        async let shell = loadIntegration("shell", "status")
+        async let live = loadIntegration("live", config.liveLimits == false ? "status" : "on")
+        if let installed = await hook { limitHook = installed }
+        if let installed = await shell { shellSwitching = installed }
+        if let installed = await live { liveLimits = installed }
+        if let installed = await loadIntegration("host-terminal", "status") { hostTerminal = installed }
         await syncHosting()
         await setIsland(nil, "sync")
         await syncPool()
     }
-    /// The account whose login a running session's slot holds.
-    func accountName(inSlot slot: String) -> String? {
-        accountID(inSlot: slot).flatMap { id in config.accounts.first { $0.id == id }?.name }
+    /// nil when the bridge couldn't say, which is logged; the switch keeps what it showed.
+    private func loadIntegration(_ command: String, _ state: String) async -> Bool? {
+        do { return try await integration(command, state) } catch {
+            integrationLog.error("\(command, privacy: .public) \(state, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
     func accountID(inSlot slot: String) -> String? { busyLogins?[slot] }
     /// Only Remote's recorder listens; without a paired phone this costs a static check.
@@ -414,11 +426,6 @@ final class AccountStore {
         guard !isDemo else { return true }
         do { try PrivateFile.write(try config.validated(), to: configURL); return true }
         catch { self.error = error.localizedDescription; return false }
-    }
-    func select(_ id: String) {
-        guard !held else { return }
-        config.selectedID = id; persist()
-        Sounds.play(.tick)
     }
     func step(_ offset: Int) {
         guard !held else { return }
@@ -569,6 +576,17 @@ final class AccountStore {
         config.accounts.removeAll { $0.id == id }
         if config.selectedID == id { config.selectedID = config.accounts.first?.id }
         persist()
+        forgetState(id)
+    }
+    /// What Side A kept about a removed account, so none of it lingers in the menu, the pool or the usage cache.
+    private func forgetState(_ id: String) {
+        usage[id] = nil; health[id] = nil; readAt[id] = nil; loginEnds[id] = nil
+        usageAt[id] = nil; backoffUntil[id] = nil; primedAt[id] = nil; failing.remove(id)
+        liveAt[id] = nil; limitHits[id] = nil; samples[id] = nil; paidWarned[id] = nil
+        loginStamps[id] = nil; endWarned[id] = nil; renewedAt[id] = nil; recheckedAt[id] = nil; unnamed[id] = nil
+        poolBlocked[id] = nil; signInWarned.remove(id); signInAsked.remove(id)
+        poolTokens.forget(id)
+        saveUsageCache()
     }
     func verify(_ id: String, reportError: Bool = true) async -> Bool {
         if isDemo && !checksLogins {
@@ -764,20 +782,28 @@ final class AccountStore {
             sample(id, value.fiveHour, at: started.timeIntervalSince1970)
         } catch {
             let message = error.localizedDescription
+            let kind = BridgeErrorKind(error)
             autopilotLog.note("read \(id)", "\(config.accounts.first { $0.id == id }?.name ?? id): usage read failed: \(message)")
             // Idle: nobody has used the login since it expired, so the last reading still holds.
-            if message.contains("idle") {
+            if kind == .idle {
                 backoffUntil[id] = Date().addingTimeInterval(1800)
                 health[id] = .idle
                 // Free: Claude Code renews the login without running a model, then it is read again.
                 if Date().timeIntervalSince(renewedAt[id] ?? .distantPast) > 600 { Task { await renew(id) } }
             } else {
                 // The usage endpoint rate-limits frequent reads; back off rather than retry.
-                let signIn = message.contains("Sign in")
-                // A rate limit is not a fault: the last reading stays, marked with its time once it ages.
-                if !signIn { health[id] = message.contains("confirm whose login") ? .verify : message.contains("429") ? nil : .offline }
-                backoffUntil[id] = Date().addingTimeInterval(signIn ? 1800 : message.contains("429") ? 600 : 300)
-                if !message.contains("429") { failing.insert(id) }
+                let signIn = kind == .signIn
+                let limited = kind == .rateLimited
+                if limited {
+                    // A rate limit is not a fault, and it shows the endpoint is reachable again: the last reading stays,
+                    // marked with its time once it ages. Health and `failing` clear together, or Autopilot would skip
+                    // an account the menu shows as fine.
+                    if health[id] == .offline || health[id] == .idle { health[id] = nil; failing.remove(id) }
+                } else {
+                    if !signIn { health[id] = kind == .unconfirmed ? .verify : .offline }
+                    failing.insert(id)
+                }
+                backoffUntil[id] = Date().addingTimeInterval(signIn ? 1800 : limited ? 600 : 300)
                 if signIn { signedOut(id, message) }
             }
         }
@@ -832,7 +858,7 @@ final class AccountStore {
         guard let near = [after.fiveHour, after.weekly].compactMap({ $0 }).first(where: { $0.percent >= 90 && ($0.resetsAt ?? 0) > now }),
               paidWarned[id] != near.resetsAt else { return }
         let others = config.accounts.filter { $0.provider == .claude && $0.id != id }
-        guard Planner.best(others, usage: planning(usage), health: health, active: nil, now: now) == nil else { return }
+        guard Planner.best(others, usage: planning(usage), health: health, active: nil, full: config.moveAt, now: now) == nil else { return }
         paidWarned[id] = near.resetsAt
         notify("\(name) will start charging soon", "It is at \(near.text(at: now)) of its \(near.label.lowercased()) limit and no other account has room. Past the limit, Claude bills paid credits (\(extra.summary)).")
     }
@@ -851,6 +877,16 @@ final class AccountStore {
         case nil: nil
         }
     }
+    enum RowAction: Equatable { case busy, signIn, renew, use, inUse, none }
+    /// The one button an account's row offers, in the menu and in Settings.
+    func rowAction(for account: Account) -> RowAction {
+        let isActive = isActive(account)
+        if signingIn.contains(account.id) { return .busy }
+        if !account.ready || (health[account.id]?.takesWork == false && !isActive) { return .signIn }
+        if health[account.id] == .idle && usage[account.id] == nil && account.provider == .claude { return .renew }
+        if isActive { return .inUse }
+        return account.provider == .claude ? .use : .none
+    }
     /// Has Claude Code renew an idle login (no model runs, no quota), then reads it again.
     func renew(_ id: String) async {
         guard !waking.contains(id) else { return }
@@ -863,7 +899,7 @@ final class AccountStore {
         } catch {
             let message = error.localizedDescription
             autopilotLog.note("renew \(id)", "\(config.accounts.first { $0.id == id }?.name ?? id): renewing its login failed: \(message)")
-            if message.contains("Sign in") { signedOut(id, message); saveUsageCache() }
+            if BridgeErrorKind(error) == .signIn { signedOut(id, message); saveUsageCache() }
         }
     }
     /// Once per lapse, whichever path finds it: the usage read, a renewal or the pool. A replaced login says so itself.
@@ -950,7 +986,7 @@ final class AccountStore {
         return Date().timeIntervalSince(usageAt[account.id] ?? .distantPast) >= interval - 1
     }
     /// Minutes until the account's 5-hour limit at its recent pace.
-    func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(samples[id] ?? [], now: Date().timeIntervalSince1970) }
+    func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(samples[id] ?? [], full: config.moveAt, now: Date().timeIntervalSince1970) }
     private func nearLimit(_ id: String) -> Bool {
         (usage[id]?.fiveHour?.percent ?? 0) >= 85 || (minutesToLimit(id) ?? .infinity) < 15
     }
@@ -994,10 +1030,11 @@ final class AccountStore {
     }
 
     static let weeklyAlertKey = "weeklyAlert"
+    static let weeklyAlertDefault = 80.0
 
     /// The user's own line: one notification per account and week when weekly use passes it.
     private func alertWeekly() {
-        let threshold = UserDefaults.standard.double(forKey: Self.weeklyAlertKey)
+        let threshold: Double = PreferencesMirror.value(Self.weeklyAlertKey)
         guard threshold > 0 else { return }
         var sent = UserDefaults.standard.dictionary(forKey: "weeklyAlerted") as? [String: Double] ?? [:]
         let now = Date().timeIntervalSince1970
@@ -1090,7 +1127,7 @@ final class AccountStore {
         if limitHits.mapValues(\.sessions) != stopped { remote.events?.liveChanged() }
         for (id, hit) in value.limits ?? [:] where hit.at > (readAt[id]?.timeIntervalSince1970 ?? 0) {
             if let account = config.accounts.first(where: { $0.id == id }), Date().timeIntervalSince1970 - hit.at < 300 {
-                let limit = hit.limit == "five_hour" ? "5-hour" : hit.limit == "seven_day" ? "weekly" : "Fable"
+                let limit = hit.limit == "seven_day" ? "weekly" : UsageWindow.label(of: hit.limit).replacingOccurrences(of: "Weekly ", with: "")
                 island.show(.limit, "\(account.name) hit its \(limit) limit",
                             config.smartMode && account.allowAuto ? "Autopilot is moving its sessions to another account." : "Its sessions wait until the limit resets.")
             }
@@ -1121,80 +1158,6 @@ final class AccountStore {
         }
         // The report is what creates machine-id, and an hourly look covers a change the watcher missed.
         await preferences?.sync()
-    }
-    func setShellSwitching(_ enabled: Bool) async {
-        struct State: Decodable { let installed: Bool }
-        do {
-            let data = try await bridgeOutput(["shell", enabled ? "on" : "off"])
-            shellSwitching = try JSONDecoder().decode(State.self, from: data).installed
-        } catch { self.error = error.localizedDescription }
-    }
-    func setHostTerminal(_ enabled: Bool) async {
-        struct State: Decodable { let installed: Bool }
-        do {
-            let data = try await bridgeOutput(["host-terminal", enabled ? "on" : "off"])
-            hostTerminal = try JSONDecoder().decode(State.self, from: data).installed
-        } catch { self.error = error.localizedDescription }
-        await syncHosting()
-    }
-
-    /// Side A's tmux server is for people who asked for it: terminal hosting, or Remote, which serves hosted sessions.
-    var hostingWanted: Bool { hostTerminal || remote.on }
-
-    /// Installs and watches Side A's tmux when it's wanted, and stops watching when it no longer is. Sessions already
-    /// running there keep running; `sidea attach` still reaches them.
-    func syncHosting() async {
-        if hostingWanted { await hosted.install() } else { hosted.stop() }
-    }
-    func setLiveLimits(_ enabled: Bool) async {
-        struct State: Decodable { let installed: Bool }
-        config.liveLimits = enabled; persist()
-        do {
-            let data = try await bridgeOutput(["live", enabled ? "on" : "off"])
-            liveLimits = try JSONDecoder().decode(State.self, from: data).installed
-        } catch { self.error = error.localizedDescription }
-    }
-    /// Undoes what Side A set up outside its folder, then moves the app to the Trash. Logins stay in the Keychain
-    /// unless the accounts are forgotten, which signs each out through its own CLI first.
-    func uninstall(forgetAccounts: Bool) async {
-        preferences?.deleteFiles()
-        await setHostTerminal(false)
-        await setShellSwitching(false)
-        await setLiveLimits(false)
-        await setLimitHook(false)
-        await setIsland(nil, "off")
-        await remote.uninstall()
-        await keepAwake.uninstall()
-        if SMAppService.mainApp.status == .enabled { try? await SMAppService.mainApp.unregister() }
-        await sessions.deleteIndex()
-        await setPool(false)
-        // The login backups are Side A's own copies; they go even when the logins stay.
-        for account in config.accounts where account.provider == .claude { _ = try? await bridgeOutput(["forget", account.id]) }
-        let files = FileManager.default
-        if forgetAccounts {
-            for account in config.accounts where account.ready && !isActive(account) {
-                _ = try? await bridgeOutput(["logout", account.id])
-            }
-            try? files.removeItem(at: root)
-            if let domain = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: domain) }
-        } else {
-            for name in ["runtime/report.json", "runtime/report-cache.json", "runtime/usage-cache.json", "runtime/queued-followups.json",
-                         "runtime/queued-followups.unread.json", "runtime/dropped-followups.json"] {
-                try? files.removeItem(at: root.appendingPathComponent(name))
-            }
-        }
-        if let id = Bundle.main.bundleIdentifier {
-            try? files.removeItem(at: files.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/\(id)"))
-        }
-        if Bundle.main.bundleURL.pathExtension == "app" { try? files.trashItem(at: Bundle.main.bundleURL, resultingItemURL: nil) }
-        NSApp.terminate(nil)
-    }
-    func setLimitHook(_ enabled: Bool) async {
-        struct State: Decodable { let installed: Bool }
-        do {
-            let data = try await bridgeOutput(["hook", enabled ? "on" : "off"])
-            limitHook = try JSONDecoder().decode(State.self, from: data).installed
-        } catch { self.error = error.localizedDescription }
     }
     /// True when a session reported new limits, at most every 15 s, so a trade happens
     /// between replies rather than up to a minute later.
@@ -1291,14 +1254,14 @@ final class AccountStore {
                 }
                 // Trade only with an account no session is using, so no session lands on the full one.
                 let free = config.accounts.filter { $0.provider == provider && ($0.id == id || (!busy().contains($0.id) && !signingIn.contains($0.id))) }
-                var target = Planner.best(free, usage: planned(slot), health: health, active: id, now: now)
+                var target = Planner.best(free, usage: planned(slot), health: health, active: id, full: config.moveAt, now: now)
                 var partner: String?
                 if target == nil, let share = Planner.fableShare(for: slot, slots: slots, models: slotModels, accounts: accounts, usage: self.plannable, health: health,
-                                                                 excluded: Set([current].compactMap { $0 }).union(signingIn).union(failing), now: now) {
+                                                                 excluded: Set([current].compactMap { $0 }).union(signingIn).union(failing), full: config.moveAt, now: now) {
                     target = share.account; partner = share.slot
                 }
                 guard let best = target, best != id else {
-                    let full = usage[id].map { !Planner.hasHeadroom($0, now: now) } ?? false
+                    let full = usage[id].map { !Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? false
                     if autopilotLog.note(key, full ? "\(account.name) is full and no free account has room." : nil), full, let value = planned(slot)[id] {
                         recordRotation(RotationRecord(at: now, kind: .stuck, from: account.name, reason: Planner.tightest(value, now: now).map { "\($0.label) \($0.text(at: now))" } ?? ""))
                     }
@@ -1306,7 +1269,7 @@ final class AccountStore {
                     continue
                 }
                 if let target = config.accounts.first(where: { $0.id == best }),
-                   Planner.priorityMoveWaits(from: account, to: target, usage: planned(slot)[id], movedAt: slotMovedAt[slot], now: now) {
+                   Planner.priorityMoveWaits(from: account, to: target, usage: planned(slot)[id], movedAt: slotMovedAt[slot], full: config.moveAt, now: now) {
                     if autopilotLog.note(key, "\(account.name) → \(target.name): this login moved recently, so a move only for priority waits.") {
                         recordRotation(RotationRecord(at: now, kind: .priorityWait, from: account.name, to: target.name, reason: "Moved recently"))
                     }
@@ -1316,7 +1279,7 @@ final class AccountStore {
                     held[slot] = HeldMove(slot: slot, from: id, to: best, share: partner != nil, reason: reason,
                                           since: self.heldMoves[slot].flatMap { $0.from == id && $0.to == best ? $0.since : nil } ?? Date())
                 }
-                if Planner.waitsForPause(planned(slot)[id], quiet: slotQuiet[slot], now: now) {
+                if Planner.waitsForPause(planned(slot)[id], quiet: slotQuiet[slot], full: config.moveAt, now: now) {
                     autopilotLog.note(key, "\(account.name) → \(name(best)): waiting for its sessions to pause (quiet \(Int(slotQuiet[slot] ?? 0))s of \(Int(Planner.pause))s).")
                     hold("Waiting for its sessions to pause, so they keep their cache.")
                     continue
@@ -1330,7 +1293,7 @@ final class AccountStore {
                 let attempt = "\(slot) \(best)"
                 // Before the trade: afterwards these sessions read as the new account's, and its numbers are the old login's.
                 let moved = rotationSessions(on: id)
-                let reason = partner != nil ? "Fable share" : config.accounts.first { $0.id == best }.map { MoveReason.text(from: account, to: $0, usage: planned(slot)[id], now: now) } ?? ""
+                let reason = partner != nil ? "Fable share" : config.accounts.first { $0.id == best }.map { MoveReason.text(from: account, to: $0, usage: planned(slot)[id], now: now, full: config.moveAt) } ?? ""
                 do {
                     try await swap(slot, best, share: partner != nil)
                 } catch {
@@ -1363,9 +1326,9 @@ final class AccountStore {
                config.accounts.first(where: { $0.id == current })?.allowAuto != false,
                !(failing.contains(current) && usage[current]?.stale != true),
                let best = Planner.best(config.accounts.filter { $0.provider == provider && ($0.id == current || !busy().contains($0.id)) },
-                                       usage: plannable, health: health, active: current, now: now), best != current {
+                                       usage: plannable, health: health, active: current, full: config.moveAt, now: now), best != current {
                 let from = config.accounts.first { $0.id == current }, to = config.accounts.first { $0.id == best }
-                let reason = from.flatMap { from in to.map { MoveReason.text(from: from, to: $0, usage: plannable[current], now: now) } } ?? ""
+                let reason = from.flatMap { from in to.map { MoveReason.text(from: from, to: $0, usage: plannable[current], now: now, full: config.moveAt) } } ?? ""
                 await activate(best)
                 autopilotLog.write("New commands: \(name(current)) → \(name(best))\(activeIDs[provider] == best ? "" : " failed\(error.map { ": \($0)" } ?? "")").")
                 if activeIDs[provider] == best {
@@ -1375,17 +1338,17 @@ final class AccountStore {
                     island.show(.track, "Now playing: \(name(best))", "New claude commands use \(name(best)).")
                 }
             }
-            if config.smartMode, activeIDs[provider] == nil, shellSwitching, let best = Planner.best(accounts, usage: plannable, health: health, active: nil, now: now) {
+            if config.smartMode, activeIDs[provider] == nil, shellSwitching, let best = Planner.best(accounts, usage: plannable, health: health, active: nil, full: config.moveAt, now: now) {
                 await activate(best)
             }
             // No listed session named it, or none could be listed: it can still be full with only a signed-out account free.
             if let current = activeIDs[provider], !slots.values.contains(current), let account = accounts.first(where: { $0.id == current }), account.allowAuto {
-                let full = usage[current].map { !Planner.hasHeadroom($0, now: now) } ?? false
-                if full, (Planner.best(accounts, usage: plannable, health: health, active: current, now: now) ?? current) == current {
+                let full = usage[current].map { !Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? false
+                if full, (Planner.best(accounts, usage: plannable, health: health, active: current, full: config.moveAt, now: now) ?? current) == current {
                     noteStuck(account, slot: "new commands", others: accounts, now: now)
                 } else { stuckNotified.remove("new commands") }
             }
-            if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, now: now), Planner.best(accounts, usage: plannable, health: health, active: current, now: now) == nil {
+            if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, full: config.moveAt, now: now), Planner.best(accounts, usage: plannable, health: health, active: current, full: config.moveAt, now: now) == nil {
                 if !exhaustedNotified {
                     exhaustedNotified = true
                     pushAllOut(fable: fableMode, back: next.0.name, at: next.1)
@@ -1400,7 +1363,7 @@ final class AccountStore {
         let minute = Calendar.current.component(.hour, from: Date()) * 60 + Calendar.current.component(.minute, from: Date())
         // Until the report has loaded, the schedule is unknown, not absent: wait for it.
         guard let report, WorkSchedule(report.activity)?.allowsPriming(atMinute: minute) ?? true else { return }
-        for account in config.accounts where Planner.shouldPrime(account, usage: plannable[account.id], now: now)
+        for account in config.accounts where Planner.shouldPrime(account, usage: plannable[account.id], full: config.moveAt, now: now)
             && Date().timeIntervalSince(primedAt[account.id] ?? .distantPast) > 1800 {
             primedAt[account.id] = Date()
             saveUsageCache()
@@ -1418,12 +1381,12 @@ final class AccountStore {
         let signedOut = Planner.signedOut(others, except: account.id, health: health)
         let inUse = others.first { other in
             other.id != account.id && other.ready && other.allowAuto && health[other.id]?.takesWork != false && (busyLogins ?? [:]).values.contains(other.id)
-                && plannable[other.id].map { Planner.hasHeadroom($0, now: now) } == true
+                && plannable[other.id].map { Planner.hasHeadroom($0, full: config.moveAt, now: now) } == true
         }
         var fixes: [String] = []
         if !signedOut.isEmpty { fixes.append("sign in to \(signedOut.map(\.name).joined(separator: ", "))") }
         if let inUse, config.pool != true { fixes.append("turn on Pool mode so these sessions can share \(inUse.name) next time") }
-        let reset = usage[account.id].flatMap { value in [value.fiveHour, value.weekly].compactMap { $0 }.filter { $0.percent >= Planner.full }.compactMap(\.resetsAt).max() }
+        let reset = usage[account.id].flatMap { value in [value.fiveHour, value.weekly].compactMap { $0 }.filter { $0.percent >= config.moveAt }.compactMap(\.resetsAt).max() }
         let wait = reset.map { "\(account.name) is back \(UsageBar.format($0))." } ?? ""
         pushStuck(account, reset: reset)
         let advice = fixes.isEmpty ? "" : " To keep going, " + fixes.joined(separator: ", or ") + "."
@@ -1435,36 +1398,5 @@ final class AccountStore {
     func setMenuBarOnly(_ value: Bool) {
         config.menuBarOnly = value; persist()
         NSApp.setActivationPolicy(value ? .accessory : .regular)
-    }
-    func bridgeOutput(_ args: [String], timeout: TimeInterval = 60, priority: QualityOfService = .default) async throws -> Data {
-        if let testBridge { return try await testBridge(args) }
-        guard let python, let bridgeURL else { throw BridgeFailure(message: "Install Python 3 to connect your accounts.") }
-        let arguments = [bridgeURL.path, "--root", root.path] + args
-        return try await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: python)
-            process.arguments = arguments
-            process.qualityOfService = priority
-            let output = Pipe()
-            process.standardOutput = output
-            // The helper returns sanitized diagnostics; raw CLI stderr is never logged.
-            let errors = Pipe()
-            process.standardError = errors
-            try process.run()
-            // The bridge leads its own process group; stopping the group also stops a hung claude or codex child.
-            let watchdog = DispatchWorkItem { if process.isRunning { kill(-process.processIdentifier, SIGTERM); process.terminate() } }
-            let deadline = BridgeDeadline.current(timeout)
-            DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: watchdog)
-            defer { watchdog.cancel() }
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            if process.terminationStatus != 0 {
-                let message = (String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Account verification failed.")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                // The watchdog's signal leaves nothing on stderr.
-                throw BridgeFailure(message: message.isEmpty ? "the helper didn't finish within \(Int(deadline))s" : message)
-            }
-            return data
-        }.value
     }
 }

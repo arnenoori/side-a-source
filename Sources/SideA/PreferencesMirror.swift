@@ -17,6 +17,7 @@ final class PreferencesMirror {
         let modified: Double
     }
 
+    /// Where every shared setting's default lives: readers and Settings' switches take theirs from here.
     static let shared: [String: Spec] = [
         Island.onKey: Spec(kind: .bool, fallback: .bool(false)),
         Island.eventsKey: Spec(kind: .bool, fallback: .bool(true)),
@@ -34,17 +35,26 @@ final class PreferencesMirror {
             if case .double(let volume) = value { return (0...1).contains(volume) }
             return false
         }),
-        WaitingNotifier.enabledKey: Spec(kind: .bool, fallback: .bool(false)),
-        AccountStore.weeklyAlertKey: Spec(kind: .double, fallback: .double(0), valid: { value in
+        WaitingNotifier.enabledKey: Spec(kind: .bool, fallback: .bool(true)),
+        AccountStore.weeklyAlertKey: Spec(kind: .double, fallback: .double(AccountStore.weeklyAlertDefault), valid: { value in
             if case .double(let percent) = value { return (0...100).contains(percent) }
             return false
         }),
-        "playerEnabled": Spec(kind: .bool, fallback: .bool(false)),
-        "resumeTerminal": Spec(kind: .string, fallback: .string(""), valid: { value in
+        MenuPlayer.enabledKey: Spec(kind: .bool, fallback: .bool(false)),
+        SessionStore.resumeTerminalKey: Spec(kind: .string, fallback: .string(""), valid: { value in
             if case .string(let name) = value { return name.isEmpty || TerminalApp(rawValue: name) != nil }
             return false
         })
     ]
+    /// What a shared setting reads as until someone sets it.
+    static func fallback<Value>(_ key: String) -> Value {
+        guard let value = shared[key]?.fallback.raw as? Value else { preconditionFailure("\(key) isn't a shared \(Value.self) setting") }
+        return value
+    }
+    /// A shared setting as set here, else its fallback.
+    static func value<Value>(_ key: String, in defaults: UserDefaults = .standard) -> Value {
+        defaults.object(forKey: key) as? Value ?? fallback(key)
+    }
     static let pendingKey = "sharedPreferencesPendingEffects"
     private nonisolated static let largestFile = 256 * 1024
 

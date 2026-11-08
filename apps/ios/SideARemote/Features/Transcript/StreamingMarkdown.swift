@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The reply being written (section 4.3, streaming and pacing): text the Mac has sent is revealed from a
+/// The reply being written: text the Mac has sent is revealed from a
 /// buffer at `max(45 chars/s, backlog / 0.4 s)`, on word boundaries, so it never lags the stream by much
 /// more than 0.4 s and never jumps a paragraph at once. New words fade in over 120 ms. Finished blocks
 /// are frozen, so only the last one re-parses. Reduce Motion shows each chunk as it lands, unfaded.

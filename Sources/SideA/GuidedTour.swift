@@ -1,13 +1,12 @@
 import SwiftUI
 
 enum TourStep: String, CaseIterable {
-    case limits, use, autopilot, usage, add
+    case limits, use, usage, add
 
     var note: String {
         switch self {
         case .limits: "Your limits: 5-hour and weekly."
         case .use: "Switch this Mac to this account."
-        case .autopilot: "Autopilot picks for you."
         case .usage: "Tokens by day and project."
         case .add: "Add accounts in Settings."
         }

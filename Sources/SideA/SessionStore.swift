@@ -971,7 +971,8 @@ final class SessionStore {
     }
 
     /// The terminal the Sessions window resumes into: the one picked in its menu, else the one in use.
-    var resumeTerminal: TerminalApp { TerminalApp(rawValue: UserDefaults.standard.string(forKey: "resumeTerminal") ?? "") ?? usualTerminal }
+    static let resumeTerminalKey = "resumeTerminal"
+    var resumeTerminal: TerminalApp { TerminalApp(rawValue: UserDefaults.standard.string(forKey: Self.resumeTerminalKey) ?? "") ?? usualTerminal }
 
     /// Fork from a running row: the phone's own Fork, a new hosted session, when hosting is wanted; otherwise
     /// `claude --resume … --fork-session` in a terminal, as Branch does.

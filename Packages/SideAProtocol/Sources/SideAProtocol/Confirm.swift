@@ -216,8 +216,19 @@ public struct ConfirmLevel: OpenEnum {
 }
 
 public extension APIError {
+    /// The `details` of a `confirm_required` or `confirm_invalid`: the key the Mac wants, and whether only pairing again gives one.
+    static func confirmDetails(level: ConfirmLevel, pairAgain: Bool) -> [String: String] {
+        var details = [levelDetail: level.rawValue]
+        if pairAgain { details[hintDetail] = pairAgainHint }
+        return details
+    }
+
     /// Which key a `confirm_required` or `confirm_invalid` asks for.
-    var confirmLevel: ConfirmLevel? { details?["level"].map(ConfirmLevel.init(rawValue:)) }
+    var confirmLevel: ConfirmLevel? { details?[Self.levelDetail].map(ConfirmLevel.init(rawValue:)) }
     /// The device has no confirm keys: only pairing again gives it some.
-    var pairAgain: Bool { details?["hint"] == "pairAgain" }
+    var pairAgain: Bool { details?[Self.hintDetail] == Self.pairAgainHint }
+
+    private static let levelDetail = "level"
+    private static let hintDetail = "hint"
+    private static let pairAgainHint = "pairAgain"
 }

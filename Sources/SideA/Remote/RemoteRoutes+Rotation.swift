@@ -96,7 +96,7 @@ enum RotationOutlook {
     @MainActor static func build(_ store: AccountStore, now: Double) -> UsageOutlook {
         let rooms = AgentProvider.allCases.compactMap { provider -> UsageOutlook.Room? in
             let members = store.config.accounts.filter { $0.provider == provider && $0.ready && $0.allowAuto }
-            guard let room = PoolRoom(members, usage: provider == .claude ? store.planning(store.usage) : store.usage, now: now) else { return nil }
+            guard let room = PoolRoom(members, usage: provider == .claude ? store.planning(store.usage) : store.usage, full: store.config.moveAt, now: now) else { return nil }
             let trusted = provider == .claude && members.allSatisfy { store.health[$0.id] == nil && store.isFresh($0.id, now: now) }
             let rhythm = trusted ? store.report.flatMap { WeekRhythm($0.activity) } : nil
             let runsOut = CombinedRunOut.estimate(members, usage: store.usage, rhythm: rhythm, now: now)

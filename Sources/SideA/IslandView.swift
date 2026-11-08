@@ -27,7 +27,9 @@ final class IslandPanel {
             place(window)
             if !window.isVisible { window.orderFrontRegardless() }
             track()
-        } else if let window, window.isVisible {
+        } else {
+            island.hover(false)
+            guard let window, window.isVisible else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                 guard let self, !self.island.visible else { return }
                 window.orderOut(nil)
@@ -78,6 +80,7 @@ final class IslandPanel {
         let point = CGPoint(x: mouse.x - window.frame.minX, y: window.frame.maxY - mouse.y)
         let inside = island.visible && hitRect.insetBy(dx: -2, dy: -2).contains(point)
         if window.ignoresMouseEvents == inside { window.ignoresMouseEvents = !inside }
+        island.hover(inside)
     }
 
     private func screen() -> NSScreen? {
@@ -300,7 +303,7 @@ private struct CompactStrip: View {
             }
             HStack(spacing: 6) {
                 if let item {
-                    Beacon(tint: item.request.risk == .destructive ? .red : .orange)
+                    Beacon(tint: item.request.risk == .destructive ? .red : Ink.amber)
                 } else {
                     Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundStyle(.green)
                 }
@@ -314,7 +317,6 @@ private struct CompactStrip: View {
         .frame(width: (island.layout.notch?.width ?? 200) + (island.layout.notch == nil ? 60 : 96),
                height: island.layout.notch?.height ?? 38)
         .contentShape(Rectangle())
-        .onHover { if $0 { island.expand() } }
         .onTapGesture { island.expand() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item == nil ? "\(count) session\(count == 1 ? " is" : "s are") done"
@@ -325,7 +327,8 @@ private struct CompactStrip: View {
     }
 }
 
-private struct Beacon: View {
+/// A dot with a ring that keeps going out from it: something is waiting on you. Still under Reduce Motion.
+struct Beacon: View {
     let tint: Color
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -444,7 +447,7 @@ private struct RequestCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(request.agent.title) \(request.tool == "AskUserQuestion" ? "question" : request.tool == "ExitPlanMode" ? "plan" : "permission request")")
         .accessibilityAction(named: "Deny") { island.answer(.deny(nil), item.id) }
-        .accessibilityAction(named: "Show terminal") { island.showTerminal(item) }
+        .accessibilityAction(named: "Show Terminal") { island.showTerminal(item) }
     }
 
     private var context: some View {
@@ -477,12 +480,13 @@ private struct RequestCard: View {
             Button { island.answer(.deny(nil), item.id) } label: { Text("Deny").frame(maxWidth: .infinity) }
                 .buttonStyle(IslandButtonStyle(kind: destructive ? .primary : .secondary))
                 .focused($focused, equals: .deny)
+                .help("Deny  ⌃⌥N")
                 .accessibilityHint("Control Option N")
             if request.offersAlways, let first = request.suggestions.first {
                 if request.suggestions.count == 1 {
                     Button { island.always(first) } label: { Text(request.agent == .codex ? "This session" : "Always").frame(maxWidth: .infinity) }
                         .buttonStyle(IslandButtonStyle(kind: .secondary))
-                        .help(first.title)
+                        .help("\(first.title)  ⌃⌥A")
                         .accessibilityLabel(first.title)
                         .accessibilityHint("Control Option A")
                 } else {
@@ -496,10 +500,11 @@ private struct RequestCard: View {
                         .accessibilityLabel("Always allow options")
                 }
             }
-            Button { island.answer(.allow, item.id, confirmed: true) } label: { Text(destructive ? "Allow anyway" : "Allow").frame(maxWidth: .infinity) }
+            Button { island.answer(.allow, item.id, confirmed: true) } label: { Text(destructive ? "Allow Anyway" : "Allow").frame(maxWidth: .infinity) }
                 .buttonStyle(IslandButtonStyle(kind: destructive ? .danger : .primary))
                 .focused($focused, equals: .allow)
                 .keyboardShortcut(destructive ? nil : .defaultAction)
+                .help(destructive ? "" : "Allow  ⌃⌥Y")
                 .accessibilityHint(destructive ? "Needs a click; no shortcut approves this." : "Control Option Y")
         }
     }
@@ -511,43 +516,17 @@ private struct RequestCard: View {
                     .lineLimit(1).truncationMode(.middle)
                     .help("It runs without a terminal (claude -p), so only Side A can answer it.")
             } else {
-                Button("Show terminal") { island.showTerminal(item) }
+                Button("Show Terminal") { island.showTerminal(item) }
                     .fixedSize()
+                    .help("⌃⌥T")
                     .accessibilityHint("Control Option T")
-                Button("Answer in terminal") { island.answerInTerminal(item) }
+                Button("Answer in Terminal") { island.answerInTerminal(item) }
                     .fixedSize()
             }
             Spacer(minLength: 8)
-            Group {
-                if destructive {
-                    Text("Needs a click")
-                } else if case .question(let questions) = request.action {
-                    Keycap(keys: "⌃⌥1–\(min(questions.map(\.options.count).max() ?? 4, 4))", label: "choose")
-                } else if case .plan = request.action {
-                    HStack(spacing: 10) { Keycap(keys: "⌃⌥Y", label: "approve"); Keycap(keys: "⌃⌥N", label: "keep planning") }
-                } else {
-                    HStack(spacing: 10) { Keycap(keys: "⌃⌥Y", label: "allow"); Keycap(keys: "⌃⌥N", label: "deny") }
-                }
-            }
-            .foregroundStyle(.white.opacity(0.45))
-            .accessibilityHidden(true)
         }
         .buttonStyle(QuietButtonStyle())
         .font(.system(size: 11, weight: .medium))
-    }
-}
-
-private struct Keycap: View {
-    let keys: String
-    let label: String
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(keys).font(.system(size: 10, weight: .semibold))
-                .padding(.horizontal, 4).padding(.vertical, 1.5)
-                .background(.white.opacity(0.1), in: .rect(cornerRadius: 4, style: .continuous))
-            Text(label)
-        }
-        .fixedSize()
     }
 }
 
@@ -803,7 +782,7 @@ private struct EventStrip: View {
         case .track: "Track change"
         case .limit: "Limit"
         case .waiting: "Waiting"
-        case .finished: "Done"
+        case .finished: "Ready"
         }
     }
 
@@ -834,7 +813,7 @@ private struct ReadyList: View {
             NotchBand(notch: island.layout.notch) {
                 HStack(spacing: 6) {
                     Disc(size: 14)
-                    Text("Ready for you").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
+                    Text("Ready").font(.system(size: 12, weight: .semibold)).foregroundStyle(.white.opacity(0.9))
                 }
             } trailing: {
                 HStack(spacing: 6) {
@@ -858,10 +837,9 @@ private struct ReadyList: View {
         .padding(.bottom, 14)
         .padding(.top, island.layout.notch == nil ? 14 : 0)
         .frame(width: 440, alignment: .leading)
-        .onHover { if !$0, island.pending.isEmpty, island.replying == nil { island.collapse() } }
         .onExitCommand { island.collapse() }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Sessions ready for you")
+        .accessibilityLabel("Ready")
     }
 }
 
@@ -906,9 +884,6 @@ private struct ReadyRow: View {
                     .buttonStyle(IslandButtonStyle(kind: .primary, pill: true))
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            Text(island.canReply(item) ? "Wakes the session with this as its next task. ⌥↩ for a new line."
-                 : "This session can't be woken from here: Copy puts it on the clipboard and opens its terminal.")
-                .font(.system(size: 11)).foregroundStyle(.white.opacity(0.45))
         }
         .onAppear { typing = true }
     }
@@ -1044,7 +1019,7 @@ private struct QuestionForm: View {
                     .buttonStyle(IslandButtonStyle(kind: .secondary))
             }
             if paged && !last && recommendedOnly {
-                Button { send() } label: { Text("Send recommended").frame(maxWidth: .infinity) }
+                Button { send() } label: { Text("Send Recommended").frame(maxWidth: .infinity) }
                     .buttonStyle(IslandButtonStyle(kind: .secondary))
             }
             if paged && !last {
@@ -1052,7 +1027,7 @@ private struct QuestionForm: View {
                     .buttonStyle(IslandButtonStyle(kind: .primary))
                     .disabled(answer(question).isEmpty)
             } else {
-                Button { send() } label: { Text(recommendedOnly ? "Send recommended answers" : "Send answers").frame(maxWidth: .infinity) }
+                Button { send() } label: { Text(recommendedOnly ? "Send Recommended Answers" : "Send Answers").frame(maxWidth: .infinity) }
                     .buttonStyle(IslandButtonStyle(kind: .primary))
                     .disabled(!complete)
                     .help(complete ? "" : "Answer every question first")
@@ -1155,6 +1130,7 @@ private struct OptionRow: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .accessibilityLabel(option.title + (option.recommended ? ", recommended" : "") + (option.description.map { ", \($0)" } ?? ""))
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(number.map { "⌃⌥\($0)" } ?? "")
         .accessibilityHint(number.map { "Control Option \($0)" } ?? "")
     }
 }
@@ -1222,11 +1198,12 @@ private struct PlanButtons: View {
                 .onAppear { island.focus(); typing = true }
             } else {
                 HStack(spacing: 8) {
-                    Button { revising = true } label: { Text("Revise…").frame(maxWidth: .infinity) }
+                    Button { revising = true } label: { Text("Keep Planning…").frame(maxWidth: .infinity) }
                         .buttonStyle(IslandButtonStyle(kind: .secondary))
-                        .accessibilityHint("Tell Claude what to change; it keeps planning.")
+                        .help("⌃⌥N")
+                        .accessibilityHint("Tell Claude what to change.")
                     Button { island.answer(.approvePlan(input: item.request.input, acceptEdits: true), item.id) } label: {
-                        Text("Accept edits").frame(maxWidth: .infinity)
+                        Text("Accept Edits").frame(maxWidth: .infinity)
                     }
                         .buttonStyle(IslandButtonStyle(kind: .secondary))
                         .help("Approve, and let Claude make file edits without asking")
@@ -1236,6 +1213,7 @@ private struct PlanButtons: View {
                     }
                         .buttonStyle(IslandButtonStyle(kind: .primary))
                         .keyboardShortcut(.defaultAction)
+                        .help("Approve  ⌃⌥Y")
                         .accessibilityHint("Control Option Y")
                 }
             }

@@ -16,6 +16,14 @@ import time
 MAX_MESSAGE = 32 * 1024 * 1024
 
 
+class SignInAgain(ValueError):
+    code = "signin"
+
+
+class RateLimited(ValueError):
+    code = "rate-limited"
+
+
 class RPC:
     """Short-lived stdio client used only for identity and saved-thread checks."""
     def __init__(self, command, env, cwd):
@@ -49,9 +57,9 @@ class RPC:
                         # Keep only what the app acts on: revoked logins need sign-in, rate limits back off.
                         # Revocation first: its message also says "failed to fetch codex rate limits".
                         if "401" in message or "token_revoked" in message:
-                            raise ValueError("Sign in again: Codex rejected this login.")
+                            raise SignInAgain("Sign in again: Codex rejected this login.")
                         if "429" in message or "too many requests" in message.lower():
-                            raise ValueError("Codex usage is rate-limited (429).")
+                            raise RateLimited("Codex usage is rate-limited (429).")
                         raise ValueError("Codex could not complete the account check. Update Codex and retry.")
                     return response["result"]
             if select.select([self.process.stdout], [], [], .1)[0]:
@@ -144,7 +152,7 @@ def owned(root, account):
         return
     email = login_email(read_auth(prepare_profile(root, account["id"])))
     if email != account.get("email", "").casefold():
-        raise ValueError(f"Sign in to {account['name']} again; its saved login belongs to another account."
+        raise SignInAgain(f"Sign in to {account['name']} again; its saved login belongs to another account."
                          if email else f"Sign in to {account['name']} again.")
 
 
@@ -229,6 +237,8 @@ def usage(root, account):
         if not window:
             continue
         minutes = window.get("windowDurationMins") or 0
+        if minutes <= 0:
+            continue
         label = "5-hour" if minutes == 300 else "Weekly" if minutes == 10080 else f"{minutes // 60}-hour"
         windows.append({"id": "five_hour" if minutes == 300 else "seven_day" if minutes == 10080 else key,
                         "label": label, "percent": common.percent(window.get("usedPercent")),
@@ -281,7 +291,7 @@ def pool_token(root, account, refused=None, binary=None):
     if not token or token_claims(token).get("exp", 0) <= time.time():
         if is_mac_login(account):
             raise ValueError(f"{account['name']}'s login is due for renewal; open Codex once outside the pool.")
-        raise ValueError(f"Sign in to {account['name']} again: Codex couldn't renew its login.")
+        raise SignInAgain(f"Sign in to {account['name']} again: Codex couldn't renew its login.")
     return {"accessToken": token, "accountId": workspace or None,
             "expiresAt": token_claims(token).get("exp", 0) * 1000, "hash": token_hash(token)}
 

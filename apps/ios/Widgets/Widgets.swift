@@ -1,4 +1,3 @@
-import SideARemoteShared
 import SwiftUI
 import WidgetKit
 

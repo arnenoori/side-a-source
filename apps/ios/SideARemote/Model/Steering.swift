@@ -87,7 +87,7 @@ extension AppModel {
         if transcripts.drafts[session] == unsent.text { transcripts.drafts[session] = "" }
         if let link, let item = unsent.item {
             let turn = transcripts.send(unsent.text, to: session)
-            link.retry(item: item, text: unsent.text, turn: turn.id, session: session)
+            link.flights.retry(item: item, text: unsent.text, turn: turn.id, session: session)
         } else {
             reply(unsent.text, to: session)
         }
@@ -95,7 +95,7 @@ extension AppModel {
 
     func interrupt(_ session: SessionKey, when: InterruptRequest.When = .now) {
         transcripts.notice(nil, in: session)
-        if let link { link.interrupt(session, when: when); return }
+        if let link { link.flights.interrupt(session, when: when); return }
         guard let current = sessions.session(session) else { return }
         // The demo's Mac: Esc stops a hosted session at once; anything else leaves stop mail.
         if when == .now && current.hosted != nil { return }
@@ -107,7 +107,7 @@ extension AppModel {
         transcripts.notice(nil, in: session)
         let note = transcripts.pendingNote(session)
         if let note { transcripts.mark(note.id, in: session, .takingBack) }
-        if let link { link.takeBack(session, turn: note?.id, keepText: keepText); return }
+        if let link { link.flights.takeBack(session, turn: note?.id, keepText: keepText); return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(350))
             sessions.setMail(nil, for: session)
@@ -130,7 +130,7 @@ extension AppModel {
     }
 
     private func deliver(_ text: String, turn: String, to session: SessionKey, mode: ReplyMode, submit: ReplySubmit? = nil) {
-        if let link { link.reply(text, turn: turn, to: session, mode: mode, submit: submit); return }
+        if let link { link.flights.reply(text, turn: turn, to: session, mode: mode, submit: submit); return }
         let leavesMail = mode == .note || predictedMode(session) == .note
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(450))

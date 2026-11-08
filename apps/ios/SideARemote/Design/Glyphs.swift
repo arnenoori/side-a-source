@@ -1,7 +1,7 @@
 import SideAProtocol
 import SwiftUI
 
-/// The leading glyph on a session row (section 4.2): the state alone. The agent sits inline in the
+/// The leading glyph on a session row: the state alone. The agent sits inline in the
 /// metadata line, where a badge can't crowd it.
 struct StatusGlyph: View {
     let phase: SessionPhase

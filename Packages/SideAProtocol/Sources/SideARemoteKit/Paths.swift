@@ -40,6 +40,9 @@ public actor Paths {
         public var quietCap: TimeInterval = 30
         /// A relay that doesn't answer sits out races for 30 s, doubling to this.
         public var relayQuietCap: TimeInterval = 300
+        /// After a network change, how long a relay that doesn't answer is asked once more instead of sitting out: its
+        /// socket may still be on the interface that went, as when Wi-Fi hands over to cellular.
+        public var settle: TimeInterval = 10
         /// The ports to try on an address that refuses the one it names.
         public var siblingPorts: @Sendable (Int) -> [Int] = Paths.siblingPorts(of:)
         public init() {}
@@ -74,6 +77,7 @@ public actor Paths {
     private var quietUntil: Date?
     private var relayMisses = 0
     private var relayQuietUntil: Date?
+    private var networkChangedAt: Date?
     /// Debug builds launched with SIDEA_RELAY_ONLY=1: no direct address is raced or rechecked, so a test on the same
     /// Wi-Fi as the Mac still goes through the relay.
     private let relayOnly: Bool
@@ -141,6 +145,7 @@ public actor Paths {
 
     private func stop() {
         stopped = true
+        race?.cancel()
         current = nil
         for entry in sockets.values { entry.socket?.moved(to: generation + 1) }
         sockets = [:]
@@ -209,6 +214,18 @@ public actor Paths {
         if current == nil { await choose() } else { await networkChanged() }
     }
 
+    /// Test Connection: the path in use, or a fresh race with the relay back in, whatever the backoff says. A test opened
+    /// because the Mac dropped would otherwise find the race resting and report it unreachable without trying.
+    public func retest() async -> Path? {
+        guard !stopped else { return nil }
+        // A race already running may have left the relay out; let it finish, then race with everything.
+        if let race { _ = await race.value }
+        misses = 0
+        quietUntil = nil
+        relayQuietUntil = nil
+        return await path()
+    }
+
     /// A request on `path` failed for want of a connection: race again if it's still the one in use.
     public func failed(_ path: Path) async -> Path? {
         KitLog.log(.transport, "path \(path) failed")
@@ -241,10 +258,11 @@ public actor Paths {
     }
 
     private func switchTo(_ path: Path) async {
-        guard path != current else { return }
-        KitLog.log(.transport, "path \(current.map { "\($0) [\(KitLog.route($0.isRelay ? Self.relayHost : $0.description))]" } ?? "none") → \(path) [\(KitLog.route(path.isRelay ? Self.relayHost : path.description))]")
+        // A race that outlived `stop()` would otherwise bring the path, its recheck and the relay back.
+        guard path != current, !stopped else { return }
         let moving = current != nil
-        KitLog.log(.transport, "path \(current.map(\.description) ?? "none") → \(path)" + (moving ? ", moving \(sockets.values.filter { $0.socket != nil }.count) sockets" : ""))
+        KitLog.log(.transport, "path \(current.map { "\($0) [\(KitLog.route($0.isRelay ? Self.relayHost : $0.description))]" } ?? "none") → \(path) [\(KitLog.route(path.isRelay ? Self.relayHost : path.description))]"
+                   + (moving ? ", moving \(sockets.values.filter { $0.socket != nil }.count) sockets" : ""))
         current = path
         generation += 1
         if moving {
@@ -302,7 +320,15 @@ public actor Paths {
                         let (reached, error) = await Self.reach(url, direct: self.direct, timing: timing)
                         return .answered(.direct(reached), error)
                     }
-                    return .answered(candidate, await Self.probe(candidate, direct: self.direct, relay: relay, timing: timing))
+                    var error = await Self.probe(candidate, direct: self.direct, relay: relay, timing: timing)
+                    // The first try may have gone down a socket the network change killed; the bridge has dropped it since.
+                    // Read when it fails, not when the race began: the request that died on the old network can start a race
+                    // before the network monitor reports the change.
+                    if let failed = error, await self.settling, Self.relayRests(after: failed, settling: false) {
+                        KitLog.log(.transport, "relay didn't answer just after a network change, asking again")
+                        error = await Self.probe(candidate, direct: self.direct, relay: relay, timing: timing)
+                    }
+                    return .answered(candidate, error)
                 }
             }
             var relayAnswered = false
@@ -325,12 +351,22 @@ public actor Paths {
                     return (.relay, [:])
                 case .answered(let path, let error?):
                     failures[path] = error
-                    // A relay probe cancelled because a direct address won says nothing about the relay.
-                    if path.isRelay, !(error is CancellationError), (error as? URLError)?.code != .cancelled { self.relayAnswered(false) }
+                    if path.isRelay, Self.relayRests(after: error, settling: settling) { self.relayAnswered(false) }
                 }
             }
             return (relayAnswered ? .relay : nil, failures)
         }
+    }
+
+    /// Within `Timing.settle` of a network change.
+    private var settling: Bool { networkChangedAt.map { Date.now.timeIntervalSince($0) < timing.settle } ?? false }
+
+    /// Whether a relay probe's failure sends the relay to sit out races. Not when the probe was cancelled because a direct
+    /// address won, which says nothing about the relay, and not while the network is settling, when the phone may have had
+    /// no network at all for a moment.
+    static func relayRests(after error: Error, settling: Bool) -> Bool {
+        guard !settling, !(error is CancellationError) else { return false }
+        return (error as? URLError)?.code != .cancelled
     }
 
     /// `url`, or when it refuses the connection, the Mac's other ports on that host: a Mac whose port was taken moved up,
@@ -419,6 +455,7 @@ public actor Paths {
         defer { lastNetwork = summary }
         guard let lastNetwork, lastNetwork != summary else { return }
         KitLog.log(.transport, "network \(lastNetwork) → \(summary), racing again")
+        networkChangedAt = .now
         // Kept connections may be on an interface that's gone, and so may the relay socket: it has to answer a ping.
         direct.reset()
         relayTransport?.reset()
@@ -452,6 +489,30 @@ public actor Paths {
     }
 
     public var relayState: RelayBridge.State? { bridge?.current }
+
+    public enum RelayCheck: Sendable, Equatable {
+        case notSetUp, answered, macOffline, refused
+        case failed(String)
+    }
+
+    /// Test Connection: whether the Mac answers a pinned hello through the relay now, whichever path is in use, so a
+    /// relay that's broken shows while a direct path still hides it. The path in use doesn't change.
+    public func checkRelay() async -> RelayCheck {
+        guard let bridge, !stopped else { return .notSetUp }
+        guard await bridge.warm() else {
+            return switch bridge.current {
+            case .refused: .refused
+            case .open(mac: false): .macOffline
+            case .failed(let why): .failed(why)
+            default: .failed("The relay didn't answer.")
+            }
+        }
+        guard let error = await Self.probe(.relay, direct: direct, relay: await relayTransportReady(), timing: timing) else {
+            relayAnswered(true)
+            return .answered
+        }
+        return error is ServerKeyChanged ? .failed("The Mac answered on the relay with a new security key.") : .failed(error.localizedDescription)
+    }
 
     /// Why the last race found no path, most telling first. A new key counts only when the relay saw it, or every
     /// direct address did: one stale LAN address now on another device isn't the Mac re-keying.

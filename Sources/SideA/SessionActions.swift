@@ -20,11 +20,11 @@ struct SessionActions: View {
             if let request {
                 Rectangle().fill(Ink.line).frame(height: 1)
                 RequestPanel(island: island, item: request).id(request.id)
-                    .transition(.opacity.combined(with: .offset(y: 8)))
+                    .transition(Ink.rise(8))
             } else if target.canReply {
                 Rectangle().fill(Ink.line).frame(height: 1)
                 SessionComposer(model: model, target: target).id(sessionID)
-                    .transition(.opacity.combined(with: .offset(y: 8)))
+                    .transition(Ink.rise(8))
             }
         }
         .animation(Ink.ease, value: request?.id)
@@ -44,8 +44,8 @@ private struct RequestPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                WaitingDot()
-                Text("\(request.agent.title) is waiting for you").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.orange)
+                Beacon(tint: Ink.amber)
+                Text("\(request.agent.title) is waiting for you").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Ink.amber)
                 if let reason = request.riskReason, destructive {
                     Label(reason, systemImage: "exclamationmark.triangle.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(.red)
                 }
@@ -67,7 +67,7 @@ private struct RequestPanel: View {
             controls
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
-        .background(Color.orange.opacity(0.05))
+        .background(Ink.amber.opacity(0.05))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(request.agent.title) is waiting for you: \(request.headline)")
     }
@@ -90,8 +90,8 @@ private struct RequestPanel: View {
                 HStack {
                     terminalLink
                     Spacer()
-                    Button("Revise…") { revising = true }
-                    Button("Accept edits") { island.answer(.approvePlan(input: request.input, acceptEdits: true), item.id) }
+                    Button("Keep Planning…") { revising = true }
+                    Button("Accept Edits") { island.answer(.approvePlan(input: request.input, acceptEdits: true), item.id) }
                     Button("Approve") { island.answer(.approvePlan(input: request.input, acceptEdits: false), item.id) }
                         .buttonStyle(.borderedProminent)
                 }
@@ -109,7 +109,7 @@ private struct RequestPanel: View {
                     Button("Allow + Accept Edits") { island.answer(.allowMode(PermissionMode.acceptEdits.rawValue), item.id) }
                         .help("Allow this, and let it make the rest of its edits without asking")
                 }
-                Button(destructive ? "Allow anyway" : "Allow") { island.answer(.allow, item.id, confirmed: true) }
+                Button(destructive ? "Allow Anyway" : "Allow") { island.answer(.allow, item.id, confirmed: true) }
                     .buttonStyle(.borderedProminent).tint(destructive ? .red : .accentColor)
             }
         }
@@ -117,7 +117,7 @@ private struct RequestPanel: View {
 
     @ViewBuilder private var terminalLink: some View {
         if item.origin == nil {
-            Button("Show in terminal") { island.showTerminal(item) }.buttonStyle(.link).font(.system(size: 12))
+            Button("Show in Terminal") { island.showTerminal(item) }.buttonStyle(.link).font(.system(size: 12))
         }
     }
 
@@ -169,7 +169,7 @@ private struct QuestionsForm: View {
             }
             HStack {
                 Spacer()
-                Button(allRecommended ? "Send recommended answers" : "Send answers", action: send)
+                Button(allRecommended ? "Send Recommended Answers" : "Send Answers", action: send)
                     .buttonStyle(.borderedProminent).disabled(!complete)
             }
         }

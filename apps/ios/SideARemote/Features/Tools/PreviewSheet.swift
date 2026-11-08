@@ -2,7 +2,7 @@ import SideARemoteKit
 import SwiftUI
 import WebKit
 
-/// Preview :port (section 4.14): the dev server through Side A's own listener, in a WebView held to
+/// Preview :port: the dev server through Side A's own listener, in a WebView held to
 /// the Mac's pinned key and to the preview's own address. Closing it takes the preview down.
 struct PreviewSheet: View {
     let port: SessionActions.Port

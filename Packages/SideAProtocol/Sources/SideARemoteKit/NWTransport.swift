@@ -311,7 +311,6 @@ final class HTTPStream: @unchecked Sendable {
         }
     }
 
-    /// Writes one request and reads its response.
     func exchange(_ request: Data, timeout: TimeInterval) async throws -> Reply {
         try await cancellable { [self] once in
             connection.send(content: request, completion: .contentProcessed { error in

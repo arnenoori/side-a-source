@@ -9,6 +9,12 @@ import Testing
     #expect(ClientInfo.current.capabilities.contains(.rotation))
 }
 
+/// And that it reads a grouped Ready, so the Mac may send it one.
+@Test func theClientAdvertisesReadyGroups() {
+    #expect(ClientInfo.current.capabilities.contains(.readyGroups))
+    #expect(Capability.readyGroups.rawValue == "ready.groups")
+}
+
 @Test func anAutopilotUpdateMovesTheStateAndAnOlderSnapshotLeavesItAlone() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)

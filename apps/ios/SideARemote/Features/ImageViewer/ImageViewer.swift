@@ -5,7 +5,7 @@ import SideARemoteShared
 import SwiftUI
 import UIKit
 
-/// Photos-style viewer (section 4.12): zooms out of its tile, pages through the session's images,
+/// Photos-style viewer: zooms out of its tile, pages through the session's images,
 /// pinch and double-tap zoom in a real `UIScrollView`, and drag down to send it back.
 struct ImageViewer: View {
     let images: [ImageRef]

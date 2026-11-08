@@ -12,8 +12,8 @@ enum Sounds {
     private static var cache: [Effect: NSSound] = [:]
     private static var lastPlayed: [Effect: Date] = [:]
 
-    static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
-    static var volume: Float { Float(UserDefaults.standard.object(forKey: volumeKey) as? Double ?? 0.5) }
+    static var enabled: Bool { PreferencesMirror.value(enabledKey) }
+    static var volume: Float { Float(PreferencesMirror.value(volumeKey) as Double) }
 
     static func play(_ effect: Effect) {
         // A trade followed by a switch, or several sessions waiting at once, sounds once.

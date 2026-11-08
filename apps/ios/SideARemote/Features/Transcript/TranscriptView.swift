@@ -2,7 +2,7 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// A session's transcript (section 4.3): plain prose, quiet tool rows, object cards, and the floating
+/// A session's transcript: plain prose, quiet tool rows, object cards, and the floating
 /// composer, with follow mode keeping the latest message in view.
 struct TranscriptView: View {
     @Environment(AppModel.self) private var model
@@ -58,7 +58,7 @@ struct TranscriptView: View {
                         }
                         .padding(.top, spacing(before: item))
                         .id(item.id)
-                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8)))
+                        .transition(.opacity)
                 }
                 if let flag = session?.flag, flag.kind != .bloated, flag.kind != .unsent {
                     HealthCard(flag: flag, session: session, canNote: session?.abilities.contains(.note) == true) {
@@ -70,7 +70,7 @@ struct TranscriptView: View {
             .padding(.horizontal, Space.m)
             .padding(.top, Space.s)
             .padding(.bottom, Space.xl)
-            .animation(Motion.smooth(reduceMotion), value: items.map(\.id))
+            .animation(.easeOut(duration: 0.2), value: items.last?.id)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -203,7 +203,7 @@ struct TranscriptView: View {
                 // After the first landing at the bottom.
                 try? await Task.sleep(for: .milliseconds(150))
                 withAnimation(Motion.smooth(reduceMotion)) { position.scrollTo(id: id, anchor: .center) }
-                withAnimation(.easeIn(duration: 0.2)) { flashed = id }
+                withAnimation(.easeOut(duration: 0.15)) { flashed = id }
                 try? await Task.sleep(for: .seconds(1.2))
                 withAnimation(.easeOut(duration: 0.6)) { flashed = nil }
                 return
@@ -224,7 +224,7 @@ struct TranscriptView: View {
         switch item {
         case .earlier(let count):
             Button {
-                withAnimation(Motion.smooth(reduceMotion)) { model.transcripts.loadEarlier(sessionID) }
+                model.transcripts.loadEarlier(sessionID)
             } label: {
                 Text("\(count) earlier messages")
                     .font(.footnote.weight(.medium))
@@ -347,7 +347,7 @@ struct TranscriptView: View {
         return SessionPhase(session) == .working && session.abilities.contains(.interrupt)
     }
 
-    /// Status `unknown` authorizes nothing, so the field says why it's off (section 4.4).
+    /// Status `unknown` authorizes nothing, so the field says why it's off.
     private var disabledReason: String? {
         if session == nil, lastTitle != nil { return "This session has ended." }
         return session?.status == .unknown ? "\(model.mac.name) can't tell what this session is doing." : nil

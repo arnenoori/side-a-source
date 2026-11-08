@@ -110,6 +110,13 @@ struct PairedMac: Codable, Hashable {
         return mac
     }
 
+    /// `X-SideA-Confirm` from this pairing's key: nil when there's no key, the app is locked, or Face ID was declined.
+    func sign(_ signer: DeviceKeys.Signer, purpose: ConfirmPurpose, subject: String, reason: String = "Confirm on your Mac",
+              fromNotification: Bool = false) async -> String? {
+        await DeviceKeys.header(signer, macID: endpoint.macID, deviceID: deviceID, purpose: purpose, subject: subject, reason: reason,
+                                fromNotification: fromNotification)
+    }
+
     /// The token, secret, push key and device keys, but not the Mac's entry, which may already be a new pairing's.
     func dropCredentials(keychain: SharedKeychain = .shared) {
         for account in ["token.", "secret.", "pushKey."] { keychain.set(nil, for: account + endpoint.macID) }

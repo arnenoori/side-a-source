@@ -23,7 +23,6 @@ enum DemoStream {
             var written = ""
             var rest = Substring(reply)
             while !rest.isEmpty {
-                // Bursts of 8 to 60 characters, 60 to 400 ms apart.
                 let take = rest.prefix(Int.random(in: 8...60))
                 written += take
                 rest = rest.dropFirst(take.count)

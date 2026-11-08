@@ -238,8 +238,6 @@ export class Tunnel {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  // MARK: Messages
-
   async message(ws: WebSocket, message: string | ArrayBuffer, now = Date.now()) {
     const attachment = this.attachment(ws);
     if (!attachment || ws.readyState !== WebSocket.OPEN) return;
@@ -453,7 +451,6 @@ export class Tunnel {
     for (const mac of this.open('mac')) mac.close(CLOSE.revoked, 'key rotated');
   }
 
-  // The install is gone, and its sockets with it.
   dropAll() {
     for (const ws of this.ctx.getWebSockets()) {
       try { ws.close(CLOSE.revoked, 'install deleted'); } catch {}

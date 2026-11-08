@@ -14,7 +14,7 @@ if [[ -n "${SIGNING_KEYCHAIN:-}" ]]; then signing_args+=(--keychain "$SIGNING_KE
 ./scripts/sign-framework.sh "$app_path/Contents/Frameworks/Sparkle.framework" "${signing_args[@]}"
 ./scripts/sign-helper.sh "$app_path" "${signing_args[@]}"
 codesign "${signing_args[@]}" "$app_path"
-for code in "$app_path" "$app_path/Contents/MacOS/SideAKeepAwake" "$app_path/Contents/Helpers/tmux"; do
+for code in "$app_path" "$app_path/Contents/MacOS/SideAKeepAwake" "$app_path/Contents/MacOS/SideAPool" "$app_path/Contents/Helpers/tmux"; do
   details="$(codesign --display --verbose=4 "$code" 2>&1)"
   [[ "$details" == *"TeamIdentifier=$APPLE_TEAM_ID"* ]] || { echo "Wrong signing team: $code" >&2; exit 1; }
   [[ "$details" == *"runtime"* && "$details" == *"Timestamp="* ]] || { echo "Missing hardened runtime or timestamp: $code" >&2; exit 1; }

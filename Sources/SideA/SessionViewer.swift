@@ -4,7 +4,7 @@ import SwiftUI
 
 struct SessionViewer: View {
     @Bindable var model: SessionStore
-    @AppStorage("resumeTerminal") private var terminal = ""
+    @AppStorage(SessionStore.resumeTerminalKey) private var terminal = ""
     @State private var showInherited = false
     @State private var flash: String?
     @State private var showDetails = false
@@ -22,11 +22,11 @@ struct SessionViewer: View {
                 }
                 .id(detail.session.id)
                 .opacity(detail.session.id == model.selectedID ? 1 : 0.55)
-                .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 8)), removal: .opacity))
+                .transition(.asymmetric(insertion: Ink.rise(8), removal: .opacity))
             } else if model.loading {
                 ProgressView().controlSize(.small)
             } else if let error = model.error {
-                ContentUnavailableView("Can't open this conversation", systemImage: "exclamationmark.bubble", description: Text(error))
+                ContentUnavailableView("Can't Open This Conversation", systemImage: "exclamationmark.bubble", description: Text(error))
             } else {
                 Welcome()
             }
@@ -34,13 +34,13 @@ struct SessionViewer: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if model.detail != nil, let error = model.error {
-                Label(error, systemImage: "exclamationmark.circle").font(.system(size: 12.5))
+                Label(error, systemImage: "exclamationmark.circle").font(.callout)
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(.regularMaterial, in: Capsule())
                     .overlay(Capsule().strokeBorder(Ink.line))
                     .padding(16)
                     .onTapGesture { model.error = nil }
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(Ink.reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(Ink.ease, value: model.error)
@@ -64,9 +64,9 @@ struct SessionViewer: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(session.name).font(.system(size: 15, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                    Text(session.name).font(.title3.weight(.semibold)).lineLimit(1).truncationMode(.tail)
                     Button { showDetails.toggle() } label: {
-                        Text(meta(session)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(meta(session)).font(.callout).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .buttonStyle(.plain)
                     .help("Details")
@@ -74,7 +74,7 @@ struct SessionViewer: View {
                 }
                 Spacer(minLength: 12)
                 Button { model.togglePin(session.id) } label: {
-                    Image(systemName: model.isPinned(session.id) ? "pin.fill" : "pin").font(.system(size: 12))
+                    Image(systemName: model.isPinned(session.id) ? "pin.fill" : "pin").font(.callout)
                         .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(model.isPinned(session.id) ? Color.orange : .secondary)
                 }
@@ -110,7 +110,7 @@ struct SessionViewer: View {
                         Text("Automatic (\(model.usualTerminal.title))").tag("")
                         ForEach(TerminalApp.allCases.filter(\.installed)) { Text($0.title).tag($0.rawValue) }
                     }
-                } label: { Image(systemName: "ellipsis").font(.system(size: 13)) }
+                } label: { Image(systemName: "ellipsis").font(.body) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .modifier(HoverPlate())
                 Button {
@@ -118,7 +118,7 @@ struct SessionViewer: View {
                 } label: {
                     Label(host.map { "Show in \($0)" } ?? (running ? "Branch" : "Resume"),
                           systemImage: host != nil ? "macwindow" : running ? "arrow.triangle.branch" : "arrow.uturn.forward")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .padding(.horizontal, 12).frame(height: 28)
                         .foregroundStyle(.white)
                         .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -211,7 +211,7 @@ struct SessionViewer: View {
                             step: { delta in step(delta, detail, proxy, inherited: inherited) },
                             close: { withAnimation(Ink.glide) { model.finding = false } })
                         .padding(12)
-                        .transition(.opacity.combined(with: .offset(y: -6)))
+                        .transition(Ink.rise(-6))
                 }
             }
             .onChange(of: findText) { search(detail, proxy, inherited: inherited) }
@@ -300,41 +300,14 @@ struct AgentHeader: View {
                 .font(.system(size: codex ? 8 : 10, weight: .bold)).foregroundStyle(.white)
                 .frame(width: 18, height: 18)
                 .background(codex ? Color.teal : Color(red: 0.85, green: 0.47, blue: 0.34), in: Circle())
-            Text(codex ? "Codex" : "Claude").font(.system(size: 12.5, weight: .semibold))
+            Text(codex ? "Codex" : "Claude").font(.callout.weight(.semibold))
         }
     }
 }
 
 struct Welcome: View {
     var body: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle().fill(Ink.field).frame(width: 64, height: 64)
-                Image(systemName: "text.bubble").font(.system(size: 24, weight: .light)).foregroundStyle(.secondary)
-            }
-            Text("Pick up where you left off").font(.system(size: 15, weight: .semibold))
-            HStack(spacing: 16) {
-                KeyHint(keys: "↑ ↓", text: "browse")
-                KeyHint(keys: "⌘ ↩", text: "resume")
-                KeyHint(keys: "esc", text: "clear")
-            }
-            .padding(.top, 6)
-        }
-        .padding(.bottom, 40)
-    }
-}
-
-struct KeyHint: View {
-    let keys: String
-    let text: String
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(keys).font(.system(size: 10.5, weight: .medium)).foregroundStyle(.secondary)
-                .padding(.horizontal, 5).frame(height: 18)
-                .background(.background, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous).strokeBorder(Ink.line))
-            Text(text).font(.system(size: 11.5)).foregroundStyle(.tertiary)
-        }
+        ContentUnavailableView("No Conversation Selected", systemImage: "text.bubble")
     }
 }
 
@@ -352,7 +325,7 @@ struct DetailsCard: View {
             row("Cost", session.cost.map { $0.formatted(.currency(code: "USD")) })
             row("Session", session.id, mono: true)
         }
-        .font(.system(size: 12))
+        .font(.callout)
         .textSelection(.enabled)
         .padding(16)
         .frame(width: 340)
@@ -362,7 +335,7 @@ struct DetailsCard: View {
         if let value, !value.isEmpty {
             GridRow {
                 Text(label).foregroundStyle(.tertiary)
-                Text(value).font(.system(size: mono ? 11 : 12, design: mono ? .monospaced : .default)).lineLimit(2).truncationMode(.middle)
+                Text(value).font(mono ? .subheadline.monospaced() : .callout).lineLimit(2).truncationMode(.middle)
             }
         }
     }
@@ -371,13 +344,15 @@ struct DetailsCard: View {
 struct LinkText: View {
     let text: String
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         Text(text).lineLimit(1)
             .overlay(alignment: .bottom) {
                 Rectangle().fill(.primary.opacity(0.5)).frame(height: 1).offset(y: 1)
-                    .scaleEffect(x: hovering ? 1 : 0, anchor: .leading)
+                    .scaleEffect(x: hovering || reduceMotion ? 1 : 0, anchor: .leading)
+                    .opacity(hovering ? 1 : 0)
             }
-            .onHover { inside in withAnimation(Ink.reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.28)) { hovering = inside } }
+            .onHover { inside in withAnimation(reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.28)) { hovering = inside } }
     }
 }
 
@@ -411,7 +386,7 @@ struct Lineage: View {
             }
             Spacer()
         }
-        .font(.system(size: 12))
+        .font(.callout)
     }
 }
 
@@ -423,10 +398,10 @@ struct InheritedCard: View {
     var body: some View {
         Button(action: toggle) {
             HStack(spacing: 10) {
-                Image(systemName: "arrow.triangle.branch").font(.system(size: 12)).foregroundStyle(Ink.branch)
-                Text("\(count.formatted()) earlier messages from before the branch").font(.system(size: 12.5)).foregroundStyle(.secondary).lineLimit(1)
+                Image(systemName: "arrow.triangle.branch").font(.callout).foregroundStyle(Ink.branch)
+                Text("\(count.formatted()) earlier messages from before the branch").font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Text(open ? "Hide" : "Show").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+                Text(open ? "Hide" : "Show").font(.callout.weight(.medium)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
             .background(hovering ? Ink.hover : .clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -443,7 +418,7 @@ struct Divided: View {
     var body: some View {
         HStack(spacing: 10) {
             Rectangle().fill(Ink.line).frame(height: 1)
-            Text(text).font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary).lineLimit(1).fixedSize()
+            Text(text).font(.subheadline.weight(.medium)).foregroundStyle(.tertiary).lineLimit(1).fixedSize()
             Rectangle().fill(Ink.line).frame(height: 1)
         }
     }
@@ -462,7 +437,7 @@ struct BranchMarker: View {
                     Text(text).foregroundStyle(.secondary)
                     if let name { LinkText(text: name).frame(maxWidth: 260) }
                 }
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.subheadline.weight(.medium))
             }
             .buttonStyle(.plain).disabled(action == nil).fixedSize(horizontal: true, vertical: false)
             Rectangle().fill(Ink.branch.opacity(0.22)).frame(height: 1)
@@ -483,7 +458,7 @@ struct MessageView: View {
             switch message.role {
             case "user":
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(MessageText.marking(AttributedString(message.text), highlight)).font(.system(size: 13)).lineSpacing(2.5)
+                    Text(MessageText.marking(AttributedString(message.text), highlight)).font(.body).lineSpacing(3)
                         .lineLimit(long && !more ? 12 : nil)
                         .padding(.horizontal, 13).padding(.vertical, 9)
                         .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -494,7 +469,7 @@ struct MessageView: View {
                         }
                     if long {
                         Button(more ? "Show less" : "Show more") { withAnimation(Ink.ease) { more.toggle() } }
-                            .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                            .buttonStyle(.plain).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -507,14 +482,14 @@ struct MessageView: View {
                                 MarkdownTable(rows: segment.rows)
                             } else if segment.kind == .code {
                                 ScrollView(.horizontal, showsIndicators: false) {
-                                    Text(segment.text).font(.system(size: 12, design: .monospaced)).lineSpacing(3).fixedSize()
+                                    Text(segment.text).font(.callout.monospaced()).lineSpacing(3).fixedSize()
                                         .padding(.horizontal, 12).padding(.vertical, 10)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Ink.field.opacity(0.7), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Ink.line))
                             } else {
-                                Text(MessageText.marking(segment.text, highlight)).font(.system(size: 13.5)).lineSpacing(4)
+                                Text(MessageText.marking(segment.text, highlight)).font(.body).lineSpacing(3)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
@@ -526,7 +501,7 @@ struct MessageView: View {
             case "compact":
                 Divided(text: "Earlier context was summarized")
             case "error":
-                Label(message.text, systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(.orange)
+                Label(message.text, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             default:
@@ -549,14 +524,14 @@ struct MessageView: View {
             if let ts = message.ts {
                 let date = Date(timeIntervalSince1970: ts)
                 Text(date, format: .dateTime.hour().minute())
-                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
                     .padding(.leading, 8).padding(.trailing, 2)
                     .help(date.formatted(date: .complete, time: .shortened))
             }
             CopyButton(text: message.text)
             if let onResend, message.role == "user" {
                 Button { onResend(message.text) } label: {
-                    Image(systemName: "pencil").font(.system(size: 11)).frame(width: 24, height: 22).contentShape(.rect)
+                    Image(systemName: "pencil").font(.subheadline).frame(width: 24, height: 22).contentShape(.rect)
                 }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help("Edit & Resend")
@@ -670,9 +645,9 @@ struct FindBar: View {
     @FocusState private var focused: Bool
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+            Image(systemName: "magnifyingglass").font(.subheadline.weight(.medium)).foregroundStyle(.tertiary)
             TextField("Find in conversation", text: $text)
-                .textFieldStyle(.plain).font(.system(size: 12.5))
+                .textFieldStyle(.plain).font(.callout)
                 .focused($focused)
                 .onKeyPress(keys: [.return]) { press in step(press.modifiers.contains(.shift) ? 1 : -1); return .handled }
                 .onKeyPress(.downArrow) { step(1); return .handled }
@@ -680,7 +655,7 @@ struct FindBar: View {
                 .onExitCommand(perform: close)
             if !text.isEmpty {
                 Text(count == 0 ? "No matches" : "\(index + 1) of \(count)")
-                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                    .font(.subheadline).monospacedDigit().foregroundStyle(.secondary).fixedSize()
             }
             Button { step(-1) } label: { Image(systemName: "chevron.up").font(.system(size: 10, weight: .semibold)) }
                 .buttonStyle(.plain).modifier(HoverPlate(size: 22, radius: 6)).disabled(count == 0)
@@ -710,7 +685,7 @@ struct CopyButton: View {
                 withAnimation(Ink.glide) { copied = false }
             }
         } label: {
-            Image(systemName: copied ? "checkmark" : "square.on.square").font(.system(size: 10.5, weight: .medium))
+            Image(systemName: copied ? "checkmark" : "square.on.square").font(.subheadline.weight(.medium))
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(copied ? Color.green : .secondary)
         }
@@ -733,7 +708,7 @@ struct ToolGroup: View {
                         .rotationEffect(.degrees(open ? 0 : -90))
                     Text(ToolSteps.summary(tools)).monospacedDigit()
                 }
-                .font(.system(size: 12.5)).foregroundStyle(.secondary)
+                .font(.callout).foregroundStyle(.secondary)
                 .padding(.horizontal, 6).frame(height: 24)
                 .background(hovering ? Ink.hover2 : .clear, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .contentShape(Rectangle())
@@ -767,10 +742,10 @@ struct ToolRow: View {
                         Image(systemName: "chevron.down").font(.system(size: 8.5, weight: .bold))
                             .rotationEffect(.degrees(open ? 0 : -90)).opacity(hovering || open ? 1 : 0)
                     }
-                    .font(.system(size: 11)).foregroundStyle(.tertiary).frame(width: 16)
-                    Text(step.verb).font(.system(size: 12.5, weight: .medium)).fixedSize()
+                    .font(.subheadline).foregroundStyle(.tertiary).frame(width: 16)
+                    Text(step.verb).font(.callout.weight(.medium)).fixedSize()
                     if !step.target.isEmpty {
-                        Text(step.target).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(step.target).font(.subheadline.monospaced()).foregroundStyle(.secondary)
                             .lineLimit(1).truncationMode(.middle)
                             .padding(.horizontal, 6).frame(height: 22)
                             .background(Ink.hover2, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -785,12 +760,12 @@ struct ToolRow: View {
             .buttonStyle(.plain)
             .onHover { inside in withAnimation(Ink.glide) { hovering = inside } }
             if open {
-                Text(ToolSteps.detail(tool)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(.secondary)
+                Text(ToolSteps.detail(tool)).font(.subheadline.monospaced()).foregroundStyle(.secondary)
                     .lineSpacing(3).lineLimit(30)
                     .padding(.leading, 14).padding(.vertical, 3)
                     .overlay(alignment: .leading) { Rectangle().fill(Ink.line).frame(width: 1) }
                     .padding(.leading, 11).padding(.bottom, 6)
-                    .transition(.opacity.combined(with: .offset(y: -4)))
+                    .transition(Ink.rise(-4))
             }
         }
         .opacity(shown ? 1 : 0).offset(y: shown ? 0 : 6)
@@ -842,17 +817,6 @@ enum ToolSteps {
         default:
             let name = line.split(separator: ":", maxSplits: 1).first.map(String.init) ?? line
             return ("wrench.and.screwdriver", name.replacingOccurrences(of: "mcp__", with: "").replacingOccurrences(of: "__", with: " · "), value == line ? "" : value)
-        }
-    }
-
-    static func icon(_ tools: [String]) -> String {
-        switch tools.first.map(kind) {
-        case "edited": "pencil"
-        case "read": "doc.text"
-        case "searched": "magnifyingglass"
-        case "looked up": "globe"
-        case "delegated": "person.2"
-        default: "terminal"
         }
     }
 

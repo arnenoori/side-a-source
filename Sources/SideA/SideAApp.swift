@@ -10,6 +10,7 @@ struct SideAApp: App {
         _store = State(initialValue: store)
         let updates = Updates()
         updates.willRelaunch = { store.keepAwake.handOff(); store.remote.handOff() }
+        updates.activity = { [unowned store] in store.relaunchActivity }
         store.remote.checkForUpdates = { [weak updates] in updates?.checkQuietly() ?? false }
         _updates = StateObject(wrappedValue: updates)
         DispatchQueue.main.async {
@@ -31,18 +32,18 @@ struct SideAApp: App {
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(after: .appInfo) { UpdateButton(updates: updates) }
-            CommandGroup(after: .help) { Button("Save diagnostics…") { store.saveDiagnostics(updateError: updates.failure) } }
+            CommandGroup(after: .help) { Button("Save Diagnostics…") { store.saveDiagnostics(updateError: updates.failure) } }
             CommandGroup(before: .windowList) {
                 Button("Sessions") { store.openSessions() }.keyboardShortcut("s", modifiers: [.command, .shift])
                 Divider()
             }
             CommandMenu("Player") {
-                Button("Use selected account on this Mac") { store.play() }.keyboardShortcut(.return, modifiers: .command)
-                Button("Previous account") { store.step(-1) }.keyboardShortcut(.leftArrow, modifiers: .command)
-                Button("Next account") { store.step(1) }.keyboardShortcut(.rightArrow, modifiers: .command)
+                Button("Use Selected Account on This Mac") { store.play() }.keyboardShortcut(.return, modifiers: .command)
+                Button("Previous Account") { store.step(-1) }.keyboardShortcut(.leftArrow, modifiers: .command)
+                Button("Next Account") { store.step(1) }.keyboardShortcut(.rightArrow, modifiers: .command)
                 Divider()
                 Button("Accounts…") { store.openLibrary() }.keyboardShortcut("l", modifiers: .command)
-                Button("Hold controls") { store.held.toggle() }.keyboardShortcut("h", modifiers: [.command, .shift])
+                Button("Hold Controls") { store.held.toggle() }.keyboardShortcut("h", modifiers: [.command, .shift])
             }
         }
         Window("Sessions", id: "sessions") {

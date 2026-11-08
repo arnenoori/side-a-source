@@ -23,10 +23,6 @@ final class WidgetPublisher {
         publish(WidgetSnapshot(macs, now: now), now: now)
     }
 
-    func publish(_ model: AppModel, macID: String, now: Date = .now) {
-        publish(WidgetSnapshot(model, macID: macID, now: now), now: now)
-    }
-
     private func publish(_ fresh: WidgetSnapshot, now: Date) {
         var snapshot = fresh
         if var previous = last {

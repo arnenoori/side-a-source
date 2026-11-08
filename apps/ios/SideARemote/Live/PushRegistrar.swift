@@ -7,7 +7,7 @@ import SideARemoteShared
 import UIKit
 import UserNotifications
 
-/// This iPhone's APNs token on its way to the Mac (M2.1): `POST /v1/devices/push` on every connection
+/// This iPhone's APNs token on its way to the Mac: `POST /v1/devices/push` on every connection
 /// and whenever the token or the notification settings change. The Mac registers it with the relay,
 /// which sends one silent push to prove the token is ours; `RelayDevice` answers it. A new token also goes
 /// straight to the relay, so pushes follow it while the Mac is out of reach.
@@ -64,13 +64,13 @@ final class PushRegistrar {
         }
     }
 
-    /// What the Mac hands the relay: the token, which app it belongs to (the `apns-topic`), which APNs
-    /// host (fixed by the build configuration), and what the user wants to hear about.
-    var registration: PushRegistration? {
+    /// What a Mac hands the relay: the token, which app it belongs to (the `apns-topic`), which APNs
+    /// host (fixed by the build configuration), and what the user wants to hear about from that Mac.
+    func registration(for macID: String) -> PushRegistration? {
         guard let apnsToken else { return nil }
         return PushRegistration(apnsToken: apnsToken, bundleID: Bundle.main.bundleIdentifier ?? PushRegistration.defaultBundleID,
                                 apnsEnvironment: Self.environment, pushToStartToken: pushToStartToken,
-                                activityTokens: activityTokens, prefs: .stored)
+                                activityTokens: activityTokens, prefs: .stored(for: macID))
     }
 
     /// `SideAAPNsEnvironment` from the xcconfigs: sandbox in Debug, production in Release.
@@ -100,7 +100,7 @@ final class PushRegistrar {
 
     private func watch(_ activity: Activity<MacActivityAttributes>) {
         let macID = activity.attributes.macID
-        if Self.endsWhenOff(macID: macID, enabled: NotificationPrefs.stored.liveActivity) { return endActivitiesIfOff() }
+        if Self.endsWhenOff(macID: macID, enabled: NotificationPrefs.stored(for: macID).liveActivity) { return endActivitiesIfOff() }
         activityMacs[activity.id] = macID
         Task {
             for await token in activity.pushTokenUpdates {
@@ -121,11 +121,12 @@ final class PushRegistrar {
         }
     }
 
-    /// Live Activity off in Settings: nothing updates a card any more, so none stays up with Allow and Deny frozen on it.
+    /// Live Activity off for a Mac in Settings: nothing updates its card any more, so none stays up with Allow and Deny frozen on it.
     func endActivitiesIfOff() {
-        let enabled = NotificationPrefs.stored.liveActivity
         Task {
-            for activity in Activity<MacActivityAttributes>.activities where Self.endsWhenOff(macID: activity.attributes.macID, enabled: enabled) {
+            for activity in Activity<MacActivityAttributes>.activities {
+                let macID = activity.attributes.macID
+                guard Self.endsWhenOff(macID: macID, enabled: NotificationPrefs.stored(for: macID).liveActivity) else { continue }
                 await activity.end(nil, dismissalPolicy: .immediate)
             }
         }
@@ -149,7 +150,7 @@ final class PushRegistrar {
     private static func hex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
 
     func report(to client: RemoteClient) async {
-        guard let registration else {
+        guard let registration = registration(for: client.endpoint.macID) else {
             RemoteLog.log(.push, "registration skipped: no APNs token")
             return
         }
@@ -164,15 +165,31 @@ final class PushRegistrar {
 }
 
 extension NotificationPrefs {
-    /// The Notifications and Live Activity toggles in Settings, by their storage keys.
-    static var stored: NotificationPrefs {
-        let defaults = UserDefaults.standard
-        func flag(_ key: String, _ fallback: Bool) -> Bool { defaults.object(forKey: key) as? Bool ?? fallback }
-        return NotificationPrefs(requests: flag("notify.requests", true), questions: flag("notify.questions", true),
-                                 plans: flag("notify.plans", true), finished: flag("notify.finished", true),
-                                 limits: flag("notify.limits", false), timeSensitiveRequests: flag("notify.timeSensitive", true),
-                                 liveActivity: flag("activity.enabled", true), suppressWhileWatching: flag("notify.quietWhileWatching", true),
-                                 health: flag("notify.health", true), rotation: flag("notify.rotation", false))
+    /// The Notifications and Live Activity switches on a Mac's page in Settings. Each Mac keeps its own under
+    /// `<key>.<macID>`; until one is set, it reads the switch from when there was one for every Mac.
+    enum Key: String, CaseIterable {
+        case requests = "notify.requests", questions = "notify.questions", plans = "notify.plans", finished = "notify.finished"
+        case limits = "notify.limits", health = "notify.health", rotation = "notify.rotation"
+        case timeSensitive = "notify.timeSensitive", quietWhileWatching = "notify.quietWhileWatching"
+        case liveActivity = "activity.enabled"
+
+        var fallback: Bool { self != .rotation }
+        func key(mac: String) -> String { "\(rawValue).\(mac)" }
+        func value(mac: String, in defaults: UserDefaults = .standard) -> Bool {
+            defaults.object(forKey: key(mac: mac)) as? Bool ?? defaults.object(forKey: rawValue) as? Bool ?? fallback
+        }
+    }
+
+    static func stored(for macID: String, in defaults: UserDefaults = .standard) -> NotificationPrefs {
+        func flag(_ key: Key) -> Bool { key.value(mac: macID, in: defaults) }
+        return NotificationPrefs(requests: flag(.requests), questions: flag(.questions), plans: flag(.plans), finished: flag(.finished),
+                                 limits: flag(.limits), timeSensitiveRequests: flag(.timeSensitive), liveActivity: flag(.liveActivity),
+                                 suppressWhileWatching: flag(.quietWhileWatching), health: flag(.health), rotation: flag(.rotation))
+    }
+
+    /// A forgotten Mac's switches go with it.
+    static func forget(macID: String, in defaults: UserDefaults = .standard) {
+        for key in Key.allCases { defaults.removeObject(forKey: key.key(mac: macID)) }
     }
 }
 

@@ -361,7 +361,6 @@ enum ShellWords {
 /// A Codex patch's headers as Codex reads them: it trims each line, so an indented header counts.
 public enum Patch {
     static let headers = ["*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "]
-    static let frame = ["*** Begin Patch", "*** End Patch", "*** End of File"]
 
     /// A move's destination is a file it writes, judged like any other: a rename into .git/hooks runs.
     public static func files(_ patch: String) -> [String] {
@@ -369,16 +368,6 @@ public enum Patch {
             let line = line.trimmingCharacters(in: .whitespaces)
             for prefix in headers where line.hasPrefix(prefix) { return String(line.dropFirst(prefix.count)) }
             return nil
-        }
-    }
-
-    /// A line that looks like a header but isn't written plainly: who can say what Codex makes of it.
-    public static func ambiguous(_ patch: String) -> Bool {
-        patch.split(whereSeparator: \.isNewline).contains { raw in
-            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard line.hasPrefix("***") else { return false }
-            let plain = frame.contains(line) || headers.contains { line.hasPrefix($0) && line.count > $0.count }
-            return !plain || String(raw) != line
         }
     }
 }

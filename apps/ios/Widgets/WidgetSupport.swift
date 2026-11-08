@@ -7,7 +7,7 @@ struct SnapshotEntry: TimelineEntry {
     /// Nil: no paired Mac, so the widget asks to pair.
     let snapshot: WidgetSnapshot?
 
-    /// "as of 1:02" once the data is 15 minutes old (section 5.5).
+    /// "as of 1:02" once the data is 15 minutes old.
     var asOf: String? {
         guard let snapshot, date.timeIntervalSince(snapshot.updatedAt) >= 15 * 60 else { return nil }
         return "as of \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))"

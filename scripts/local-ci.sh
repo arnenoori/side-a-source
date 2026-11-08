@@ -10,6 +10,7 @@ python3 -m unittest discover -s bridge/tests -v
 if [[ "$(/usr/bin/python3 -c 'import sys; print(sys.version_info[:2] == (3, 9))' 2>/dev/null)" == True ]]; then
   /usr/bin/python3 -m unittest discover -s bridge/tests -v
 fi
+rm -f Sources/SideA/Resources/*.py
 cp bridge/*.py Sources/SideA/Resources/
 swift test
 npm --prefix site ci

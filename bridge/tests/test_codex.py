@@ -35,6 +35,14 @@ class CodexTests(unittest.TestCase):
             self.assertEqual(cls.call_args.args[1]['CODEX_HOME'],str(Path(d)/'.codex'))
             cls.return_value.__enter__.return_value.call.side_effect=ValueError('old Codex')
             self.assertEqual(codex.mail_hooks_trust(Path(d),Path(d)/'.codex'),'unknown')
+    def test_a_window_without_a_length_is_left_out_as_the_app_does(self):
+        with tempfile.TemporaryDirectory() as d, patch('codex_bridge.RPC') as cls, patch.object(codex,'global_email',return_value='a@example.com'), \
+             patch.object(codex,'codex_binary',return_value='codex'):
+            cls.return_value.__enter__.return_value.call.return_value={'rateLimits':{
+                'primary':{'usedPercent':7,'windowDurationMins':300,'resetsAt':2000000000},
+                'secondary':{'usedPercent':3,'windowDurationMins':None}}}
+            windows=codex.usage(Path(d),{'id':str(uuid.uuid4()),'email':'A@example.com'})['windows']
+            self.assertEqual(windows,[{'id':'five_hour','label':'5-hour','percent':7.0,'resetsAt':2000000000.0}])
     def test_the_mac_codex_login_is_read_where_codex_keeps_it(self):
         with tempfile.TemporaryDirectory() as d, patch('codex_bridge.RPC') as cls, patch.object(codex,'global_email',return_value='a@example.com'), \
              patch.object(codex,'codex_binary',return_value='codex'):

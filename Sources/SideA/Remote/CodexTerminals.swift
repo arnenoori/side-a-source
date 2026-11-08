@@ -384,12 +384,6 @@ final class CodexTerminals {
         }
     }
 
-    /// Context and cost for the session's row.
-    func usage(_ live: LiveSession) -> (contextPercent: Int?, cost: Double?) {
-        guard let (link, _, thread) = link(of: live), let state = link.threads[thread] else { return (nil, nil) }
-        return (state.contextPercent, state.cost)
-    }
-
     /// The thread's estimated cost. A daemon signed in to no account, or one whose billing route has none, has none;
     /// after the first no, the connection stops asking.
     private func readCost(_ thread: String, _ link: Link) {
@@ -407,12 +401,6 @@ final class CodexTerminals {
     }
 
     // MARK: Settings
-
-    /// The model, effort and mode the session's next turns run with, while they can be changed from here.
-    func settings(_ live: LiveSession) -> CodexAppServer.Settings? {
-        guard let (link, _, thread) = link(of: live), link.settable else { return nil }
-        return link.threads[thread]?.settings
-    }
 
     /// The models the session's daemon offers, read once per connection.
     func models(_ live: LiveSession) async throws(Failure) -> [CodexAppServer.Model] {

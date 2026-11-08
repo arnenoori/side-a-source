@@ -148,11 +148,38 @@ struct PathsTests {
         return timing
     }
 
+    @Test func theRelayIsCheckedWhicheverPathWon() async throws {
+        let mac = try Mac()
+        defer { mac.server.stop() }
+        try await mac.listening()
+        let (direct, _) = paths([mac.url], pin: mac.pin)
+        #expect(await direct.checkRelay() == .notSetUp)
+
+        let relay = RelayRoute(url: URL(string: "http://127.0.0.1:\(freePort())")!, installID: "i1", deviceID: "d1")
+        let endpoint = Endpoint(macID: "mac", baseURL: mac.url, serverKeyHash: mac.pin, name: "Mac", relay: relay)
+        let paths = Paths(endpoint: endpoint, monitorNetwork: false, authorization: { "Bearer d1.i1.d1.x" })
+        #expect(await paths.path() == .direct(mac.url))
+        guard case .failed = await paths.checkRelay() else { Issue.record("a relay that isn't there passed"); return }
+        #expect(await paths.current == .direct(mac.url))
+    }
+
     @Test func theMacsMovePortsAreItsOwnBuildsOnly() {
         #expect(Paths.siblingPorts(of: 47800) == Array(47801...47809))
         #expect(Paths.siblingPorts(of: 47905) == [47900, 47901, 47902, 47903, 47904, 47906, 47907, 47908, 47909])
         // A harness's port, and the port after each range, have no siblings.
         #expect(Paths.siblingPorts(of: 51000).isEmpty && Paths.siblingPorts(of: 47810).isEmpty)
+    }
+
+    /// Wi-Fi handing over to cellular: the relay's socket was on Wi-Fi, so its first probe fails, and the relay mustn't sit
+    /// out the races that would find it once the bridge reopens on cellular.
+    @Test func aRelayThatFailsWhileTheNetworkSettlesDoesntRest() {
+        #expect(Paths.relayRests(after: URLError(.timedOut), settling: true) == false)
+        #expect(Paths.relayRests(after: URLError(.networkConnectionLost), settling: true) == false)
+        #expect(Paths.relayRests(after: URLError(.timedOut), settling: false))
+        #expect(Paths.relayRests(after: URLError(.secureConnectionFailed), settling: false))
+        // Cancelled because a direct address won: never the relay's fault.
+        #expect(Paths.relayRests(after: URLError(.cancelled), settling: false) == false)
+        #expect(Paths.relayRests(after: CancellationError(), settling: false) == false)
     }
 
     @Test func aHostThatRefusesIsTriedOnItsSiblingPorts() async throws {
@@ -194,6 +221,19 @@ struct PathsTests {
         let (paths, _) = paths([try await silent.url()], pin: mac.pin, timing: timing)
         #expect(await paths.path() == nil)
         await #expect(throws: CancellationError.self) { _ = try await scanned.first { _ in true } }
+    }
+
+    /// Test Connection is opened because the Mac dropped, so the race is resting: it has to try again, not report the miss.
+    @Test func aRetestRacesThroughTheQuietWindow() async throws {
+        let mac = try Mac()
+        defer { mac.server.stop() }
+        try await mac.listening()
+        let (paths, client) = paths([refusing()], pin: mac.pin)
+        #expect(await paths.path() == nil)
+        await client.transport.learned(Endpoints(tailnet: "127.0.0.1:\(mac.port)"))
+        // Still inside the wait after the miss: a plain request fails without racing.
+        #expect(await paths.path() == nil)
+        #expect(await paths.retest() == .direct(mac.url))
     }
 
     @Test func addressesFromAHelloJoinTheNextRace() async throws {

@@ -21,10 +21,10 @@ struct RootView: View {
     }
 }
 
-enum AppTab: Hashable { case sessions, accounts, search }
+enum AppTab: Hashable { case sessions, accounts, settings, search }
 
 enum DeepLink: Equatable {
-    case session(SessionKey, mac: String), request(RequestID, mac: String), accounts, account(String), search, settings
+    case session(SessionKey, mac: String), request(RequestID, mac: String), mac(String), accounts, account(String), search, settings
 
     init?(_ url: URL) {
         guard url.scheme == "sidea-remote", let host = url.host() else { return nil }
@@ -32,6 +32,7 @@ enum DeepLink: Equatable {
         switch host {
         // The Mac id comes first.
         case "session" where parts.count == 2: self = .session(parts[1], mac: parts[0])
+        case "mac" where parts.count == 1: self = .mac(parts[0])
         case "request" where parts.count == 2: self = .request(parts[1], mac: parts[0])
         case "accounts" where parts.count == 1: self = .account(parts[0])
         case "accounts": self = .accounts
@@ -114,6 +115,13 @@ struct MainTabs: View {
                 .environment(\.zoomNamespace, accountsZoom)
             }
 
+            Tab("Settings", systemImage: "gear", value: .settings) {
+                NavigationStack {
+                    SettingsView()
+                }
+                .environment(root.current)
+            }
+
             Tab(value: .search, role: .search) {
                 NavigationStack {
                     HistoryView(query: historyQuery)
@@ -130,7 +138,8 @@ struct MainTabs: View {
                 .environment(\.zoomNamespace, searchZoom)
             }
         }
-        .tabBarMinimizeBehavior(.onScrollDown)
+        // Minimized, the bar split into the current tab and a separate search button; it stays whole.
+        .tabBarMinimizeBehavior(.never)
         .waitingAccessory(showsAccessory) { show($0) }
         // Only the Sessions tab shows the accessory; its zoom into the approval sheet shares that stack's namespace.
         .environment(\.zoomNamespace, sessionsZoom)
@@ -151,8 +160,8 @@ struct MainTabs: View {
         .demoConfirmation(isPresented: $askingDemo) { root.openDemo() }
     }
 
-    /// `sidea-remote://session/<mac>/<id>`, `request/<mac>/<rid>`, `accounts`, `accounts/<id>`, `search`, `settings`. Notifications,
-    /// widgets and the Live Activity resolve to these too (M2).
+    /// `sidea-remote://session/<mac>/<id>`, `request/<mac>/<rid>`, `mac/<mac>`, `accounts`, `accounts/<id>`, `search`, `settings`. Notifications,
+    /// widgets and the Live Activity resolve to these too.
     private func open(_ url: URL) {
         let link: DeepLink
         switch root.action(for: url) {
@@ -171,6 +180,10 @@ struct MainTabs: View {
             tab = .sessions
             if let session = request.sessionID { sessionsPath = [.session(session, mac: mac)] }
             if !request.isQuestion { approvals.request = request }
+        case .mac(let id):
+            tab = .sessions
+            sessionsPath = []
+            if root.macs.count > 1, root.model(for: id) != nil { root.shown = id }
         case .accounts:
             tab = .accounts
         case .account(let id):
@@ -179,8 +192,7 @@ struct MainTabs: View {
         case .search:
             tab = .search
         case .settings:
-            tab = .sessions
-            sessionsPath = [.settings]
+            tab = .settings
         }
     }
 
@@ -225,7 +237,7 @@ private extension View {
     }
 }
 
-/// "● Allow Bash · npm test  +2" floating over the tab bar (section 4.2).
+/// "● Allow Bash · npm test  +2" floating over the tab bar.
 struct WaitingAccessory: View {
     @Environment(AppRoot.self) private var root
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
