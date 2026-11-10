@@ -375,7 +375,7 @@ Check the code
 Done
 ```
 
-The first two run the first steps of the [connection test](#test-connection); a failure stops
+The first two run the first steps of the [connection test](#test-connection-phone); a failure stops
 there and shows its card. "Checking its security key" compares the server key with the QR's `fp`.
 At "Check the code" the card says:
 

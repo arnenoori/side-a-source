@@ -47,18 +47,25 @@ public enum Pool {
     /// behind the pool it is the latter: a pause over five minutes writes the whole history to cache again.
     /// Its own breakpoints are made hour-long, byte for byte otherwise; text inside messages is escaped, so never matches.
     public static func hourLongCache(_ body: Data) -> Data {
-        let plain = Data(#""cache_control":{"type":"ephemeral"}"#.utf8)
-        let long = Data(#""cache_control":{"type":"ephemeral","ttl":"1h"}"#.utf8)
-        guard body.firstRange(of: plain) != nil else { return body }
-        var out = Data(capacity: body.count + 512)
-        var rest = body[...]
-        while let range = rest.firstRange(of: plain) {
-            out += rest[..<range.lowerBound]
-            out += long
-            rest = rest[range.upperBound...]
-        }
-        out += rest
-        return out
+        let plain = Array(#""cache_control":{"type":"ephemeral"}"#.utf8)
+        let long = Array(#""cache_control":{"type":"ephemeral","ttl":"1h"}"#.utf8)
+        // memmem, not Data.firstRange: a body is megabytes on every request, and Foundation's search compares
+        // element by element through generic witnesses.
+        return body.withUnsafeBytes { bytes -> Data? in
+            guard let base = bytes.baseAddress else { return nil }
+            let start = base.assumingMemoryBound(to: UInt8.self)
+            var out: Data?
+            var offset = 0
+            while let hit = memmem(base + offset, bytes.count - offset, plain, plain.count) {
+                let at = base.distance(to: UnsafeRawPointer(hit))
+                if out == nil { out = Data(capacity: bytes.count + 512) }
+                out?.append(start + offset, count: at - offset)
+                out?.append(contentsOf: long)
+                offset = at + plain.count
+            }
+            out?.append(start + offset, count: bytes.count - offset)
+            return out
+        } ?? body
     }
 
     /// Codex names itself in `originator` (codex_cli_rs, codex_exec, an IDE's codex_vscode).
@@ -176,8 +183,6 @@ public struct PoolRouter: Sendable {
         if let session { sticky[session] = (chosen, now) }
         return chosen
     }
-
-    public func account(for session: String) -> String? { sticky[session]?.account }
 
     public var conversations: [String: Int] {
         sticky.values.reduce(into: [:]) { $0[$1.account, default: 0] += 1 }

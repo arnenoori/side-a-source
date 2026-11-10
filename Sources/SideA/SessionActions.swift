@@ -124,7 +124,7 @@ private struct RequestPanel: View {
     private func revise() {
         let text = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        island.answer(.deny("The user wants changes to the plan before you start: \(text)"), item.id)
+        island.answer(.revisePlan(text), item.id)
     }
 }
 

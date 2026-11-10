@@ -71,7 +71,7 @@ public enum Hosting {
         for scalar in text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").unicodeScalars {
             let value = scalar.value
             if (value < 0x20 && value != 0x0A && value != 0x09) || value == 0x7F || (0x80..<0xA0).contains(value) { continue }
-            size += String(scalar).utf8.count
+            size += scalar.utf8.count
             if size > replyLimit { break }
             scalars.append(scalar)
         }

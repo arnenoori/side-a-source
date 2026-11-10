@@ -100,6 +100,11 @@ struct Composer: View {
     private var hasText: Bool { !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     /// A photo still on its way to the Mac: the reply waits for it.
     private var uploading: Bool { session.map { model.tools.attachments.isUploading($0.id) } ?? false }
+    /// Why the send button is off with something to send: the Mac is out of reach, or a photo is still on its way.
+    private var blocked: String? {
+        if case .offline(let reason) = model.mac.state { return reason.message(mac: model.mac.name) }
+        return hasText && uploading ? "Sends once the photo has uploaded." : nil
+    }
 
     var body: some View {
         GlassEffectContainer(spacing: Space.s) {
@@ -136,7 +141,7 @@ struct Composer: View {
                         .glassEffectID("field", in: glass)
                 }
                 .disabled(disabledReason != nil)
-                if unsent != nil || notice != nil || disabledReason != nil || dropped != nil {
+                if unsent != nil || notice != nil || disabledReason != nil || dropped != nil || blocked != nil {
                     statusLine
                         .padding(.horizontal, Space.xs)
                         .transition(.opacity)
@@ -152,6 +157,7 @@ struct Composer: View {
         .animation(Motion.smooth(reduceMotion), value: follow)
         .animation(Motion.smooth(reduceMotion), value: unsent)
         .animation(Motion.smooth(reduceMotion), value: notice)
+        .animation(Motion.smooth(reduceMotion), value: blocked)
         .animation(Motion.smooth(reduceMotion), value: session.map { model.tools.attachments.items($0.id).map(\.id) })
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
         .sensoryFeedback(.error, trigger: unsent) { _, new in new != nil }
@@ -222,7 +228,7 @@ struct Composer: View {
         }
         .buttonStyle(.plain)
         .disabled(idle)
-        .opacity(idle ? 0.3 : 1)
+        .opacity(idle || offline ? 0.3 : 1)
         .contextMenu {
             if mode == .interrupt {
                 ForEach(steers, id: \.self) { steer in
@@ -258,15 +264,20 @@ struct Composer: View {
 
     private var offline: Bool { if case .offline = model.mac.state { true } else { false } }
 
-    /// One quiet line under the field: a reply that didn't go, or a steer the Mac refused.
+    /// One quiet line under the field: why nothing can be sent now, a reply that didn't go, or a steer the Mac refused.
     @ViewBuilder private var statusLine: some View {
-        if let unsent {
-            HStack(spacing: Space.xxs) {
+        if case .offline(let reason) = model.mac.state {
+            // Retry is off too while the Mac is out of reach, so this leads.
+            Label(reason.message(mac: model.mac.name), systemImage: reason.symbol)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let unsent {
+            HStack(alignment: .firstTextBaseline, spacing: Space.xxs) {
                 Image(systemName: "exclamationmark.circle.fill").foregroundStyle(Color.destructive)
-                Text("Not sent").foregroundStyle(.secondary)
-                Text("·").foregroundStyle(.tertiary)
-                Button("Retry", action: onRetry).fontWeight(.semibold).buttonStyle(.borderless).needsMac()
+                Text("Not sent · \(unsent.reason)").foregroundStyle(.secondary).lineLimit(2)
                 Spacer(minLength: 0)
+                Button("Retry", action: onRetry).fontWeight(.semibold).buttonStyle(.borderless).needsMac()
             }
             .font(.footnote)
             .accessibilityElement(children: .combine)
@@ -283,7 +294,7 @@ struct Composer: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(dropped)
             .accessibilityAction(named: "Retry", onRetryDropped)
-        } else if let notice = notice ?? disabledReason {
+        } else if let notice = blocked ?? notice ?? disabledReason {
             Text(notice)
                 .font(.footnote)
                 .foregroundStyle(.secondary)

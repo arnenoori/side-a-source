@@ -6,7 +6,7 @@ tokens, and build order. Wire shapes are [protocol](protocol.md)'s and this file
 them; the setup journey and its copy are [setup](setup.md)'s; server, bridge and relay work are in
 their own specs.
 
-Status: spec, October 2026. Nothing is built yet.
+Status: built and shipping (Side A Remote 1.0.1). Where this spec and the code disagree, the code wins.
 
 The bar: it should feel like an app Apple might ship next to Shortcuts or Find My. It should not
 look like a web dashboard or a terminal in a costume. System components first, glass only on what
@@ -380,11 +380,11 @@ state, request or step, project, account, agent, elapsed.
 
 ### 4.3 Session detail (transcript)
 
-References, with what each one gives us (screenshots kept in `design/remote-refs/`):
+References, with what each one gives us:
 
 | Reference | Take |
 |---|---|
-| v0 transcript ([Mobbin](https://mobbin.com/screens/f4489226-373f-42bf-9839-26105c144eff), [`v0-transcript.png`](../../design/remote-refs/v0-transcript.png)) | Plain full-width prose; tool steps as quiet one-line rows with a leading glyph, a past-tense label and a trailing chevron; "Thought for 1s" as just another row |
+| v0 transcript ([Mobbin](https://mobbin.com/screens/f4489226-373f-42bf-9839-26105c144eff)) | Plain full-width prose; tool steps as quiet one-line rows with a leading glyph, a past-tense label and a trailing chevron; "Thought for 1s" as just another row |
 | v0 running turn ([Mobbin](https://mobbin.com/screens/e180ae62-64e2-40eb-a851-dba120707fba)) | The live row says what it is doing now ("Thinking") and becomes its past tense when done |
 | v0 scroll-to-bottom ([Mobbin](https://mobbin.com/screens/e31ba8b6-bb5d-4c43-9295-7c7638dcff7a)) | A glass circle that floats over the blurred content just above the composer |
 | v0 console ([Mobbin](https://mobbin.com/screens/6f8c4407-8d0f-4d5c-9cb0-f46e4f89a152), [filter menu](https://mobbin.com/screens/99110047-5d5c-4046-9be2-3ae0c6e22b42)) | Bash output as a full-height log page with Copy all at the bottom |
@@ -392,7 +392,7 @@ References, with what each one gives us (screenshots kept in `design/remote-refs
 | Grok turn end ([Mobbin](https://mobbin.com/screens/172f9754-b3d1-4e8a-b7f0-3b07b072bdf6)) | A row of small icon actions under the last reply, with the model and the duration trailing in tertiary |
 | Granola chat ([Mobbin](https://mobbin.com/screens/77c50532-d6fa-4077-958a-d4a33e5e5edf)) | "Thought for 1s ›" in tertiary text with no icon weight; a centered arrow over the content to jump down |
 | Dot ([Mobbin](https://mobbin.com/screens/d603ac4a-63af-4177-83b3-4818292d0302)) | Centered date separators ("Yesterday at 3:06 PM") between turns far apart in time; image attachments sit above the user bubble |
-| Grok Bot chat ([Mobbin flow](https://mobbin.com/flows/1e2f749a-8054-47cd-9049-f267dc34d362), [`assistant-question-card.png`](../../design/remote-refs/assistant-question-card.png)) | The file chip (icon, name with a dimmed extension, size), the inline question card with lettered options, and the floating glass back button and title |
+| Grok Bot chat ([Mobbin flow](https://mobbin.com/flows/1e2f749a-8054-47cd-9049-f267dc34d362)) | The file chip (icon, name with a dimmed extension, size), the inline question card with lettered options, and the floating glass back button and title |
 
 What we don't take: Grok Bot's grey cards around every assistant paragraph (prose stays plain,
 as in v0, so cards keep meaning "an object": a diff, a file, a question), and v0's avatar beside
@@ -582,8 +582,7 @@ removed") with the lines as children. Rotors: Headings, Messages from you, Tool 
 ### 4.4 Composer
 
 References: v0 ([composer](https://mobbin.com/screens/f4489226-373f-42bf-9839-26105c144eff), [Add to Chat sheet](https://mobbin.com/screens/8b0038b7-4e24-473f-b3b6-cc84bf4956f3)), Grok Bot
-([`assistant-question-card.png`](../../design/remote-refs/assistant-question-card.png),
-[Mobbin flow](https://mobbin.com/flows/1e2f749a-8054-47cd-9049-f267dc34d362)), Dot ([Mobbin](https://mobbin.com/screens/433d9d19-7bab-4d4a-b9ea-bb51921ba4cb),
+([Mobbin flow](https://mobbin.com/flows/1e2f749a-8054-47cd-9049-f267dc34d362)), Dot ([Mobbin](https://mobbin.com/screens/433d9d19-7bab-4d4a-b9ea-bb51921ba4cb),
 [multi-line](https://mobbin.com/screens/9a2f1269-0a21-4bcc-b0a7-b4ca5acf2315)), Granola ([scope chips](https://mobbin.com/screens/10a88684-1dfe-4ab2-8299-dacc1061a3b6)).
 All four agree on the shape: a separate round `+`, a pill field, and the voice or send control
 inside the pill's trailing end. Content keeps scrolling, blurred, under all of it.
@@ -730,8 +729,8 @@ Claude's `AskUserQuestion` (one to four questions, each with two to four options
 "write your own").
 
 **Where it lives: inline in the transcript, not in place of the composer.** Two shapes were on
-the table: the inline card of [`assistant-question-card.png`](../../design/remote-refs/assistant-question-card.png)
-(Grok Bot, [Mobbin flow](https://mobbin.com/flows/1e2f749a-8054-47cd-9049-f267dc34d362)), and
+the table: the inline card of Grok Bot
+([Mobbin flow](https://mobbin.com/flows/1e2f749a-8054-47cd-9049-f267dc34d362)), and
 Claude iOS, where the options replace the composer. Recommendation: **the inline card**, because
 
 - the question stays next to the text that asked it and scrolls with it; a panel over the

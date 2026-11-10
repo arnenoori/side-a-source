@@ -110,7 +110,7 @@ extension AccountStore {
         case .offline: return AccountIssue(kind: .offline)
         case .idle, nil: break
         }
-        guard let end = loginEnds[account.id], end - now < 3 * 86_400 else { return nil }
+        guard let end = loginEnds[account.id], end - now < Self.signInWarning else { return nil }
         return AccountIssue(kind: .signInEnds, endsAt: end)
     }
 

@@ -123,6 +123,8 @@ enum TerminalFocus {
         NSRunningApplication(processIdentifier: host.pid)?.activate() == true ? nil : "\(host.app) could not be brought forward."
     }
 
+    static let automationDenied = "Allow Side A to control your terminal in System Settings > Privacy & Security > Automation."
+
     private static func run(_ script: String, _ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -134,7 +136,7 @@ enum TerminalFocus {
         process.waitUntilExit()
         guard process.terminationStatus != 0 else { return nil }
         let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return message.contains("-1743") ? "Allow Side A to control your terminal in System Settings > Privacy & Security > Automation."
+        return message.contains("-1743") ? automationDenied
             : "The terminal tab could not be found."
     }
 

@@ -4,7 +4,7 @@ import SideAProtocol
 
 /// Quitting, stopping a server, starting a hosted session and Restart Fresh, for the phone and the Sessions window.
 extension SessionCommands {
-    static let internalFailure = { (message: String) in Failure(status: 500, code: "internal", message: message) }
+    nonisolated static func internalFailure(_ message: String) -> Failure { Failure(status: 500, code: "internal", message: message) }
 
     // MARK: Quit
 
@@ -169,7 +169,7 @@ extension SessionCommands {
         case let failure as RemoteTranscript.Failure where failure.badCursor:
             Failure(status: 400, code: "bad_request", message: "That cursor isn't one this Mac gave out.")
         case is BridgeFailure: Failure(status: 503, code: "not_ready", message: "Side A is still starting its session reader.", retryAfter: 2)
-        default: Failure(status: 500, code: "internal", message: "Side A couldn't read that session.")
+        default: internalFailure("Side A couldn't read that session.")
         }
     }
 }

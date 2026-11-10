@@ -180,23 +180,25 @@ final class RemoteEvents: Island.Watcher {
                 working[session.id] = session.statusAt.map { Date(timeIntervalSince1970: $0) } ?? Date()
             }
         }
-        for (id, session) in sessions where session.flag != nil && next.first(where: { $0.id == id })?.flag == nil {
+        let latest = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        for (id, session) in sessions where session.flag != nil && latest[id]?.flag == nil {
             store.remote.push.healthEnded(id)
         }
         working = working.filter { ids.contains($0.key) }
         lastFinished = lastFinished.filter { ids.contains($0.key) }
-        sessions = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        sessions = latest
         keys = nextKeys
         store.remote.previews.prune(listening: RemotePreviews.listening(store))
-        store.remote.push.activity(Self.activity(next, requests: store.island.pending.map(WireBuilders.request), accounts: WireBuilders.accounts(store)))
+        store.remote.push.activity(Self.activity(next, requests: store.island.pending.map { $0.id.uuidString.lowercased() }, accounts: WireBuilders.accounts(store)))
     }
 
     /// The Live Activity's numbers: counts, the next request's id, and the tightest window of the accounts in use.
-    static func activity(_ sessions: [RemoteSession], requests: [RemoteRequest], accounts: [RemoteAccount]) -> ActivityContentState {
+    /// Takes request ids, not wire requests: building one records its gate as shown to a phone.
+    static func activity(_ sessions: [RemoteSession], requests: [String], accounts: [RemoteAccount]) -> ActivityContentState {
         let windows = accounts.filter(\.active).flatMap { [$0.usage?.fiveHour, $0.usage?.weekly].compactMap { $0 } }
         let tightest = windows.max { $0.percent < $1.percent }
         return ActivityContentState(working: sessions.filter { $0.status == .working }.count, waiting: requests.count,
-                                    topRequest: requests.first?.id, soonestResetAt: tightest?.resetsAt,
+                                    topRequest: requests.first, soonestResetAt: tightest?.resetsAt,
                                     tightestPercent: tightest.map { min(max(Int($0.percent.rounded()), 0), 100) })
     }
 
@@ -247,7 +249,7 @@ final class RemoteEvents: Island.Watcher {
         guard recording, usageTask == nil else { return }
         usageTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
-            guard let self, let store = self.store else { return }
+            guard !Task.isCancelled, let self, let store = self.store else { return }
             self.usageTask = nil
             let next = WireBuilders.accounts(store)
             let changed = next.filter { self.accounts[$0.id] != $0 }

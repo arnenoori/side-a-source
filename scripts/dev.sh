@@ -5,4 +5,4 @@ cd "$(dirname "$0")/.."
 architecture="$(uname -m)"
 ./scripts/build-app.sh debug "$architecture"
 open -W -n "dist/$architecture/Side A.app"
-[[ -d "/Applications/Side A.app" ]] && open "/Applications/Side A.app"
+if [[ -d "/Applications/Side A.app" ]]; then open "/Applications/Side A.app"; fi

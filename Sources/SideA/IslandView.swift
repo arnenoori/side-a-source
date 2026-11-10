@@ -1224,6 +1224,6 @@ private struct PlanButtons: View {
     private func send() {
         let text = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        island.answer(.deny("The user wants changes to the plan before you start: \(text)"), item.id)
+        island.answer(.revisePlan(text), item.id)
     }
 }

@@ -21,6 +21,7 @@ Configure these Actions secrets in the **private source repository**:
 | `NOTARY_PRIVATE_KEY` | App Store Connect API private key, PEM contents |
 | `NOTARY_KEY_ID` | Matching Apple API key ID |
 | `NOTARY_ISSUER_ID` | Matching issuer UUID for a team API key; omit for an individual API key |
+| `SPARKLE_PRIVATE_KEY` | Sparkle EdDSA private key that signs the update feed, exported file contents |
 | `PUBLIC_RELEASE_TOKEN` | Fine-grained GitHub token for **only** `arnenoori/side-a-releases`, Contents: read/write, with an explicit expiry |
 
 Use a dedicated Apple key where available. Confirm that it belongs to the personal
@@ -49,7 +50,8 @@ public repository, so branch protection is **not enforced**. Keep the source pri
 ## Release
 
 1. Update both version/build values in `scripts/Info.plist`, add
-   `releases/vMAJOR.MINOR.PATCH.md`, and merge a reviewed, green PR to `main`.
+   `releases/vMAJOR.MINOR.PATCH.md`, rename `## Unreleased` in `CHANGELOG.md` to the
+   version and date (`scripts/check-release.py` refuses the release otherwise), and merge a reviewed, green PR to `main`.
 2. From an up-to-date `main`, run `scripts/ship.sh`. It dispatches
    `Local signed release` on the Mac's one-job runner.
 3. The workflow rejects dispatches from anything but `main`, mismatched versions,
@@ -99,7 +101,7 @@ in Application Support. Version 0.4 adds [signed Sparkle updates](updates.md); e
 
 ## Shipping an update
 
-Merge a PR that bumps `scripts/Info.plist` (version and build) and adds `releases/vX.Y.Z.md`, then from an up-to-date `main`:
+Merge a PR that bumps `scripts/Info.plist` (version and build) adds `releases/vX.Y.Z.md` and turns `## Unreleased` in `CHANGELOG.md` into that version's section, then from an up-to-date `main`:
 
 ```sh
 ./scripts/ship.sh

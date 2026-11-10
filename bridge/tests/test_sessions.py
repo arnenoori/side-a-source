@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -114,6 +115,24 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(sessions.search(self.root, 'AGENTS.md')['sessions'], [])
         self.assertEqual(sessions.search(self.root, 'pytest')['sessions'][0]['snippets'][0]['role'], 'tool')
         self.assertEqual([m['role'] for m in sessions.show(self.root, 'thread-1')['messages']], ['user', 'tool'])
+
+    def test_the_viewers_cache_keeps_the_conversations_opened_last(self):
+        for sid in ('old', 'mid', 'new'):
+            self.write(sid, [user('u-' + sid, 'Hello from ' + sid, '2026-10-01T10:00:00Z')])
+        sessions.index(self.root)
+        for sid in ('old', 'mid', 'new'):
+            sessions.show(self.root, sid)
+        db = sqlite3.connect(self.root / 'runtime/sessions.db'); self.addCleanup(db.close)
+        cached = lambda table: {row[0] for row in db.execute(f'SELECT DISTINCT session FROM {table}')}
+        # A file that changed is indexed without the upkeep; the pass over everything does it.
+        with patch.object(sessions, 'tidy', side_effect=AssertionError('upkeep on a named file')):
+            sessions.index(self.root, paths=[str(self.project / 'new.jsonl')])
+        for at, sid in enumerate(('old', 'mid', 'new')):
+            db.execute('UPDATE view_state SET used=? WHERE session=?', (at, sid))
+        db.commit()
+        with patch.object(sessions, 'VIEWS_KEPT', 2):
+            sessions.tidy(self.root, db)
+        self.assertEqual((cached('views'), cached('view_state')), ({'mid', 'new'}, {'mid', 'new'}))
 
     def test_live_lists_running_sessions_waiting_first(self):
         registry = self.home / '.claude/sessions'; registry.mkdir(parents=True)

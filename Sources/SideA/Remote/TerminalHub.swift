@@ -466,7 +466,8 @@ final class TerminalViewer: @unchecked Sendable {
             self.reader = nil
         }
         master = -1
-        guard pid > 0 else { return }
+        // A reaped pid may already belong to another process.
+        guard pid > 0, !reaped else { return }
         let pid = pid
         kill(pid, SIGHUP)
         queue.asyncAfter(deadline: .now() + 1) { [self] in if !reaped { kill(pid, SIGKILL) } }

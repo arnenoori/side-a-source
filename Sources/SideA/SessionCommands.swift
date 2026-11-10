@@ -257,7 +257,7 @@ import SideAProtocol
         } catch let error as HostedError {
             throw .hosted(error)
         } catch {
-            throw Failure(status: 500, code: "internal", message: "Side A couldn't type into that session.")
+            throw Self.internalFailure("Side A couldn't type into that session.")
         }
     }
 
@@ -323,7 +323,7 @@ import SideAProtocol
     private func inbox(_ text: String, target: Target) -> Plan? {
         guard let live = target.live, live.provider == .claude, live.hosted == nil, store.remote.inbox.watching(live) else { return nil }
         guard store.remote.inbox.leave(text, to: live) else {
-            return .failed(Failure(status: 500, code: "internal", message: "Side A couldn't leave the message for this session."))
+            return .failed(Self.internalFailure("Side A couldn't leave the message for this session."))
         }
         return .done(ReplyResult(delivery: .inbox, sessionID: target.key))
     }
@@ -336,7 +336,7 @@ import SideAProtocol
         if let hosted = live.hosted, when == .now {
             guard state == .working else { throw .cannotDeliver(.cannot) }
             do { try await store.hosted.interrupt(hosted, working: true) } catch {
-                throw (error as? HostedError).map(Failure.hosted) ?? Failure(status: 500, code: "internal", message: "Side A couldn't type into that session.")
+                throw (error as? HostedError).map(Failure.hosted) ?? Self.internalFailure("Side A couldn't type into that session.")
             }
             return InterruptResult(method: .escape)
         }
@@ -365,7 +365,7 @@ import SideAProtocol
             switch error {
             case .hooksOff, .empty: throw .cannotDeliver(.setup)
             case .notClaude: throw .cannotDeliver(.cannot)
-            case .failed: throw Failure(status: 500, code: "internal", message: "Side A couldn't leave the note for this session.")
+            case .failed: throw Self.internalFailure("Side A couldn't leave the note for this session.")
             }
         }
     }

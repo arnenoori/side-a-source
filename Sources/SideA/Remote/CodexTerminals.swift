@@ -29,8 +29,6 @@ final class CodexTerminals {
     struct Thread {
         var status: CodexAppServer.Thread.Status
         var turn: String?
-        /// Turns that ended since attaching.
-        var ended = 0
         /// Messages sent with turn/start that Codex hasn't shown as the user's yet, by clientUserMessageId.
         var sent: [String: (text: String, at: Date)] = [:]
         /// One it dropped: a steer still waiting when the turn was interrupted never reaches the model or the TUI.
@@ -620,7 +618,6 @@ final class CodexTerminals {
         case "turn/completed":
             guard let thread, link.threads[thread] != nil else { return }
             link.threads[thread]?.turn = nil
-            link.threads[thread]?.ended += 1
             link.changes = [:]
             lost(thread, link, interrupted: params["turn"]?["status"]?.string == "interrupted")
             readCost(thread, link)

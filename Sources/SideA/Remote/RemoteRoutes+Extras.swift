@@ -177,8 +177,6 @@ extension RemoteRoutes {
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.handoff(id) }
     }
 
-    static func prompt(_ handoff: Handoff) -> String { SessionCommands.prompt(handoff) }
-
     /// Starts the new hosted session first and ends the old one only once it's up, so a failed start loses nothing.
     @Sendable static func restart(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""

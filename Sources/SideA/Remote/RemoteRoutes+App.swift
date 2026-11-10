@@ -4,7 +4,6 @@ import SideAProtocol
 
 extension RemoteRoutes {
     /// Longest reply or note, in characters.
-    static let maxReply = SessionCommands.maxReply
 
     static let appRoutes: [Route] = [
         Route("GET", "v1/state", state),

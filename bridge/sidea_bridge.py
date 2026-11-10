@@ -405,7 +405,9 @@ def claude_usage(root, config, account):
                for key, label in WINDOW_LABELS.items() if isinstance(data.get(key), dict)]
     # Per-model weekly caps now arrive as scoped entries in `limits`, e.g. {"model": {"display_name": "Fable"}}.
     for limit in data.get("limits") or []:
-        model = ((limit.get("scope") or {}).get("model") or {}).get("display_name") if isinstance(limit, dict) else None
+        if not isinstance(limit, dict):
+            continue
+        model = ((limit.get("scope") or {}).get("model") or {}).get("display_name")
         if limit.get("kind") == "weekly_scoped" and model:
             windows.append({"id": "model:" + model.casefold(), "label": "Weekly " + model,
                             "percent": percent(limit.get("percent")), "resetsAt": epoch(limit.get("resets_at"))})
@@ -775,10 +777,11 @@ def same_login(root, blob, login):
 
 
 def swap_locks(root, slots):
-    stack = contextlib.ExitStack()
-    for slot in slots:
-        stack.enter_context(claude_refresh_lock(slot_selector(root, slot) or str(Path.home() / ".claude")))
-    return stack
+    # A lock that can't be taken releases the ones already held.
+    with contextlib.ExitStack() as stack:
+        for slot in slots:
+            stack.enter_context(claude_refresh_lock(slot_selector(root, slot) or str(Path.home() / ".claude")))
+        return stack.pop_all()
 
 
 def slot_owner(root, config, slot):
@@ -2444,6 +2447,8 @@ def serve_sessions(root, parser):
     and reopening a conversation reuses its parsed transcript. Indexing stays in its own process."""
     import sqlite3
     for line in sys.stdin:
+        # A line that isn't JSON must not answer with the request before it.
+        request = None
         try:
             request = json.loads(line)
             # Python 3.9 gives `text` an empty value at the first option, leaving `show --limit 1 -- <id>`
@@ -2453,7 +2458,7 @@ def serve_sessions(root, parser):
                 raise ValueError("Not available here")
             reply = {"id": request["id"], "result": run_sessions(root, args)}
         except SystemExit:
-            reply = {"id": request.get("id"), "error": "Invalid request"}
+            reply = {"id": request.get("id") if isinstance(request, dict) else None, "error": "Invalid request"}
         except (ValueError, KeyError, TypeError, OSError, sqlite3.Error) as error:
             reply = {"id": request.get("id") if isinstance(request, dict) else None, "error": str(error)}
         sys.stdout.write(json.dumps(reply) + "\n")
@@ -2605,7 +2610,6 @@ def main():
         serve_sessions(root, parser.sessions)
         return
     if args.command == "sessions":
-        import sessions
         import sqlite3
         try:
             result = run_sessions(root, args)

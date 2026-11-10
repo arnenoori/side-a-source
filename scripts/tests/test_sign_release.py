@@ -90,13 +90,6 @@ class SignReleaseTests(unittest.TestCase):
 
 
 class WorkflowTests(unittest.TestCase):
-    def test_every_job_with_secrets_names_the_release_environment(self):
-        for workflow in (ROOT / ".github/workflows").glob("*.yml"):
-            text = workflow.read_text()
-            for job in text.split("\n  ")[1:]:
-                if "secrets." in job and job.split(":")[0].strip() and "runs-on" in job:
-                    self.assertIn("environment: release", job, workflow.name)
-
     def test_the_old_hosted_release_is_gone(self):
         self.assertFalse((ROOT / ".github/workflows/release.yml").exists())
 

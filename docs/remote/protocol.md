@@ -4,7 +4,7 @@ The wire contract between Side A on the Mac (`RemoteServer`) and Side A Remote o
 fills in the API section of [the plan](../remote.md); where the two disagree, this file wins and the
 plan gets a one-line pointer here.
 
-Status: spec, October 2026. Nothing here is built yet.
+Status: built and shipping. Where this spec and the code disagree, the code wins.
 
 ## Conventions
 

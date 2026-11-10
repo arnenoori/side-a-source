@@ -868,7 +868,7 @@ final class AccountStore {
         case .signIn(let other): other.map { "Login replaced by \($0)'s · sign in" } ?? "Sign in again"
         case .idle: usage[id] == nil ? "Renewing its login…"
             : "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened)) · renewing"
-        case nil where (loginEnds[id] ?? .infinity) - Date().timeIntervalSince1970 < 3 * 86_400:
+        case nil where (loginEnds[id] ?? .infinity) - Date().timeIntervalSince1970 < Self.signInWarning:
             "Sign-in ends \(UsageBar.format(loginEnds[id]!)) · sign in again"
         case .verify: "Checking whose login this is · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
         case nil where usage[id] != nil && Date().timeIntervalSince(readAt[id] ?? .distantPast) > 900:
@@ -1030,13 +1030,16 @@ final class AccountStore {
     }
 
     static let weeklyAlertKey = "weeklyAlert"
+    /// How long before a sign-in ends the menu, the notification and Autopilot start saying so.
+    static let signInWarning: TimeInterval = 3 * 86_400
     static let weeklyAlertDefault = 80.0
 
     /// The user's own line: one notification per account and week when weekly use passes it.
     private func alertWeekly() {
         let threshold: Double = PreferencesMirror.value(Self.weeklyAlertKey)
         guard threshold > 0 else { return }
-        var sent = UserDefaults.standard.dictionary(forKey: "weeklyAlerted") as? [String: Double] ?? [:]
+        let before = UserDefaults.standard.dictionary(forKey: "weeklyAlerted") as? [String: Double] ?? [:]
+        var sent = before
         let now = Date().timeIntervalSince1970
         for account in config.accounts where account.ready {
             guard let weekly = usage[account.id]?.weekly, weekly.percent >= threshold, let reset = weekly.resetsAt,
@@ -1044,7 +1047,7 @@ final class AccountStore {
             sent[account.id] = reset
             notify("\(account.name) passed \(Int(threshold))% of its week", "\(weekly.text(at: now)) used; it resets \(UsageBar.format(reset)).")
         }
-        UserDefaults.standard.set(sent, forKey: "weeklyAlerted")
+        if sent != before { UserDefaults.standard.set(sent, forKey: "weeklyAlerted") }
     }
 
     /// One sysctl most of the time; Python only runs to total the sessions once macOS reports memory pressure.
@@ -1137,7 +1140,7 @@ final class AccountStore {
             changed = true
         }
         if changed { saveUsageCache() }
-        for (id, end) in loginEnds where end - Date().timeIntervalSince1970 < 3 * 86_400 && endWarned[id] != end {
+        for (id, end) in loginEnds where end - Date().timeIntervalSince1970 < Self.signInWarning && endWarned[id] != end {
             endWarned[id] = end
             if let name = config.accounts.first(where: { $0.id == id })?.name {
                 notify("Sign in to \(name) again soon", "Its sign-in ends \(UsageBar.format(end)). Signing in again keeps its limits readable and Autopilot using it.")

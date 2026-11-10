@@ -45,8 +45,8 @@ CREATE INDEX IF NOT EXISTS images_id ON images(id);
 CREATE INDEX IF NOT EXISTS images_session ON images(session, ts);
 """
 # Reading an unindexed FTS column reads the whole row, message text included, so `rows` maps each
-# message to its session; matching and deleting never touch the text. The indexer fills it for version 3
-# indexes in the background; until then search reads the session from the FTS row.
+# message to its session; matching and deleting never touch the text. A version 3 index gets it at the
+# start of the next index pass; until then search reads the session from the FTS row.
 VERSION = 6
 TITLE_RANK = {"custom": 0, "codex": 1, "ai": 2, "agent": 3, "summary": 4, "prompt": 5}
 TEXT_LIMIT = 8000
@@ -764,7 +764,6 @@ def _index(root, seconds, paths=None):
     db = connect(root)
     upgrade(db)
     deadline = time.time() + seconds
-    known = {row[0]: row for row in db.execute("SELECT path, session, offset, size, mtime, state FROM files")}
     found = []
     if paths is not None:
         # The app watches the transcript folders and names what changed, so nothing else is listed or statted.
@@ -772,9 +771,14 @@ def _index(root, seconds, paths=None):
         paths = [Path(os.path.realpath(p)) if "/profiles/" in p else Path(p) for p in paths if p.endswith(".jsonl")]
         sources = (("claude", [p for p in paths if "/.claude/projects/" in str(p)]),
                    ("codex", [p for p in paths if is_codex_path(p)]))
-        known = {k: v for k, v in known.items() if Path(k) in set(paths)}
+        # Only the named files' rows: the table has one per transcript ever read, each with its parser's state.
+        named = [str(p) for p in paths]
+        known = {row[0]: row for start in range(0, len(named), 500) for row in db.execute(
+            f"SELECT path, session, offset, size, mtime, state FROM files WHERE path IN ({','.join('?' * len(named[start:start + 500]))})",
+            named[start:start + 500])}
     else:
         sources = (("claude", claude_files()), ("codex", codex_files(root)))
+        known = {row[0]: row for row in db.execute("SELECT path, session, offset, size, mtime, state FROM files")}
     for agent, files in sources:
         for path in files:
             try:
@@ -785,8 +789,6 @@ def _index(root, seconds, paths=None):
             if row is None or row[3] != stat.st_size or row[4] != stat.st_mtime:
                 found.append((stat.st_mtime, agent, path, stat))
     present = {str(item[2]) for item in found} | {p for p in known if Path(p).exists()}
-    if paths is not None:
-        present |= {k for k in known if Path(k).exists()}
     for gone in set(known) - present:
         session = known[gone][1]
         db.execute("DELETE FROM files WHERE path=?", (gone,))
@@ -820,7 +822,6 @@ def _index(root, seconds, paths=None):
                    (str(path), session, offset, stat.st_size, stat.st_mtime, json.dumps(state)))
         db.commit()
         done += 1
-    images_remaining = backfill(db, deadline)
     # Spare time keeps the newest conversations ready to open; one already current costs a stat.
     for session_id, path, agent in db.execute("SELECT id, path, agent FROM sessions WHERE prompts > 0 ORDER BY last_ts DESC LIMIT 20").fetchall():
         if time.time() > deadline:
@@ -829,17 +830,31 @@ def _index(root, seconds, paths=None):
             update_view(db, session_id, Path(path), agent)
         except OSError:
             continue
-    db.execute("DELETE FROM views WHERE session NOT IN (SELECT session FROM view_state ORDER BY used DESC LIMIT 300)")
-    db.execute("DELETE FROM view_state WHERE session NOT IN (SELECT session FROM view_state ORDER BY used DESC LIMIT 300)")
+    result = {"remaining": len(found) - done, "indexed": done}
+    # The upkeep reads whole tables, so it runs on the passes over everything, not after each file that changed.
+    if paths is None:
+        result["images_remaining"] = backfill(db, deadline)
+        tidy(root, db)
+    result["sessions"] = db.execute("SELECT count(*) FROM sessions").fetchone()[0]
+    db.close()
+    return result
+
+
+VIEWS_KEPT = 300
+
+
+def tidy(root, db):
+    """Keeps the viewer's cache to the conversations opened most recently, and the file to what it holds."""
+    # By session, which is the cache's key: a NOT IN over the kept ones reads every cached row to delete none.
+    for (session,) in db.execute("SELECT session FROM view_state ORDER BY used DESC LIMIT -1 OFFSET ?", (VIEWS_KEPT,)).fetchall():
+        db.execute("DELETE FROM views WHERE session=?", (session,))
+        db.execute("DELETE FROM view_state WHERE session=?", (session,))
     db.commit()
     sweep_thumbnails(root, db)
     free, pages = db.execute("PRAGMA freelist_count").fetchone()[0], db.execute("PRAGMA page_count").fetchone()[0]
     # Deleted conversations leave free pages SQLite reuses but never returns; compact once they're a quarter of the file.
     if pages and free * 4 > pages and free * db.execute("PRAGMA page_size").fetchone()[0] > 32 << 20:
         db.execute("VACUUM")
-    total = db.execute("SELECT count(*) FROM sessions").fetchone()[0]
-    db.close()
-    return {"remaining": len(found) - done, "indexed": done, "sessions": total, "images_remaining": images_remaining}
 
 
 def backfill(db, deadline):
@@ -1947,18 +1962,13 @@ def prompt_uuid(entry):
     pasted = isinstance(content, list) and any(isinstance(part, dict) and part.get("type") == "image" for part in content)
     return entry.get("uuid") if prompt_text(text_of(content)) or pasted else None
 
+# A transcript's tail, read once per size and modification time: live() runs on every change to any transcript,
+# and most running sessions' transcripts have not moved since the last one.
+TAILS = {}
 
-def health(path, status):
-    """What a running session is doing from its transcript's tail, and the one thing most worth flagging:
-    no progress, the same step over and over, a run of failures, or a context that every step re-reads."""
-    try:
-        with open(path, "rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            stream.seek(max(0, stream.tell() - TAIL))
-            lines = stream.read().splitlines()
-        quiet = time.time() - os.path.getmtime(path)
-    except OSError:
-        return {}
+
+def tail_facts(lines):
+    """What health() needs from a transcript's last lines, none of it depending on the time or the session's status."""
     calls, failures, context, step, mode, turn, compacted = [], 0, None, None, None, None, None
     for line in lines:
         try:
@@ -1997,7 +2007,26 @@ def health(path, status):
                     step, failures = "Reading your message", 0
             if isinstance(content, str) and prompt_text(content):
                 step, failures = "Reading your message", 0
-    recent = calls[-6:]
+    return calls[-6:], failures, context, step, mode, turn, compacted
+
+
+def health(path, status):
+    """What a running session is doing from its transcript's tail, and the one thing most worth flagging:
+    no progress, the same step over and over, a run of failures, or a context that every step re-reads."""
+    try:
+        stamp = os.stat(path)
+        key = (stamp.st_size, stamp.st_mtime_ns)
+        if TAILS.get(str(path), (None,))[0] != key:
+            with open(path, "rb") as stream:
+                stream.seek(max(0, stamp.st_size - TAIL))
+                lines = stream.read().splitlines()
+            if len(TAILS) >= 512:
+                TAILS.clear()
+            TAILS[str(path)] = (key, tail_facts(lines))
+    except OSError:
+        return {}
+    recent, failures, context, step, mode, turn, compacted = TAILS[str(path)][1]
+    quiet = time.time() - stamp.st_mtime
     repeats = max((recent.count(call) for call in recent), default=0)
     flag = None
     if status == "busy" and quiet >= STUCK_AFTER:
@@ -2030,11 +2059,25 @@ def process_tree():
             memory[pid] = rss / 1024
             children.setdefault(parent, []).append(pid)
             args[pid] = parts[8] if len(parts) > 8 else ""
-            try:
-                started[pid] = int(time.mktime(time.strptime(" ".join(parts[3:8]), "%a %b %d %H:%M:%S %Y")))
-            except (ValueError, OverflowError):
-                pass
+            at = start_time(" ".join(parts[3:8]))
+            if at is not None:
+                started[pid] = at
     return memory, children, started, args
+
+
+STARTS = {}
+
+
+def start_time(text):
+    """ps's lstart as epoch seconds, None when it isn't a date. Kept, since the same processes come back on every call."""
+    if text not in STARTS:
+        if len(STARTS) >= 8192:
+            STARTS.clear()
+        try:
+            STARTS[text] = int(time.mktime(time.strptime(text, "%a %b %d %H:%M:%S %Y")))
+        except (ValueError, OverflowError):
+            STARTS[text] = None
+    return STARTS[text]
 
 
 def descendants(pid, memory, children):
@@ -2074,15 +2117,25 @@ def parse_listening(output):
     return ports
 
 
+# lsof walks every process on the Mac, seconds of work when many sessions run, so its answer is kept this long.
+PORTS_FRESH = 15
+PORTS = {"at": 0.0, "found": {}}
+
+
 def listening():
-    """Listening TCP ports by pid from one lsof call; empty when lsof is missing or slow."""
+    """Listening TCP ports by pid from one lsof call, at most every PORTS_FRESH seconds; empty when lsof is missing or slow."""
     import subprocess
+    if time.monotonic() - PORTS["at"] < PORTS_FRESH:
+        return PORTS["found"]
     try:
         output = subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"],
                                 capture_output=True, text=True, timeout=5).stdout
     except (OSError, subprocess.TimeoutExpired):
-        return {}
-    return parse_listening(output)
+        # A slow lsof isn't asked again on every poll.
+        PORTS.update(at=time.monotonic(), found={})
+        return PORTS["found"]
+    PORTS.update(at=time.monotonic(), found=parse_listening(output))
+    return PORTS["found"]
 
 
 CODEX_NOT_SESSIONS = ("app-server", "exec", "login", "logout", "mcp", "mcp-server", "completion")
@@ -2367,6 +2420,23 @@ def claude_settings(root, session_id, mode=None, mode_at=0):
     return {key: value for key, value in settings.items() if value is not None and not (isinstance(value, str) and not value)}
 
 
+TRANSCRIPTS = {}
+
+
+def claude_transcript(session_id):
+    """A Claude session's transcript, found once: the search reads every project folder."""
+    if not session_id:
+        return None
+    known = TRANSCRIPTS.get(session_id)
+    if known is None or not known.exists():
+        known = next((Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"), None)
+        if known is None:
+            TRANSCRIPTS.pop(session_id, None)
+        else:
+            TRANSCRIPTS[session_id] = known
+    return known
+
+
 def live(root):
     """Running Claude Code and Codex sessions, waiting on you first, then working, then idle, with each
     one's memory, process count, the TCP ports its processes listen on and the Side A tmux session hosting it."""
@@ -2391,7 +2461,7 @@ def live(root):
             continue  # Side A's own window priming
         row = db.execute("SELECT title, cost FROM sessions WHERE id=?", (data.get("sessionId"),)).fetchone()
         status = data.get("status") or "idle"
-        path = next((Path.home() / ".claude" / "projects").glob(f"*/{data.get('sessionId')}.jsonl"), None) if data.get("sessionId") else None
+        path = claude_transcript(data.get("sessionId"))
         found = health(path, status) if path else {}
         if path and not found.get("turnID"):
             # A turn longer than the tail started earlier: its prompt is the newest user row the viewer cached.

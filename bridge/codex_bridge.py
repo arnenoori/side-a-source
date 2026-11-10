@@ -81,6 +81,7 @@ class RPC:
                 self.process.terminate()
                 self.process.wait(timeout=8)
         except subprocess.TimeoutExpired:
+            self.process.kill()
             raise ValueError("Codex did not shut down gracefully.") from None
         finally:
             if self.process.stdout:

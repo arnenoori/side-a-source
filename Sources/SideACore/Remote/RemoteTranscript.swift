@@ -115,14 +115,15 @@ public enum RemoteTranscript {
     private struct Image: Decodable {
         let id: String
         let mime: String
-        let bytes: Int
+        /// Nil for a file that's gone since the session viewed it.
+        let bytes: Int?
         let width: Int?
         let height: Int?
         let source: String?
         let name: String?
 
         func wire(seq: Int) -> ImageRef {
-            ImageRef(id: id, mime: mime, bytes: bytes, width: width, height: height, source: ImageRef.Source(rawValue: source ?? "other"), name: name, seq: seq)
+            ImageRef(id: id, mime: mime, bytes: bytes ?? 0, width: width, height: height, source: ImageRef.Source(rawValue: source ?? "other"), name: name, seq: seq)
         }
     }
 

@@ -839,7 +839,7 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
 
 @Test func aHandoffPromptLeavesOutWhatIsEmpty() {
     let handoff = Handoff(goal: "Fix the build", branch: "main", failed: " ", next: "Run the tests", lastMessages: "", cwd: "/tmp/app", project: "app")
-    let prompt = RemoteRoutes.prompt(handoff)
+    let prompt = SessionCommands.prompt(handoff)
     #expect(prompt.contains("## Goal\n\nFix the build") && prompt.contains("## Branch\n\n`main`") && prompt.contains("## Next steps\n\nRun the tests"))
     #expect(!prompt.contains("What failed") && !prompt.contains("Last messages"))
 }

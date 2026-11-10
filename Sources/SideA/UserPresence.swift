@@ -12,9 +12,6 @@ struct UserPresence: Sendable, Equatable {
         return UserPresence(idle: idle, locked: session?["CGSSessionScreenIsLocked"] as? Bool ?? false)
     }
 
-    /// Input within `window` seconds on an unlocked screen.
-    func atMac(within window: TimeInterval) -> Bool { !locked && idle < window }
-
     /// No input for `window` seconds, or the screen is locked.
     func away(for window: TimeInterval) -> Bool { locked || idle >= window }
 }

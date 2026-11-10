@@ -57,7 +57,7 @@ extension SessionCommands {
         } catch let error as HostedError {
             throw .hosted(error)
         } catch {
-            throw Failure(status: 500, code: "internal", message: "Side A couldn't change that session's settings.")
+            throw Self.internalFailure("Side A couldn't change that session's settings.")
         }
     }
 

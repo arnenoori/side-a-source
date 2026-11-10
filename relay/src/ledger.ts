@@ -17,7 +17,8 @@ export class Ledger extends DurableObject<Env> {
 
   async registered(dayEnds: number): Promise<void> {
     await this.ctx.storage.put('count', await this.registrations() + 1);
-    await this.ctx.storage.setAlarm(dayEnds + DAY);
+    // Nothing can name this object once its day is over.
+    await this.ctx.storage.setAlarm(dayEnds);
   }
 
   // APNs can't challenge a Live Activity token, and Apple doesn't link it to the device token. So the first

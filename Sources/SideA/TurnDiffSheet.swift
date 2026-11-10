@@ -49,7 +49,7 @@ struct TurnDiffSheet: View {
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 560, idealWidth: 720, minHeight: 420, idealHeight: 620)
-        .task(id: "\(live.status ?? "")-\(live.turnID ?? "")") { await load() }
+        .task(id: "\(live.status)-\(live.turnID ?? "")") { await load() }
     }
 
     @ViewBuilder private var content: some View {

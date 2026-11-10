@@ -90,7 +90,7 @@ extension RemoteRoutes {
             return RemoteServer.error(404, "not_found", "That folder isn't one of the Mac's projects.")
         }
         if let resume = body.resume, !safeID(resume) { return RemoteServer.error(404, "session_not_found", "That conversation isn't on the Mac.") }
-        guard (body.prompt ?? "").count <= maxReply else { return invalidReply("That prompt is too long.", "too_long") }
+        guard (body.prompt ?? "").count <= SessionCommands.maxReply else { return invalidReply("That prompt is too long.", "too_long") }
         if body.effort != nil, let options = await agentOptions(context),
            let refusal = RemoteOptions.refusal(effort: body.effort, model: body.model, agent: body.agent, options: options) {
             return RemoteServer.error(422, "invalid_option", refusal)

@@ -167,7 +167,7 @@ final class HostedSessions {
         struct Installed: Decodable { let tmux: String? }
         installs += 1
         let current = installs
-        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/tmux").path
+        let bundled = DependencyCheck.bundledTmux
         let args = ["hosting", "install"] + (FileManager.default.isExecutableFile(atPath: bundled) ? ["--bundled", bundled] : [])
         let found: String?
         do {

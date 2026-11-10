@@ -462,7 +462,8 @@ final class SessionStore {
         }
         guard text == query.trimmingCharacters(in: .whitespaces) else { return }
         var sessions = listing.sessions.map(localized).filter { archived.contains($0.id) == showArchived }
-        let renamed = names.filter { $0.value.localizedStandardContains(text) && !sessions.map(\.id).contains($0.key) }.map(\.key)
+        let listed = Set(sessions.map(\.id))
+        let renamed = names.filter { $0.value.localizedStandardContains(text) && !listed.contains($0.key) }.map(\.key)
         if !text.isEmpty, !renamed.isEmpty,
            let extra = try? await bridge.request(["recent"] + filterArguments + renamed.flatMap { ["--only", $0] }, as: Listing.self) {
             sessions = extra.sessions.map(localized).filter { archived.contains($0.id) == showArchived } + sessions
@@ -1141,7 +1142,7 @@ final class SessionStore {
             guard finished.terminationStatus != 0 else { return }
             let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             Task { @MainActor in
-                self?.error = message.contains("-1743") ? "Allow Side A to control your terminal in System Settings > Privacy & Security > Automation."
+                self?.error = message.contains("-1743") ? TerminalFocus.automationDenied
                     : "The terminal could not be opened. Copy the command instead."
             }
         }

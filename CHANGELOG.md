@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.49 — 2026-11-09
+
+Side A uses much less CPU when many sessions run at once. With dozens of sessions open it looked up every listening port on the Mac and re-read each session's transcript every time any session wrote a line; it now looks up ports at most every 15 seconds, so a dev server a session starts can take that long to appear, and re-reads only the transcripts that changed. Pool mode also spends far less time on each request it forwards.
+
+New lines in your conversations show up sooner in the Sessions window and on your iPhone. With a large history, each one waited behind housekeeping that took over ten seconds; that now runs every few minutes instead of after every change.
+
+A Codex conversation that looked at an image file which has since been deleted opens on your iPhone again; it used to fail to load. If a request starts needing Face ID after your iPhone first showed it, the phone is now told to look again instead of getting a plain refusal. Trading two accounts no longer leaves one of them locked for a minute when the other is busy, and the Sessions window keeps working after a malformed request to its reader.
+
 ## 0.5.48 — 2026-11-08
 
 Pool mode keeps working when Side A is closed. Sessions started through the pool used to fail with "connection refused" the moment Side A quit or crashed, until you restarted them. A small helper now serves the pool on the same port whenever Side A isn't running, using the accounts and limits Side A last knew, and hands it back as soon as Side A opens again. New `claude` and `codex` commands keep using the pool too. macOS lists it under Login Items as Side A; turning pool mode off removes it. If pool mode can't start, Settings now says why instead of showing Starting… until Side A restarts.

@@ -9,7 +9,6 @@ struct ComposerField: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var placeholder: String
-    var focused: Bool
     /// True when the composer took the key; false leaves it to the text.
     var onKey: (Key) -> Bool
     /// Images pasted or dropped onto the text; true when they were taken.
@@ -60,7 +59,7 @@ struct ComposerField: NSViewRepresentable {
         view.placeholder = placeholder
         view.setAccessibilityPlaceholderValue(placeholder)
         view.needsDisplay = true
-        if focused, view.window != nil, view.window?.firstResponder !== view {
+        if view.window != nil, view.window?.firstResponder !== view {
             DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
         }
         context.coordinator.measure(view)

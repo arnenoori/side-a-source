@@ -3,7 +3,7 @@ import AppKit
 /// Small player sounds, synthesized at first use so no audio files ship with the app.
 @MainActor
 enum Sounds {
-    enum Effect: CaseIterable {
+    enum Effect {
         case tick, trackChange, spinUp, nudge, done
     }
 

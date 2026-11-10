@@ -17,7 +17,7 @@ equivalents, and motion must respect Reduced Motion.
 
 Anything Side A adds to a file the user owns (`~/.zshrc`, `~/.claude/settings.json`,
 `~/.codex/hooks.json`) must carry its marker (`side-a shell integration`,
-`side-a-live`, `side-a-limit`, `side-a-island`), sit beside the user's own entries, be
+`side-a host terminal sessions`, `side-a-live`, `side-a-limit`, `side-a-island`), sit beside the user's own entries, be
 removed cleanly by its toggle and by Remove Side A, and leave the CLI behaving
 normally when Side A isn't running. Hooks that run on every tool call must stay cheap:
 the island's mail hooks cost one file test unless mail is waiting. Try UI changes with

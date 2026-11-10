@@ -8,7 +8,6 @@ struct SessionComposer: View {
     @Bindable var model: SessionStore
     let target: ComposerTarget
     @State private var height = ComposerField.lineHeight
-    @State private var focused = true
     /// Where the caret is; the end of the draft until the field says otherwise.
     @State private var caret = Int.max
     @State private var highlighted = 0
@@ -30,7 +29,7 @@ struct SessionComposer: View {
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help("Attach photos")
                 .accessibilityLabel("Attach photos")
-                ComposerField(text: text, height: $height, placeholder: target.placeholder, focused: focused, onKey: key,
+                ComposerField(text: text, height: $height, placeholder: target.placeholder, onKey: key,
                               onImages: { images in
                                   model.attach(images, to: id)
                                   return true

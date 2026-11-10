@@ -141,7 +141,11 @@ struct SelectableText: UIViewRepresentable {
 
         /// One selection at a time, as in Notes.
         func textViewDidChangeSelection(_ textView: UITextView) {
-            if textView.selectedRange.length > 0 { SelectableText.clearSelection(except: textView) }
+            guard textView.selectedRange.length > 0 else { return }
+            SelectableText.clearSelection(except: textView)
+            // A double-tap's first tap showed `menu`, and its second selects a word, which brings the system's own
+            // callout: without this the two sit together, each with a Copy.
+            editMenu.dismissMenu()
         }
 
         @objc func tapped(_ tap: UITapGestureRecognizer) {

@@ -2,27 +2,19 @@ import AppKit
 import SideACore
 import SwiftUI
 
-struct SessionsSettings: View {
-    let store: AccountStore
-    var body: some View {
-        SessionsBrowser(model: store.sessions)
-            .onAppear { store.sessions.appear() }
-            .onDisappear { store.sessions.disappear() }
-    }
-}
-
 /// Sessions in a window of its own, so Settings keeps one size.
 struct SessionsWindow: View {
     let store: AccountStore
     @Environment(\.dismissWindow) private var dismissWindow
     var body: some View {
-        SessionsSettings(store: store)
+        SessionsBrowser(model: store.sessions)
             .frame(minWidth: 860, minHeight: 560)
             .onAppear {
+                store.sessions.appear()
                 store.sessionsOpen = true
                 if !store.sessionsRequested { dismissWindow(id: "sessions") }
             }
-            .onDisappear { store.sessionsOpen = false; store.sessionsRequested = false }
+            .onDisappear { store.sessions.disappear(); store.sessionsOpen = false; store.sessionsRequested = false }
     }
 }
 
@@ -857,7 +849,7 @@ struct RunningRow: View {
     /// Only memory worth acting on takes room from the title; the rest is in the row's tooltip.
     @ViewBuilder private var memory: some View {
         if let memory = session.memory, memory >= 1024 {
-            Chip(text: Megabytes.text(memory), tint: memory >= 1024 ? .orange : nil)
+            Chip(text: Megabytes.text(memory), tint: .orange)
                 .help("\(session.processes ?? 1) processes")
         }
     }

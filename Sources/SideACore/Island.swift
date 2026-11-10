@@ -399,6 +399,9 @@ extension IslandRisk {
 }
 
 public enum IslandAnswer: Sendable, Equatable {
+    /// Keep Planning: the plan is denied with what should change.
+    public static func revisePlan(_ text: String) -> IslandAnswer { .deny("The user wants changes to the plan before you start: \(text)") }
+
     case allow, always(IslandSuggestion), deny(String?), terminal
     /// Allow, and leave the session in this permission mode (Claude's `setMode` for the session). A destructive
     /// request takes it only as it takes `.allow`: confirmed.

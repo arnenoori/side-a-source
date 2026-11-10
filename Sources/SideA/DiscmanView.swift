@@ -187,19 +187,8 @@ struct DiscmanView: NSViewRepresentable {
         private var guideMaterials: [String: SCNMaterial] = [:]
         private var guideSignature = ""
 
-        static func studioEnvironment() -> NSImage {
-            NSImage(size: NSSize(width: 512, height: 256), flipped: false) { rect in
-                NSGradient(colors: [NSColor(white: 0.18, alpha: 1), NSColor(white: 0.55, alpha: 1), NSColor(white: 0.98, alpha: 1)])?
-                    .draw(in: rect, angle: 90)
-                return true
-            }
-        }
-
         init() {
             scene.background.contents = NSColor.clear
-            // Metals need something to reflect; without it the disc and chassis render as flat grey.
-            scene.lightingEnvironment.contents = Self.studioEnvironment()
-            scene.lightingEnvironment.intensity = 1.1
             hinge.position = SCNVector3(0, 0.45, -2.05)
             scene.rootNode.addChildNode(hinge)
             do {
@@ -281,6 +270,7 @@ struct DiscmanView: NSViewRepresentable {
             ambient.light?.intensity = 170
             ambient.light?.color = NSColor.white
             scene.rootNode.addChildNode(ambient)
+            // Metals need something to reflect; without it the disc and chassis render as flat grey.
             let environment = NSImage(size: NSSize(width: 512, height: 256), flipped: false) { rect in
                 NSGradient(colors: [NSColor(white: 0.32, alpha: 1), .white, NSColor(white: 0.6, alpha: 1)])!.draw(in: rect, angle: 90)
                 return true
