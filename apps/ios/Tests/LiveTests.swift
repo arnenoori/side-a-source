@@ -19,6 +19,20 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(store.rows(.working).map(\.id), ["b", "a"])
     }
 
+    func testRowsFollowAPhaseChange() {
+        let store = SessionsStore([session("a")])
+        XCTAssertEqual(store.rows(.working).map(\.id), ["a"])
+        store.replace([session("a", status: .finished)], finished: [:])
+        XCTAssertTrue(store.rows(.working).isEmpty)
+        XCTAssertEqual(store.rows(.ready).map(\.id), ["a"])
+        XCTAssertTrue(store.rows(.idle).isEmpty)
+    }
+
+    func testMarkdownParsesTheSameFromTheCache() {
+        let source = "# Plan\n\n- one\n- `two`"
+        XCTAssertEqual(MarkdownParser.blocks(source), MarkdownParser.blocks(source))
+    }
+
     func testAnswerGoesToTheMacOnce() {
         let request = DemoData(now: .now).requests[0]
         let store = RequestsStore([request])

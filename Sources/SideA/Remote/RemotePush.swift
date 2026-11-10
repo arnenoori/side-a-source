@@ -214,13 +214,14 @@ final class RemotePush {
     func tick() { run(scheduler.tick(now: clock(), presence: presence())) }
 
     /// Remote off: nothing held goes, and nothing waits to. Turned on again, it starts empty, as the events do: what was
-    /// already open then isn't pushed.
+    /// already open then isn't pushed. Live Activities end, since nothing would update them.
     func stopScheduling() {
         wake?.cancel()
         wake = nil
         held = [:]
         scheduler = PushScheduler()
         perTurnSent = []
+        endActivities()
     }
 
     /// A full context isn't worth a notification: the flag stays on the session's row, and Restart Fresh is there.
@@ -345,7 +346,26 @@ final class RemotePush {
         }
     }
 
+    /// Every card ends as one a phone turned off would, and the minute's ticker stops.
+    private func endActivities() {
+        ticker?.cancel()
+        ticker = nil
+        let devices = (controller?.devices.devices ?? []).map { LiveActivities.Device(id: $0.id, wanted: false, canStart: false) }
+        perform(activities.changed(activities.state, devices: devices, now: Date().timeIntervalSince1970), state: activities.state)
+        activities = LiveActivities()
+    }
+
+    #if DEBUG
+    /// Tests: each Live Activity action, before it's handed to the relay (none in tests), and whether the minute's
+    /// ticker runs.
+    var acting: (([LiveActivities.Action]) -> Void)?
+    var ticking: Bool { ticker != nil }
+    #endif
+
     private func perform(_ actions: [LiveActivities.Action], state: ActivityContentState) {
+        #if DEBUG
+        if !actions.isEmpty { acting?(actions) }
+        #endif
         guard let relay else { return }
         for action in actions {
             switch action {

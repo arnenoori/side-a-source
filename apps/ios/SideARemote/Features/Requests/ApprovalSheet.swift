@@ -219,12 +219,8 @@ struct ApprovalSheet: View {
                     .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
                 Button("Send", systemImage: "arrow.up") {
                     let reason = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    denies += 1
-                    Self.felt.insert(request.id)
-                    current = Self.next(after: request.id, in: open)
-                    model.requests.answer(request.id, .deny(message: reason.isEmpty ? nil : reason))
                     feedback = nil
-                    if open.isEmpty { dismiss() }
+                    answer(request, .deny(message: reason.isEmpty ? nil : reason))
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.glassProminent)
@@ -302,19 +298,14 @@ struct ApprovalSheet: View {
         }
     }
 
-    private func answer(_ request: RemoteRequest, _ answer: RemoteAnswer, mode: PermissionMode? = nil) {
-        allows += 1
-        Self.felt.insert(request.id)
-        current = Self.next(after: request.id, in: open)
-        model.requests.answer(request.id, answer, mode: mode)
-        if open.isEmpty { dismiss() }
-    }
+    private func deny(_ request: RemoteRequest) { answer(request, .deny(message: nil)) }
 
-    private func deny(_ request: RemoteRequest) {
-        denies += 1
+    /// Felt here, so the transcript doesn't buzz again; on to the next request, or closed after the last.
+    private func answer(_ request: RemoteRequest, _ answer: RemoteAnswer, mode: PermissionMode? = nil, confirm: String? = nil) {
+        if case .deny = answer { denies += 1 } else { allows += 1 }
         Self.felt.insert(request.id)
         current = Self.next(after: request.id, in: open)
-        model.requests.answer(request.id, .deny(message: nil))
+        model.requests.answer(request.id, answer, mode: mode, confirm: confirm)
         if open.isEmpty { dismiss() }
     }
 
@@ -331,12 +322,7 @@ struct ApprovalSheet: View {
                 failures += 1
                 return
             }
-            allows += 1
-            Self.felt.insert(request.id)
-            current = Self.next(after: request.id, in: open)
-            model.requests.answer(request.id, allow, confirm: confirm)
-            if open.isEmpty { dismiss() }
-            return
+            return answer(request, allow, confirm: confirm)
         }
         let context = LAContext()
         do {

@@ -55,7 +55,7 @@ final class PushRegistrar {
             onChange()
         }
         guard defaults.bool(forKey: Self.relayOwedKey) else { return }
-        let bundleID = Bundle.main.bundleIdentifier ?? PushRegistration.defaultBundleID
+        let bundleID = Self.bundleID
         Task {
             if await RelayDevice.report(token: hex, bundleID: bundleID, environment: Self.environment) {
                 defaults.set(false, forKey: Self.relayOwedKey)
@@ -68,7 +68,7 @@ final class PushRegistrar {
     /// host (fixed by the build configuration), and what the user wants to hear about from that Mac.
     func registration(for macID: String) -> PushRegistration? {
         guard let apnsToken else { return nil }
-        return PushRegistration(apnsToken: apnsToken, bundleID: Bundle.main.bundleIdentifier ?? PushRegistration.defaultBundleID,
+        return PushRegistration(apnsToken: apnsToken, bundleID: Self.bundleID,
                                 apnsEnvironment: Self.environment, pushToStartToken: pushToStartToken,
                                 activityTokens: activityTokens, prefs: .stored(for: macID))
     }
@@ -240,8 +240,7 @@ enum RelayDevice {
 
     /// What a Live Activity's attributes call the Mac, which the relay derives from its install: no paired id says it.
     static func activityMacID(install: String) -> String {
-        Data(SHA256.hash(data: Data("SideA macID v1\n\(install)".utf8)).prefix(12)).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        Data(SHA256.hash(data: Data("SideA macID v1\n\(install)".utf8)).prefix(12)).base64URL
     }
 
     private static func mac(activity macID: String, in macs: [PairedMac]) -> PairedMac? {
@@ -277,9 +276,7 @@ enum RelayDevice {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let encoded = secret.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        request.setValue("Bearer d1.\(install).\(mac.deviceID).\(encoded)", forHTTPHeaderField: "Authorization")
+        request.setValue(mac.relayBearer(install: install, secret: secret), forHTTPHeaderField: "Authorization")
         return request
     }
 }

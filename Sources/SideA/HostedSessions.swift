@@ -115,6 +115,8 @@ final class HostedSessions {
     private(set) var sessions: [Session] = []
     /// The Mac tab most recently typed in, per session; phones are left out.
     private(set) var macClients: [String: Client] = [:]
+    /// Phone viewers per session, as the last refresh listed them.
+    @ObservationIgnored private(set) var phoneViewers: [String: Int] = [:]
     var available: Bool { tmux != nil }
     @ObservationIgnored private var verifiers: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var interrupted: [String: Date] = [:]
@@ -942,9 +944,12 @@ final class HostedSessions {
             }
         }
         if found != sessions { sessions = found }
-        var tabs: [String: Client] = [:]
-        for (name, client) in await allClients() where !client.phone && tabs[name] == nil { tabs[name] = client }
+        var tabs: [String: Client] = [:], phones: [String: Int] = [:]
+        for (name, client) in await allClients() {
+            if client.phone { phones[name, default: 0] += 1 } else if tabs[name] == nil { tabs[name] = client }
+        }
         if tabs.mapValues(\.pid) != macClients.mapValues(\.pid) { macClients = tabs }
+        phoneViewers = phones
         for (session, ended) in dead where !finishing.contains(session.name) {
             finishing.insert(session.name)
             onEnded?(session.name, ended.hasPrefix("status ") ? Int(ended.dropFirst(7)) : nil, ending.remove(session.name) != nil ? .killed : .ended)
@@ -1038,32 +1043,9 @@ final class HostedSessions {
     /// client finds the same socket.
     nonisolated static func process(_ path: String, _ args: [String], input: Data? = nil, environment overrides: [String: String] = [:], timeout: TimeInterval)
         async -> (status: Int32, output: String, errors: String, elapsed: TimeInterval) {
-        await Task.detached {
-            let started = Date()
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = args
-            var environment = ProcessInfo.processInfo.environment
-            for key in ["TMUX", "TMUX_PANE", "TMUX_TMPDIR"] { environment.removeValue(forKey: key) }
-            environment.merge(overrides) { $1 }
-            process.environment = environment
-            let output = Pipe(), errors = Pipe(), stdin = Pipe()
-            process.standardOutput = output
-            process.standardError = errors
-            process.standardInput = input == nil ? FileHandle.nullDevice : stdin
-            do { try process.run() } catch { return (-1, "", error.localizedDescription, 0) }
-            if let input {
-                try? stdin.fileHandleForWriting.write(contentsOf: input)
-                try? stdin.fileHandleForWriting.close()
-            }
-            let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
-            defer { watchdog.cancel() }
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            let problems = errors.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return (process.terminationStatus, String(decoding: data, as: UTF8.self),
-                    String(decoding: problems, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), Date().timeIntervalSince(started))
-        }.value
+        let run = await ProcessRunner.run(path, args, environment: overrides, removing: ["TMUX", "TMUX_PANE", "TMUX_TMPDIR"], input: input, timeout: timeout)
+        if let failure = run.launchError { return (-1, "", failure.localizedDescription, 0) }
+        return (run.status, String(decoding: run.output, as: UTF8.self),
+                String(decoding: run.errors, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines), run.elapsed)
     }
 }

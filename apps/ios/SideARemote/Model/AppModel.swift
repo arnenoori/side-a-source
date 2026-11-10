@@ -60,6 +60,10 @@ final class AppModel {
                              sessions: sessions, requests: requests, transcripts: transcripts,
                              accounts: AccountsStore(data.accounts, autopilot: data.autopilot), history: HistoryStore(data.history),
                              isDemo: true, paired: true)
+        model.mac.onPower = true
+        model.mac.memoryUsed = 21.4
+        model.mac.memoryTotal = 36
+        model.mac.keepAwake = true
         model.tools.showDemoRotation(data.rotation, outlook: data.autopilot.isEmpty ? nil : data.outlook)
         model.foldAnswers()
         #if DEBUG
@@ -147,17 +151,22 @@ final class MacConnection: Identifiable {
 
     enum State: Equatable {
         case connecting, live, reconnecting(since: Date), offline(Offline)
+
+        var isOffline: Bool { if case .offline = self { true } else { false } }
     }
+
+    var isOffline: Bool { state.isOffline }
 
     let id = UUID()
     var name: String
     var state: State
     var lastSeen: Date
-    var onPower = true
+    /// nil until the Mac's first `remote.mac` report, so nothing shows a guess.
+    var onPower: Bool?
     var battery: Int?
-    var memoryUsed: Double = 21.4
-    var memoryTotal: Double = 36
-    var keepAwake = true
+    var memoryUsed: Double?
+    var memoryTotal: Double?
+    var keepAwake: Bool?
     /// From the path monitor: a VPN interface (Tailscale) is up.
     var vpnUp = true
     var route: Route?

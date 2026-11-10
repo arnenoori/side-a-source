@@ -189,3 +189,17 @@ import Testing
     #expect(RemoteUploads.paths([first.id], root: root) == nil)
     #expect(try RemoteUploads.store(png(0.9), root: root, device: "d1", cap: cap).bytes > 0)
 }
+
+/// Quit and Quit Idle go by the list as it is now, hosted or not: a session the phone just gave work, or a pid that
+/// now belongs to another process, stays.
+@Test func quittingGoesByAFreshList() {
+    func session(_ pid: Int, _ status: String, started: Double = 1_700_000_000, hosted: String? = nil) -> LiveSession {
+        var live = LiveSession(pid: pid, sessionID: "s\(pid)", name: nil, title: nil, cost: nil, cwd: "/tmp", status: status, waitingFor: nil, since: 0)
+        live.started = started; live.hosted = hosted; live.kind = "interactive"
+        return live
+    }
+    let shown = [session(1, "idle", hosted: "sa-app-1"), session(2, "idle"), session(3, "idle"), session(4, "idle", hosted: "sa-app-4")]
+    let fresh = [session(1, "busy", hosted: "sa-app-1"), session(2, "idle"), session(3, "idle", started: 1_700_000_500), session(4, "idle", hosted: "sa-app-4")]
+    #expect(SessionStore.current(shown, in: fresh) { $0.status == "idle" }.map(\.pid) == [2, 4])
+    #expect(SessionStore.current(shown, in: [], still: { _ in true }).isEmpty)
+}

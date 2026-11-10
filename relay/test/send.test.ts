@@ -1,8 +1,9 @@
-import { env } from 'cloudflare:test';
+import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fromB64url, utf8 } from '../src/bytes';
 import worker from '../src/index';
-import { FakeApns, alert, call, context, incoming, hexToken, newPhone, paired, phoneCall, putDevice, randomId, sealed, signed, type Mac, type Phone } from './helpers';
+import { LIMITS, type Install } from '../src/install';
+import { FakeApns, alert, call, context, incoming, hexToken, newPhone, paired, phoneCall, putDevice, randomId, sealed, signed, stub, type Mac, type Phone } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -197,6 +198,25 @@ describe('Live Activities', () => {
     expect(apns.last(updateToken)!.body.aps).toMatchObject({ event: 'end', 'dismissal-date': 1792202000 });
     const after = await send(mac, update);
     expect((await after.json() as any).results[0].result).toBe('gone');
+  });
+
+  it('stops using an activity token once it is 12 hours old, and deletes it then', async () => {
+    const apns = new FakeApns();
+    const { mac, phone } = await paired(apns);
+    const fresh = randomId();
+    const old = randomId();
+    const oldToken = hexToken();
+    await phoneCall(phone, 'PUT', `/v1/device/activities/${fresh}`, { updateToken: hexToken() });
+    await phoneCall(phone, 'PUT', `/v1/device/activities/${old}`, { updateToken: oldToken });
+    await runInDurableObject(stub(mac.installId), (_: Install, state) => {
+      state.storage.sql.exec('UPDATE activities SET created = ? WHERE id = ?', Date.now() - LIMITS.activityLifetime - 1000, old);
+    });
+    const response = await send(mac, { devices: [phone.deviceId], kind: 'liveactivity', event: 'update', activityId: old, contentState: content });
+    expect(await response.json()).toEqual({ results: [{ device: phone.deviceId, result: 'gone' }] });
+    expect(apns.to(oldToken)).toHaveLength(0);
+    const left = await runInDurableObject(stub(mac.installId), (_: Install, state) =>
+      state.storage.sql.exec<{ id: string }>('SELECT id FROM activities').toArray().map(row => row.id));
+    expect(left).toEqual([fresh]);
   });
 
   it("won't let one device's phone touch another's activity", async () => {

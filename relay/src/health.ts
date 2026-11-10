@@ -33,8 +33,10 @@ export class Health extends DurableObject<Env> {
     const streaks: Record<string, number> = {};
     for (const { environment, ok } of probes) {
       const key = `failures:${environment}`;
-      const streak = ok ? 0 : ((await this.ctx.storage.get<number>(key)) ?? 0) + 1;
-      await this.ctx.storage.put(key, streak);
+      const before = (await this.ctx.storage.get<number>(key)) ?? 0;
+      const streak = ok ? 0 : before + 1;
+      // A healthy run every 15 minutes would otherwise write the same 0 twice.
+      if (streak !== before) await this.ctx.storage.put(key, streak);
       streaks[environment] = streak;
     }
     return streaks;

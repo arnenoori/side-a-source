@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 import Network
 import SideAProtocol
@@ -53,7 +52,7 @@ final class NWSocket: SocketConnection, @unchecked Sendable {
             throw [401, 426, 429].contains(reply.status) ? SocketClosed(code: 4000 + reply.status) : URLError(.badServerResponse)
         }
         let accept = reply.headers.first { $0.key.caseInsensitiveCompare("Sec-WebSocket-Accept") == .orderedSame }?.value
-        guard accept == ClientFrames.accept(key) else {
+        guard accept == WebSocketFrames.acceptKey(key) else {
             stream.cancel()
             throw URLError(.badServerResponse)
         }
@@ -76,10 +75,10 @@ final class NWSocket: SocketConnection, @unchecked Sendable {
         for frame in frames {
             switch frame {
             case .message(let message): deliver(.success(message))
-            case .ping(let payload): stream.connection.send(content: ClientFrames.frame(0xA, payload), completion: .contentProcessed { _ in })
+            case .ping(let payload): stream.connection.send(content: ClientFrames.frame(.pong, payload), completion: .contentProcessed { _ in })
             case .pong(let payload): lock.withLock { pongs.removeValue(forKey: payload) }?.resume()
             case .close(let code, let reason):
-                stream.connection.send(content: ClientFrames.frame(0x8, ClientFrames.closePayload(code == 1005 ? 1000 : code, "")),
+                stream.connection.send(content: ClientFrames.frame(.close, ClientFrames.closePayload(code == 1005 ? 1000 : code, "")),
                                        completion: .contentProcessed { _ in stream.cancel() })
                 end(SocketClosed(code: code, reason: reason), stream)
             case .invalid: end(SocketClosed(code: 1002, reason: "protocol error"), stream)
@@ -113,8 +112,8 @@ final class NWSocket: SocketConnection, @unchecked Sendable {
         if let ended = lock.withLock({ ended }) { throw ended }
         let frame: Data
         switch message {
-        case .text(let text): frame = ClientFrames.frame(0x1, Data(text.utf8))
-        case .data(let data): frame = ClientFrames.frame(0x2, data)
+        case .text(let text): frame = ClientFrames.frame(.text, Data(text.utf8))
+        case .data(let data): frame = ClientFrames.frame(.binary, data)
         }
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
             stream.connection.send(content: frame, completion: .contentProcessed { error in
@@ -150,7 +149,7 @@ final class NWSocket: SocketConnection, @unchecked Sendable {
                 return nil
             }
             if let failed { return done.resume(throwing: failed) }
-            stream.connection.send(content: ClientFrames.frame(0x9, payload), completion: .contentProcessed { _ in })
+            stream.connection.send(content: ClientFrames.frame(.ping, payload), completion: .contentProcessed { _ in })
             stream.queue.asyncAfter(deadline: .now() + 10) { [weak self] in
                 guard let self else { return }
                 self.lock.withLock { self.pongs.removeValue(forKey: payload) }?.resume(throwing: URLError(.timedOut))
@@ -162,7 +161,7 @@ final class NWSocket: SocketConnection, @unchecked Sendable {
         let opened = opened!
         Task {
             guard let stream = try? await opened.value else { return opened.cancel() }
-            stream.connection.send(content: ClientFrames.frame(0x8, ClientFrames.closePayload(code, reason ?? "")),
+            stream.connection.send(content: ClientFrames.frame(.close, ClientFrames.closePayload(code, reason ?? "")),
                                    completion: .contentProcessed { _ in stream.cancel() })
             end(SocketClosed(code: code, reason: reason), stream)
         }
@@ -173,97 +172,29 @@ final class NWSocket: SocketConnection, @unchecked Sendable {
 struct ClientFrames {
     enum Frame: Equatable { case message(SocketMessage), ping(Data), pong(Data), close(code: Int, reason: String?), invalid }
 
-    private var buffer = Data()
-    private var fragments = Data()
-    private var fragmentOpcode: UInt8?
-
-    static func accept(_ key: String) -> String {
-        Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
-    }
+    private var frames = WebSocketFrames(role: .client, maxMessage: NWSocket.maxMessage, strict: false)
 
     static func closePayload(_ code: Int, _ reason: String) -> Data {
-        Data([UInt8(code >> 8 & 0xff), UInt8(code & 0xff)]) + Data(reason.utf8.prefix(120))
+        WebSocketFrames.closePayload(UInt16(truncatingIfNeeded: code), reason, maxReason: 120)
     }
 
-    static func frame(_ opcode: UInt8, _ payload: Data) -> Data {
-        var frame = Data([0x80 | opcode])
-        let count = payload.count
-        if count < 126 {
-            frame.append(0x80 | UInt8(count))
-        } else if count <= 0xffff {
-            frame.append(contentsOf: [0x80 | 126, UInt8(count >> 8), UInt8(count & 0xff)])
-        } else {
-            frame.append(0x80 | 127)
-            frame.append(contentsOf: (0..<8).reversed().map { UInt8(UInt64(count) >> (UInt64($0) * 8) & 0xff) })
-        }
-        let mask = (0..<4).map { _ in UInt8.random(in: 0...255) }
-        frame.append(contentsOf: mask)
-        var masked = [UInt8](payload)
-        for index in masked.indices { masked[index] ^= mask[index & 3] }
-        frame.append(contentsOf: masked)
-        return frame
-    }
+    static func frame(_ opcode: WebSocketFrames.Opcode, _ payload: Data) -> Data { WebSocketFrames.frame(opcode, payload, from: .client) }
 
     mutating func feed(_ data: Data) -> [Frame] {
-        buffer.append(data)
-        var frames: [Frame] = []
-        while let (frame, used) = next() {
-            buffer.removeFirst(used)
-            guard let frame else { continue }
-            frames.append(frame)
-            if frame == .invalid { buffer = Data(); break }
-        }
-        return frames
-    }
-
-    /// The next whole frame and the bytes it took; a nil frame is a fragment kept for later.
-    private mutating func next() -> (Frame?, Int)? {
-        let head = [UInt8](buffer.prefix(10))
-        guard head.count >= 2 else { return nil }
-        let fin = head[0] & 0x80 != 0
-        let opcode = head[0] & 0x0f
-        // A server never masks.
-        if head[1] & 0x80 != 0 { return (.invalid, 0) }
-        var length = Int(head[1] & 0x7f)
-        var offset = 2
-        if length == 126 {
-            guard head.count >= 4 else { return nil }
-            length = Int(head[2]) << 8 | Int(head[3]); offset = 4
-        } else if length == 127 {
-            guard head.count >= 10 else { return nil }
-            length = head[2..<10].reduce(0) { $0 << 8 | Int($1) }; offset = 10
-        }
-        guard length >= 0, length <= NWSocket.maxMessage else { return (.invalid, 0) }
-        guard buffer.count >= offset + length else { return nil }
-        let payload = Data(buffer.dropFirst(offset).prefix(length))
-        let used = offset + length
-        switch opcode {
-        case 0x0:
-            guard let started = fragmentOpcode else { return (.invalid, used) }
-            fragments.append(payload)
-            guard fragments.count <= NWSocket.maxMessage else { return (.invalid, used) }
-            guard fin else { return (nil, used) }
-            fragmentOpcode = nil
-            defer { fragments = Data() }
-            return (message(started, fragments), used)
-        case 0x1, 0x2:
-            guard fragmentOpcode == nil else { return (.invalid, used) }
-            guard fin else {
-                fragmentOpcode = opcode
-                fragments = payload
-                return (nil, used)
+        frames.append(data)
+        var out: [Frame] = []
+        while let next = frames.next() {
+            guard case .success(let (opcode, payload)) = next else { out.append(.invalid); break }
+            switch opcode {
+            case .text: out.append(.message(.text(String(decoding: payload, as: UTF8.self))))
+            case .close:
+                let code = payload.count >= 2 ? Int(payload[payload.startIndex]) << 8 | Int(payload[payload.startIndex + 1]) : 1005
+                out.append(.close(code: code, reason: payload.count > 2 ? String(decoding: payload.dropFirst(2), as: UTF8.self) : nil))
+            case .ping: out.append(.ping(payload))
+            case .pong: out.append(.pong(payload))
+            case .binary, .continuation: out.append(.message(.data(payload)))
             }
-            return (message(opcode, payload), used)
-        case 0x8:
-            let code = payload.count >= 2 ? Int(payload[payload.startIndex]) << 8 | Int(payload[payload.startIndex + 1]) : 1005
-            return (.close(code: code, reason: payload.count > 2 ? String(decoding: payload.dropFirst(2), as: UTF8.self) : nil), used)
-        case 0x9: return (.ping(payload), used)
-        case 0xA: return (.pong(payload), used)
-        default: return (.invalid, used)
         }
-    }
-
-    private func message(_ opcode: UInt8, _ payload: Data) -> Frame {
-        opcode == 0x1 ? .message(.text(String(decoding: payload, as: UTF8.self))) : .message(.data(payload))
+        return out
     }
 }

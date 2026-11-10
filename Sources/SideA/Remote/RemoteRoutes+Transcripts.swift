@@ -14,12 +14,6 @@ extension RemoteRoutes {
 
     static let noImage = RemoteServer.error(404, "image_not_found", "That image isn't on the Mac any more.")
 
-    /// Ids go to the bridge as arguments, so nothing that could read as an option gets through.
-    static func safeID(_ id: String) -> Bool {
-        guard let first = id.unicodeScalars.first, CharacterSet.alphanumerics.contains(first), id.count <= 128 else { return false }
-        return id.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0)) }
-    }
-
     /// The conversation a phone's session key names: a live session's own id, or the key itself for one that ended.
     static func conversation(_ context: Context) async -> String? {
         let id = context.params["id"] ?? ""
@@ -28,7 +22,7 @@ extension RemoteRoutes {
 
     @MainActor static func conversation(_ key: SessionKey, store: AccountStore) -> String? {
         let conversation = Target(key, store: store)?.conversation ?? (key.hasPrefix("pid-") ? nil : key)
-        return conversation.flatMap { safeID($0) ? $0 : nil }
+        return conversation.flatMap { IDs.safe($0) ? $0 : nil }
     }
 
     static func bridge(_ context: Context, _ action: String, _ id: String, _ options: [String] = []) async throws -> Data {
@@ -56,11 +50,11 @@ extension RemoteRoutes {
         var options = ["--format", "remote", "--limit", String(min(max(query["limit"].flatMap(Int.init) ?? 50, 1), 200))]
         for key in ["before", "after"] {
             guard let cursor = query[key] else { continue }
-            guard safeID(cursor) else { return RemoteServer.error(400, "bad_request", "That cursor isn't one this Mac gave out.") }
+            guard IDs.safe(cursor) else { return RemoteServer.error(400, "bad_request", "That cursor isn't one this Mac gave out.") }
             options += ["--\(key)", cursor]
         }
         if let agent = query["agent"] {
-            guard safeID(agent) else { return noSession }
+            guard IDs.safe(agent) else { return noSession }
             options += ["--agent-id", agent]
         }
         do { return json(200, try RemoteTranscript.page(try await bridge(context, "show", conversation, options))) } catch { return failed(error) }
@@ -68,12 +62,12 @@ extension RemoteRoutes {
 
     @Sendable static func message(_ context: Context) async -> HTTPResponse {
         guard let seq = context.params["seq"].flatMap(Int.init), seq >= 0,
-              let generation = context.request.query["generation"], safeID(generation) else {
+              let generation = context.request.query["generation"], IDs.safe(generation) else {
             return RemoteServer.error(400, "bad_request", "Send the message's seq and generation.")
         }
         guard let conversation = await conversation(context) else { return noSession }
         var options = ["--seq", String(seq), "--generation", generation]
-        if let agent = context.request.query["agent"], safeID(agent) { options += ["--agent-id", agent] }
+        if let agent = context.request.query["agent"], IDs.safe(agent) { options += ["--agent-id", agent] }
         do {
             guard let message = try RemoteTranscript.message(try await bridge(context, "message", conversation, options)) else {
                 return RemoteServer.error(410, "cursor_expired", "This conversation changed since you loaded it. Load it again.")

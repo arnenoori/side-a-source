@@ -78,7 +78,7 @@ final class TranscriptStream {
                 if let page = try? await page(store, id, ["--limit", "1"]) { hub.advance(clients, session: session, from: nil, to: page.after) }
                 continue
             }
-            guard let page = try? await page(store, id, ["--after", cursor.raw, "--limit", String(Self.maxCatchUp)]) else { continue }
+            guard let options = Self.catchUp(after: cursor), let page = try? await page(store, id, options) else { continue }
             if page.reset || page.hasMoreAfter || page.messages.count + page.replaced.count > Self.maxCatchUp {
                 hub.transcript([.transcriptReset(sessionID: session, generation: page.generation)], to: clients)
                 continue
@@ -87,6 +87,12 @@ final class TranscriptStream {
             hub.transcript(Self.events(page, session: session, from: cursor), to: clients)
             hub.advance(clients, session: session, from: cursor, to: page.after)
         }
+    }
+
+    /// What the bridge is asked past a phone's cursor; nil for one this Mac never gave out, which the REST route refuses too.
+    static func catchUp(after cursor: Cursor) -> [String]? {
+        guard IDs.safe(cursor.raw) else { return nil }
+        return ["--after", cursor.raw, "--limit", String(maxCatchUp)]
     }
 
     private func page(_ store: AccountStore, _ id: String, _ options: [String]) async throws -> TranscriptPage {

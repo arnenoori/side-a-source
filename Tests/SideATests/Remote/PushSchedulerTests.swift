@@ -245,6 +245,23 @@ struct PushSchedulerTests {
         #expect(sealed().isEmpty)
     }
 
+    /// Remote turned off with a Live Activity up: the card ends at once and the minute's ticker stops; a preview's
+    /// credential goes too, since the next server never hears of it.
+    @MainActor @Test func turningRemoteOffEndsLiveActivitiesAndPreviews() async throws {
+        let (remote, _) = try remote(phones: ["new": [.events]])
+        var actions: [LiveActivities.Action] = []
+        remote.push.acting = { actions += $0 }
+        _ = await remote.push.register("new", PushRegistration(apnsToken: "aa", pushToStartToken: "s", activityTokens: ["a1": "t1"]))
+        #expect(remote.push.ticking)
+        _ = remote.previews.open(session: "s1", port: 5173, pid: 1, device: "new", host: "127.0.0.1:1025")
+        #expect(remote.previews.url(session: "s1", port: 5173) != nil)
+
+        remote.tearDown()
+        #expect(actions.last == .end(device: "new", activity: "a1"))
+        #expect(!remote.push.ticking)
+        #expect(remote.previews.previews.isEmpty && remote.previews.url(session: "s1", port: 5173) == nil)
+    }
+
     @Test func aNoticeWaitsOnlyForTheUserToLeave() {
         var scheduler = PushScheduler()
         #expect(scheduler.add("rotation", .notice, now: start, presence: atMac).isEmpty)

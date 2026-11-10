@@ -108,6 +108,26 @@ class CleanupTests(unittest.TestCase):
         self.assertFalse((archived / "taken").exists())
         self.assertEqual({s["id"] for s in sessions.recent(self.root)["sessions"]}, {"taken", "broken"})
 
+    def test_codex_profile_history_is_counted_archived_and_restored(self):
+        own = self.home / ".codex/sessions/2026/01/01"
+        shared = self.root / "codex-conversations/sessions/2026/01/01"
+        paths = []
+        for folder, name in ((own, "rollout-2026-01-01-mine"), (shared, "rollout-2026-01-01-profile")):
+            folder.mkdir(parents=True)
+            path = folder / f"{name}.jsonl"
+            path.write_text(json.dumps({"type": "session_meta", "payload": {"id": name[-7:], "cwd": "/code/app"}}) + "\n")
+            os.utime(path, (OLD, OLD))
+            paths.append(path)
+        report = cleanup.disk(self.root)
+        self.assertEqual((report["conversations"], report["old"]["count"]), (2, 2))
+        self.assertEqual(report["codex"], sum(path.stat().st_size for path in paths))
+        result = cleanup.archive(self.root, 90)
+        self.assertEqual(sorted(Path(m["path"]).name for m in result["moved"]), sorted(path.name for path in paths))
+        self.assertFalse(any(path.exists() for path in paths))
+        back = cleanup.restore(self.root)
+        self.assertEqual(sorted(back["restored"]), sorted(str(path) for path in paths))
+        self.assertTrue(all(path.exists() for path in paths))
+
 
 class WorktreeTests(unittest.TestCase):
     def setUp(self):

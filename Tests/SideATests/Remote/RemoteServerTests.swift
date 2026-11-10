@@ -135,8 +135,15 @@ private func ready(_ server: RemoteServer) async {
     // The controller moves to the next port on exactly this text.
     second.serve(addresses: ["127.0.0.1", "192.0.2.1"], port: port)
     let states = second.listenerStates
-    #expect(states["127.0.0.1"] == .failed("Port in use"))
+    #expect(states["127.0.0.1"] == .failed(RemoteServer.portInUse))
     #expect(states["192.0.2.1"] == .failed("The address isn't on this Mac any more"))
+}
+
+/// One port up while busy, never past nine above the base, and never past the top of the range.
+@Test func aBusyPortMovesUpWithinItsRange() {
+    #expect(RemoteController.nextPort(after: 47900, base: 47900) == 47901)
+    #expect(RemoteController.nextPort(after: 47909, base: 47900) == nil)
+    #expect(RemoteController.nextPort(after: 65_535, base: 47900) == nil)
 }
 
 @Test func pairingWaitsHaveTheirOwnBudgetAndADroppedOneIsReported() async throws {
@@ -268,6 +275,77 @@ private func ready(_ server: RemoteServer) async {
     let body = String(repeating: "x", count: 2 << 20)
     #expect(await send("POST /v1/uploads HTTP/1.1\r\n\(host)Authorization: Bearer \(token)\r\nIdempotency-Key: u1\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)",
                        within: 10) == "HTTP/1.1 200")
+}
+
+/// The head's clock stops once the head is in: a body that keeps coming takes as long as it needs, one that stops
+/// arriving ends the connection, and a head that never finishes still does.
+@Test func aSlowBodyGetsItsTimeButAStalledOneOrAStalledHeadDoesNot() async throws {
+    let keychain = try TestKeychain()
+    let token = DeviceToken.make()
+    let (server, port, pin) = try makeServer(keychain, token: token)
+    defer { server.stop() }
+    server.timeouts = .init(head: 0.6, body: 1, idle: 30)
+    let closed = OSAllocatedUnfairLock(initialState: 0)
+    server.connectionClosed = { _ in closed.withLock { $0 += 1 } }
+    await ready(server)
+    let head = "POST /v1/uploads HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nAuthorization: Bearer \(token)\r\nIdempotency-Key: u1\r\n"
+
+    let slow = PinnedClient(port: port, pin: pin)
+    defer { slow.close() }
+    slow.send(head + "Content-Length: 8\r\n\r\n")
+    // Two seconds of body, a byte every quarter second: well past the head's time, never past the body's.
+    for _ in 0..<8 {
+        try await Task.sleep(for: .milliseconds(250))
+        slow.send("x")
+    }
+    #expect(await slow.text(until: "\r\n", within: 10).hasPrefix("HTTP/1.1 200"))
+    #expect(closed.withLock { $0 } == 0)
+
+    let stalled = PinnedClient(port: port, pin: pin)
+    defer { stalled.close() }
+    stalled.send(head + "Content-Length: 8\r\n\r\nxx")
+    #expect(await stalled.text(until: "HTTP/1.1", within: 5).isEmpty)
+    #expect(closed.withLock { $0 } == 1)
+
+    let loris = PinnedClient(port: port, pin: pin)
+    defer { loris.close() }
+    loris.send("GET /v1/sessions HTTP/1.1\r\n")
+    for _ in 0..<4 {
+        try await Task.sleep(for: .milliseconds(250))
+        loris.send("X-Slow: 1\r\n")
+    }
+    #expect(await loris.text(until: "HTTP/1.1", within: 5).isEmpty)
+    #expect(closed.withLock { $0 } == 2)
+}
+
+/// A device revoked or paired again under the same id proves its token afresh, so its new record is seen.
+@Test func aDevicePairedAgainIsVouchedForAgain() async throws {
+    let keychain = try TestKeychain()
+    let token = DeviceToken.make()
+    let (server, port, pin) = try makeServer(keychain, token: token)
+    defer { server.stop() }
+    let seen = OSAllocatedUnfairLock(initialState: [String]())
+    server.authenticated = { id in seen.withLock { $0.append(id) } }
+    await ready(server)
+    func get(_ token: String) async -> String {
+        let client = PinnedClient(port: port, pin: pin)
+        defer { client.close() }
+        client.send("GET /v1/sessions HTTP/1.1\r\nHost: 127.0.0.1:\(port)\r\nAuthorization: Bearer \(token)\r\n\r\n")
+        return String(await client.text(until: "\r\n", within: 10).prefix(12))
+    }
+    #expect(await get(token) == "HTTP/1.1 200")
+    #expect(await get(token) == "HTTP/1.1 200")
+    #expect(seen.withLock { $0 } == ["d1"])
+
+    server.revoke("d1")
+    server.setDevices([(id: "d1", hash: DeviceToken.hash(token))])
+    #expect(await get(token) == "HTTP/1.1 200")
+    #expect(seen.withLock { $0 } == ["d1", "d1"])
+
+    let again = DeviceToken.make()
+    server.setDevices([(id: "d1", hash: DeviceToken.hash(again))])
+    #expect(await get(again) == "HTTP/1.1 200")
+    #expect(seen.withLock { $0 } == ["d1", "d1", "d1"])
 }
 
 /// A resend after a lost response carries the same key and the same signature: its stored answer comes back without

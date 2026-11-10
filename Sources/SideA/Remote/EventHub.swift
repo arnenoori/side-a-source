@@ -28,6 +28,8 @@ final class EventHub: @unchecked Sendable {
     private final class Client {
         let peer: WebSocketPeer
         var ready = false
+        /// Its `hello` came; the welcome follows a main-actor hop, and a second `hello` meanwhile gets none.
+        var greeted = false
         var subscriptions: [SessionKey: Cursor?] = [:]
         var order: [SessionKey] = []
         var presence: Presence?
@@ -82,7 +84,8 @@ final class EventHub: @unchecked Sendable {
         }
         switch decoded {
         case .hello(let epoch, let lastSeq, let capabilities):
-            guard !client.ready else { return }
+            guard !client.greeted else { return }
+            client.greeted = true
             greeted?(client.peer.device, capabilities)
             welcome(client, epoch: epoch, lastSeq: lastSeq)
         case .subscribe(let sessions):

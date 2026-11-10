@@ -1038,7 +1038,7 @@ The Settings tab, between Accounts and Search. Inset grouped `Form`.
   searching, and edits inside the project. Commands, MCP tools and anything that widens
   permissions need the iPhone unlocked. Destructive requests need Face ID in the app." The Mac
   decides each request's gate; the phone can't loosen it.
-- **Terminal:** font size stepper with live preview, "Predictive echo" toggle.
+- **Terminal:** font size stepper with live preview.
 - **About:** version, "What's new", Privacy (the app collects nothing; session traffic stays
   between the iPhone and the Mac; the push relay sees only device tokens and ciphertext),
   **Acknowledgements** (SwiftTerm MIT, Codeman MIT, Paseo Apache-2.0 with changed-file notice,

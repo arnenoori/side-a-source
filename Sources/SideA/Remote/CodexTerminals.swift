@@ -524,6 +524,11 @@ final class CodexTerminals {
     private func drop(_ link: Link) {
         link.retry?.cancel(); link.retry = nil
         link.client?.close(); link.client = nil
+        reset(link)
+    }
+
+    /// What a link knew through its connection goes with it; the approvals it held are withdrawn.
+    private func reset(_ link: Link) {
         link.threads = [:]
         link.attaching = []
         link.loaded = nil
@@ -574,13 +579,7 @@ final class CodexTerminals {
             guard link.client != nil || link.connecting else { return }
             RemoteLog.shared("codex app server at \(link.home): closed")
             link.client = nil
-            link.threads = [:]
-            link.attaching = []
-            link.loaded = nil
-            link.models = nil
-            link.costs = true
-            for approval in link.approvals.values { store?.island.withdraw(approval.id, by: .gone) }
-            link.approvals = [:]
+            reset(link)
             store?.remote.events?.liveChanged()
             link.failures += 1
             again(link)

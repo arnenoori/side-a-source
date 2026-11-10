@@ -22,9 +22,20 @@ final class RemoteServer: @unchecked Sendable {
 
     static let maxConnections = 64
     static let requestsPerConnection = 1_000
-    static let headerTime: TimeInterval = 10
-    static let idleTime: TimeInterval = 30
     static let socketsPerDevice = 4
+
+    /// A request's head has `head` seconds from its first byte; its body may go `body` seconds without a byte, so a
+    /// large upload over a slow link takes as long as it keeps coming; a connection with nothing to do goes after `idle`.
+    struct Timeouts: Sendable {
+        var head: TimeInterval = 10
+        var body: TimeInterval = 30
+        /// A whole upload, however steadily it arrives.
+        var upload: TimeInterval = 600
+        var idle: TimeInterval = 30
+    }
+
+    /// Tests shorten these.
+    var timeouts = Timeouts()
 
     let queue = DispatchQueue(label: "com.arnenoori.sidea.remote")
     let epoch: String
@@ -211,16 +222,19 @@ final class RemoteServer: @unchecked Sendable {
 
     private func report() { stateChanged?(states) }
 
+    /// What a listener on a taken port fails with; the controller moves up a port on it.
+    static let portInUse = "Port in use"
+
     static func describe(_ error: Error) -> String {
         switch (error as? POSIXError)?.code {
-        case .EADDRINUSE?: "Port in use"
+        case .EADDRINUSE?: portInUse
         case .EADDRNOTAVAIL?: "The address isn't on this Mac any more"
         default: (error as? NWError).map(describe) ?? error.localizedDescription
         }
     }
 
     static func describe(_ error: NWError) -> String {
-        if case .posix(let code) = error, code == .EADDRINUSE { return "Port in use" }
+        if case .posix(let code) = error, code == .EADDRINUSE { return portInUse }
         if case .posix(let code) = error, code == .EADDRNOTAVAIL { return "The address isn't on this Mac any more" }
         return error.localizedDescription
     }
@@ -240,6 +254,8 @@ final class RemoteServer: @unchecked Sendable {
             self.devices = devices
             confirmKeys = keys
             let ids = Set(devices.map(\.id))
+            // A device paired again, or paired anew after a revoke, proves its new token afresh.
+            vouched = vouched.filter { ids.contains($0) && !replaced.contains($0) }
             for socket in sockets.values where !ids.contains(socket.device) || replaced.contains(socket.device) {
                 socket.close(4401, replaced.contains(socket.device) ? "replaced" : "revoked")
             }
@@ -252,6 +268,7 @@ final class RemoteServer: @unchecked Sendable {
     func revoke(_ device: String) {
         queue.async { [self] in
             devices?.removeAll { $0.id == device }
+            vouched.remove(device)
             for socket in sockets.values where socket.device == device { socket.close(4401, "revoked") }
             idempotency.forget(device: device)
             previews = previews.filter { $0.value.device != device }
@@ -612,11 +629,12 @@ final class HTTPConnection: @unchecked Sendable {
     let id: UInt64
     private let connection: NWConnection
     private weak var server: RemoteServer?
-    private lazy var parser = HTTPParser { [weak server] head in
-        // Nil from the server means the parser's usual limit; no server, a stranger's.
-        guard let server else { return RemoteServer.unauthenticatedBody }
-        return server.bodyLimit(head)
+    private lazy var parser = HTTPParser { [weak self] head in
+        guard let self else { return RemoteServer.unauthenticatedBody }
+        return headIn(head)
     }
+    /// Heads parsed whose body hasn't all arrived.
+    private var unfinished = 0
     private var queued: [HTTPRequest] = []
     /// Reading stops while this many requests, or bytes of them, wait behind a slow one, and goes on as they drain.
     static let maxQueued = 4
@@ -627,6 +645,7 @@ final class HTTPConnection: @unchecked Sendable {
     private var served = 0
     private var closing = false
     private var headTimer: DispatchWorkItem?
+    private var bodyTimer: DispatchWorkItem?
     private var idleTimer: DispatchWorkItem?
     private(set) var lastActive = Date()
     private var peer: WebSocketPeer?
@@ -645,7 +664,7 @@ final class HTTPConnection: @unchecked Sendable {
     private let opened = Date()
     private var secured = false
 
-    var idle: Bool { !busy && queued.isEmpty && peer == nil }
+    var idle: Bool { !busy && queued.isEmpty && peer == nil && unfinished == 0 }
 
     init(id: UInt64, connection: NWConnection, server: RemoteServer, peer: String = "", source: String = "", loopback: UInt16? = nil) {
         self.id = id; self.connection = connection; self.server = server; from = peer; known = source; self.loopback = loopback
@@ -654,6 +673,7 @@ final class HTTPConnection: @unchecked Sendable {
     private func milliseconds(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
     private var queue: DispatchQueue { server?.queue ?? .main }
+    private var timeouts: RemoteServer.Timeouts { server?.timeouts ?? RemoteServer.Timeouts() }
 
     func start() {
         connection.stateUpdateHandler = { [weak self] state in
@@ -683,7 +703,7 @@ final class HTTPConnection: @unchecked Sendable {
         ended = true
         RemoteLog.shared("#\(id) closed after \(milliseconds(since: opened)) ms, \(served) request\(served == 1 ? "" : "s")"
                          + (secured ? "" : ", before TLS finished"))
-        headTimer?.cancel(); idleTimer?.cancel()
+        headTimer?.cancel(); bodyTimer?.cancel(); idleTimer?.cancel()
         server?.closed(id)
     }
 
@@ -710,14 +730,11 @@ final class HTTPConnection: @unchecked Sendable {
         lastActive = Date()
         if let peer { peer.received(data); return }
         guard !closing else { return }
-        if headTimer == nil && !busy {
-            let timer = DispatchWorkItem { [weak self] in self?.cancel() }
-            headTimer = timer
-            queue.asyncAfter(deadline: .now() + RemoteServer.headerTime, execute: timer)
-        }
+        if headTimer == nil && !busy && unfinished == 0 { headTimer = cancel(after: timeouts.head) }
         for result in parser.feed(data) {
             switch result {
             case .success(let request):
+                unfinished -= 1
                 queued.append(request)
                 queuedBytes += request.body.count
             case .failure(let error):
@@ -729,7 +746,31 @@ final class HTTPConnection: @unchecked Sendable {
                 return
             }
         }
+        // Each byte of a body puts its clock back: only a body that stops arriving ends the connection.
+        bodyTimer?.cancel()
+        bodyTimer = unfinished > 0 ? cancel(after: timeouts.body) : nil
         next()
+    }
+
+    /// On the queue, from the parser: the head is in. Only an upload's clock changes, to one long enough for a
+    /// photo over cellular; anything else still has to arrive whole within the head's time, so a stranger
+    /// can't hold a connection by sending a byte now and then.
+    private func headIn(_ head: HTTPRequest) -> Int? {
+        unfinished += 1
+        // Nil from the server means the parser's usual limit; no server, a stranger's.
+        guard let server else { return RemoteServer.unauthenticatedBody }
+        let limit = server.bodyLimit(head)
+        if limit == RemoteServer.uploadBody {
+            headTimer?.cancel()
+            headTimer = cancel(after: timeouts.upload)
+        }
+        return limit
+    }
+
+    private func cancel(after seconds: TimeInterval) -> DispatchWorkItem {
+        let timer = DispatchWorkItem { [weak self] in self?.cancel() }
+        queue.asyncAfter(deadline: .now() + seconds, execute: timer)
+        return timer
     }
 
     private func next() {
@@ -764,7 +805,7 @@ final class HTTPConnection: @unchecked Sendable {
             self.cancel()
         }
         idleTimer = timer
-        queue.asyncAfter(deadline: .now() + RemoteServer.idleTime, execute: timer)
+        queue.asyncAfter(deadline: .now() + timeouts.idle, execute: timer)
     }
 
     private func write(_ response: HTTPResponse, close: Bool) {
@@ -779,7 +820,7 @@ final class HTTPConnection: @unchecked Sendable {
     func upgrade(_ response: HTTPResponse, to peer: WebSocketPeer) {
         self.peer = peer
         busy = false
-        idleTimer?.cancel(); headTimer?.cancel()
+        idleTimer?.cancel(); headTimer?.cancel(); bodyTimer?.cancel()
         connection.send(content: response.encoded(close: false), completion: .contentProcessed { _ in })
         let rest = parser.takeRemainder()
         if !rest.isEmpty { peer.received(rest) }

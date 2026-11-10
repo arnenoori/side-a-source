@@ -110,7 +110,7 @@ func remoteHarness() async throws {
 
     func invite() {
         remote.beginPairing()
-        guard let link = remote.qrLink, let pairing = remote.pairing else { return say("no invitation: \(remote.error ?? "no address")") }
+        guard let link = remote.qrLink, let pairing = remote.pairing else { return say("no invitation: \(remote.key.problem ?? remote.error ?? "no address")") }
         say("link \(link)")
         say("code \(pairing.code.code)")
         if let out = env["SIDEA_HARNESS_OUT"] {

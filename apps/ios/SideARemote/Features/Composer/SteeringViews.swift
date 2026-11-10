@@ -109,7 +109,7 @@ struct OutgoingBubble: View {
 
     private var menu: [SelectableText.Action] {
         let copy = SelectableText.Action(title: "Copy", image: "doc.on.doc") { UIPasteboard.general.string = turn.text }
-        if case .offline = model.mac.state { return [copy] }
+        if model.mac.isOffline { return [copy] }
         guard turn.state == .note else { return [copy] }
         return [
             .init(title: "Edit", image: "pencil") { takeBack(keepText: true) },
@@ -131,7 +131,7 @@ struct MailLine: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var taking = false
 
-    private var offline: Bool { if case .offline = model.mac.state { true } else { false } }
+    private var offline: Bool { model.mac.isOffline }
 
     private var withdraw: String { mail.kind == .stop ? "Cancel Stop" : "Delete Note" }
 

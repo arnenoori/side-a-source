@@ -48,3 +48,19 @@ import Testing
     #expect(island.respond(.deny(nil), nil, quietly: true))
     #expect(island.pending.isEmpty)
 }
+
+/// ⌃⌥N on a plan is Keep Planning, as its button says: the plan stays and its field opens. Anything else is denied.
+@MainActor @Test func controlOptionNOnAPlanKeepsPlanning() throws {
+    let island = AccountStore(demo: true).island
+    let data = try JSONSerialization.data(withJSONObject: ["v": 1, "agent": "claude", "pid": 970, "slot": "mac", "request": [
+        "session_id": "s-plan", "tool_name": "ExitPlanMode", "cwd": "/tmp/app", "tool_input": ["plan": "# Plan\n1. Do it"],
+    ]])
+    let plan = island.add(try #require(IslandRequest(message: data)), account: nil) { _ in }
+    island.deny()
+    #expect(island.pending.map(\.id) == [plan] && island.revising == plan)
+    island.withdraw(plan, by: .terminal)
+    #expect(island.revising == nil)
+    let ids = try requests(1, in: island)
+    island.deny()
+    #expect(!island.pending.contains { $0.id == ids[0] })
+}

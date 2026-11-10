@@ -182,7 +182,7 @@ struct PairingFailure: Equatable {
     init?(_ hello: Hello, macName mac: String, clientBuild: Int) {
         switch hello.needsUpdate(clientBuild: clientBuild) {
         case .client: self.init(title: "Update Side A Remote to pair with this Mac.", primary: .appStore)
-        case .mac: self.init(title: "Update Side A on your Mac to 0.6 or later.", primary: .tryAgain)
+        case .mac: self.init(title: "Update Side A on your Mac.", primary: .tryAgain)
         case nil:
             guard !hello.remoteOn else { return nil }
             self.init(title: "Turn on Remote in Side A on \(mac).", primary: .tryAgain)
@@ -211,7 +211,7 @@ struct PairingFailure: Equatable {
         case .upgradeClient:
             Self(title: "Update Side A Remote to pair with this Mac.", primary: .appStore)
         case .upgradeMac:
-            Self(title: "Update Side A on your Mac to 0.6 or later.", primary: .tryAgain)
+            Self(title: "Update Side A on your Mac.", primary: .tryAgain)
         case .remoteOff:
             Self(title: "Turn on Remote in Side A on \(mac).", primary: .tryAgain)
         default:

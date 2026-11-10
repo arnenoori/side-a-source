@@ -92,8 +92,8 @@ struct NewSessionSheet: View {
     }
 
     private func load() async {
-        async let found = RemoteRoutes.projectList(store.remote)
-        async let agents = RemoteRoutes.agentOptions(store.remote)
+        async let found = RemoteProjects.list(store.remote)
+        async let agents = RemoteOptions.agents(store.remote)
         options = await agents ?? []
         projects = await found
         if cwd.isEmpty { cwd = projects?.first?.path ?? "" }

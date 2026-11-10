@@ -214,10 +214,7 @@ private struct EveryMacResults: View {
     private var done: Bool { macs.allSatisfy { searches[$0.macID]?.query == query || isOffline($0) } }
     private var empty: Bool { macs.allSatisfy { searches[$0.macID]?.results.isEmpty != false } }
 
-    private func isOffline(_ mac: AppModel) -> Bool {
-        if case .offline = mac.mac.state { return !mac.isDemo }
-        return false
-    }
+    private func isOffline(_ mac: AppModel) -> Bool { mac.mac.isOffline && !mac.isDemo }
 
     var body: some View {
         List {
@@ -370,10 +367,7 @@ private struct HistoryResults: View {
     let query: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var offline: Bool {
-        if case .offline = model.mac.state { return !model.isDemo }
-        return false
-    }
+    private var offline: Bool { model.mac.isOffline && !model.isDemo }
 
     var body: some View {
         List {

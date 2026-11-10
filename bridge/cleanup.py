@@ -8,7 +8,6 @@ one whose commit no branch, tag or remote has, and one holding ignored files suc
 a build can't bring back.
 """
 from __future__ import annotations
-import json
 import os
 from pathlib import Path
 import shutil
@@ -25,13 +24,31 @@ REGENERABLE = {"node_modules", ".build", "build", "dist", ".venv", "__pycache__"
                ".cache", ".DS_Store"}
 
 
-def stores():
-    home = Path.home()
-    return (("claude", home / ".claude" / "projects"), ("codex", home / ".codex" / "sessions"))
+def stores(root=None):
+    """Where transcripts live: Claude's projects, and every Codex sessions folder the session index reads."""
+    import sessions
+    return (("claude", Path.home() / ".claude" / "projects"),) + tuple(("codex", folder) for folder in sessions.codex_session_folders(root))
 
 
 def archive_dir(root):
     return Path(root) / "archive"
+
+
+# Codex profiles' shared history lives in Side A's own folder, which need not be under the home folder.
+OWN = ".side-a-root"
+
+
+def archived_path(root, item):
+    try:
+        relative = item.relative_to(Path.home())
+    except ValueError:
+        relative = Path(OWN) / item.relative_to(root)
+    return archive_dir(root) / relative
+
+
+def original_path(root, item):
+    relative = item.relative_to(archive_dir(root))
+    return Path(root).joinpath(*relative.parts[1:]) if relative.parts[0] == OWN else Path.home() / relative
 
 
 def size_of(path):
@@ -48,22 +65,13 @@ def size_of(path):
 
 def running_ids():
     """Session ids of Claude Code processes still alive, from its registry."""
-    ids = set()
-    folder = Path.home() / ".claude" / "sessions"
-    for path in folder.glob("*.json") if folder.is_dir() else []:
-        try:
-            data = json.loads(path.read_text())
-            os.kill(int(data["pid"]), 0)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        if data.get("sessionId"):
-            ids.add(data["sessionId"])
-    return ids
+    import sessions
+    return {data["sessionId"] for data, _ in sessions.running_claude() if isinstance(data.get("sessionId"), str)}
 
 
-def transcripts():
+def transcripts(root=None):
     """Each conversation as (agent, transcript, companion folder or None, session id)."""
-    for agent, folder in stores():
+    for agent, folder in stores(root):
         if not folder.is_dir():
             continue
         if agent == "claude":
@@ -80,10 +88,10 @@ def kept(session_id, skip):
     return session_id in skip or any(session_id.endswith("-" + item) for item in skip)
 
 
-def old_conversations(days=DAYS, keep=()):
+def old_conversations(root, days=DAYS, keep=()):
     cutoff = time.time() - float(days) * 86400
     skip = set(keep) | running_ids()
-    for agent, path, companion, session_id in transcripts():
+    for agent, path, companion, session_id in transcripts(root):
         try:
             mtime = path.stat().st_mtime
         except OSError:
@@ -107,13 +115,13 @@ def project_paths(root):
 
 def disk(root, days=DAYS, keep=()):
     names = project_paths(root)
-    totals, projects = {}, []
-    for agent, folder in stores():
-        totals[agent] = 0
+    projects = []
+    totals = {"claude": 0, "codex": 0}
+    for agent, folder in stores(root):
         if not folder.is_dir():
             continue
         if agent == "codex":
-            totals[agent] = size_of(folder)
+            totals[agent] += size_of(folder)
             continue
         for project in folder.iterdir():
             if not project.is_dir():
@@ -123,9 +131,9 @@ def disk(root, days=DAYS, keep=()):
             projects.append({"folder": project.name, "path": names.get(project.name), "bytes": bytes_,
                              "conversations": sum(1 for _ in project.glob("*.jsonl"))})
     projects.sort(key=lambda item: -item["bytes"])
-    old = list(old_conversations(days, keep))
+    old = list(old_conversations(root, days, keep))
     archived = [p for p in archive_dir(root).rglob("*.jsonl") if "subagents" not in p.parts] if archive_dir(root).is_dir() else []
-    conversations = sum(item["conversations"] for item in projects) + sum(1 for agent, *_ in transcripts() if agent == "codex")
+    conversations = sum(item["conversations"] for item in projects) + sum(1 for agent, *_ in transcripts(root) if agent == "codex")
     return {"total": sum(totals.values()), "claude": totals["claude"], "codex": totals["codex"], "projects": projects[:30],
             "conversations": conversations,
             "old": {"days": days, "count": len(old), "bytes": sum(item[3] for item in old)},
@@ -150,11 +158,10 @@ def jsonl_in(path):
 def archive(root, days=DAYS, keep=()):
     """Moves each old transcript, then its companion folder; only what actually moved is counted.
     A destination that already exists is left alone, and the index is updated even when a move fails."""
-    home, target = Path.home(), archive_dir(root)
     moved, freed, gone, errors = [], 0, [], []
 
     def move(item):
-        destination = target / item.relative_to(home)
+        destination = archived_path(root, item)
         if destination.exists():
             return None
         files, bytes_ = jsonl_in(item), size_of(item)
@@ -169,7 +176,7 @@ def archive(root, days=DAYS, keep=()):
 
     reindexed = True
     try:
-        for agent, path, companion, _ in list(old_conversations(days, keep)):
+        for agent, path, companion, _ in list(old_conversations(root, days, keep)):
             bytes_ = move(path)
             if bytes_ is None:
                 continue
@@ -184,14 +191,14 @@ def archive(root, days=DAYS, keep=()):
 
 
 def restore(root):
-    home, source = Path.home(), archive_dir(root)
+    source = archive_dir(root)
     restored, skipped, back = [], [], []
     if not source.is_dir():
         return {"restored": [], "skipped": [], "reindexed": True}
     # Transcripts and their companion folders move back as the units archive() moved.
     units = []
-    for agent, folder in stores():
-        base = source / folder.relative_to(home)
+    for agent, folder in stores(root):
+        base = archived_path(root, folder)
         if not base.is_dir():
             continue
         if agent == "claude":
@@ -199,7 +206,7 @@ def restore(root):
         else:
             units += list(base.glob("**/rollout-*.jsonl"))
     for item in units:
-        destination = home / item.relative_to(source)
+        destination = original_path(root, item)
         if destination.exists():
             skipped.append(str(destination))
             continue
@@ -300,16 +307,8 @@ def cwds_in_use():
             pid = int(line[1:]) if line[1:].isdigit() else None
         elif line.startswith("n") and pid not in (None, os.getpid()):
             found.add(os.path.realpath(line[1:]))
-    folder = Path.home() / ".claude" / "sessions"
-    for path in folder.glob("*.json") if folder.is_dir() else []:
-        try:
-            data = json.loads(path.read_text())
-            pid = int(data["pid"])
-            if pid <= 1:
-                continue
-            os.kill(pid, 0)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
+    import sessions
+    for data, _ in sessions.running_claude():
         if isinstance(data.get("cwd"), str):
             found.add(os.path.realpath(data["cwd"]))
     return found

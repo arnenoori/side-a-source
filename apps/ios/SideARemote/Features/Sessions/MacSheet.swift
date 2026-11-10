@@ -25,12 +25,16 @@ struct MacSheet: View {
                             Text(mac.lastSeen, format: .relative(presentation: .named))
                         }
                     }
-                    LabeledContent("Power", value: mac.onPower ? "On power" : "On battery · \(mac.battery ?? 0)%")
-                    LabeledContent("Memory") {
-                        Text(String(format: "%.1f of %.0f GB", mac.memoryUsed, mac.memoryTotal)).monospacedDigit()
+                    if let onPower = mac.onPower {
+                        LabeledContent("Power", value: onPower ? "On power" : "On battery · \(mac.battery ?? 0)%")
+                    }
+                    if let used = mac.memoryUsed, let total = mac.memoryTotal {
+                        LabeledContent("Memory") {
+                            Text(String(format: "%.1f of %.0f GB", used, total)).monospacedDigit()
+                        }
                     }
                 }
-                if model.tools.can(.mac) {
+                if model.tools.can(.mac), mac.keepAwake != nil {
                     Section {
                         Toggle("Keep Awake While Agents Work", systemImage: "cup.and.saucer", isOn: keepAwake)
                             .tint(.green)
@@ -60,7 +64,7 @@ struct MacSheet: View {
 
     /// The Mac's own setting: shown flipped at once, and set back if the Mac says no.
     private var keepAwake: Binding<Bool> {
-        Binding { model.mac.keepAwake } set: { on in
+        Binding { model.mac.keepAwake ?? false } set: { on in
             let mac = model.mac, tools = model.tools
             mac.keepAwake = on
             keepAwakeError = nil

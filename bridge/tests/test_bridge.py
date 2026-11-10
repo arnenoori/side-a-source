@@ -227,6 +227,39 @@ class BridgeTests(unittest.TestCase):
             self.assertTrue(bridge.limit_marker(self.root).exists())
             bridge.set_limit_hook(self.root,False)
             self.assertEqual(bridge.read_json(home/'.claude/settings.json'),{'model':'opus','hooks':{'StopFailure':[mine]}})
+    def test_settings_keep_their_text_and_are_not_rewritten_when_nothing_changes(self):
+        home=self.root/'home'; (home/'.claude').mkdir(parents=True); (home/'.codex').mkdir()
+        path=home/'.claude/settings.json'
+        text='{\n    "statusLine": {"type": "command", "command": "echo café ✓"},\n    "env": {"GREETING": "こんにちは"}\n}\n'
+        path.write_text(text,encoding='utf-8')
+        with patch.object(Path,'home',return_value=home), patch.dict(os.environ,{'CODEX_HOME':''}):
+            for off in (lambda: bridge.island_state(self.root,['claude','codex'],'off'), lambda: bridge.set_limit_hook(self.root,False),
+                        lambda: bridge.set_inbox(self.root,False), lambda: bridge.set_live(self.root,False)):
+                off()
+                self.assertEqual(path.read_text(encoding='utf-8'),text)
+            self.assertFalse((home/'.codex/hooks.json').exists())
+            bridge.set_limit_hook(self.root,True)
+            written=path.read_text(encoding='utf-8')
+            self.assertIn('café ✓',written); self.assertIn('こんにちは',written); self.assertNotIn('\\u',written)
+            bridge.set_limit_hook(self.root,False)
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8')),json.loads(text))
+    def test_hook_edits_step_around_entries_they_dont_recognise(self):
+        home=self.root/'home'; (home/'.claude').mkdir(parents=True)
+        odd={'model':'opus','hooks':{'StopFailure':['not a group',{'matcher':'x'},{'hooks':'nope'},{'hooks':[7,{'command':None},{'type':'command','command':'mine'}]}],
+                                      'SessionStart':[None]}}
+        bridge.atomic_json(home/'.claude/settings.json',odd)
+        with patch.object(Path,'home',return_value=home):
+            self.assertFalse(bridge.limit_hook_installed()); self.assertFalse(bridge.inbox_installed()); self.assertFalse(bridge.island_installed('claude'))
+            bridge.set_limit_hook(self.root,True)
+            self.assertTrue(bridge.limit_hook_installed())
+            bridge.set_limit_hook(self.root,False)
+            self.assertEqual(bridge.read_json(home/'.claude/settings.json'),odd)
+            for value in ([1,2],{'hooks':[1]},{'hooks':{'StopFailure':{'x':1}}}):
+                bridge.atomic_json(home/'.claude/settings.json',value)
+                self.assertFalse(bridge.limit_hook_installed())
+                with self.assertRaisesRegex(ValueError,'left it unchanged'):
+                    bridge.set_limit_hook(self.root,True)
+                self.assertEqual(bridge.read_json(home/'.claude/settings.json'),value)
     def test_island_hook_installs_beside_the_users_hooks_for_both_clis_and_removes_cleanly(self):
         home=self.root/'home'; (home/'.claude').mkdir(parents=True); (home/'.codex').mkdir()
         mine={'matcher':'Bash','hooks':[{'type':'command','command':'my-guard'}]}
@@ -766,6 +799,22 @@ class BridgeTests(unittest.TestCase):
         with patch.object(Path,'home',return_value=Path(self.temp.name)/'home'), patch.object(bridge.time,'time',return_value=(folder/'rollout.jsonl').stat().st_mtime):
             result=bridge.report(self.root,days=10000)
         self.assertEqual([(r['input'],r['output']) for r in result['models']],[(160,35)])
+
+    def test_codex_usage_includes_profile_sessions_once(self):
+        sys.path.insert(0,str(Path(bridge.__file__).parent))
+        home=Path(self.temp.name)/'home'
+        tc=lambda out:json.dumps({'timestamp':'2026-10-01T15:00:05Z','type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':10,'output_tokens':out}}}})
+        own=home/'.codex/sessions/2026/10/01'; own.mkdir(parents=True)
+        (own/'rollout-a.jsonl').write_text(tc(3)+'\n')
+        shared=self.root/'codex-conversations/sessions/2026/10/01'; shared.mkdir(parents=True)
+        (shared/'rollout-b.jsonl').write_text(tc(4)+'\n')
+        run=lambda root:bridge.report(root,days=10000)
+        with patch.object(Path,'home',return_value=home), patch.object(bridge.time,'time',return_value=(shared/'rollout-b.jsonl').stat().st_mtime):
+            self.assertEqual(sum(r['output'] for r in run(self.root)['days']),7)
+            # A profile folder whose sessions link to ~/.codex/sessions holds the same rollouts.
+            linked=Path(self.temp.name)/'linked'; (linked/'codex-conversations').mkdir(parents=True)
+            (linked/'codex-conversations/sessions').symlink_to(home/'.codex/sessions')
+            self.assertEqual(sum(r['output'] for r in run(linked)['days']),3)
 
     def test_two_macs_share_totals_through_sync_folder_without_logins(self):
         sync=Path(self.temp.name)/'icloud'
@@ -1405,6 +1454,19 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
             with self.assertRaisesRegex(ValueError,'Sign in to Alpha again'): bridge.renew(self.root,{'accounts':[a]},a)
             writer.assert_not_called()
 
+    def test_sessions_serve_answers_an_unexpected_error_and_keeps_serving(self):
+        failures=iter([AttributeError("'str' object has no attribute 'get'"),IndexError('list index out of range'),None])
+        def run(root,args):
+            error=next(failures)
+            if error: raise error
+            return {'ok':args.text}
+        stdin=io.StringIO(''.join(json.dumps({'id':n,'args':['show','s1']})+'\n' for n in range(3)))
+        stdout=io.StringIO()
+        with patch.object(bridge,'run_sessions',side_effect=run), patch.object(sys,'stdin',stdin), patch.object(sys,'stdout',stdout):
+            bridge.serve_sessions(self.root,bridge.build_parser().sessions)
+        replies=[json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([(r['id'],r.get('error'),r.get('result')) for r in replies],
+                         [(0,"'str' object has no attribute 'get'",None),(1,'list index out of range',None),(2,None,{'ok':'s1'})])
     def test_sessions_serve_takes_the_id_after_options_on_the_system_python_too(self):
         home=self.root/'home'; project=home/'.claude/projects/-code-app'; project.mkdir(parents=True)
         lines=[{'type':'user','uuid':'u1','timestamp':'2026-10-01T10:00:00Z','cwd':'/code/app','message':{'content':'Add search'}},

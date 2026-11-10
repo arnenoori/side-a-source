@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
@@ -22,13 +23,36 @@ def api(path, data=None):
     return json.loads(result.stdout)
 
 
-def require_newer_feed(previous, current):
+def builds(data):
     namespace = {"s": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
-    def build(data):
-        return max(int(item.findtext("s:version", namespaces=namespace))
-                   for item in ET.fromstring(data).findall("./channel/item"))
-    if build(current) <= build(previous) and previous != current:
+    return [int(item.findtext("s:version", namespaces=namespace)) for item in ET.fromstring(data).findall("./channel/item")]
+
+
+def require_newer_feed(previous, current):
+    if max(builds(current)) <= max(builds(previous)) and previous != current:
         raise ValueError("Cannot replace or downgrade a published update")
+
+
+def find(path):
+    """Like api, but None for a 404."""
+    result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{path}"], capture_output=True, text=True)
+    if result.returncode == 0:
+        return json.loads(result.stdout)
+    if "HTTP 404" in result.stderr:
+        return None
+    raise RuntimeError(f"gh api {path}: {result.stderr.strip()}")
+
+
+def release_state(version, build):
+    """How far a release got: "published" (stable release and a feed carrying this build),
+    "release-only" (the release is public, the feed isn't updated) or "unpublished"."""
+    release = find(f"releases/tags/v{version}")  # drafts aren't served here
+    if not release or release["draft"] or release["prerelease"]:
+        return "unpublished"
+    feed = find("contents/appcast.xml?ref=main")
+    if feed and int(build) in builds(base64.b64decode(feed["content"])):
+        return "published"
+    return "release-only"
 
 
 def main():
@@ -70,4 +94,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--state"]:
+        # scripts/ship.sh asks before dispatching, so a rerun picks up after a failed later step.
+        metadata = plistlib.loads((ROOT / "scripts/Info.plist").read_bytes())
+        print(release_state(metadata["CFBundleShortVersionString"], metadata["CFBundleVersion"]))
+    else:
+        main()

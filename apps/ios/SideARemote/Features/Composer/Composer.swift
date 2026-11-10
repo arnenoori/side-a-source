@@ -235,11 +235,15 @@ struct Composer: View {
                     Button(steer.title, systemImage: steer.symbol) { onSteer(steer) }
                 }
             } else if mode == .send, hasText, let onQueue {
-                Button("Send Now", systemImage: "arrow.up") { send() }
-                Button("Send After This Turn", systemImage: "clock") {
-                    sends += 1
-                    onQueue()
+                // Sending takes the attachment tray, so a photo still uploading would be dropped.
+                Group {
+                    Button("Send Now", systemImage: "arrow.up") { send() }
+                    Button("Send After This Turn", systemImage: "clock") {
+                        sends += 1
+                        onQueue()
+                    }
                 }
+                .disabled(uploading || offline)
             }
         }
         .accessibilityLabel(mode.accessibilityLabel)
@@ -262,7 +266,7 @@ struct Composer: View {
         }
     }
 
-    private var offline: Bool { if case .offline = model.mac.state { true } else { false } }
+    private var offline: Bool { model.mac.isOffline }
 
     /// One quiet line under the field: why nothing can be sent now, a reply that didn't go, or a steer the Mac refused.
     @ViewBuilder private var statusLine: some View {

@@ -31,9 +31,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS msgs USING fts5(text, session UNINDEXED, uuid
     ts UNINDEXED, tokenize='trigram');
 CREATE TABLE IF NOT EXISTS rows(id INTEGER PRIMARY KEY, session TEXT, role TEXT);
 CREATE INDEX IF NOT EXISTS rows_session ON rows(session);
-CREATE TABLE IF NOT EXISTS views(session TEXT, seq INTEGER, uuids TEXT, data TEXT, rev INTEGER,
-    PRIMARY KEY(session, seq)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS views(session TEXT, seq INTEGER, uuids TEXT, data TEXT, rev INTEGER, role TEXT,
+    inherited INTEGER DEFAULT 0, PRIMARY KEY(session, seq)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS views_rev ON views(session, rev);
+CREATE INDEX IF NOT EXISTS views_kind ON views(session, seq, role, inherited, uuids);
+CREATE INDEX IF NOT EXISTS views_inherited ON views(session, seq) WHERE inherited = 1;
 CREATE TABLE IF NOT EXISTS view_state(session TEXT PRIMARY KEY, path TEXT, offset INTEGER, head TEXT,
     count INTEGER, used REAL, generation TEXT, rev INTEGER, calls TEXT, agent_id TEXT);
 CREATE TABLE IF NOT EXISTS images(id TEXT NOT NULL, session TEXT NOT NULL, agent_id TEXT, path TEXT NOT NULL,
@@ -47,7 +49,8 @@ CREATE INDEX IF NOT EXISTS images_session ON images(session, ts);
 # Reading an unindexed FTS column reads the whole row, message text included, so `rows` maps each
 # message to its session; matching and deleting never touch the text. A version 3 index gets it at the
 # start of the next index pass; until then search reads the session from the FTS row.
-VERSION = 6
+# 7: the viewer's rows carry their role and whether they're inherited as columns, so no query reads `data` to filter.
+VERSION = 7
 TITLE_RANK = {"custom": 0, "codex": 1, "ai": 2, "agent": 3, "summary": 4, "prompt": 5}
 TEXT_LIMIT = 8000
 SKIP = (b'"toolUseResult"', b'"type":"attachment"', b'"type":"queue-operation"', b'"type":"file-history-',
@@ -64,16 +67,15 @@ def connect(root):
     os.chmod(path, 0o600)
     db.execute("PRAGMA journal_mode=WAL")
     version = db.execute("PRAGMA user_version").fetchone()[0]
-    if version not in (3, 4, 5, VERSION):
+    if version not in (3, 4, 5, 6, VERSION):
         db.executescript("DROP TABLE IF EXISTS files; DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS msgs; DROP TABLE IF EXISTS rows; "
                          "DROP TABLE IF EXISTS views; DROP TABLE IF EXISTS view_state; DROP TABLE IF EXISTS images;")
         db.execute(f"PRAGMA user_version={VERSION}")
-    elif version < VERSION and "rev" not in {row[1] for row in db.execute("PRAGMA table_info(views)")}:
-        # 4 to 5: the viewer's cache gains revisions. It's only a cache, so it starts over; the index stays.
+    elif version < VERSION and "inherited" not in {row[1] for row in db.execute("PRAGMA table_info(views)")}:
+        # The viewer's cache from an older version starts over in this one's shape; the search index stays.
         db.executescript("DROP TABLE IF EXISTS views; DROP TABLE IF EXISTS view_state;")
     db.executescript(SCHEMA)
-    if version in (4, 5):
-        # 6 shows follow-ups that reached a busy session: the search index stays, conversations are read again.
+    if version in (4, 5, 6):
         db.executescript(f"DELETE FROM views; DELETE FROM view_state; PRAGMA user_version={VERSION};")
     return db
 
@@ -174,18 +176,34 @@ def codex_homes(root=None):
             yield home
 
 
-def codex_files(root=None):
+def codex_session_folders(root=None):
+    """Each Codex home's `sessions` folder once, even when one links to another."""
+    seen = set()
     for home in codex_homes(root):
-        if (home / "sessions").is_dir():
-            yield from (home / "sessions").glob("**/rollout-*.jsonl")
+        folder = home / "sessions"
+        real = os.path.realpath(folder)
+        if real not in seen:
+            seen.add(real)
+            yield folder
+
+
+def codex_files(root=None):
+    for folder in codex_session_folders(root):
+        yield from folder.glob("**/rollout-*.jsonl")
 
 
 def is_codex_path(path):
     return Path(path).name.startswith("rollout-") and ("/.codex/sessions/" in str(path) or "/codex-conversations/sessions/" in str(path))
 
 
-def codex_threads(root=None):
+def codex_threads(root=None, ids=None):
+    """Codex's own title, tokens and branch per thread id: every thread, or only `ids`."""
     threads = {}
+    if ids is not None:
+        ids = [i for i in dict.fromkeys(ids) if isinstance(i, str)]
+        if not ids:
+            return threads
+    where = f" WHERE id IN ({','.join('?' * len(ids))})" if ids is not None else ""
     for home in codex_homes(root):
         path = home / "state_5.sqlite"
         if not path.exists():
@@ -194,7 +212,7 @@ def codex_threads(root=None):
             db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
             columns = {row[1] for row in db.execute("PRAGMA table_info(threads)")}
             name = "name" if "name" in columns else "NULL"
-            rows = db.execute(f"SELECT id, {name}, title, tokens_used, git_branch FROM threads").fetchall()
+            rows = db.execute(f"SELECT id, {name}, title, tokens_used, git_branch FROM threads{where}", ids or []).fetchall()
             db.close()
         except sqlite3.Error:
             continue
@@ -779,16 +797,21 @@ def _index(root, seconds, paths=None):
     else:
         sources = (("claude", claude_files()), ("codex", codex_files(root)))
         known = {row[0]: row for row in db.execute("SELECT path, session, offset, size, mtime, state FROM files")}
+    listed = set()
     for agent, files in sources:
         for path in files:
             try:
                 stat = path.stat()
             except OSError:
                 continue
+            listed.add(str(path))
             row = known.get(str(path))
             if row is None or row[3] != stat.st_size or row[4] != stat.st_mtime:
                 found.append((stat.st_mtime, agent, path, stat))
-    present = {str(item[2]) for item in found} | {p for p in known if Path(p).exists()}
+    # The listing already stat'ed what it found; only a known file it didn't list needs a look.
+    present = listed | {p for p in known if p not in listed and Path(p).exists()}
+    # What backfill needs of each file's row, kept as this pass changes them rather than read back.
+    rows = {path: (row[4], row[1], row[2], row[5]) for path, row in known.items() if path in present}
     for gone in set(known) - present:
         session = known[gone][1]
         db.execute("DELETE FROM files WHERE path=?", (gone,))
@@ -811,15 +834,22 @@ def _index(root, seconds, paths=None):
         if row and offset == 0 and row[1]:
             delete_rows(db, row[1])
             db.execute("DELETE FROM sessions WHERE id=?", (row[1],))
+        start, saved = offset, json.dumps(state)
         try:
             if agent == "claude":
                 session, offset, state = index_claude(db, path, offset, state)
             else:
                 session, offset, state = index_codex(db, path, offset, state, threads)
         except OSError:
+            db.rollback()
             continue
-        db.execute("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?)",
-                   (str(path), session, offset, stat.st_size, stat.st_mtime, json.dumps(state)))
+        except Exception:
+            # A line no parser here expected. What's there now is passed over, or a transcript still being written
+            # would stop at that line on every pass; what it writes next is indexed.
+            db.rollback()
+            session, offset, state = row[1] if row else None, stat.st_size, json.loads(saved)
+        rows[str(path)] = (stat.st_mtime, session, offset, json.dumps(state))
+        db.execute("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?)", (str(path), session, offset, stat.st_size, stat.st_mtime, rows[str(path)][3]))
         db.commit()
         done += 1
     # Spare time keeps the newest conversations ready to open; one already current costs a stat.
@@ -828,12 +858,12 @@ def _index(root, seconds, paths=None):
             break
         try:
             update_view(db, session_id, Path(path), agent)
-        except OSError:
+        except Exception:
             continue
     result = {"remaining": len(found) - done, "indexed": done}
     # The upkeep reads whole tables, so it runs on the passes over everything, not after each file that changed.
     if paths is None:
-        result["images_remaining"] = backfill(db, deadline)
+        result["images_remaining"] = backfill(db, deadline, rows)
         tidy(root, db)
     result["sessions"] = db.execute("SELECT count(*) FROM sessions").fetchone()[0]
     db.close()
@@ -857,12 +887,17 @@ def tidy(root, db):
         db.execute("VACUUM")
 
 
-def backfill(db, deadline):
+def backfill(db, deadline, rows):
     """Indexes the images of files read before the image index existed, newest first, in what's left of
-    this pass. Returns how many files still have lines to scan."""
+    this pass. `rows` is each file's (mtime, session, offset, state) as the index pass left it. Returns how
+    many files still have lines to scan."""
     pending = []
-    for path, session, offset, state in db.execute("SELECT path, session, offset, state FROM files ORDER BY mtime DESC").fetchall():
-        state = json.loads(state or "{}")
+    for path, (_, session, offset, state) in sorted(rows.items(), key=lambda item: item[1][0] or 0, reverse=True):
+        state = state or "{}"
+        # Nearly every file is done; its state says so in plain text, so only the rest are parsed.
+        if f'"img": {offset},' in state or f'"img": {offset}}}' in state:
+            continue
+        state = json.loads(state)
         if state.get("img", 0) < offset or "img" not in state:
             pending.append((path, session, offset, state))
     left = len(pending)
@@ -883,6 +918,8 @@ def backfill(db, deadline):
                     start += len(line)
         except OSError:
             continue
+        except Exception:
+            start = offset  # a line the image scan can't read: this file's images stay as they are
         add_images(db, [row for row in images.rows if row["session"]])
         state["img"] = start
         db.execute("UPDATE files SET state=? WHERE path=?", (json.dumps(state), path))
@@ -1609,6 +1646,9 @@ def read_messages(path, agent, offset=0, rows=None, refs=None, sub=False):
     return rows, offset
 
 
+USED_STALE = 60
+
+
 def update_view(db, session_id, path, agent, sub=False, owner=None):
     """Keeps the viewer's rows for one conversation in the index, reading only lines added since last time.
     Every row written gets the session's next revision; a rebuild from the start gets a new generation.
@@ -1616,6 +1656,13 @@ def update_view(db, session_id, path, agent, sub=False, owner=None):
     size = path.stat().st_size
     head = head_of(path)
     owner = owner or (session_id, None)
+    state = db.execute("SELECT path, offset, head, count, generation, used FROM view_state WHERE session=?", (session_id,)).fetchone()
+    if state and state[0] == str(path) and head.startswith(state[2] or "-") and state[1] == size and state[4]:
+        # Already current: no write lock, and `used` (what tidy keeps by) is only rewritten once it's a minute old.
+        if time.time() - (state[5] or 0) > USED_STALE:
+            db.execute("UPDATE view_state SET used=? WHERE session=?", (time.time(), session_id))
+            db.commit()
+        return state[3], []
     db.execute("BEGIN IMMEDIATE")
     try:
         state = db.execute("SELECT path, offset, head, count, generation, rev, calls FROM view_state WHERE session=?", (session_id,)).fetchone()
@@ -1649,10 +1696,10 @@ def update_view(db, session_id, path, agent, sub=False, owner=None):
             if seq in stored and stored[seq] == record:
                 continue
             rev += 1
-            written.append((session_id, seq, *record, rev))
+            written.append((session_id, seq, *record, rev, row["role"], int(bool(row["inherited"]))))
             if seq < count:
                 changed.append(seq)
-        db.executemany("INSERT OR REPLACE INTO views VALUES(?,?,?,?,?)", written)
+        db.executemany("INSERT OR REPLACE INTO views(session, seq, uuids, data, rev, role, inherited) VALUES(?,?,?,?,?,?,?)", written)
         count = rows.start + len(rows.new)
         calls = dict(list(rows.calls.items())[-CALLS_KEPT:])
         db.execute("INSERT OR REPLACE INTO view_state VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -1721,8 +1768,7 @@ def show(root, session_id, limit=4000, around=None):
     # Counts and pages are in messages as this format shows them: thinking rows left out, and a run of
     # tool rows (split for Remote, or around a thinking row) one message. `starts` is each one's first seq.
     starts, inherited_at, previous = [], [], None
-    for seq, role, from_parent in db.execute("SELECT seq, json_extract(data, '$.role'), json_extract(data, '$.inherited') FROM views "
-                                             "WHERE session=? ORDER BY seq", (session_id,)):
+    for seq, role, from_parent in db.execute("SELECT seq, role, inherited FROM views WHERE session=? ORDER BY seq", (session_id,)):
         if role == "thinking":
             continue
         if not (role == "tools" and previous == ("tools", from_parent)):
@@ -1732,7 +1778,7 @@ def show(root, session_id, limit=4000, around=None):
     total = len(starts)
     first, last, focus = max(total - limit, 0), total, None
     if around:
-        hit = db.execute("SELECT seq, uuids FROM views WHERE session=? AND instr(uuids, ?) > 0 AND json_extract(data, '$.role') != 'thinking' "
+        hit = db.execute("SELECT seq, uuids FROM views WHERE session=? AND instr(uuids, ?) > 0 AND role != 'thinking' "
                          "ORDER BY seq LIMIT 1", (session_id, around)).fetchone()
         if hit:
             focus = hit[1].split()[0]
@@ -1810,7 +1856,8 @@ def page(root, session_id, limit=None, before=None, after=None, around=None, age
                 start = min(max(cursor[1] + 1, 0), count)
                 end = min(start + limit, count)
                 replaced = [remote_row(seq, data) for seq, data in db.execute(
-                    "SELECT seq, data FROM views WHERE session=? AND seq<=? AND rev>? ORDER BY seq", (key, cursor[1], cursor[2]))]
+                    # By revision: `+seq` keeps SQLite off the primary key, which would read every earlier row.
+                    "SELECT seq, data FROM views WHERE session=? AND rev>? AND +seq<=? ORDER BY seq", (key, cursor[2], cursor[1]))]
             else:
                 end = min(max(cursor[1], 0), count)
                 start = max(end - limit, 0)
@@ -1821,8 +1868,7 @@ def page(root, session_id, limit=None, before=None, after=None, around=None, age
                 end = min(start + limit, count)
         messages = [remote_row(seq, data) for seq, data in db.execute(
             "SELECT seq, data FROM views WHERE session=? AND seq>=? AND seq<? ORDER BY seq", (key, start, end))]
-        inherited = db.execute("SELECT count(*) FROM views WHERE session=? AND seq<? AND data LIKE '%\"inherited\": true%'",
-                               (key, start)).fetchone()[0] if start else 0
+        inherited = db.execute("SELECT count(*) FROM views WHERE session=? AND inherited=1 AND seq<?", (key, start)).fetchone()[0] if start else 0
     finally:
         db.close()
     return {"session_id": session_id, "agent_id": agent_id, "generation": generation, "messages": messages, "replaced": replaced,
@@ -2100,6 +2146,16 @@ def footprint(pid, memory, children):
     return round(sum(memory[p] for p in seen)), len(seen)
 
 
+def resources(pid, memory, children, started, ports):
+    """A live row's memory, processes and ports, from one walk of the session's process tree. The session's own
+    process listening (Claude Code does) is no server; only what it started counts."""
+    if not memory:
+        return {"memory": None, "processes": None, "ports": []}
+    seen = descendants(pid, memory, children)
+    return {"memory": round(sum(memory[p] for p in seen)), "processes": len(seen),
+            "ports": sorted(({**entry, "started": started.get(p)} for p in seen - {pid} for entry in ports.get(p, [])), key=lambda e: e["port"])}
+
+
 def parse_listening(output):
     """pid -> [{port, pid, command}] from `lsof -F pcn` output for listening TCP sockets."""
     ports, pid, command = {}, None, None
@@ -2148,8 +2204,27 @@ def is_codex_session(command):
     return bool(words) and os.path.basename(words[0]) == "codex" and (len(words) < 2 or words[1] not in CODEX_NOT_SESSIONS)
 
 
+# Which rollout a Codex process has open changes once a conversation, so lsof's answer for a pid is kept this long.
+OPEN_FRESH = 5
+OPENED = {}
+
+
 def codex_open(pids):
-    """pid -> {"rollouts": [...], "cwd": ...} from one lsof call over every Codex process."""
+    """pid -> {"rollouts": [...], "cwd": ...}, asking lsof once about every Codex process not asked in the last few seconds."""
+    now = time.monotonic()
+    stale = [pid for pid in pids if pid not in OPENED or now - OPENED[pid][0] >= OPEN_FRESH]
+    if stale:
+        found = lsof_open(stale)
+        for pid in set(OPENED) - set(pids):
+            del OPENED[pid]
+        # No answer at all is lsof failing, not every process having nothing open: ask again next time.
+        if found:
+            OPENED.update((pid, (now, found.get(pid))) for pid in stale)
+    return {pid: OPENED[pid][1] for pid in pids if OPENED.get(pid, (0, None))[1] is not None}
+
+
+def lsof_open(pids):
+    """codex_open's lsof call."""
     import subprocess
     if not pids:
         return {}
@@ -2193,6 +2268,48 @@ def first_entry(path):
             return parse(stream.readline()) or {}
     except OSError:
         return {}
+
+
+# A rollout's first line carries the thread's whole instructions; it never changes, so it's parsed once per file.
+METAS = {}
+
+
+def rollout_meta(path):
+    """id, cwd and parent_thread_id from a rollout's session_meta."""
+    try:
+        inode = os.stat(path).st_ino
+    except OSError:
+        return {}
+    known = METAS.get(str(path))
+    if known is None or known[0] != inode:
+        payload = first_entry(path).get("payload")
+        meta = {key: payload.get(key) for key in ("id", "cwd", "parent_thread_id")} if isinstance(payload, dict) else {}
+        if not meta.get("id"):
+            return meta  # not written yet
+        if len(METAS) >= 1024:
+            METAS.clear()
+        known = METAS[str(path)] = (inode, meta)
+    return known[1]
+
+
+# What live reads from a rollout's tail, kept per size and modification time like TAILS.
+CODEX_TAILS = {}
+
+
+def codex_facts(path):
+    """A rollout's status (codex_status) and health readings (codex_health_facts) and its mtime; None when it can't be read."""
+    try:
+        stamp = os.stat(path)
+    except OSError:
+        return None
+    key = (stamp.st_size, stamp.st_mtime_ns)
+    known = CODEX_TAILS.get(str(path))
+    if known is None or known[0] != key:
+        entries, whole = codex_tail(path)
+        if len(CODEX_TAILS) >= 512:
+            CODEX_TAILS.clear()
+        known = CODEX_TAILS[str(path)] = (key, codex_status(entries, whole, stamp.st_mtime), codex_health_facts(entries))
+    return known[1], known[2], stamp.st_mtime
 
 
 def codex_tail(path):
@@ -2246,6 +2363,11 @@ def codex_status(entries, whole, mtime):
 
 def codex_health(entries, status, quiet):
     """health's step, context and flag, read from Codex items."""
+    return codex_flagged(codex_health_facts(entries), status, quiet)
+
+
+def codex_health_facts(entries):
+    """The commands, failures, context and step in a rollout's tail; nothing here depends on the time."""
     commands, exits, context, step = [], [], None, None
     for entry in entries:
         payload = entry.get("payload") or {}
@@ -2269,13 +2391,17 @@ def codex_health(entries, status, quiet):
             step = "Running code"
         elif kind == "message" and payload.get("role") == "assistant":
             step = "Writing a reply"
-    recent = commands[-6:]
-    repeats = max((recent.count(command) for command in recent), default=0)
     failures = 0
     for code in reversed(exits):
         if not code:
             break
         failures += 1
+    return commands[-6:], failures, context, step
+
+
+def codex_flagged(facts, status, quiet):
+    recent, failures, context, step = facts
+    repeats = max((recent.count(command) for command in recent), default=0)
     flag = None
     if status == "busy" and quiet >= STUCK_AFTER:
         flag = {"kind": "stuck", "text": f"No progress for {int(quiet // 60)} min"}
@@ -2305,7 +2431,7 @@ def hosted_by(pid, parents, panes):
     return None
 
 
-def live_codex(root, memory, children, started, ports, parents, args):
+def live_codex(root, memory, children, started, ports, parents, args, db):
     """Running Codex sessions in the shape of live's Claude rows: each process mapped to the rollout it
     has open, its status from the rollout's tail."""
     pids = [pid for pid, command in args.items() if is_codex_session(command)]
@@ -2313,14 +2439,12 @@ def live_codex(root, memory, children, started, ports, parents, args):
     if not pids:
         return []
     opened = codex_open(pids)
-    threads = codex_threads(root)
-    db = connect(root)
-    rows = []
+    found = []
     for pid in pids:
         info = opened.get(pid) or {"rollouts": [], "cwd": None}
         main, subagents = None, 0
         for path in info["rollouts"]:
-            if (first_entry(path).get("payload") or {}).get("parent_thread_id"):
+            if rollout_meta(path).get("parent_thread_id"):
                 subagents += 1
             elif main is None:
                 main = path
@@ -2332,44 +2456,57 @@ def live_codex(root, memory, children, started, ports, parents, args):
                     mtime = path.stat().st_mtime
                 except OSError:
                     continue
-                if mtime > newest and mtime >= (started.get(pid) or 0) and (first_entry(path).get("payload") or {}).get("cwd") == info["cwd"]:
+                if mtime > newest and mtime >= (started.get(pid) or 0) and rollout_meta(path).get("cwd") == info["cwd"]:
                     main, newest = str(path), mtime
         if main is None:
             continue
-        meta = first_entry(main).get("payload") or {}
-        entries, whole = codex_tail(main)
-        try:
-            mtime = os.path.getmtime(main)
-        except OSError:
+        facts = codex_facts(main)
+        if facts is None:
             continue
-        status = codex_status(entries, whole, mtime)
+        meta = rollout_meta(main)
         thread = meta.get("id")
         row = db.execute("SELECT title, model FROM sessions WHERE id=?", (thread,)).fetchone() if thread else None
-        rows.append({"agent": "codex", **codex_health(entries, status["status"], time.time() - mtime), "pid": pid, "id": thread, "name": None,
+        found.append((pid, info, main, subagents, meta, row, *facts))
+    # Codex's own title only for a thread the index has none for yet.
+    threads = codex_threads(root, [item[4].get("id") for item in found if not (item[5] and item[5][0])])
+    rows = []
+    for pid, info, main, subagents, meta, row, status, health, mtime in found:
+        thread = meta.get("id")
+        rows.append({"agent": "codex", **codex_flagged(health, status["status"], time.time() - mtime), "pid": pid, "id": thread, "name": None,
                      "title": (row[0] if row else None) or (threads.get(thread) or {}).get("title") or None, "cost": None,
                      "cwd": meta.get("cwd") or info["cwd"], "status": status["status"], "waitingFor": status["waitingFor"],
-                     "since": status["since"], "kind": None,
-                     **dict(zip(("memory", "processes"), footprint(pid, memory, children) if memory else (None, None))),
-                     "ports": sorted(({**entry, "started": started.get(p)} for p in descendants(pid, memory, children) - {pid}
-                                      for entry in ports.get(p, [])), key=lambda e: e["port"]),
+                     "since": status["since"], "kind": None, **resources(pid, memory, children, started, ports),
                      "started": started.get(pid), "model": status["model"] or (row[1] if row else None), "subagents": subagents,
                      "pending_call": status["pending_call"], "path": main})
-    db.close()
     return rows
 
 
 SETTINGS_KEEP = 7 * 86400
 
 
+# The statusline and hook files of every running session are read on each live(); most haven't changed since.
+SAVED = {}
+
+
 def saved(path):
     """A JSON object Side A's statusline or hooks wrote, and when; (None, 0) when it's missing or half-written."""
     try:
+        stamp = os.stat(path)
+        known = SAVED.get(str(path))
+        if known and known[0] == (stamp.st_mtime_ns, stamp.st_size):
+            return known[1]
         with open(path) as stream:
-            at = os.fstat(stream.fileno()).st_mtime
+            stamp = os.fstat(stream.fileno())
+            key = (stamp.st_mtime_ns, stamp.st_size)
             value = json.load(stream)
     except (OSError, ValueError):
         return None, 0
-    return (value, at) if isinstance(value, dict) else (None, 0)
+    if not isinstance(value, dict):
+        return None, 0
+    if len(SAVED) >= 2048:
+        SAVED.clear()
+    SAVED[str(path)] = (key, (value, stamp.st_mtime))
+    return value, stamp.st_mtime
 
 
 def newest(*readings):
@@ -2377,10 +2514,17 @@ def newest(*readings):
     return max(((at, value) for value, at in readings if value is not None), default=(0, None), key=lambda r: r[0])[1]
 
 
+PRUNE_EVERY = 60
+PRUNED = {}
+
+
 def prune_settings(root, running):
     """Drops what sessions long gone saved, copies a statusline or hook stopped mid-write, and the background work of
-    any session no longer running: nothing would end it in the count otherwise."""
+    any session no longer running: nothing would end it in the count otherwise. At most once a minute."""
     now = time.time()
+    if now - PRUNED.get(str(root), 0) < PRUNE_EVERY:
+        return
+    PRUNED[str(root)] = now
     for folder in (root / "runtime" / "live" / "s", root / "runtime" / "state"):
         for path in folder.iterdir() if folder.is_dir() else ():
             try:
@@ -2420,6 +2564,22 @@ def claude_settings(root, session_id, mode=None, mode_at=0):
     return {key: value for key, value in settings.items() if value is not None and not (isinstance(value, str) and not value)}
 
 
+def running_claude():
+    """Each record in Claude Code's session registry whose process is alive, with its pid. pid 0 and 1 never are:
+    kill(0, 0) reaches this process's own group and always succeeds, and 1 is launchd."""
+    folder = Path.home() / ".claude" / "sessions"
+    for path in folder.glob("*.json") if folder.is_dir() else ():
+        try:
+            data = json.loads(path.read_text())
+            pid = int(data["pid"])
+            if pid <= 1:
+                continue
+            os.kill(pid, 0)
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # not running, or a half-written file
+        yield data, pid
+
+
 TRANSCRIPTS = {}
 
 
@@ -2446,44 +2606,15 @@ def live(root):
     parents = {child: parent for parent, kids in children.items() for child in kids}
     ports = listening() if memory else {}
     panes = tmux_panes(root) if memory else {}
-    folder = Path.home() / ".claude" / "sessions"
     db = connect(root)
-    for path in folder.glob("*.json") if folder.is_dir() else []:
-        try:
-            data = json.loads(path.read_text())
-            pid = int(data["pid"])
-            if pid <= 1:
-                continue
-            os.kill(pid, 0)
-        except (OSError, ValueError, KeyError, TypeError):
-            continue  # not running, or a half-written file
-        if data.get("cwd") == str(root):
-            continue  # Side A's own window priming
-        row = db.execute("SELECT title, cost FROM sessions WHERE id=?", (data.get("sessionId"),)).fetchone()
-        status = data.get("status") or "idle"
-        path = claude_transcript(data.get("sessionId"))
-        found = health(path, status) if path else {}
-        if path and not found.get("turnID"):
-            # A turn longer than the tail started earlier: its prompt is the newest user row the viewer cached.
-            newest = db.execute("SELECT data FROM views WHERE session=? AND data LIKE ? ORDER BY seq DESC LIMIT 1",
-                                (data.get("sessionId"), '{"role": "user"%')).fetchone()
-            found["turnID"] = json.loads(newest[0]).get("uuid") if newest else None
-        with contextlib.suppress(OSError):
-            found.update(claude_settings(root, data.get("sessionId"), found.get("mode"), os.path.getmtime(path) if path else 0))
-        sessions.append({"agent": "claude", "cost": row[1] if row else None, **found, "pid": pid, "id": data.get("sessionId"), "name": data.get("name"),
-                         "title": row[0] if row else None, "cwd": data.get("cwd"), "status": status,
-                         "waitingFor": data.get("waitingFor"), "since": epoch(data.get("statusUpdatedAt") or 0),
-                         "kind": data.get("kind"),
-                         **dict(zip(("memory", "processes"), footprint(pid, memory, children) if memory else (None, None))),
-                         # Claude Code itself listens on a port; only what it started counts as a server.
-                         "ports": sorted(({**entry, "started": started.get(p)} for p in descendants(pid, memory, children) - {pid}
-                                          for entry in ports.get(p, [])), key=lambda e: e["port"]),
-                         "started": started.get(pid)})
-    db.close()
-    prune_settings(root, {session["id"] for session in sessions})
-    for row in live_codex(root, memory, children, started, ports, parents, args) if args else []:
-        row.pop("path")
-        sessions.append(row)
+    try:
+        sessions += live_claude(root, db, memory, children, started, ports)
+        prune_settings(root, {session["id"] for session in sessions})
+        for row in live_codex(root, memory, children, started, ports, parents, args, db) if args else []:
+            row.pop("path")
+            sessions.append(row)
+    finally:
+        db.close()
     import hosting
     # A hosted session runs under one of the panes of Side A's tmux server; when several reach one pane, the closest keeps it.
     hosting.match(sessions, parents, panes)
@@ -2492,22 +2623,38 @@ def live(root):
     return {"sessions": sessions}
 
 
+def live_claude(root, db, memory, children, started, ports):
+    """live's rows for running Claude Code sessions, from its registry."""
+    sessions = []
+    for data, pid in running_claude():
+        if data.get("cwd") == str(root):
+            continue  # Side A's own window priming
+        row = db.execute("SELECT title, cost FROM sessions WHERE id=?", (data.get("sessionId"),)).fetchone()
+        status = data.get("status") or "idle"
+        path = claude_transcript(data.get("sessionId"))
+        found = health(path, status) if path else {}
+        if path and not found.get("turnID"):
+            # A turn longer than the tail started earlier: its prompt is the newest user row the viewer cached.
+            newest = db.execute("SELECT data FROM views WHERE session=? AND role='user' ORDER BY seq DESC LIMIT 1",
+                                (data.get("sessionId"),)).fetchone()
+            found["turnID"] = json.loads(newest[0]).get("uuid") if newest else None
+        with contextlib.suppress(OSError):
+            found.update(claude_settings(root, data.get("sessionId"), found.get("mode"), os.path.getmtime(path) if path else 0))
+        sessions.append({"agent": "claude", "cost": row[1] if row else None, **found, "pid": pid, "id": data.get("sessionId"), "name": data.get("name"),
+                         "title": row[0] if row else None, "cwd": data.get("cwd"), "status": status,
+                         "waitingFor": data.get("waitingFor"), "since": epoch(data.get("statusUpdatedAt") or 0),
+                         "kind": data.get("kind"), **resources(pid, memory, children, started, ports),
+                         "started": started.get(pid)})
+    return sessions
+
+
 TURN_NOTE = "Edits made with Claude's file tools; shell changes aren't shown."
 TURN_FILES = 500
 
 
 def claude_busy(session_id):
     """Whether a running Claude session is mid-turn, by Claude Code's session registry."""
-    folder = Path.home() / ".claude" / "sessions"
-    for path in folder.glob("*.json") if folder.is_dir() else ():
-        try:
-            data = json.loads(path.read_text())
-            if data.get("sessionId") == session_id:
-                os.kill(int(data["pid"]), 0)
-                return data.get("status") in ("busy", "waiting")
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-    return False
+    return any(data.get("status") in ("busy", "waiting") for data, _ in running_claude() if data.get("sessionId") == session_id)
 
 
 def rename_live(session_id, name, timeout=2.0):
@@ -2523,16 +2670,8 @@ def rename_live(session_id, name, timeout=2.0):
     if not session_id or not title:
         return {"renamed": False, "reason": "empty"}
     folder = Path.home() / ".claude" / "sessions"
-    for path in folder.glob("*.json") if folder.is_dir() else ():
-        try:
-            data = json.loads(path.read_text())
-            if data.get("sessionId") != session_id:
-                continue
-            pid = int(data["pid"])
-            if pid <= 1:
-                continue
-            os.kill(pid, 0)
-        except (OSError, ValueError, KeyError, TypeError):
+    for data, pid in running_claude():
+        if data.get("sessionId") != session_id:
             continue
         address = data.get("messagingSocketPath")
         if not isinstance(address, str) or not os.path.isabs(address):
@@ -2576,8 +2715,8 @@ def turn_diff(root, session_id, turn=None):
     db = connect(root)
     try:
         count, _ = update_view(db, key, path, agent, owner=(session_id, None))
-        prompts = [(seq, json.loads(data).get("uuid")) for seq, data in db.execute(
-            "SELECT seq, data FROM views WHERE session=? AND data LIKE ? ORDER BY seq", (key, '{"role": "user"%'))]
+        # A user row's uuids is its own uuid alone: only tool rows gather others.
+        prompts = [(seq, uuids) for seq, uuids in db.execute("SELECT seq, uuids FROM views WHERE session=? AND role='user' ORDER BY seq", (key,))]
         at = next((n for n, (_, uuid) in enumerate(prompts) if uuid == turn), None) if turn else len(prompts) - 1 if prompts else None
         if at is None:
             raise ValueError("That turn isn't in this conversation" if turn else "This conversation has no turn yet")
@@ -2664,12 +2803,17 @@ def images(root, session_id, limit=200, before=None):
         found = db.execute("SELECT id, mime, bytes, width, height, source, file, uuid, ts, agent_id FROM images WHERE session=?"
                            + (" AND ts < ?" if before is not None else "") + " ORDER BY ts DESC LIMIT ?",
                            (session_id, float(before), limit) if before is not None else (session_id, limit)).fetchall()
-        result = []
+        result, rows = [], {}
         for id_, mime, size, width, height, source, file, uuid, ts, agent_id in found:
             key = f"{session_id}/{agent_id}" if agent_id else session_id
-            hit = db.execute("SELECT seq FROM views WHERE session=? AND instr(uuids, ?) > 0 ORDER BY seq LIMIT 1", (key, uuid)).fetchone() if uuid else None
+            if key not in rows:
+                # Each uuid's first row, read once per conversation rather than searched for per image.
+                rows[key] = {}
+                for seq, uuids in db.execute("SELECT seq, uuids FROM views WHERE session=? ORDER BY seq", (key,)):
+                    for name in uuids.split():
+                        rows[key].setdefault(name, seq)
             result.append({**ref({"id": id_, "mime": mime, "bytes": size, "width": width, "height": height, "source": source, "file": file}),
-                           "seq": hit[0] if hit else None, "uuid": uuid, "ts": ts, "agent_id": agent_id})
+                           "seq": rows[key].get(uuid) if uuid else None, "uuid": uuid, "ts": ts, "agent_id": agent_id})
     finally:
         db.close()
     return {"images": result}

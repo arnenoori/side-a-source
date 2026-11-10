@@ -147,7 +147,7 @@ private let shots = ProcessInfo.processInfo.environment["SIDEA_PAIR_SHOTS"].map 
 
     let refused = try Rig(signs: { _ in false })
     defer { refused.stop() }
-    try await until(refused.remote.error == RemoteController.keyRefused)
+    try await until(refused.remote.key.state == .refused)
     try await shoot(RemoteSettings(store: refused.store), "settings-3-key-refused", size: settings)
 
     let gate = DispatchSemaphore(value: 0)

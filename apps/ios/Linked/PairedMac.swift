@@ -84,6 +84,11 @@ struct PairedMac: Codable, Hashable {
         return mac
     }
 
+    /// The relay's device credential header; `Paths.bearer` makes the same one for the tunnel.
+    func relayBearer(install: String, secret: Data) -> String {
+        "Bearer d1.\(install).\(deviceID).\(secret.base64URL)"
+    }
+
     struct NotSaved: Error {}
 
     /// Every credential, then the record that says they're there; throws when the keychain refused any.

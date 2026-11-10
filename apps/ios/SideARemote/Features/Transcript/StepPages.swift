@@ -154,7 +154,7 @@ private struct LabeledBlock: View {
 }
 
 /// Grep output grouped by file: `path:line` lines become a file header and its line numbers.
-private struct GroupedMatches: View {
+struct GroupedMatches: View {
     let output: String
 
     var body: some View {
@@ -179,7 +179,8 @@ private struct GroupedMatches: View {
         var lines: [String: [String]] = [:]
         for line in output.split(separator: "\n") {
             let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            let file = parts[0]
+            // A line of only ":" splits to nothing.
+            guard let file = parts.first else { continue }
             if lines[file] == nil { order.append(file); lines[file] = [] }
             if parts.count > 1 { lines[file]?.append(parts[1]) }
         }
@@ -252,6 +253,7 @@ struct CodePage: View {
 
 /// A file the session wrote: Markdown rendered with the transcript's views, everything else as code.
 struct FilePage: View {
+    @Environment(AppModel.self) private var model
     let sessionID: SessionKey
     let tool: TranscriptTool
     let path: String
@@ -265,7 +267,7 @@ struct FilePage: View {
         ScrollView {
             Group {
                 if path.hasSuffix(".md") {
-                    MarkdownView(DemoFiles.text(for: path) ?? content, sourceID: "file-\(tool.id)")
+                    MarkdownView((model.isDemo ? DemoFiles.text(for: path) : nil) ?? content, sourceID: "file-\(tool.id)")
                 } else {
                     Text(content).font(.callout.monospaced()).textSelection(.enabled)
                 }

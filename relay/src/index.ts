@@ -33,6 +33,8 @@ function respond(reply: Reply): Response {
 const failure = (status: number, code: string, message: string, retryAfter?: number): Reply => ({ status, code, message, retryAfter });
 const isPlan = (value: Answer | Plan): value is Plan => 'targets' in value;
 const configured = (env: Env) => Boolean(env.APNS_KEY_P8 && env.APNS_KEY_ID && env.APNS_TEAM_ID);
+// Without RATE_KEY the per-network limits can't key anything (a zero-length HMAC key throws).
+const unkeyed = (env: Env) => env.RATE_KEY ? undefined : failure(503, 'not_configured', 'The relay has no rate key');
 
 async function readBody(request: Request): Promise<Uint8Array | null> {
   if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY) return null;
@@ -159,6 +161,17 @@ async function registrationGate(request: Request, env: Env, now: number): Promis
   return { ledger, dayEnds, fullFor: full ? Math.ceil((dayEnds - now) / 1000) : 0 };
 }
 
+// Every signed or bearer request wakes an install's object, billed, before anything is proved. 600 a
+// minute per network is ten times what one Mac may send (LIMITS.sendsPerMinute) and twice what ten
+// phones may ask (LIMITS.phonePerMinute), so only a flood of guesses reaches it.
+async function requestGate(request: Request, env: Env, now: number): Promise<Reply | undefined> {
+  const missing = unkeyed(env);
+  if (missing) return missing;
+  const client = await clientKey(env, request.headers.get('cf-connecting-ip') ?? 'unknown', Math.floor(now / 86_400_000));
+  const { success } = await env.REQUEST_LIMIT.limit({ key: client });
+  return success ? undefined : failure(429, 'rate_limited', 'Too many requests from this network', 60);
+}
+
 function macOp(method: string, path: string, body: Json, env: Env): MacOp | null {
   if (path === '/v1/installs/self' && method === 'GET') return { op: 'self', paused: paused(env) };
   if (path === '/v1/installs' && method === 'POST') return { op: 'register', publicKey: key32(body.publicKey, 'publicKey'), fullFor: 0 };
@@ -275,6 +288,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
     if (!credential) return { reply: failure(401, 'unauthorized', 'Missing or malformed device token') };
     const op = phoneOp(method, path, json, env);
     if (!op) return { reply: failure(404, 'not_found', 'No such route'), install: credential.install };
+    const limited = await requestGate(request, env, now);
+    if (limited) return { reply: limited, install: credential.install };
     const stub = env.INSTALLS.get(env.INSTALLS.idFromName(credential.install));
     const result = await stub.phone(credential.device, credential.secretHash, op, now);
     return { reply: await challenge(env, stub, result, now, ctx), install: credential.install };
@@ -288,6 +303,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
   const op = macOp(method, path, json, env);
   if (!op) return { reply: failure(404, 'not_found', 'No such route'), install: signature.install };
   if (op.op === 'send' && paused(env)) return { reply: failure(503, 'paused', 'Sending is paused', 300), install: signature.install };
+  const limited = await requestGate(request, env, now);
+  if (limited) return { reply: limited, install: signature.install };
   const gate = op.op === 'register' ? await registrationGate(request, env, now) : undefined;
   if (gate?.limited) return { reply: gate.limited, install: signature.install };
   if (op.op === 'register') op.fullFor = gate!.fullFor;
@@ -308,6 +325,8 @@ async function tunnel(request: Request, env: Env, path: string, now: number): Pr
   const install = path === '/v1/tunnel/mac' ? parseSignature(authorization)?.install
     : (await parseDeviceBearer(authorization))?.install ?? authorization?.match(/^SideA-Pair ([A-Za-z0-9_-]{22})\.[A-Za-z0-9_-]{22}$/)?.[1];
   if (!install) return { reply: failure(401, 'unauthorized', 'Missing or malformed credential') };
+  const missing = unkeyed(env);
+  if (missing) return { reply: missing, install };
   // Nothing has been proved yet, and what follows wakes an object: a well-formed guess costs its sender.
   const ip = request.headers.get('cf-connecting-ip');
   if (ip && !(await env.TUNNEL_LIMIT.limit({ key: await clientKey(env, ip, Math.floor(now / 86_400_000)) })).success) {

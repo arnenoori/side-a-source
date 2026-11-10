@@ -14,11 +14,9 @@ extension RemoteRoutes {
         Route("POST", "v1/rotation/pool", refusePool),
     ]
 
-    /// Nil once the confirm key vouches for `subject`; otherwise what to answer. Checks only: the caller has already
-    /// refused a body it can't act on, so a good signature is never spent on one.
-    private static func refusal(_ context: Context, subject: String) async -> HTTPResponse? {
-        guard let server = await MainActor.run(body: { context.controller.server }) else { return notReady }
-        return server.confirm(context.request, device: context.device, purpose: .rotation, subject: subject, needs: .biometric)
+    /// Checks only: the caller has already refused a body it can't act on, so a good signature is never spent on one.
+    private static func rotationRefusal(_ context: Context, subject: String) async -> HTTPResponse? {
+        await refusal(context, .rotation, subject: subject, needs: .biometric)
     }
 
     private static func account(_ context: Context, _ id: String) async -> Bool {
@@ -33,7 +31,7 @@ extension RemoteRoutes {
             return RemoteServer.error(400, "bad_request", "Send priority: first, normal or last.")
         }
         guard await account(context, id), let subject = try? ConfirmMessage.subject(account: id, priority: change.priority) else { return noAccount }
-        if let refusal = await refusal(context, subject: subject) { return refusal }
+        if let refusal = await rotationRefusal(context, subject: subject) { return refusal }
         let changed = await MainActor.run { () -> Bool in
             guard let store = context.controller.store, let account = store.config.accounts.first(where: { $0.id == id }) else { return false }
             store.setPriority(id, priority)
@@ -47,7 +45,7 @@ extension RemoteRoutes {
         let id = context.params["id"] ?? ""
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, "bad_request", "Send enabled, true or false.") }
         guard await account(context, id), let subject = try? ConfirmMessage.subject(account: id, auto: change.enabled) else { return noAccount }
-        if let refusal = await refusal(context, subject: subject) { return refusal }
+        if let refusal = await rotationRefusal(context, subject: subject) { return refusal }
         let changed = await MainActor.run { () -> Bool in
             guard let store = context.controller.store, let account = store.config.accounts.first(where: { $0.id == id }) else { return false }
             store.setAuto(id, change.enabled)
@@ -61,7 +59,7 @@ extension RemoteRoutes {
         guard let change = context.body(SwapAtChange.self), SwapAtChange.choices.contains(change.percent) else {
             return RemoteServer.error(400, "bad_request", "Send percent, one of \(SwapAtChange.choices.map(String.init).joined(separator: ", ")).")
         }
-        if let refusal = await refusal(context, subject: ConfirmMessage.subject(swapAt: change.percent)) { return refusal }
+        if let refusal = await rotationRefusal(context, subject: ConfirmMessage.subject(swapAt: change.percent)) { return refusal }
         await MainActor.run {
             context.controller.store?.setSwapAt(Double(change.percent))
             context.controller.store?.autopilotLog.write("Move at set to \(change.percent)% from the phone.")
@@ -71,7 +69,7 @@ extension RemoteRoutes {
 
     @Sendable static func setFollowFable(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, "bad_request", "Send enabled, true or false.") }
-        if let refusal = await refusal(context, subject: ConfirmMessage.subject(followFable: change.enabled)) { return refusal }
+        if let refusal = await rotationRefusal(context, subject: ConfirmMessage.subject(followFable: change.enabled)) { return refusal }
         await MainActor.run {
             context.controller.store?.setFollowFable(change.enabled)
             context.controller.store?.autopilotLog.write("Follow Fable \(change.enabled ? "on" : "off") from the phone.")

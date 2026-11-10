@@ -32,17 +32,18 @@ final class RemoteController {
     private(set) var pairing: PairingSession?
     private(set) var keyID: String?
     var error: String?
-    /// Whether the key has signed once this launch. TLS signs with it in every handshake, and a key macOS wants to ask
-    /// about would hang each one silently, so the server waits for this.
-    @ObservationIgnored private var keyChecked = false
+    /// Whether the security key signs; nothing listens until it has.
+    let key = KeyCheck()
+    /// Every port in the range was busy.
+    private(set) var portsRanOut = false
     @ObservationIgnored private(set) var opened = false
     /// Tests count the probes.
     @ObservationIgnored var probe: @Sendable () async -> TailscaleStatus = { await TailscaleCLI.shared.status() }
-    /// The one signature under way, if any. `makeNewKey` clears it, so the old key's answer finds it gone.
-    @ObservationIgnored private var keyCheck: KeyCheck?
-    private struct KeyCheck { let id = UUID(); let waited: Task<Void, Never> }
     /// Tests stand in for a signature that takes its time.
-    @ObservationIgnored var signs: @Sendable (RemoteKeychain.Identity) -> Bool = { RemoteKeychain.signs($0) }
+    var signs: @Sendable (RemoteKeychain.Identity) -> Bool {
+        get { key.signs }
+        set { key.signs = newValue }
+    }
     /// Open WebSockets per device, for "Connected now".
     private(set) var connected: [String: Int] = [:]
     private(set) var tunnelStatus: TunnelClient.Status = .off
@@ -200,10 +201,13 @@ final class RemoteController {
             self.identity = identity
             keyID = SPKI.keyID(identity.spkiHash.base64URL)
         } catch {
-            self.error = Self.keyUnreadable
+            key.unreadable()
             return
         }
-        guard keyChecked else { return checkKey() }
+        guard key.state == .signed else {
+            if let identity { key.check(identity) { [weak self] in if self?.on == true { self?.bringUp() } } }
+            return
+        }
         if server == nil, let identity {
             let server = RemoteServer(identity: identity, epoch: epoch, idempotency: IdempotencyStore(url: idempotencyURL),
                                       handler: RemoteRoutes.handler(self))
@@ -306,39 +310,7 @@ final class RemoteController {
         devices.devices.map { TunnelControl.Device(id: $0.id, secretHash: $0.secretHash) }
     }
 
-    static let keyWaiting = "Side A is waiting for macOS to let it use its security key. Look for a keychain dialog."
-    static let keyRefused = "Side A can't use its security key. Make New Key… replaces it, and every iPhone pairs again."
-    static let keyUnreadable = "Side A can't read its security key."
     static func portBusy(_ port: UInt16) -> String { "Port \(port) is in use by another app." }
-
-    /// One signature off the main thread before anything listens. Past five seconds the Remote tab says what it
-    /// waits for; when it ends, Remote comes up or says why it can't.
-    private func checkKey() {
-        guard keyCheck == nil, let identity else { return }
-        let waited = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(5))
-            guard let self, !Task.isCancelled else { return }
-            self.error = Self.keyWaiting
-            RemoteLog.shared("still waiting for the security key after 5 s: macOS is holding it")
-        }
-        let check = KeyCheck(waited: waited)
-        keyCheck = check
-        let sign = self.signs
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let started = Date()
-            let signs = sign(identity)
-            RemoteLog.shared("security key \(signs ? "signed" : "couldn't sign") in \(Int(Date().timeIntervalSince(started) * 1000)) ms")
-            DispatchQueue.main.async {
-                guard let self, self.keyCheck?.id == check.id else { return }
-                check.waited.cancel()
-                self.keyCheck = nil
-                if self.error == Self.keyWaiting { self.error = nil }
-                guard signs else { self.error = Self.keyRefused; return }
-                self.keyChecked = true
-                if self.on { self.bringUp() }
-            }
-        }
-    }
 
     /// Every minute while Remote serves: a pairing whose phone never used its token is revoked (see DeviceStore.orphans).
     @ObservationIgnored private var sweeper: Task<Void, Never>?
@@ -357,6 +329,7 @@ final class RemoteController {
         events?.stop()
         events = nil
         push.stopScheduling()
+        previews.revokeAll()
         hub = nil
         transcripts?.stop()
         transcripts = nil
@@ -366,6 +339,7 @@ final class RemoteController {
         monitor?.cancel(); monitor = nil
         listening = [:]
         connected = [:]
+        portsRanOut = false
         endPairing()
     }
 
@@ -419,15 +393,14 @@ final class RemoteController {
     private func listenersChanged(_ states: [String: RemoteServer.ListenerState]) {
         listening = states
         // The previous copy may still be exiting; after ten seconds busy, move up a port (at most nine).
-        if states.values.contains(.failed("Port in use")) {
+        if states.values.contains(.failed(RemoteServer.portInUse)) {
             if busySince == nil {
                 busySince = Date()
                 Task {
                     try? await Task.sleep(for: .seconds(10))
-                    guard busySince != nil, listening.values.contains(.failed("Port in use")) else { return }
+                    guard busySince != nil, listening.values.contains(.failed(RemoteServer.portInUse)) else { return }
                     busySince = nil
-                    let next = port + 1
-                    guard next <= Self.basePort + 9 else { error = Self.portBusy(port); return }
+                    guard let next = Self.nextPort(after: port, base: Self.basePort) else { portsRanOut = true; return }
                     port = next
                     UserDefaults.standard.set(Int(next), forKey: Self.portKey)
                     server?.serve(addresses: [], port: next)
@@ -437,6 +410,12 @@ final class RemoteController {
         } else {
             busySince = nil
         }
+    }
+
+    /// The port to try when this one stays busy: one up, at most nine above the base. A harness's port may sit anywhere,
+    /// up to the top of the range.
+    nonisolated static func nextPort(after port: UInt16, base: UInt16) -> UInt16? {
+        port < base + 9 ? port + 1 : nil
     }
 
     /// Recording, and the live loop behind it, run exactly while Remote is active.
@@ -486,10 +465,13 @@ final class RemoteController {
     var pairReadiness: PairReadiness {
         if devices.unreadable != nil { return .devicesUnreadable }
         if listening.values.contains(.ready) || tunnel != nil { return .ready }
-        if error == Self.keyWaiting { return .keyWaiting }
-        if error == Self.keyRefused || error == Self.keyUnreadable { return .keyBroken }
-        if error == Self.portBusy(port) { return .cantListen(Self.portBusy(port)) }
-        if let failure = listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first, failure != "Port in use" {
+        switch key.state {
+        case .waiting: return .keyWaiting
+        case .refused, .unreadable: return .keyBroken
+        case .unchecked, .checking, .signed: break
+        }
+        if portsRanOut { return .cantListen(Self.portBusy(port)) }
+        if let failure = listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first, failure != RemoteServer.portInUse {
             return .cantListen("Side A couldn't listen: \(failure)")
         }
         if endpoints == nil, !(anywhereOn && relayURL != nil) { return .noNetwork }
@@ -612,10 +594,7 @@ final class RemoteController {
         tearDown()
         keychain.deleteIdentity()
         identity = nil
-        keyChecked = false
-        keyCheck?.waited.cancel()
-        keyCheck = nil
-        if [Self.keyRefused, Self.keyWaiting, Self.keyUnreadable].contains(error) { error = nil }
+        key.reset()
         for device in devices.devices {
             try? devices.remove(device.id)
             invalidate(device.id)
@@ -706,7 +685,7 @@ final class RemoteController {
     /// pairing overwrite the other's.
     nonisolated static func macID(hardware uuid: String, bundleID: String?, release: Bool) -> String {
         let seed = release ? uuid : uuid + "\n" + (bundleID ?? "")
-        return SHA256.hash(data: Data(seed.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return IDs.hashed(seed)
     }
 
     static func hostPort(_ address: String, _ port: UInt16) -> String { address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)" }

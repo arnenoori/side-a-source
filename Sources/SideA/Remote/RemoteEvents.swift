@@ -37,7 +37,7 @@ final class RemoteEvents: Island.Watcher {
         sessions = Dictionary(current().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         keys = Dictionary(store.sessions.live.map { (Self.process($0), WireBuilders.key($0)) }, uniquingKeysWith: { a, _ in a })
         accounts = Dictionary(WireBuilders.accounts(store).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        hosted = Dictionary(hostedNow(store).map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        hosted = Dictionary(WireBuilders.hostedSessions(store).map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
         hostedChanged()
         store.sessions.retainLive("remote")
         autopilot = Autopilot.state(store, log: Autopilot.tail(store.root.appendingPathComponent("runtime/autopilot.log")))
@@ -60,6 +60,7 @@ final class RemoteEvents: Island.Watcher {
         macTask?.cancel(); macTask = nil
         autopilotTask?.cancel(); autopilotTask = nil
         hostedTask?.cancel(); hostedTask = nil
+        liveTask?.cancel(); liveTask = nil; liveAgain = false
     }
 
     /// The full open list each time; an empty one clears the phone's.
@@ -156,13 +157,44 @@ final class RemoteEvents: Island.Watcher {
 
     func current() -> [RemoteSession] {
         guard let store else { return [] }
-        let finished = Set(store.island.ready.compactMap(\.finish.sessionID))
+        let rows = WireBuilders.Rows(store, finished: Set(store.island.ready.compactMap(\.finish.sessionID)))
         var seen = Set<SessionKey>()
-        return store.sessions.live.map { WireBuilders.session($0, store: store, finished: finished) }.filter { seen.insert($0.id).inserted }
+        return store.sessions.live.map { WireBuilders.session($0, store: store, rows: rows) }.filter { seen.insert($0.id).inserted }
+    }
+
+    /// The one row a phone asked for, built alone.
+    func session(_ id: String) -> RemoteSession? {
+        guard let store, let live = store.sessions.live.first(where: { WireBuilders.key($0) == id || $0.sessionID == id }) else { return nil }
+        return WireBuilders.session(live, store: store, finished: Set(store.island.ready.compactMap(\.finish.sessionID)))
+    }
+
+    /// The window a burst of changes shares: the first goes at once, the rest together when it closes.
+    static let liveWindow: Duration = .milliseconds(100)
+    private var liveTask: Task<Void, Never>?
+    private var liveAgain = false
+    #if DEBUG
+    /// Tests: a window is open.
+    var holding: Bool { liveTask != nil }
+    #endif
+
+    /// Every change to sessions, requests, mail or usage lands here, often many to a moment; at most one pass a window,
+    /// and none waits longer than the window.
+    func liveChanged() {
+        guard recording else { return }
+        guard liveTask == nil else { liveAgain = true; return }
+        flushLive()
+        liveTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.liveWindow)
+            guard let self, !Task.isCancelled else { return }
+            liveTask = nil
+            guard liveAgain else { return }
+            liveAgain = false
+            liveChanged()
+        }
     }
 
     /// Memory and ports are left out of the comparison, so a refresh that only moves them sends nothing.
-    func liveChanged() {
+    private func flushLive() {
         guard recording, let store else { return }
         store.remote.codex.sync()
         store.remote.inbox.prune(store.sessions.live)
@@ -189,7 +221,8 @@ final class RemoteEvents: Island.Watcher {
         sessions = latest
         keys = nextKeys
         store.remote.previews.prune(listening: RemotePreviews.listening(store))
-        store.remote.push.activity(Self.activity(next, requests: store.island.pending.map { $0.id.uuidString.lowercased() }, accounts: WireBuilders.accounts(store)))
+        // The accounts as the last usage pass left them: it runs after every usage or account change, then comes here.
+        store.remote.push.activity(Self.activity(next, requests: store.island.pending.map { $0.id.uuidString.lowercased() }, accounts: Array(accounts.values)))
     }
 
     /// The Live Activity's numbers: counts, the next request's id, and the tightest window of the accounts in use.
@@ -217,7 +250,7 @@ final class RemoteEvents: Island.Watcher {
         guard recording, let store else { return }
         guard hostedTask == nil else { hostedAgain = true; return }
         hostedTask = Task { [weak self] in
-            let next = await RemoteRoutes.hostedSessions(store)
+            let next = WireBuilders.hostedSessions(store)
             guard let self, !Task.isCancelled else { return }
             self.hostedTask = nil
             let names = Set(next.map(\.name))
@@ -234,11 +267,6 @@ final class RemoteEvents: Island.Watcher {
     /// A hosted session needs someone at its screen: a reply that may not have gone in, a compaction that didn't show.
     func hostedAttention(_ name: String, _ attention: HostedSessions.Attention) {
         record(.hostedAttention(HostedAttention(name: name, kind: .init(rawValue: attention.kind), text: attention.text)))
-    }
-
-    /// The panes now, with the viewer counts last seen (counting them takes a tmux call).
-    private func hostedNow(_ store: AccountStore) -> [HostedSession] {
-        store.hosted.sessions.compactMap { RemoteRoutes.wire($0, hosted: store.hosted, store: store, viewers: hosted[$0.name]?.viewers ?? 0) }
     }
 
     // MARK: Usage
@@ -281,7 +309,7 @@ final class RemoteEvents: Island.Watcher {
         let accounts = WireBuilders.accounts(store)
         let mac = MacStats.state(store)
         let incidents = WireBuilders.incidents(store)
-        let hosted = hostedNow(store)
+        let hosted = WireBuilders.hostedSessions(store)
         let autopilot = autopilot
         let dropped = island.droppedForPhones()
         return { seq, epoch in

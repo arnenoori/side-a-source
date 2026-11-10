@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { b64url } from '../src/bytes';
 import { Install, LIMITS } from '../src/install';
 import worker from '../src/index';
-import { FakeApns, type Mac, alert, call, context, incoming, newMac, paired, phoneCall, randomId, register, signed, stub } from './helpers';
+import { BASE, FakeApns, type Mac, alert, call, context, incoming, newMac, newPhone, paired, phoneCall, randomId, register, signed, stub } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -65,6 +65,55 @@ describe('rate limits', () => {
       break;
     }
     expect((await register(await newMac())).status).toBe(201);
+  });
+
+  it('turns a flood from one network away before it wakes an install', async () => {
+    const mac = await newMac();
+    const phone = newPhone(mac);
+    const keys: string[] = [];
+    const flooded = {
+      ...env,
+      REQUEST_LIMIT: { limit: async ({ key }: { key: string }) => (keys.push(key), { success: false }) },
+      INSTALLS: { idFromName: () => { throw new Error('woke an install'); }, get: () => { throw new Error('woke an install'); } },
+    } as unknown as Env;
+    const from = (request: Request, ip: string) => {
+      const headers = new Headers(request.headers);
+      headers.set('cf-connecting-ip', ip);
+      return incoming(new Request(request, { headers }));
+    };
+    const requests = [
+      from(await signed(mac, 'POST', '/v1/send', alert(phone)), '2001:db8:5:6::1'),
+      from(await signed(mac, 'POST', '/v1/installs', { publicKey: b64url(mac.publicKey) }), '2001:db8:5:6::2'),
+      from(new Request(`${BASE}/v1/device/verify`, {
+        method: 'POST', body: JSON.stringify({ challenge: b64url(new Uint8Array(16)) }), headers: { authorization: phone.bearer },
+      }), '2001:db8:5:6::3'),
+    ];
+    for (const request of requests) {
+      const response = await worker.fetch(request, flooded, context);
+      expect(response.status).toBe(429);
+      expect(await response.json()).toEqual({ error: { code: 'rate_limited', message: 'Too many requests from this network', retryable: true } });
+      expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
+    }
+    // One /64 is one network.
+    expect(new Set(keys).size).toBe(1);
+    expect((await worker.fetch(incoming(new Request(`${BASE}/v1/health`)), flooded, context)).status).toBe(200);
+  });
+
+  it('answers 503 not_configured, not 500, everywhere a network is keyed while RATE_KEY is unset', async () => {
+    const unset = { ...env, RATE_KEY: '' } as unknown as Env;
+    const mac = await newMac();
+    const ip = { 'cf-connecting-ip': '198.51.100.30' };
+    const requests = [
+      await signed(mac, 'POST', '/v1/installs', { publicKey: b64url(mac.publicKey) }, { headers: ip }),
+      await signed(mac, 'POST', '/v1/send', alert(newPhone(mac)), { headers: ip }),
+      await signed(mac, 'GET', '/v1/tunnel/mac', undefined, { headers: { ...ip, upgrade: 'websocket' } }),
+    ];
+    for (const request of requests) {
+      const response = await worker.fetch(incoming(request), unset, context);
+      expect(response.status).toBe(503);
+      expect(((await response.json()) as any).error.code).toBe('not_configured');
+    }
+    expect((await worker.fetch(incoming(new Request(`${BASE}/v1/health`)), unset, context)).status).toBe(200);
   });
 
   it('cools an address down for the day after 50 registrations', async () => {

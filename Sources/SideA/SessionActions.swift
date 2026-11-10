@@ -132,8 +132,7 @@ private struct QuestionsForm: View {
     let island: Island
     let item: Island.Pending
     let questions: [IslandQuestion]
-    @State private var picked: [String: Set<String>] = [:]
-    @State private var other: [String: String] = [:]
+    @State private var answers = QuestionAnswers()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -141,8 +140,8 @@ private struct QuestionsForm: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(question.question).font(.system(size: 13, weight: .medium)).fixedSize(horizontal: false, vertical: true)
                     ForEach(Array(question.options.enumerated()), id: \.offset) { _, option in
-                        let on = picked[question.question]?.contains(option.label) == true
-                        Button { toggle(question, option.label) } label: {
+                        let on = answers.isPicked(option.label, in: question)
+                        Button { answers.pick(option.label, in: question) } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
                                 Image(systemName: question.multiSelect ? (on ? "checkmark.square.fill" : "square") : (on ? "largecircle.fill.circle" : "circle"))
                                     .foregroundStyle(on ? Color.accentColor : .secondary)
@@ -153,7 +152,7 @@ private struct QuestionsForm: View {
                                             Chip(text: "Recommended", tint: .accentColor)
                                         }
                                     }
-                                    if let description = option.description, !description.isEmpty, description != option.label {
+                                    if let description = QuestionAnswers.description(of: option) {
                                         Text(description).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
@@ -163,50 +162,21 @@ private struct QuestionsForm: View {
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
-                    TextField("Something else…", text: Binding(get: { other[question.question] ?? "" }, set: { other[question.question] = $0 }))
+                    TextField("Something else…", text: Binding(get: { answers.other[question.question] ?? "" }, set: { answers.other[question.question] = $0 }))
                         .textFieldStyle(.roundedBorder).font(.system(size: 12.5))
                 }
             }
             HStack {
                 Spacer()
-                Button(allRecommended ? "Send Recommended Answers" : "Send Answers", action: send)
-                    .buttonStyle(.borderedProminent).disabled(!complete)
+                Button(answers.recommendedOnly(questions) ? "Send Recommended Answers" : "Send Answers", action: send)
+                    .buttonStyle(.borderedProminent).disabled(!answers.complete(questions))
             }
         }
-        .onAppear {
-            for question in questions where picked[question.question] == nil {
-                if let option = question.options.first(where: \.recommended) { picked[question.question] = [option.label] }
-            }
-        }
-    }
-
-    private func toggle(_ question: IslandQuestion, _ label: String) {
-        var chosen = picked[question.question] ?? []
-        if question.multiSelect {
-            if chosen.contains(label) { chosen.remove(label) } else { chosen.insert(label) }
-        } else {
-            chosen = [label]
-        }
-        picked[question.question] = chosen
-    }
-
-    private func answer(_ question: IslandQuestion) -> String {
-        let typed = (other[question.question] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let chosen = question.options.map(\.label).filter { picked[question.question]?.contains($0) == true }
-        return (chosen + (typed.isEmpty ? [] : [typed])).joined(separator: ", ")
-    }
-
-    private var complete: Bool { questions.allSatisfy { !answer($0).isEmpty } }
-
-    private var allRecommended: Bool {
-        questions.allSatisfy { question in
-            let recommended = Set(question.options.filter(\.recommended).map(\.label))
-            return !recommended.isEmpty && picked[question.question] == recommended && (other[question.question] ?? "").isEmpty
-        }
+        .onAppear { answers.preselect(questions) }
     }
 
     private func send() {
-        guard complete else { return }
-        island.answer(.answers(Dictionary(questions.map { ($0.question, answer($0)) }) { first, _ in first }, input: item.request.input), item.id)
+        guard answers.complete(questions) else { return }
+        island.answer(.answers(answers.answers(questions), input: item.request.input), item.id)
     }
 }

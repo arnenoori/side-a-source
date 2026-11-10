@@ -211,7 +211,8 @@ survive eviction (Cloudflare drops in-memory state when an object leaves memory)
 updates `last_send` (at most once a day). An alarm runs daily: an install with no device for 30
 days, or no successful send (`last_send`) for 90, is deleted with `deleteAll()`; an activity older
 than 12 hours is dropped (iOS stops updating one after 8 hours and removes it from the Lock Screen
-by 12).
+by 12). A send never uses one past 12 hours either: it deletes the expired ones first, so the
+privacy page's 12 hours holds between alarms.
 
 The Worker verifies the signature against the key it gets from the object, asks the object
 whether the send is allowed and which tokens to use, makes the APNs requests itself (the HTTP/2
@@ -224,6 +225,7 @@ reports `gone` tokens back to the object.
 |---|---|---|
 | New installs per IP (IPv6: per /64) | 10 per minute per location, 50 per day everywhere. A Mac already registered isn't counted or refused | Rate Limiting binding for the minute; the daily count in a `Ledger` Durable Object named by `HMAC(HMAC(RATE_KEY, day), network)`, deleted a day after the day ends |
 | Tunnel upgrades per IP (IPv6: per /64) | 120 per minute per location | Rate Limiting binding, before any object wakes |
+| Every other signed or bearer request per IP (IPv6: per /64) | 600 per minute per location | Rate Limiting binding, before any object wakes |
 | Phone endpoints per device | 30 per minute | Durable Object `state` row |
 | Sends per install | 60 per minute, 2,000 per day | Durable Object `state` row |
 | Verification challenges per device | 1 per minute, 5 per hour, each valid 1 hour | Durable Object `state` row |

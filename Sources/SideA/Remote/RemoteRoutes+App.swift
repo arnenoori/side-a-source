@@ -50,6 +50,14 @@ extension RemoteRoutes {
         }
     }
 
+    /// The same for work that awaits: it starts on the main actor and the route waits for its answer.
+    static func onMainAsync(_ context: Context, _ body: @escaping @MainActor (AccountStore) async -> HTTPResponse) async -> HTTPResponse {
+        await MainActor.run { () -> Task<HTTPResponse, Never>? in
+            guard let store = context.controller.store else { return nil }
+            return Task { @MainActor in await body(store) }
+        }?.value ?? notReady
+    }
+
     // MARK: Lists
 
     @Sendable static func state(_ context: Context) async -> HTTPResponse {
@@ -77,7 +85,7 @@ extension RemoteRoutes {
     @Sendable static func session(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         return await onMain(context) { _ in
-            guard let session = context.controller.events?.current().first(where: { $0.id == id || $0.conversationID == id }) else { return noSession }
+            guard let session = context.controller.events?.session(id) else { return noSession }
             return json(200, session)
         }
     }
@@ -169,25 +177,19 @@ extension RemoteRoutes {
     /// Runs a command on the main actor with the app's store: its value as JSON, or its failure.
     static func command<T: Encodable & Sendable>(_ context: Context, status: Int = 200,
                                                  _ body: @escaping @MainActor (SessionCommands) async throws(SessionCommands.Failure) -> T) async -> HTTPResponse {
-        await MainActor.run { () -> Task<HTTPResponse, Never>? in
-            guard let store = context.controller.store else { return nil }
-            return Task { @MainActor in
-                do throws(SessionCommands.Failure) { return json(status, try await body(SessionCommands(store: store))) } catch { return response(error) }
-            }
-        }?.value ?? notReady
+        await onMainAsync(context) { store in
+            do throws(SessionCommands.Failure) { return json(status, try await body(SessionCommands(store: store))) } catch { return response(error) }
+        }
     }
 
     /// A command with nothing to say back: 204, or its failure.
     static func command(_ context: Context, _ body: @escaping @MainActor (SessionCommands) async throws(SessionCommands.Failure) -> Void) async -> HTTPResponse {
-        await MainActor.run { () -> Task<HTTPResponse, Never>? in
-            guard let store = context.controller.store else { return nil }
-            return Task { @MainActor in
-                do throws(SessionCommands.Failure) {
-                    try await body(SessionCommands(store: store))
-                    return HTTPResponse(status: 204)
-                } catch { return response(error) }
-            }
-        }?.value ?? notReady
+        await onMainAsync(context) { store in
+            do throws(SessionCommands.Failure) {
+                try await body(SessionCommands(store: store))
+                return HTTPResponse(status: 204)
+            } catch { return response(error) }
+        }
     }
 
     @Sendable static func reply(_ context: Context) async -> HTTPResponse {
@@ -261,4 +263,58 @@ extension RemoteRoutes {
     }
 
     static func invalidReply(_ message: String, _ reason: String) -> HTTPResponse { response(.invalid(message, reason)) }
+
+    // MARK: Settings and models
+
+    /// `POST /v1/sessions/{id}/settings`, signed: unlocked for a model, effort or mode, Face ID for a mode that raises.
+    @Sendable static func changeSettings(_ context: Context) async -> HTTPResponse {
+        guard let change = context.body(SettingsChange.self) else { return badJSON }
+        let id = context.params["id"] ?? ""
+        let subject: String
+        do { subject = try ConfirmMessage.subject(sessionID: id, settings: change) } catch { return noSession }
+        if let refusal = await refusal(context, .settings, subject: subject, needs: change.raises ? .biometric : .unlock) { return refusal }
+        return await command(context) { commands throws(SessionCommands.Failure) in try await commands.settings(id, change) }
+    }
+
+    /// `GET /v1/models?kind=claude|codex[&session=<id>]`: a Codex session's own daemon lists its account's models;
+    /// otherwise what `/v1/options` offers.
+    @Sendable static func models(_ context: Context) async -> HTTPResponse {
+        guard let agent = AgentProvider(rawValue: context.request.query["kind"] ?? "claude") else {
+            return RemoteServer.error(400, "bad_request", "kind is claude or codex.")
+        }
+        let session = context.request.query["session"]
+        let live = await command(context) { commands throws(SessionCommands.Failure) in try await commands.models(agent, session: session) }
+        // A list from the daemon, or a failure; null falls through to the catalog.
+        if live.status != 200 || live.body != Data("null".utf8) { return live }
+        guard let options = await RemoteOptions.agents(context.controller) else { return notReady }
+        return json(200, ModelList(agent: agent, models: options.first { $0.agent == agent }?.models ?? []))
+    }
+
+    // MARK: Turns
+
+    /// `GET /v1/sessions/{id}/turns/{turnID}/diff`.
+    @Sendable static func turnDiff(_ context: Context) async -> HTTPResponse {
+        let id = context.params["id"] ?? "", turn = context.params["turnID"] ?? ""
+        return await command(context) { commands throws(SessionCommands.Failure) in try await commands.turnDiff(id, turn: turn) }
+    }
+
+    /// `POST /v1/sessions/{id}/compact`: 204 once Codex has started it.
+    @Sendable static func compact(_ context: Context) async -> HTTPResponse {
+        let id = context.params["id"] ?? ""
+        if let refused = await refusal(context, .compact, target: id) { return refused }
+        return empty(await command(context, status: 204) { commands throws(SessionCommands.Failure) in try await commands.compact(id); return Empty() })
+    }
+
+    /// `POST /v1/sessions/{id}/review {target}`.
+    @Sendable static func review(_ context: Context) async -> HTTPResponse {
+        guard let request = context.body(ReviewRequest.self) else { return badJSON }
+        let id = context.params["id"] ?? ""
+        if let refused = await refusal(context, .review, target: id, body: request) { return refused }
+        return empty(await command(context, status: 204) { commands throws(SessionCommands.Failure) in try await commands.review(id, request); return Empty() })
+    }
+
+    struct Empty: Encodable, Sendable {}
+
+    /// A 204 has no body.
+    private static func empty(_ response: HTTPResponse) -> HTTPResponse { response.status == 204 ? HTTPResponse(status: 204) : response }
 }

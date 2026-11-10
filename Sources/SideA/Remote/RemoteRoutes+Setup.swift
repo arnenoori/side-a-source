@@ -27,26 +27,8 @@ extension RemoteRoutes {
     }
 
     @Sendable static func options(_ context: Context) async -> HTTPResponse {
-        guard let agents = await agentOptions(context) else { return notReady }
+        guard let agents = await RemoteOptions.agents(context.controller) else { return notReady }
         return json(200, OptionsList(agents: agents))
-    }
-
-    static func agentOptions(_ context: Context) async -> [AgentOptions]? { await agentOptions(context.controller) }
-
-    /// Each agent's models, efforts and commands: the phone's options and the Sessions window's New Session.
-    static func agentOptions(_ controller: RemoteController) async -> [AgentOptions]? {
-        let known = await MainActor.run { () -> (claude: Bool, codex: String?, used: [String], homes: RemoteOptions.Homes)? in
-            guard let store = controller.store else { return nil }
-            let used = (store.report?.models ?? []).sorted { $0.total > $1.total }.compactMap(\.model)
-            // A demo never runs the real Codex, and reads only its own folders.
-            let codex = store.isInstalled(.codex) && !store.isDemo ? store.dependencies.agent(.codex).path : nil
-            return (store.isInstalled(.claude), codex, used, RemoteOptions.homes(store))
-        }
-        guard let known else { return nil }
-        let codexModels = await RemoteOptions.codexModels(codex: known.codex, home: known.homes.codex)
-        let commands = await RemoteOptions.commands(known.homes, cache: controller.cache)
-        return [AgentOptions(agent: .claude, installed: known.claude, models: RemoteOptions.claudeModels(used: known.used), commands: commands.claude),
-                AgentOptions(agent: .codex, installed: known.codex != nil, models: codexModels, commands: commands.codex)]
     }
 }
 
@@ -54,6 +36,22 @@ extension RemoteRoutes {
 /// aliases, then the models in the usage report or Codex's config, then the user's own commands and skills.
 enum RemoteOptions {
     typealias Option = AgentOptions.Option
+
+    /// Each agent's models, efforts and commands: the phone's options and the Sessions window's New Session.
+    static func agents(_ controller: RemoteController) async -> [AgentOptions]? {
+        let known = await MainActor.run { () -> (claude: Bool, codex: String?, used: [String], homes: RemoteOptions.Homes)? in
+            guard let store = controller.store else { return nil }
+            let used = (store.report?.models ?? []).sorted { $0.total > $1.total }.compactMap(\.model)
+            // A demo never runs the real Codex, and reads only its own folders.
+            let codex = store.isInstalled(.codex) && !store.isDemo ? store.dependencies.agent(.codex).path : nil
+            return (store.isInstalled(.claude), codex, used, homes(store))
+        }
+        guard let known else { return nil }
+        let codexModels = await Self.codexModels(codex: known.codex, home: known.homes.codex)
+        let commands = await Self.commands(known.homes, cache: controller.cache)
+        return [AgentOptions(agent: .claude, installed: known.claude, models: claudeModels(used: known.used), commands: commands.claude),
+                AgentOptions(agent: .codex, installed: known.codex != nil, models: codexModels, commands: commands.codex)]
+    }
 
     /// Where each agent keeps its commands: the user's home, or a demo's own folder; Codex's CODEX_HOME when set.
     struct Homes: Sendable {

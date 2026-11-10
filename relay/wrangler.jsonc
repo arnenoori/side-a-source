@@ -18,7 +18,7 @@
   "observability": { "enabled": true, "head_sampling_rate": 1, "logs": { "invocation_logs": false } },
   // RELAY_TUNNEL_PAUSED: refuses new tunnel sockets (docs/remote/tunnel.md) and leaves pushes alone.
   // APNS_BUNDLES: the apps whose tokens this relay accepts, comma-separated.
-  "vars": { "RELAY_PAUSED": "", "RELAY_TUNNEL_PAUSED": "", "RELAY_ENV": "production", "APNS_BUNDLES": "com.arnenoori.sidea.remote,com.arnenoori.sidea.remote.dev" },
+  "vars": { "RELAY_PAUSED": "", "RELAY_TUNNEL_PAUSED": "", "APNS_BUNDLES": "com.arnenoori.sidea.remote,com.arnenoori.sidea.remote.dev" },
   "durable_objects": {
     "bindings": [
       { "name": "INSTALLS", "class_name": "Install" },
@@ -29,14 +29,16 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Install", "Health"] }, { "tag": "v2", "new_sqlite_classes": ["Ledger"] }],
   "ratelimits": [
     { "name": "REGISTER_LIMIT", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } },
-    { "name": "TUNNEL_LIMIT", "namespace_id": "4103", "simple": { "limit": 120, "period": 60 } }
+    { "name": "TUNNEL_LIMIT", "namespace_id": "4103", "simple": { "limit": 120, "period": 60 } },
+    // Every other signed or bearer request, per network, before it wakes an install's object (src/index.ts).
+    { "name": "REQUEST_LIMIT", "namespace_id": "4105", "simple": { "limit": 600, "period": 60 } }
   ],
   "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "sidea_push" }],
   "env": {
     "staging": {
       "name": "sidea-push-staging",
       "routes": [{ "pattern": "push-staging.getsidea.com", "custom_domain": true }],
-      "vars": { "RELAY_PAUSED": "", "RELAY_TUNNEL_PAUSED": "", "RELAY_ENV": "staging", "APNS_BUNDLES": "com.arnenoori.sidea.remote,com.arnenoori.sidea.remote.dev" },
+      "vars": { "RELAY_PAUSED": "", "RELAY_TUNNEL_PAUSED": "", "APNS_BUNDLES": "com.arnenoori.sidea.remote,com.arnenoori.sidea.remote.dev" },
       "durable_objects": {
         "bindings": [
           { "name": "INSTALLS", "class_name": "Install" },
@@ -46,7 +48,8 @@
       },
       "ratelimits": [
         { "name": "REGISTER_LIMIT", "namespace_id": "4102", "simple": { "limit": 10, "period": 60 } },
-        { "name": "TUNNEL_LIMIT", "namespace_id": "4104", "simple": { "limit": 120, "period": 60 } }
+        { "name": "TUNNEL_LIMIT", "namespace_id": "4104", "simple": { "limit": 120, "period": 60 } },
+        { "name": "REQUEST_LIMIT", "namespace_id": "4106", "simple": { "limit": 600, "period": 60 } }
       ],
       "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "sidea_push_staging" }]
     }

@@ -135,7 +135,8 @@ struct ScannerScreen: View {
     }
 
     private func found(_ payload: String) {
-        guard run == nil else { return }
+        // The camera keeps reading the code behind an alert; a re-read must not skip its Pair Anyway.
+        guard run == nil, identity == nil, otherTailnet == nil else { return }
         if let url = URL(string: payload), ReviewDemo.matches(url) {
             locked += 1
             guard root.action(for: url) == .openDemo else { return askingDemo = true }
@@ -150,7 +151,7 @@ struct ScannerScreen: View {
             return
         }
         locked += 1
-        if identity == nil, let warning = PairedMac.identityWarning(invitation) {
+        if let warning = PairedMac.identityWarning(invitation) {
             identity = OtherTailnet(invitation: invitation, title: warning)
             return
         }

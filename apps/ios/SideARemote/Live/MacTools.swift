@@ -242,7 +242,7 @@ final class MacTools {
 
     /// A new hosted session continuing from a live one's latest state; the parent keeps running.
     func fork(_ session: RemoteSession) async throws -> HostedSession {
-        guard let conversation = session.conversationID, let cwd = session.cwd else { throw ToolError.demo }
+        guard let conversation = session.conversationID, let cwd = session.cwd else { throw ToolError.gone }
         let hosted = try await start(StartHosted(cwd: cwd, agent: session.agent, resume: conversation, fork: true), key: UUID().uuidString.lowercased())
         forkedFrom[hosted.name] = session.title
         return hosted
@@ -277,7 +277,7 @@ final class MacTools {
     /// Trust and Start: after Face ID the confirm key signs the folder the user saw, and the Mac answers its trust
     /// dialog. A dialog that's already gone (409 `cannot_deliver`) just clears the card.
     func trust(_ name: String) async throws {
-        guard let hosted = hosted[name] else { throw ToolError.demo }
+        guard let hosted = hosted[name] else { throw ToolError.gone }
         let confirm = try await faceID(.trust, subject: ConfirmMessage.subject(trust: name, cwd: hosted.cwd), reason: "Trust \(hosted.project) and start")
         do {
             self.hosted[name] = try await signed { try await client().trust(hosted, confirm: confirm) }
@@ -547,6 +547,7 @@ final class MacTools {
         case ToolError.demo: "The demo doesn't change anything."
         case ToolError.unavailable: "Side A can't open its storage on this iPhone. Reinstall it to make changes."
         case ToolError.badURL: "The Mac sent an address the phone can't open."
+        case ToolError.gone: "The Mac no longer lists this session."
         case ToolError.cancelled: "Cancelled."
         case ToolError.locked: "Unlock your iPhone to do this."
         case ToolError.pairAgain: "Pair this iPhone again to do this from it."
@@ -566,6 +567,8 @@ extension AutopilotState {
 
 enum ToolError: Error {
     case demo, badURL
+    /// The session changed on the Mac between showing the button and the tap: it ended, or no longer says where it runs.
+    case gone
     /// No Mac to act on: not paired, or the outbox couldn't open (`MacTools.Mode.unavailable`).
     case unavailable
     /// Face ID was cancelled: nothing to report.

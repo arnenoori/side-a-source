@@ -374,6 +374,9 @@ export class Install extends DurableObject<Env> {
     const { install_id: installId } = this.install();
     const seconds = Math.floor(now / 1000);
     const plan: Plan = { targets: [], results: [] };
+    // The privacy page promises activity tokens last 12 hours; the daily alarm alone would keep them up to 36.
+    const activitiesFrom = now - LIMITS.activityLifetime;
+    if (send.kind === 'liveactivity' && send.event !== 'start') this.sql.exec('DELETE FROM activities WHERE created <= ?', activitiesFrom);
     for (const deviceId of send.devices) {
       const device = this.device(deviceId);
       if (!device || !device.apns_token) {
@@ -396,7 +399,8 @@ export class Install extends DurableObject<Env> {
         });
       } else {
         const activity = this.sql.exec<{ update_token: string; bundle: string; environment: Environment }>(
-          'SELECT update_token, bundle, environment FROM activities WHERE id = ? AND device_id = ?', send.activityId!, deviceId).toArray()[0];
+          'SELECT update_token, bundle, environment FROM activities WHERE id = ? AND device_id = ? AND created > ?',
+          send.activityId!, deviceId, activitiesFrom).toArray()[0];
         if (!activity) plan.results.push({ device: deviceId, result: 'gone' });
         else plan.targets.push({
           deviceId, kind: 'activity', activityId: send.activityId, ending: send.event === 'end', owner: device.apns_token,
@@ -450,7 +454,7 @@ export class Install extends DurableObject<Env> {
     const state = this.load(now);
     const wait = this.take(state, `phone:${deviceId}`, MINUTE, LIMITS.phonePerMinute, now);
     const result = wait ? answer(error(429, 'rate_limited', 'Too many requests this minute', wait)) : this.phoneOp(state, device, op, now, fresh, proof);
-    if (this.exists()) this.save(state, now);
+    this.save(state, now);
     return result;
   }
 

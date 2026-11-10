@@ -58,36 +58,3 @@ extension RemoteRoutes {
         return known ? HTTPResponse(status: 204) : RemoteServer.error(404, "not_found", "Side A didn't send that test.")
     }
 }
-
-/// Dev server previews through Side A's own listener.
-extension RemoteRoutes {
-    static let previewRoutes: [Route] = [
-        Route("POST", "v1/sessions/{id}/ports/{port}/preview", openPreview),
-        Route("DELETE", "v1/sessions/{id}/ports/{port}/preview", closePreview),
-    ]
-
-    static let portNotFound = RemoteServer.error(404, "port_not_found", "That session isn't listening on that port any more.")
-
-    @Sendable static func openPreview(_ context: Context) async -> HTTPResponse {
-        guard let port = context.params["port"].flatMap(Int.init), let host = context.request.headers["Host"] else { return portNotFound }
-        let id = context.params["id"] ?? "", device = context.device
-        if let refused = await refusal(context, .preview, target: "\(id):\(port)") { return refused }
-        return await MainActor.run {
-            guard let store = context.controller.store, let target = Target(id, store: store), let live = target.live,
-                  let listener = live.ports?.first(where: { $0.port == port }) else { return portNotFound }
-            struct Opened: Encodable { let url: String }
-            let preview = context.controller.previews.open(session: target.key, port: port, pid: Int32(clamping: listener.pid), device: device, host: host)
-            return json(200, Opened(url: preview.url))
-        }
-    }
-
-    @Sendable static func closePreview(_ context: Context) async -> HTTPResponse {
-        guard let port = context.params["port"].flatMap(Int.init) else { return portNotFound }
-        let id = context.params["id"] ?? ""
-        await MainActor.run {
-            guard let store = context.controller.store, let target = Target(id, store: store) else { return }
-            context.controller.previews.close(session: target.key, port: port)
-        }
-        return HTTPResponse(status: 204)
-    }
-}

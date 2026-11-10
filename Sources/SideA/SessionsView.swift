@@ -258,11 +258,13 @@ struct FilterToken: View {
     }
 }
 
+/// Each row keeps its own hover, so the pointer crossing the list redraws only the rows it enters and leaves.
+/// `rested` runs once the pointer stays a moment, to load the conversation before the click.
 struct RowPlate: ViewModifier {
-    let id: String
     let selected: Bool
-    @Binding var hovered: String?
+    @Binding var hovering: Bool
     var radius: CGFloat = 8
+    let rested: () -> Void
     func body(content: Content) -> some View {
         content
             .background {
@@ -270,13 +272,18 @@ struct RowPlate: ViewModifier {
                     RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Ink.selected)
                 } else {
                     RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Ink.hover)
-                        .opacity(hovered == id ? 1 : 0)
-                        .animation(.easeOut(duration: 0.1), value: hovered == id)
+                        .opacity(hovering ? 1 : 0)
+                        .animation(.easeOut(duration: 0.1), value: hovering)
                 }
             }
             .contentShape(Rectangle())
             .onHover { inside in
-                if inside { hovered = id } else if hovered == id { hovered = nil }
+                hovering = inside
+                guard inside else { return }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(120))
+                    if hovering { rested() }
+                }
             }
     }
 }
@@ -307,32 +314,33 @@ struct SessionList: View {
     @Bindable var model: SessionStore
     @State private var collapsed: Set<String> = []
     @State private var expanded: Set<String> = []
-    @State private var hovered: String?
     @FocusState private var focused: Bool
     var body: some View {
         let groups = model.groups
-        let listed = model.showsSections ? model.listed : .init()
+        let shown = model.shown
+        let listed = model.showsSections ? shown.listed : .init()
         let finishedIDs = Set(listed.finished.compactMap(\.finish.sessionID))
+        let pins = model.showsSections ? model.visiblePins : []
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if model.searching {
                         ForEach(model.results) { session in
-                            SearchResultRow(model: model, session: session, hovered: $hovered)
+                            SearchResultRow(model: model, session: session)
                                 .transition(Ink.rise(6))
                         }
                     } else {
                         if !listed.waiting.isEmpty {
                             SectionLabel(text: "Needs you")
                             ForEach(listed.waiting) { session in
-                                WaitingRow(model: model, session: session, hovered: $hovered)
+                                WaitingRow(model: model, session: session)
                                     .transition(Ink.rise(-4))
                             }
                         }
                         if !listed.finished.isEmpty {
                             SectionLabel(text: "Ready")
                             ForEach(listed.finished) { item in
-                                FinishedRow(model: model, item: item, hovered: $hovered)
+                                FinishedRow(model: model, item: item)
                                     .transition(Ink.rise(-4))
                             }
                         }
@@ -344,7 +352,7 @@ struct SessionList: View {
                             ForEach(model.byProject(listed.working)) { group in
                                 if captions { ProjectCaption(name: group.project) }
                                 ForEach(group.sessions) { session in
-                                    RunningRow(model: model, session: session, hovered: $hovered)
+                                    RunningRow(model: model, session: session)
                                         .transition(Ink.rise(-4))
                                 }
                             }
@@ -354,17 +362,17 @@ struct SessionList: View {
                                     ForEach(model.byProject(listed.idle)) { group in
                                         if captions { ProjectCaption(name: group.project) }
                                         ForEach(group.sessions) { session in
-                                            RunningRow(model: model, session: session, hovered: $hovered)
+                                            RunningRow(model: model, session: session)
                                                 .transition(Ink.rise(-4))
                                         }
                                     }
                                 }
                             }
                         }
-                        if model.showsSections && !model.visiblePins.isEmpty {
+                        if !pins.isEmpty {
                             SectionLabel(text: "Pinned")
-                            ForEach(model.visiblePins.filter { !finishedIDs.contains($0.id) }) { session in
-                                SessionRow(model: model, session: session, depth: 0, hovered: $hovered)
+                            ForEach(pins.filter { !finishedIDs.contains($0.id) }) { session in
+                                SessionRow(model: model, session: session, depth: 0)
                                     .transition(Ink.rise(-4))
                             }
                         }
@@ -377,7 +385,7 @@ struct SessionList: View {
                             if !folded {
                                 let limit = expanded.contains(group.path) ? rows.count : 5
                                 ForEach(rows.prefix(limit), id: \.session.id) { row in
-                                    SessionRow(model: model, session: row.session, depth: row.depth, hovered: $hovered)
+                                    SessionRow(model: model, session: row.session, depth: row.depth)
                                         .transition(Ink.rise(-4))
                                 }
                                 if rows.count > limit {
@@ -393,7 +401,7 @@ struct SessionList: View {
             .onHover { inside in model.holding = inside }
             .onDisappear { model.holding = false }
             .overlay(alignment: .top) {
-                if model.heldBehind {
+                if shown.behind {
                     Button { model.showHeld() } label: {
                         Label("Show Updates", systemImage: "arrow.up").font(.subheadline.weight(.medium))
                             .padding(.horizontal, 10).frame(height: 24)
@@ -406,20 +414,13 @@ struct SessionList: View {
                     .transition(Ink.rise(-6))
                 }
             }
-            .animation(Ink.glide, value: model.heldBehind)
+            .animation(Ink.glide, value: shown.behind)
             .focusable()
             .focused($focused)
             .focusEffectDisabled()
             .onKeyPress(.downArrow) { model.step(1); return .handled }
             .onKeyPress(.upArrow) { model.step(-1); return .handled }
             .onKeyPress(.escape) { model.focusSearch += 1; return .handled }
-            .onChange(of: hovered) { _, id in
-                guard let id else { return }
-                Task {
-                    try? await Task.sleep(for: .milliseconds(120))
-                    if hovered == id { model.prefetch(id, at: model.searching ? model.results.first { $0.id == id }?.snippets?.first?.uuid : nil) }
-                }
-            }
             .onChange(of: model.selectedID) { _, id in
                 // Arrow keys keep working from the list once a row is picked, not only from search.
                 if id != nil && !model.searching { focused = true }
@@ -562,7 +563,7 @@ struct SessionRow: View {
     let model: SessionStore
     let session: SessionInfo
     let depth: Int
-    @Binding var hovered: String?
+    @State private var hovering = false
     var body: some View {
         let selected = model.selectedID == session.id
         Button { model.open(session.id) } label: {
@@ -586,7 +587,7 @@ struct SessionRow: View {
                 }
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 28)
-            .modifier(RowPlate(id: session.id, selected: selected, hovered: $hovered))
+            .modifier(RowPlate(selected: selected, hovering: $hovering) { model.prefetch(session.id) })
         }
         .buttonStyle(.plain)
         .contextMenu { SessionMenuItems(model: model, session: session) }
@@ -596,7 +597,7 @@ struct SessionRow: View {
 struct WaitingRow: View {
     let model: SessionStore
     let session: LiveSession
-    @Binding var hovered: String?
+    @State private var hovering = false
     var body: some View {
         let id = session.sessionID ?? ""
         Button { model.open(id) } label: {
@@ -613,7 +614,7 @@ struct WaitingRow: View {
                 Spacer(minLength: 8)
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 40)
-            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered))
+            .modifier(RowPlate(selected: model.selectedID == id, hovering: $hovering) { model.prefetch(id) })
         }
         .buttonStyle(.plain)
     }
@@ -670,7 +671,7 @@ struct IdleFold: View {
             .accessibilityValue(model.idleOpen ? "Shown" : "Folded")
             if !stale.isEmpty {
                 Button("Quit \(stale.count) Idle…") { model.quittingStale = true }.controlSize(.small)
-                    .help("Quit the \(stale.count) idle 30 minutes or more. They free about \(Megabytes.text(stale.compactMap(\.memory).reduce(0, +))).")
+                    .help("Quit the \(stale.count) idle \(LiveSession.staleMinutes) minutes or more. They free about \(Megabytes.text(stale.compactMap(\.memory).reduce(0, +))).")
             }
         }
         .padding(.leading, 4).padding(.trailing, 6).frame(height: 32)
@@ -692,7 +693,7 @@ enum Megabytes {
 struct FinishedRow: View {
     let model: SessionStore
     let item: Island.Ready
-    @Binding var hovered: String?
+    @State private var hovering = false
     var body: some View {
         let id = item.finish.sessionID ?? ""
         Button { model.open(id) } label: {
@@ -707,7 +708,7 @@ struct FinishedRow: View {
                 Text(When.compact(item.at.timeIntervalSince1970)).font(.subheadline).foregroundStyle(.tertiary).monospacedDigit()
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 40)
-            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered))
+            .modifier(RowPlate(selected: model.selectedID == id, hovering: $hovering) { model.prefetch(id) })
         }
         .buttonStyle(.plain)
         .contextMenu { Button("Show in Terminal") { model.store.island.go(item) } }
@@ -719,7 +720,7 @@ struct FinishedRow: View {
 struct RunningRow: View {
     let model: SessionStore
     let session: LiveSession
-    @Binding var hovered: String?
+    @State private var hovering = false
     var body: some View {
         let id = session.sessionID ?? ""
         let busy = session.status == "busy"
@@ -757,12 +758,12 @@ struct RunningRow: View {
                 Spacer(minLength: 0)
             }
             .padding(.leading, 4).padding(.trailing, 6).frame(height: 40)
-            .modifier(RowPlate(id: id, selected: model.selectedID == id, hovered: $hovered))
+            .modifier(RowPlate(selected: model.selectedID == id, hovering: $hovering) { model.prefetch(id) })
         }
         .buttonStyle(.plain)
         .help(session.memory.map { "\(Megabytes.text($0)) in \(session.processes ?? 1) processes" } ?? "")
         .overlay(alignment: .trailing) {
-            if hovered == id {
+            if hovering {
                 HStack(spacing: 2) {
                     if noting { RowAction(symbol: "text.bubble", help: "Send a note it reads after its current step") { model.noting = session } }
                     if escape {
@@ -784,7 +785,7 @@ struct RunningRow: View {
                 .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.1), value: hovered == id)
+        .animation(.easeOut(duration: 0.1), value: hovering)
         .contextMenu {
             if noting || stopping || escape || waiting != nil {
                 if noting { Button("Send a Note…") { model.noting = session } }
@@ -941,7 +942,7 @@ struct SessionMenuItems: View {
 struct SearchResultRow: View {
     let model: SessionStore
     let session: SessionInfo
-    @Binding var hovered: String?
+    @State private var hovering = false
     var body: some View {
         let selected = model.selectedID == session.id
         Button { model.open(session.id, at: session.snippets?.first?.uuid) } label: {
@@ -967,7 +968,7 @@ struct SearchResultRow: View {
                 .font(.subheadline).foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 10).padding(.vertical, 9)
-            .modifier(RowPlate(id: session.id, selected: selected, hovered: $hovered, radius: 10))
+            .modifier(RowPlate(selected: selected, hovering: $hovering, radius: 10) { model.prefetch(session.id, at: session.snippets?.first?.uuid) })
         }
         .buttonStyle(.plain)
         .contextMenu { SessionMenuItems(model: model, session: session) }

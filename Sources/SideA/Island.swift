@@ -136,7 +136,9 @@ final class Island {
     struct Choice: Equatable { let option: Int; let serial: Int }
     /// Answers picked so far on each question form, so folding the island or stepping to another request keeps them.
     var drafts: [Pending.ID: Draft] = [:]
-    struct Draft { var picked: [String: [String]] = [:]; var other: [String: String] = [:]; var step = 0 }
+    struct Draft { var answers = QuestionAnswers(); var step = 0 }
+    /// The plan whose "What should change?" field is open.
+    var revising: Pending.ID?
     /// The Ready row whose reply field is open.
     var replying: Ready.ID?
     /// Per session, follow-ups queued while it works: on disk, because the Stop hook that takes them can outlast this app.
@@ -477,6 +479,7 @@ final class Island {
         if resolvedOrder.count > 256 { resolved[resolvedOrder.removeFirst()] = nil }
         watcher?.requestResolved(item, by: by, answer: answer)
         drafts[id] = nil
+        if revising == id { revising = nil }
         if pending.isEmpty { expanded = false }
         changed()
     }
@@ -851,7 +854,7 @@ final class Island {
         hotKeys.register([
             (.controlOption(kVK_ANSI_G), { [weak self] in self?.go() }),
             (.controlOption(kVK_ANSI_Y), { [weak self] in self?.answer(.allow) }),
-            (.controlOption(kVK_ANSI_N), { [weak self] in self?.answer(.deny(nil)) }),
+            (.controlOption(kVK_ANSI_N), { [weak self] in self?.deny() }),
             (.controlOption(kVK_ANSI_A), { [weak self] in self?.always() }),
             (.controlOption(kVK_ANSI_T), { [weak self] in self?.showTerminal() }),
             (.controlOption(kVK_ANSI_I), { [weak self] in self?.focus() }),
@@ -861,6 +864,13 @@ final class Island {
         ] + [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4].enumerated().map { index, key in
             (.controlOption(key), { [weak self] in self?.choose(index) })
         })
+    }
+
+    /// ⌃⌥N: on a plan, Keep Planning, which opens its "What should change?" field; anything else is denied.
+    func deny() {
+        guard let item = current, case .plan = item.request.action else { return answer(.deny(nil)) }
+        revising = item.id
+        focus()
     }
 
     /// ⌃⌥1–4: answers a one-question, single-choice AskUserQuestion; on a longer form, picks on the question showing.

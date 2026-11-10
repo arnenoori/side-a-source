@@ -79,11 +79,43 @@ enum WireBuilders {
         }
     }
 
+    /// What every row of one listing shares, read once for all of them: the open requests by session and by process,
+    /// and each conversation's limit.
+    struct Rows {
+        let finished: Set<String>
+        let limits: [String: SessionLimit]
+        private let pending: [Island.Pending]
+        private let bySession: [String: [Int]]
+        private let byProcess: [Int: [Int]]
+
+        @MainActor init(_ store: AccountStore, finished: Set<String>) {
+            self.finished = finished
+            limits = store.sessionLimits(now: Date().timeIntervalSince1970)
+            pending = store.island.pending
+            var bySession: [String: [Int]] = [:], byProcess: [Int: [Int]] = [:]
+            for (index, item) in pending.enumerated() {
+                if let id = item.request.sessionID { bySession[id, default: []].append(index) }
+                if let pid = item.request.pid { byProcess[pid, default: []].append(index) }
+            }
+            self.bySession = bySession; self.byProcess = byProcess
+        }
+
+        /// In arrival order, as the island holds them.
+        func open(_ live: LiveSession) -> [Island.Pending] {
+            let indices = Set((live.sessionID.flatMap { bySession[$0] } ?? []) + (byProcess[live.pid] ?? []))
+            return indices.sorted().map { pending[$0] }
+        }
+    }
+
     static func session(_ live: LiveSession, store: AccountStore, finished: Set<String>) -> RemoteSession {
+        session(live, store: store, rows: Rows(store, finished: finished))
+    }
+
+    static func session(_ live: LiveSession, store: AccountStore, rows: Rows) -> RemoteSession {
         let sessions = store.sessions
-        let island = store.island
+        let finished = rows.finished
         let key = key(live)
-        let open = island.pending.filter { $0.request.sessionID != nil && $0.request.sessionID == live.sessionID || $0.request.pid == live.pid }
+        let open = rows.open(live)
         let commands = SessionCommands(store: store)
         let status = commands.status(live, finished: finished)
         let accountID = sessions.accountID(of: live)
@@ -92,7 +124,7 @@ enum WireBuilders {
         let daemon = store.remote.codex.row(live)
         return RemoteSession(id: key, conversationID: live.sessionID, agent: agent,
                              title: live.sessionID.flatMap { sessions.names[$0] } ?? live.title ?? live.name ?? sessions.project(of: live.cwd), cwd: live.cwd, project: sessions.project(of: live.cwd),
-                             worktree: live.cwd.map { isFile($0 + "/.git") } ?? false,
+                             worktree: live.cwd.map { worktree($0) } ?? false,
                              accountID: accountID, accountName: accountID.flatMap { id in store.config.accounts.first { $0.id == id }?.name },
                              model: daemon?.settings?.model ?? live.model, effort: daemon?.settings?.effort?.rawValue ?? live.effort, status: status,
                              waitingFor: live.waitingFor, statusAt: live.since.map { $0 > 1e11 ? $0 / 1000 : $0 },
@@ -105,7 +137,7 @@ enum WireBuilders {
                              memoryBytes: live.memory.map { $0 << 20 }, contextPercent: daemon?.contextPercent ?? live.contextPercent,
                              abilityReasons: commands.reasons(live, status: status), settings: daemon?.settings ?? settings(live),
                              turnID: daemon?.turnID ?? live.turnID, plan: daemon?.plan, backgroundTasks: live.runningTasks,
-                             limit: live.sessionID.flatMap { store.sessionLimits(now: Date().timeIntervalSince1970)[$0] })
+                             limit: live.sessionID.flatMap { rows.limits[$0] })
     }
 
     /// What the session runs with, as the bridge read it; nil when it read nothing.
@@ -115,10 +147,35 @@ enum WireBuilders {
                                mode: live.mode.map(PermissionMode.init(rawValue:)), fast: live.fast)
     }
 
-    /// A worktree's `.git` is a file; one stat a session, on every snapshot.
-    private static func isFile(_ path: String) -> Bool {
+    /// A worktree's `.git` is a file. Asked for every session on every change, so each folder's answer is kept a little.
+    static func worktree(_ cwd: String, now: Date = Date()) -> Bool {
+        if let known = worktrees[cwd], now.timeIntervalSince(known.at) < worktreeTTL { return known.is }
+        if worktrees.count > 512 { worktrees = [:] }
         var directory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &directory) && !directory.boolValue
+        let found = FileManager.default.fileExists(atPath: cwd + "/.git", isDirectory: &directory) && !directory.boolValue
+        worktrees[cwd] = (found, now)
+        return found
+    }
+
+    static let worktreeTTL: TimeInterval = 10
+    private static var worktrees: [String: (is: Bool, at: Date)] = [:]
+
+    static func hosted(_ session: HostedSessions.Session, hosted: HostedSessions, store: AccountStore, viewers: Int) -> HostedSession? {
+        guard let agent = session.agent else { return nil }
+        let live = store.sessions.live.first { $0.hosted == session.name }
+        return HostedSession(name: session.name, agent: agent == .codex ? .codex : .claude, cwd: session.cwd,
+                             // A worktree's project is the repo it came from.
+                             project: URL(fileURLWithPath: HostedSessions.repository(of: session.cwd) ?? session.cwd).lastPathComponent,
+                             worktree: session.worktree.isEmpty ? nil : SideAProtocol.Worktree(path: session.worktree, branch: "sidea/\(session.name)"),
+                             sessionID: live.map(key) ?? (session.sessionID.isEmpty ? nil : session.sessionID),
+                             createdAt: session.created, macAttached: hosted.macClients[session.name] != nil, viewers: viewers, alive: true,
+                             exitStatus: nil)
+    }
+
+    /// Phone viewers as the last tmux refresh counted them, which `HostedSessions.watch` keeps within seconds.
+    static func hostedSessions(_ store: AccountStore) -> [HostedSession] {
+        let hosted = store.hosted
+        return hosted.sessions.compactMap { Self.hosted($0, hosted: hosted, store: store, viewers: hosted.phoneViewers[$0.name] ?? 0) }
     }
 
     static func accounts(_ store: AccountStore) -> [RemoteAccount] {

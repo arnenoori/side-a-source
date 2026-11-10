@@ -76,7 +76,7 @@ final class SessionStore {
         guard !store.isDemo else { return }
         let count = stale.count
         command { commands throws(SessionCommands.Failure) in
-            let skipped = count - (try await commands.quitIdle(olderThanMinutes: 30)).count
+            let skipped = count - (try await commands.quitIdle(olderThanMinutes: LiveSession.staleMinutes)).count
             if skipped > 0 { self.error = skipped == 1 ? "That session changed since the list was shown, so it was left running." : "\(skipped) sessions changed since the list was shown, so they were left running." }
         }
     }
@@ -85,14 +85,23 @@ final class SessionStore {
     /// signalled, or nil when the list couldn't be read.
     func terminate(_ sessions: [LiveSession], still: (LiveSession) -> Bool) async -> [LiveSession]? {
         guard let fresh = await freshLive() else { return nil }
-        var ended: [LiveSession] = []
-        for session in sessions {
-            guard let now = fresh.first(where: { $0.pid == session.pid && $0.sessionID == session.sessionID && $0.started == session.started }),
-                  still(now), ProcessCheck.maySignal(pid: now.pid, started: now.started) else { continue }
+        return signal(Self.current(sessions, in: fresh, still: still))
+    }
+
+    /// SIGTERM to each of `sessions`, as a fresh list shows them, whose pid still belongs to that process.
+    func signal(_ sessions: [LiveSession]) -> [LiveSession] {
+        sessions.filter { now in
+            guard ProcessCheck.maySignal(pid: now.pid, started: now.started) else { return false }
             kill(pid_t(now.pid), SIGTERM)
-            ended.append(now)
+            return true
         }
-        return ended
+    }
+
+    /// Each of `sessions` as `fresh` shows it, when it is still the same process and passes `still`.
+    nonisolated static func current(_ sessions: [LiveSession], in fresh: [LiveSession], still: (LiveSession) -> Bool) -> [LiveSession] {
+        sessions.compactMap { session in
+            fresh.first { $0.pid == session.pid && $0.sessionID == session.sessionID && $0.started == session.started }.flatMap { still($0) ? $0 : nil }
+        }
     }
     var stoppingServer: LiveSession.Port?
 
@@ -157,17 +166,24 @@ final class SessionStore {
         return Listed(waiting: waiting, finished: finished, working: rest.filter { $0.status == "busy" }, idle: rest.filter { $0.status != "busy" })
     }
 
-    var listed: Listed {
-        guard let held else { return current }
+    var listed: Listed { held.map(kept) ?? current }
+
+    /// The list as shown, and whether holding it hides a change so the list can offer to show it; together, so a
+    /// view works the sections out once.
+    var shown: (listed: Listed, behind: Bool) {
+        let current = self.current
+        guard let held else { return (current, false) }
+        let listed = kept(held)
+        return (listed, listed.shape != current.shape)
+    }
+
+    private func kept(_ held: Listed) -> Listed {
         let fresh = Dictionary(live.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
         let keep = { (rows: [LiveSession]) in rows.compactMap { row in fresh[row.pid].flatMap { $0.started == row.started ? $0 : nil } } }
         let alive = Set(live.compactMap(\.sessionID))
         return Listed(waiting: keep(held.waiting), finished: held.finished.filter { $0.finish.sessionID.map(alive.contains) ?? false },
                       working: keep(held.working), idle: keep(held.idle))
     }
-
-    /// True while the held list hides a change, so the list can offer to show it.
-    var heldBehind: Bool { held != nil && listed.shape != current.shape }
 
     func showHeld() { withAnimation(Ink.ease) { held = current } }
 
@@ -248,6 +264,10 @@ final class SessionStore {
     @ObservationIgnored private var changeTask: Task<Void, Never>?
     @ObservationIgnored private var changed: Set<String> = []
     @ObservationIgnored private var registryChanged = false
+    /// Transcripts changed since the last index pass, and when that pass ran.
+    @ObservationIgnored private var unindexed: Set<String> = []
+    @ObservationIgnored private var indexedAt = ContinuousClock.now - .seconds(60)
+    private static let indexSpacing: Duration = .seconds(2)
     @ObservationIgnored private var cache: [String: SessionDetail] = [:]
     @ObservationIgnored private var recency: [String] = []
     @ObservationIgnored private var inflight: [String: (limit: Int, task: Task<SessionDetail, Error>)] = [:]
@@ -340,35 +360,61 @@ final class SessionStore {
     }
 
     private func scheduleChanges(after delay: Duration) {
-        guard !changed.isEmpty || registryChanged, changeTask == nil else { return }
+        guard !changed.isEmpty || registryChanged || !unindexed.isEmpty, changeTask == nil else { return }
+        // Only the index is owed: wait out its spacing rather than wake every 300 ms for nothing.
+        let wait = changed.isEmpty && !registryChanged ? max(delay, indexedAt + Self.indexSpacing - .now) : delay
         changeTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
+            try? await Task.sleep(for: wait)
             await self?.applyChanges()
         }
     }
 
+    /// Each pass reloads the open conversation through the reader. Indexing is a Python process of its own, and the
+    /// live list reads every process and port, so while sessions stream those run at most every `indexSpacing`:
+    /// the first change after a quiet spell at once, the rest gathered.
     private func applyChanges() async {
         let paths = changed
         let registry = registryChanged
         changed = []
         registryChanged = false
+        unindexed.formUnion(paths)
         var retry = false
         defer {
             changeTask = nil
             // Changes that arrived meanwhile, or paths the locked index skipped, get their own pass.
             scheduleChanges(after: retry ? .seconds(1) : .milliseconds(300))
         }
-        if registry || (!paths.isEmpty && !running.isEmpty) { await refreshLive() }
-        guard !paths.isEmpty else { return }
-        if await index(paths: Array(paths)) == -1 {
-            changed.formUnion(paths)
+        if registry { await refreshLive() }
+        if !paths.isEmpty {
+            for id in Set(cache.keys).union(inflight.keys) where paths.contains(where: { $0.contains(id) }) { invalidate(id) }
+            await reloadOpen(paths)
+        }
+        guard !unindexed.isEmpty, ContinuousClock.now - indexedAt >= Self.indexSpacing else { return }
+        let batch = unindexed
+        unindexed = []
+        indexedAt = .now
+        // A transcript feeds the live row of the session writing it; Codex has no registry, so its rollouts are how
+        // a new one shows up.
+        let ids = Set(live.compactMap(\.sessionID))
+        if !registry, batch.contains(where: { path in path.contains("/.codex/sessions/") || ids.contains { path.contains($0) } }) {
+            await refreshLive()
+        }
+        if await index(paths: Array(batch)) == -1 {
+            unindexed.formUnion(batch)
             retry = true
             return
         }
-        for id in Set(cache.keys).union(inflight.keys) where paths.contains(where: { $0.contains(id) }) { invalidate(id) }
         // Reordering results under the pointer while someone browses a search would be worse than a stale score.
         if !searching { await refresh() }
-        // Someone reading a page further back keeps it; "Jump to latest" brings the update.
+        // Its title and cost come from the index.
+        if let id = selectedID, batch.contains(where: { $0.contains(id) }) {
+            invalidate(id)
+            await reloadOpen(batch)
+        }
+    }
+
+    /// Someone reading a page further back keeps it; "Jump to latest" brings the update.
+    private func reloadOpen(_ paths: Set<String>) async {
         if let id = selectedID, paths.contains(where: { $0.contains(id) }), (detail?.later ?? 0) == 0,
            let value = try? await load(id), selectedID == id, (detail?.later ?? 0) == 0 {
             detail = value
@@ -1133,20 +1179,12 @@ final class SessionStore {
     }
 
     private func osascript(_ source: String, _ arguments: String...) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source] + arguments
-        let errors = Pipe()
-        process.standardError = errors
-        process.terminationHandler = { [weak self] finished in
-            guard finished.terminationStatus != 0 else { return }
-            let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            Task { @MainActor in
-                self?.error = message.contains("-1743") ? TerminalFocus.automationDenied
-                    : "The terminal could not be opened. Copy the command instead."
-            }
+        Task { [weak self] in
+            let run = await ProcessRunner.run("/usr/bin/osascript", ["-e", source] + arguments, timeout: nil)
+            guard run.launchError != nil || run.status != 0 else { return }
+            let message = String(data: run.errors, encoding: .utf8) ?? ""
+            self?.error = message.contains("-1743") ? TerminalFocus.automationDenied : "The terminal could not be opened. Copy the command instead."
         }
-        do { try process.run() } catch { self.error = "The terminal could not be opened. Copy the command instead." }
     }
 
     static func copy(_ text: String) {

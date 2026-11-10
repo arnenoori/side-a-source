@@ -369,11 +369,6 @@ final class MacSleepSystem: SleepSystem {
     }
 
     func sleepNow() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: KeepAwakeHelper.pmset)
-        process.arguments = ["sleepnow"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
+        Task { _ = await ProcessRunner.run(KeepAwakeHelper.pmset, ["sleepnow"], timeout: nil) }
     }
 }

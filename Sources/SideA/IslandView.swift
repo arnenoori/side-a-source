@@ -926,13 +926,9 @@ private struct QuestionForm: View {
     let island: Island
     let item: Island.Pending
     let questions: [IslandQuestion]
-    private var picked: [String: [String]] {
-        get { island.drafts[item.id]?.picked ?? [:] }
-        nonmutating set { island.drafts[item.id, default: .init()].picked = newValue }
-    }
-    private var other: [String: String] {
-        get { island.drafts[item.id]?.other ?? [:] }
-        nonmutating set { island.drafts[item.id, default: .init()].other = newValue }
+    private var answers: QuestionAnswers {
+        get { island.drafts[item.id]?.answers ?? .init() }
+        nonmutating set { island.drafts[item.id, default: .init()].answers = newValue }
     }
     private var step: Int {
         get { island.drafts[item.id]?.step ?? 0 }
@@ -967,7 +963,7 @@ private struct QuestionForm: View {
     private var tabs: some View {
         HStack(spacing: 6) {
             ForEach(Array(questions.enumerated()), id: \.offset) { index, question in
-                let done = !answer(question).isEmpty
+                let done = !answers.answer(question).isEmpty
                 Button { go(index) } label: {
                     HStack(spacing: 4) {
                         if done { Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)) }
@@ -995,9 +991,9 @@ private struct QuestionForm: View {
                 }
                 ForEach(Array(question.options.enumerated()), id: \.offset) { index, option in
                     OptionRow(option: option, number: single && index < 4 ? index + 1 : nil, multiple: question.multiSelect,
-                              selected: picked[question.question]?.contains(option.label) == true) { pick(question, option.label) }
+                              selected: answers.isPicked(option.label, in: question)) { pick(question, option.label) }
                 }
-                TextField("Something else…", text: Binding(get: { other[question.question] ?? "" }, set: { other[question.question] = $0 }))
+                TextField("Something else…", text: Binding(get: { answers.other[question.question] ?? "" }, set: { answers.other[question.question] = $0 }))
                     .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(.white)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(.white.opacity(0.05), in: .rect(cornerRadius: 11, style: .continuous))
@@ -1025,7 +1021,7 @@ private struct QuestionForm: View {
             if paged && !last {
                 Button { go(step + 1) } label: { Text("Next").frame(maxWidth: .infinity) }
                     .buttonStyle(IslandButtonStyle(kind: .primary))
-                    .disabled(answer(question).isEmpty)
+                    .disabled(answers.answer(question).isEmpty)
             } else {
                 Button { send() } label: { Text(recommendedOnly ? "Send Recommended Answers" : "Send Answers").frame(maxWidth: .infinity) }
                     .buttonStyle(IslandButtonStyle(kind: .primary))
@@ -1041,37 +1037,19 @@ private struct QuestionForm: View {
         island.announce("Question \(index + 1) of \(questions.count). \(questions[index].question)", high: false)
     }
 
-    private func answer(_ question: IslandQuestion) -> String {
-        let typed = (other[question.question] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        return ((picked[question.question] ?? []) + (typed.isEmpty ? [] : [typed])).joined(separator: ", ")
-    }
+    private var complete: Bool { answers.complete(questions) }
 
-    private var complete: Bool { questions.allSatisfy { !answer($0).isEmpty } }
+    private var recommendedOnly: Bool { answers.recommendedOnly(questions) }
 
-    /// Every answer is still the one Claude recommended, so one click accepts them all.
-    private var recommendedOnly: Bool {
-        questions.allSatisfy { question in
-            (other[question.question] ?? "").isEmpty
-                && picked[question.question] == question.options.filter(\.recommended).map(\.label) && !(picked[question.question] ?? []).isEmpty
-        }
-    }
-
-    /// Starts each single-choice question on Claude's recommended answer.
     private func preselect() {
-        for question in questions where !question.multiSelect && picked[question.question] == nil {
-            if let option = question.options.first(where: \.recommended) { picked[question.question] = [option.label] }
-        }
+        var preselected = answers
+        preselected.preselect(questions)
+        if preselected != answers { answers = preselected }
     }
 
     private func pick(_ question: IslandQuestion, _ label: String) {
         if single { return island.answer(.answers([question.question: label], input: item.request.input), item.id) }
-        var chosen = picked[question.question] ?? []
-        if question.multiSelect {
-            if let index = chosen.firstIndex(of: label) { chosen.remove(at: index) } else { chosen.append(label) }
-        } else {
-            chosen = [label]
-        }
-        picked[question.question] = chosen
+        answers.pick(label, in: question)
         // A single choice settles its question; let the pick show for a beat, then turn the page.
         if paged, !question.multiSelect, !last {
             let from = step
@@ -1080,8 +1058,8 @@ private struct QuestionForm: View {
     }
 
     private func send() {
-        guard complete else { return go(questions.firstIndex { answer($0).isEmpty } ?? step) }
-        island.answer(.answers(Dictionary(questions.map { ($0.question, answer($0)) }) { first, _ in first }, input: item.request.input), item.id)
+        guard complete else { return go(questions.firstIndex { answers.answer($0).isEmpty } ?? step) }
+        island.answer(.answers(answers.answers(questions), input: item.request.input), item.id)
     }
 }
 
@@ -1115,7 +1093,7 @@ private struct OptionRow: View {
                                 .background(.white.opacity(0.85), in: Capsule())
                         }
                     }
-                    if let description = option.description, !description.isEmpty, description.caseInsensitiveCompare(option.label) != .orderedSame {
+                    if let description = QuestionAnswers.description(of: option) {
                         Text(description).font(.system(size: 11)).foregroundStyle(.white.opacity(0.55)).fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -1176,9 +1154,9 @@ private struct PlanText: View {
 private struct PlanButtons: View {
     let island: Island
     let item: Island.Pending
-    @State private var revising = false
     @State private var feedback = ""
     @FocusState private var typing: Bool
+    private var revising: Bool { island.revising == item.id }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1188,7 +1166,7 @@ private struct PlanButtons: View {
                         .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(.white).lineLimit(1...5)
                         .focused($typing)
                         .onSubmit(send)
-                        .onExitCommand { revising = false }
+                        .onExitCommand { island.revising = nil }
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .background(.white.opacity(0.08), in: .rect(cornerRadius: 10, style: .continuous))
                     Button("Send", action: send)
@@ -1198,7 +1176,7 @@ private struct PlanButtons: View {
                 .onAppear { island.focus(); typing = true }
             } else {
                 HStack(spacing: 8) {
-                    Button { revising = true } label: { Text("Keep Planning…").frame(maxWidth: .infinity) }
+                    Button { island.revising = item.id } label: { Text("Keep Planning…").frame(maxWidth: .infinity) }
                         .buttonStyle(IslandButtonStyle(kind: .secondary))
                         .help("⌃⌥N")
                         .accessibilityHint("Tell Claude what to change.")

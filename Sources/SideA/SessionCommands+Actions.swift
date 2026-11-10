@@ -14,14 +14,15 @@ extension SessionCommands {
         if let kind = live.kind, kind != "interactive" {
             throw Failure(status: 409, code: "cannot_deliver", message: "That's an automated run, so Side A doesn't quit it.")
         }
-        if let name = live.hosted, store.hosted.sessions.contains(where: { $0.name == name }) {
+        guard let fresh = await store.sessions.freshLive() else {
+            throw Failure(status: 503, code: "not_ready", message: "Side A couldn't check whether that session is still running.", retryAfter: 2)
+        }
+        guard let now = SessionStore.current([live], in: fresh, still: { $0.kind.map { $0 == "interactive" } ?? true }).first else { throw .noSession }
+        if let name = now.hosted, store.hosted.sessions.contains(where: { $0.name == name }) {
             do { try await store.hosted.end(name) } catch { throw .hosted(error as? HostedError ?? .failed("Side A couldn't end that session.")) }
             return
         }
-        guard let ended = await store.sessions.terminate([live], still: { $0.kind.map { $0 == "interactive" } ?? true }) else {
-            throw Failure(status: 503, code: "not_ready", message: "Side A couldn't check whether that session is still running.", retryAfter: 2)
-        }
-        guard !ended.isEmpty else { throw .noSession }
+        guard !store.sessions.signal([now]).isEmpty else { throw .noSession }
         refreshSoon()
     }
 
@@ -31,16 +32,16 @@ extension SessionCommands {
         let quiet = { (session: LiveSession) in
             session.status == "idle" && (session.since ?? .infinity) <= cutoff && (session.kind.map { $0 == "interactive" } ?? true)
         }
-        let candidates = store.sessions.live.filter(quiet)
+        guard let fresh = await store.sessions.freshLive() else {
+            throw Failure(status: 503, code: "not_ready", message: "Side A couldn't check which sessions are still running.", retryAfter: 2)
+        }
+        let candidates = SessionStore.current(store.sessions.live.filter(quiet), in: fresh, still: quiet)
         var quit: [SessionKey] = []
         for session in candidates {
             guard let name = session.hosted, store.hosted.sessions.contains(where: { $0.name == name }) else { continue }
             if (try? await store.hosted.end(name)) != nil { quit.append(WireBuilders.key(session)) }
         }
-        guard let ended = await store.sessions.terminate(candidates.filter { $0.hosted == nil }, still: quiet) else {
-            throw Failure(status: 503, code: "not_ready", message: "Side A couldn't check which sessions are still running.", retryAfter: 2)
-        }
-        quit += ended.map(WireBuilders.key)
+        quit += store.sessions.signal(candidates.filter { $0.hosted == nil }).map(WireBuilders.key)
         if !quit.isEmpty { refreshSoon() }
         return quit
     }
@@ -104,7 +105,7 @@ extension SessionCommands {
     /// A draft only: the conversation's first prompt as the goal, its health flag as what failed, its branch and its
     /// last few turns, to edit and hand to `restart`.
     func handoff(_ id: String) async throws(Failure) -> Handoff {
-        guard let live = Target(id, store: store)?.live, let conversation = live.sessionID, RemoteRoutes.safeID(conversation), let cwd = live.cwd else {
+        guard let live = Target(id, store: store)?.live, let conversation = live.sessionID, IDs.safe(conversation), let cwd = live.cwd else {
             throw .noSession
         }
         let accountID = store.sessions.accountID(of: live)

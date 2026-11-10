@@ -130,8 +130,9 @@ struct LiveSession: Decodable, Identifiable, Hashable, Sendable {
     var runningTasks: Int? { backgroundTasks.map { $0.filter { !["completed", "failed", "killed", "stopped", "cancelled"].contains($0.status ?? "") }.count } }
     var provider: AgentProvider { agent.flatMap(AgentProvider.init(rawValue:)) ?? .claude }
     var id: Int { pid }
-    /// Idle half an hour or more: likely forgotten, still holding its memory.
-    var stale: Bool { status == "idle" && Date().timeIntervalSince1970 - (since ?? .infinity) >= 1800 }
+    /// Idle half an hour or more: likely forgotten, still holding its memory. Quit Idle quits the same ones.
+    var stale: Bool { status == "idle" && Date().timeIntervalSince1970 - (since ?? .infinity) >= Double(Self.staleMinutes) * 60 }
+    static let staleMinutes = 30
     private enum CodingKeys: String, CodingKey { case pid, sessionID = "id", name, title, cost, cwd, status, waitingFor, since, activity, context, flag, memory, processes, ports, started, hosted, agent, kind,
              model, effort, mode, fast, contextPercent, backgroundTasks, turnID, compactedAt }
 

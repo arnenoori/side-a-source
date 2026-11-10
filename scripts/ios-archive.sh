@@ -35,8 +35,10 @@ xcodebuild -project SideARemote.xcodeproj -scheme SideARemote -configuration Rel
     -destination 'generic/platform=iOS' -archivePath "$archive" -allowProvisioningUpdates \
     ${auth[@]+"${auth[@]}"} DEVELOPMENT_TEAM="$team" CURRENT_PROJECT_VERSION="$build" -quiet archive
 
-options="$(mktemp -t export-options).plist"
-trap 'rm -f "$options"' EXIT
+# mktemp makes its own file; a name built from it with a suffix would be a second one left behind.
+options_dir="$(mktemp -d "${TMPDIR:-/tmp}/export-options.XXXXXX")"
+trap 'rm -rf "$options_dir"' EXIT
+options="$options_dir/ExportOptions.plist"
 cat > "$options" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

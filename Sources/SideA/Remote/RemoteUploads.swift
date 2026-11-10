@@ -20,8 +20,7 @@ enum RemoteUploads {
 
     /// A phone's own folder, named by a hash so a device id is never a path.
     static func folder(_ root: URL, device: String) -> URL {
-        let hash = SHA256.hash(data: Data(device.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        return folder(root).appendingPathComponent(devicePrefix + hash)
+        folder(root).appendingPathComponent(devicePrefix + IDs.hashed(device))
     }
 
     /// The day folders, the Mac's own and each phone's.

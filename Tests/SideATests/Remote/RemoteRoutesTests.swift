@@ -12,10 +12,12 @@ import Testing
 private final class Scene {
     let store = AccountStore(demo: true)
 
-    /// A signed caller, for what these tests are about; SignedRoutesTests checks real signatures. Face ID on a start
-    /// still reaches the scene's missing server, as `settings` does.
+    /// A signed caller, for what these tests are about; SignedRoutesTests checks real signatures. Face ID for a start,
+    /// Autopilot, an account, a trust or rotation still reaches the scene's missing server.
     init() {
-        store.remote.confirmCheck = { _, _, purpose, _, needs in purpose == .settings && needs == .biometric ? RemoteRoutes.notReady : nil }
+        store.remote.confirmCheck = { _, _, purpose, _, needs in
+            needs == .biometric && [.settings, .autopilot, .account, .trust, .rotation].contains(purpose) ? RemoteRoutes.notReady : nil
+        }
     }
 
     func live(pid: Int, id: String?, status: String, agent: String = "claude", hosted: String? = nil) throws {
@@ -122,6 +124,41 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     let row = (page["approvals"] as? [[String: Any]])?.first { ($0["resolution"] as? [String: Any])?["requestID"] as? String == item.id.uuidString.lowercased() }
     #expect(status == 200 && (row?["request"] as? [String: Any])?["tool"] as? String == "Bash" && (row?["request"] as? [String: Any])?["sessionTitle"] as? String == "app")
     scene.store.remote.approvals.forget()
+}
+
+/// A burst of changes: the first goes out at once, the rest together within the window, as the latest state.
+@MainActor @Test func aBurstOfLiveChangesGoesOutAtOnceThenTogether() async throws {
+    let scene = Scene()
+    let queue = DispatchQueue(label: "test.hub")
+    let hub = EventHub(queue: queue, epoch: "e1", snapshot: { { seq, epoch in StateSnapshot(seq: seq, epoch: epoch) } }, hello: {
+        Hello(app: "", build: 0, mac: MacInfo(id: "", name: ""), capabilities: [], epoch: "e1", serverTime: 0, endpoints: Endpoints(tailnet: ""), keyID: "")
+    })
+    let events = RemoteEvents(store: scene.store, hub: hub, queue: queue)
+    events.start()
+    defer { events.stop() }
+    func upserts() -> [SessionStatus] {
+        hub.recorded(after: 0).compactMap { if case .sessionUpsert(let session) = $0, session.id == "s1" { session.status } else { nil } }
+    }
+    try scene.live(pid: 4242, id: "s1", status: "busy")
+    events.liveChanged()
+    #expect(upserts() == [.working])
+
+    scene.store.sessions.live.removeAll()
+    try scene.live(pid: 4242, id: "s1", status: "idle")
+    events.liveChanged()
+    scene.store.sessions.live.removeAll()
+    try scene.live(pid: 4242, id: "s1", status: "waiting")
+    events.liveChanged()
+    #expect(upserts() == [.working], "held for the window")
+    for _ in 0..<100 where events.holding || upserts().count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(upserts() == [.working, .waiting])
+    #expect(events.session("s1")?.status == .waiting && events.session("nope") == nil)
+
+    // Quiet again: the next goes at once.
+    scene.store.sessions.live.removeAll()
+    try scene.live(pid: 4242, id: "s1", status: "busy")
+    events.liveChanged()
+    #expect(upserts() == [.working, .waiting, .working])
 }
 
 /// Sparkle's check runs only where the app offers one, and the capability says so.
@@ -1082,4 +1119,11 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     #expect(!store.config.smartMode)
     store.toggleSmart()
     #expect(store.config.smartMode)
+}
+
+/// One hash for every id made from text: the first 8 bytes of SHA-256, as worktree ids, upload folders and the Mac id were.
+@Test func idsMadeFromTextAreTheirHashesFirstEightBytes() {
+    #expect(IDs.hashed("abc") == "ba7816bf8f01cfea")
+    #expect(RemoteRoutes.worktreeID("abc") == "ba7816bf8f01cfea")
+    #expect(IDs.safe("a41f.813_0-x") && !IDs.safe("--root") && !IDs.safe(""))
 }

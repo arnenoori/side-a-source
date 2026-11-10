@@ -55,7 +55,9 @@ public repository, so branch protection is **not enforced**. Keep the source pri
 2. From an up-to-date `main`, run `scripts/ship.sh`. It dispatches
    `Local signed release` on the Mac's one-job runner.
 3. The workflow rejects dispatches from anything but `main`, mismatched versions,
-   and missing notes before building, and runs every local gate.
+   and missing notes before building, and runs every local gate. `scripts/check-release.py`
+   (run by `ship.sh` too) also refuses a `CFBundleVersion` that isn't a whole number greater
+   than the previous `v*` tag's; with no earlier tag in the checkout it says so and skips that one check.
 4. The signing step combines the tested builds' executable slices, signs with
    hardened runtime and a secure timestamp, and submits the app to Apple. It requires
    `Accepted`, staples the ticket, checks Gatekeeper, then builds, signs, notarizes,
@@ -65,9 +67,18 @@ public repository, so branch protection is **not enforced**. Keep the source pri
    uploads the verified binaries, and publishes it. Already published versions are
    never overwritten; a failed draft may be retried. Ship a new patch version to
    fix or roll back a public build.
-6. `scripts/ship.sh` then publishes the site and the source. `scripts/publish-source.sh`
-   refuses a snapshot that `scripts/scan-public-source.py` finds a key, token, real
-   home path or real tailnet name in.
+6. `scripts/ship.sh` then pushes the tag, publishes the source and, last, mirrors the
+   site. `scripts/publish-source.sh` refuses a snapshot that `scripts/scan-public-source.py`
+   finds a key, token, real home path or real tailnet name in.
+
+`ship.sh` can be run again after any failure. It refuses to start with uncommitted
+changes under `site/` (the site is built from the working tree). Before dispatching it
+asks `scripts/publish-appcast.py --state` whether the release is already published with
+this build in the feed; if so it skips the dispatch and finishes the tag, source and site,
+each of which it skips when already done. A published release whose feed lacks the build
+stops it, since dispatching again would fail in `publish-release.sh`. It waits at most
+3 minutes for the dispatched run to appear, picks it by commit, and cancels it and stops if
+`main` moved and the run builds a different commit.
 
 Signing keys live in a temporary keychain on the Mac's one-job runner, and each key
 file is on disk only for the step that needs it. Credentials are removed even when

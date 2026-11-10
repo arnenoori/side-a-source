@@ -118,6 +118,9 @@ network and location by the Rate Limiting binding, and to 50 new installs a day 
 `Ledger` Durable Object, which holds everywhere. A network is an IPv4 address or an IPv6 /64. Its
 key is HMAC(HMAC(`RATE_KEY`, day), network), so it can't be reversed to an address, and the object
 deletes itself a day later. A Mac already registered isn't counted or refused.
+Every other signed or bearer request, and every tunnel upgrade, passes a per-network Rate Limiting
+binding before it wakes an install's object (`REQUEST_LIMIT`, 600 a minute; `TUNNEL_LIMIT`, 120),
+so well-formed guesses at install ids cost their sender, not the relay.
 
 ## Live Activity tokens
 

@@ -348,6 +348,33 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(merged['focus'], 'hit')
         self.assertIn('Grep', ' '.join(t for m in merged['messages'] if m['uuid'] == merged['focus'] for t in m['tools']))
 
+    def test_the_registry_never_takes_pid_0_or_1_for_a_running_session(self):
+        registry = self.home / '.claude/sessions'
+        registry.mkdir(parents=True)
+        for n, (pid, sid) in enumerate([(0, 'group'), (1, 'launchd'), ('x', 'junk'), (os.getpid(), 'alive')]):
+            (registry / f'{n}.json').write_text(json.dumps({'pid': pid, 'sessionId': sid, 'status': 'busy', 'cwd': '/code/app'}))
+        (registry / 'list.json').write_text('[1, 2]')
+        self.assertEqual([(data['sessionId'], pid) for data, pid in sessions.running_claude()], [('alive', os.getpid())])
+        self.assertEqual((sessions.claude_busy('group'), sessions.claude_busy('launchd'), sessions.claude_busy('alive')), (False, False, True))
+        import cleanup
+        self.assertEqual(cleanup.running_ids(), {'alive'})
+
+    def test_an_odd_transcript_waits_until_it_changes_and_the_rest_are_indexed(self):
+        self.write('older', [user('u1', 'The heron is indexed anyway', '2026-10-01T10:00:00Z')])
+        old = time.time() - 60
+        os.utime(self.project / 'older.jsonl', (old, old))
+        self.write('odd', [user('o1', 'Before the odd line', '2026-10-02T10:00:00Z'),
+                           {'type': 'assistant', 'uuid': 'o2', 'timestamp': '2026-10-02T10:01:00Z', 'message': 'not an object'}])
+        self.assertEqual(sessions.index(self.root)['remaining'], 0)
+        self.assertEqual([s['id'] for s in sessions.search(self.root, 'heron')['sessions']], ['older'])
+        with patch.object(sessions, 'index_claude', side_effect=AssertionError('retried')):
+            self.assertEqual(sessions.index(self.root)['indexed'], 0)
+        self.write('odd', [user('o3', 'A later line', '2026-10-02T10:02:00Z')], 'a')
+        self.assertEqual(sessions.index(self.root)['indexed'], 1)
+        # The viewer's warm-up over the newest conversations steps past one it can't read, too.
+        self.write('older', [{'type': 'assistant', 'uuid': 'o4', 'timestamp': '2026-10-01T10:01:00Z', 'message': 'odd'}], 'a')
+        self.assertEqual(sessions.index(self.root)['remaining'], 0)
+
     def test_a_transcript_rewritten_in_place_is_rebuilt_not_appended_to(self):
         self.write('r', [user('u1', 'First version', '2026-10-01T10:00:00Z')])
         sessions.index(self.root)

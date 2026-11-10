@@ -7,10 +7,14 @@ import { b64url, sha256, utf8 } from '../src/bytes';
 // The relay never reads its own hostname; any will do.
 export const BASE = 'https://relay.test';
 
+// Tests send from one address far faster than any Mac; the per-network request limit has its own tests.
+export const open = { limit: async () => ({ success: true }) };
+export const testEnv = { ...env, REQUEST_LIMIT: open } as unknown as Env;
+
 // Every request's waitUntil work (a verification push, a cleanup) is done before the test looks: no guessing how long.
 export async function call(request: Request): Promise<Response> {
   const ctx = createExecutionContext();
-  const response = await worker.fetch!(incoming(request), env, ctx);
+  const response = await worker.fetch!(incoming(request), testEnv, ctx);
   await waitOnExecutionContext(ctx);
   return response;
 }

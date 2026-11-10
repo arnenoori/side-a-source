@@ -111,8 +111,7 @@ final class WaitingNotifier {
     }
 
     private nonisolated static func deliver(id: String, title: String, subtitle: String?, body: String) {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
+        whenAllowed {
             let content = UNMutableNotificationContent()
             content.title = title
             if let subtitle { content.subtitle = subtitle }
@@ -123,7 +122,7 @@ final class WaitingNotifier {
         }
     }
 
-    static let requestPrefix = "request-"
+    nonisolated static let requestPrefix = "request-"
 
     /// A permission request answerable from the notification. Destructive ones, questions and plans only open
     /// Sessions: they need a click there, or more than yes or no.
@@ -139,8 +138,7 @@ final class WaitingNotifier {
         let subtitle = "\(request.agent.title) asks to \(request.headline.prefix(1).lowercased() + request.headline.dropFirst())"
         let body = String(request.detail.prefix(240))
         let session = request.sessionID
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
+        whenAllowed {
             let content = UNMutableNotificationContent()
             content.title = title
             content.subtitle = subtitle
@@ -152,8 +150,12 @@ final class WaitingNotifier {
         }
     }
 
-    nonisolated static func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    nonisolated static func requestPermission() { whenAllowed {} }
+
+    /// Every notification Side A posts asks with the same options, so whichever asks first doesn't leave the rest
+    /// without sound. `post` runs on a background queue once allowed.
+    nonisolated static func whenAllowed(_ post: @escaping @Sendable () -> Void) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in if granted { post() } }
     }
 }
 
@@ -194,8 +196,7 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
     /// A paired phone's notification address moved, with Remove Device on it. One per device: a later one replaces it.
     nonisolated static func deviceMoved(_ device: String, name: String) {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
-            guard granted else { return }
+        WaitingNotifier.whenAllowed {
             let content = UNMutableNotificationContent()
             content.title = "\(name) has a new notification address"
             content.body = "If you didn't restore or reinstall it, remove it."

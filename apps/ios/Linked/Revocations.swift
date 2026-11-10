@@ -87,9 +87,7 @@ enum Revocations {
               let url = URL(string: "\(relay)/v1/device") else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "DELETE"
-        let encoded = secret.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        request.setValue("Bearer d1.\(install).\(entry.mac.deviceID).\(encoded)", forHTTPHeaderField: "Authorization")
+        request.setValue(entry.mac.relayBearer(install: install, secret: secret), forHTTPHeaderField: "Authorization")
         guard let (_, response) = try? await URLSession.shared.data(for: request) else { return false }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         RemoteLog.log(.pairing, "relay forget → \(status)")

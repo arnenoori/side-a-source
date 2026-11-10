@@ -165,3 +165,48 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     try await Task.sleep(for: .milliseconds(300))
     #expect(await !inbox.events.contains { if case .snapshot = $0 { true } else { false } })
 }
+
+/// A cursor goes to the bridge as an argument: one that could read as an option is never sent, as the REST route refuses it.
+@MainActor @Test func aPhonesCursorIsCheckedBeforeTheBridgeSeesIt() {
+    #expect(TranscriptStream.catchUp(after: Cursor("a41f09c2e7b3.813.0")) == ["--after", "a41f09c2e7b3.813.0", "--limit", "200"])
+    #expect(TranscriptStream.catchUp(after: Cursor("--root=/etc")) == nil)
+    #expect(TranscriptStream.catchUp(after: Cursor("")) == nil)
+}
+
+/// Two `hello`s in a row, the second before the first's welcome: one welcome.
+@MainActor @Test func aSecondHelloGetsNoSecondWelcome() async throws {
+    let keychain = try TestKeychain()
+    let identity = try #require(try keychain.store.identity())
+    let server = RemoteServer(identity: identity, epoch: "e1") { _, _ in HTTPResponse(status: 404) }
+    let hub = EventHub(queue: server.queue, epoch: "e1", snapshot: { { seq, epoch in StateSnapshot(seq: seq, epoch: epoch) } }, hello: {
+        // The first welcome takes its time on the main actor, so the second hello lands before it.
+        Thread.sleep(forTimeInterval: 0.3)
+        return Hello(app: "", build: 0, mac: MacInfo(id: "", name: ""), capabilities: [], epoch: "e1", serverTime: 0, remoteOn: true,
+              endpoints: Endpoints(tailnet: ""), keyID: "")
+    })
+    server.opened = { peer in hub.attach(peer) }
+    let token = DeviceToken.make()
+    server.setDevices([(id: "d1", hash: DeviceToken.hash(token))])
+    let port = freePort()
+    server.serve(addresses: ["127.0.0.1"], port: port)
+    defer { server.stop() }
+    for _ in 0..<250 where server.listenerStates.values.first != .ready { try await Task.sleep(for: .milliseconds(20)) }
+
+    var request = URLRequest(url: URL(string: "wss://127.0.0.1:\(port)/v1/ws/events")!)
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    let socket = URLSessionTransport(trust: PinnedTrust(.pinned(identity.spkiHash.base64URL))).socket(request)
+    let inbox = Inbox()
+    Task {
+        while let message = try? await socket.receive() {
+            guard case .text(let text) = message, let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: Data(text.utf8)) else { continue }
+            await inbox.add(envelope.event)
+        }
+    }
+    let hello = String(decoding: try JSONEncoder().encode(ClientMessage.hello(epoch: nil, lastSeq: nil, capabilities: [.events])), as: UTF8.self)
+    try await socket.send(.text(hello))
+    try await socket.send(.text(hello))
+    #expect(await soon { await inbox.events.contains { if case .welcome = $0 { true } else { false } } })
+    try await Task.sleep(for: .milliseconds(500))
+    #expect(await inbox.events.filter { if case .welcome = $0 { true } else { false } }.count == 1)
+    socket.close(code: 1000, reason: nil)
+}

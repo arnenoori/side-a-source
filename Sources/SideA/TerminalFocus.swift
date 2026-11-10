@@ -111,7 +111,7 @@ enum TerminalFocus {
         default:
             return activate(host)
         }
-        return await Task.detached { run(script, arguments) }.value
+        return await run(script, arguments)
     }
 
     private static func tool(_ host: Host, _ name: String) -> String? {
@@ -125,17 +125,12 @@ enum TerminalFocus {
 
     static let automationDenied = "Allow Side A to control your terminal in System Settings > Privacy & Security > Automation."
 
-    private static func run(_ script: String, _ arguments: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script] + arguments
-        let errors = Pipe()
-        process.standardError = errors
-        process.standardOutput = FileHandle.nullDevice
-        do { try process.run() } catch { return "The terminal could not be reached." }
-        process.waitUntilExit()
-        guard process.terminationStatus != 0 else { return nil }
-        let message = String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    /// No timeout: osascript waits while macOS asks whether Side A may control the terminal.
+    private static func run(_ script: String, _ arguments: [String]) async -> String? {
+        let run = await ProcessRunner.run("/usr/bin/osascript", ["-e", script] + arguments, timeout: nil)
+        if run.launchError != nil { return "The terminal could not be reached." }
+        guard run.status != 0 else { return nil }
+        let message = String(data: run.errors, encoding: .utf8) ?? ""
         return message.contains("-1743") ? automationDenied
             : "The terminal tab could not be found."
     }

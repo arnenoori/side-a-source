@@ -52,6 +52,52 @@ class ReleaseSafetyTests(unittest.TestCase):
         (self.root / "releases" / f"{self.tag}.md").unlink()
         self.assertNotEqual(self.check(self.tag).returncode, 0)
 
+    def set_build(self, build):
+        path = self.root / "scripts/Info.plist"
+        metadata = plistlib.loads(path.read_bytes())
+        metadata["CFBundleVersion"] = build
+        path.write_bytes(plistlib.dumps(metadata))
+
+    def git(self, *arguments):
+        env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        env.update(GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        subprocess.run(["git", "-C", str(self.root), *arguments], env=env, check=True, capture_output=True)
+
+    def released(self, *builds):
+        """Commits and tags a release per (tag, build), then leaves the tree at the version being cut."""
+        self.git("init", "-q")
+        for tag, build in builds:
+            self.set_build(build)
+            self.git("add", "-A")
+            self.git("commit", "-qm", tag)
+            self.git("tag", tag)
+
+    def test_build_must_be_a_whole_number(self):
+        for build in ("57.1", "", "abc"):
+            with self.subTest(build=build):
+                self.set_build(build)
+                self.assertNotEqual(self.check(self.tag).returncode, 0)
+
+    def test_build_must_be_newer_than_the_previous_release(self):
+        self.released(("v0.0.1", "40"), ("v0.0.2", "50"), ("v99.0.0", "999"))
+        for build, passes in (("49", False), ("50", False), ("51", True)):
+            with self.subTest(build=build):
+                self.set_build(build)
+                result = self.check(self.tag)
+                self.assertEqual(result.returncode == 0, passes, result.stdout + result.stderr)
+                if not passes:
+                    self.assertIn("v0.0.2's 50", result.stderr)
+
+    def test_the_tag_being_cut_is_not_its_own_previous_release(self):
+        self.released(("v0.0.1", "40"), (self.tag, "41"))
+        self.assertEqual(self.check(self.tag).returncode, 0)
+
+    def test_without_an_earlier_tag_the_build_check_is_skipped_with_a_note(self):
+        self.set_build("1")
+        result = self.check(self.tag)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("isn't compared", result.stdout)
+
     def publish(self, state, corrupt=False):
         dist = self.root / "dist"
         dist.mkdir()

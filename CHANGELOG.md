@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.50 — 2026-11-10
+
+Side A does less work while sessions are streaming. Each line a session wrote used to start a new helper process and re-scan every session; while anything is streaming that now happens at most every 2 seconds, and the conversation you have open still updates right away. A Codex session's status line can lag by up to 2 seconds as a result. Checking which sessions are live is far quicker with Codex sessions open, opening and paging a conversation is faster, and Side A Remote no longer rebuilds every session for your iPhone each time one of them changes. The first time you open a conversation after this update it takes a moment longer while its saved view is rebuilt.
+
+Quit and Quit Idle no longer end a session that just got work from your iPhone. They used a list up to 20 seconds old; they now check again first.
+
+The Sessions window and the island answer questions the same way. They had drifted: the two could send a multiple-choice answer in a different order. The Sessions window no longer ticks recommended options for you on questions that take several answers. On a plan, ⌃⌥N now opens "What should change?" as the Keep Planning tooltip says; it used to turn the plan down outright.
+
+Fixes:
+- A large photo sent from your iPhone over a slow connection is no longer cut off after 10 seconds.
+- Turning Side A Remote off now ends its Live Activities and stops offering previews, and an iPhone you pair again is no longer removed 10 minutes later.
+- Codex usage and cleanup now include sessions that ran under an account Side A added.
+- Saving Claude's settings no longer rewrites accented letters, emoji and other non-English text in the file as escape codes.
+- One unreadable transcript no longer stops the others from being indexed.
+- On a new install, notifications about waiting sessions are no longer silent when the first notification Side A sent was about an account.
+
 ## 0.5.49 — 2026-11-09
 
 Side A uses much less CPU when many sessions run at once. With dozens of sessions open it looked up every listening port on the Mac and re-read each session's transcript every time any session wrote a line; it now looks up ports at most every 15 seconds, so a dev server a session starts can take that long to appear, and re-reads only the transcripts that changed. Pool mode also spends far less time on each request it forwards.

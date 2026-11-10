@@ -512,7 +512,7 @@ struct MacsMenu: View {
     private var state: MacConnection.State {
         let states = (allowsAll ? root.visible : [root.current]).map(\.mac.state)
         if states.allSatisfy({ $0 == .live }) { return .live }
-        if let offline = states.first(where: { if case .offline = $0 { true } else { false } }) { return offline }
+        if let offline = states.first(where: \.isOffline) { return offline }
         return .connecting
     }
 }

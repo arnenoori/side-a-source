@@ -23,7 +23,29 @@ public struct MarkdownBlock: Identifiable, Hashable {
 /// Markdown into blocks, natively (the app and the notification extension share it): `AttributedString(markdown:)` with full syntax, then a walk over
 /// each run's `PresentationIntent`. Inline styles stay in the `AttributedString`.
 public enum MarkdownParser {
+    /// Views re-create their Markdown on every parent update; a transcript row would re-parse each time without this.
+    /// NSCache is thread-safe (so `unsafe` is sound here) and evicts under memory pressure; the limit keeps a streaming
+    /// reply's many partial texts from piling up.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, Parsed> = {
+        let cache = NSCache<NSString, Parsed>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    private final class Parsed {
+        let blocks: [MarkdownBlock]
+        init(_ blocks: [MarkdownBlock]) { self.blocks = blocks }
+    }
+
     public static func blocks(_ markdown: String) -> [MarkdownBlock] {
+        let key = markdown as NSString
+        if let hit = cache.object(forKey: key) { return hit.blocks }
+        let blocks = parse(markdown)
+        cache.setObject(Parsed(blocks), forKey: key)
+        return blocks
+    }
+
+    private static func parse(_ markdown: String) -> [MarkdownBlock] {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: markdown, options: options) else {
             return [MarkdownBlock(id: 0, kind: .paragraph, text: AttributedString(markdown))]

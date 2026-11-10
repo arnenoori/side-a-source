@@ -158,7 +158,7 @@ struct SettingsPanel: View {
         if let list = try? await commands.models(live.provider, session: WireBuilders.key(live)) {
             models = list.models
         } else {
-            models = await RemoteRoutes.agentOptions(model.store.remote)?.first { $0.agent == live.provider }?.models ?? []
+            models = await RemoteOptions.agents(model.store.remote)?.first { $0.agent == live.provider }?.models ?? []
         }
         if !modelID.isEmpty, !models.contains(where: { $0.id == modelID }) {
             models.insert(ModelOption(id: modelID, title: ModelName.short(modelID), agent: live.provider), at: 0)

@@ -58,7 +58,7 @@ def atomic_json(path: Path, value):
 
 def read_json(path: Path, default=None):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return default
 
@@ -1938,8 +1938,10 @@ def report(root, days=30, sync=None):
     cache_path = root / "runtime" / "report-cache.json"
     cache = read_json(cache_path, {}) or {}
     fresh, merged, hours = {}, {}, {}
-    folders = [(Path.home() / ".claude" / "projects", "*/**/*.jsonl", scan_transcript), (root / "conversations", "*/**/*.jsonl", scan_transcript),
-               (Path.home() / ".codex" / "sessions", "**/*.jsonl", scan_codex)]
+    import sessions
+    # Codex profiles keep their history in one shared folder beside ~/.codex, as the session index reads it.
+    folders = [(Path.home() / ".claude" / "projects", "*/**/*.jsonl", scan_transcript), (root / "conversations", "*/**/*.jsonl", scan_transcript)] + \
+              [(folder, "**/*.jsonl", scan_codex) for folder in sessions.codex_session_folders(root)]
     for folder, pattern, scan in folders:
         for path in folder.glob(pattern) if folder.is_dir() else []:
             try:
@@ -2006,32 +2008,85 @@ def set_limit_hook(root, enabled):
 
 
 def _set_limit_hook(root, enabled):
-    path = Path.home() / ".claude" / "settings.json"
-    settings = read_json(path, {}) or {}
-    hooks = settings.setdefault("hooks", {})
-    groups = [g for g in hooks.get("StopFailure", []) if not any(HOOK_MARK in h.get("command", "") for h in g.get("hooks", []))]
+    path = claude_settings_path()
+    settings = load_settings(path)
     if enabled:
         limit_marker(root).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        groups.append({"matcher": "rate_limit", "hooks": [{"type": "command", "command": hook_command(root), "timeout": 5}]})
-    if groups:
-        hooks["StopFailure"] = groups
-    else:
-        hooks.pop("StopFailure", None)
-    if not hooks:
-        settings.pop("hooks")
+    group = {"matcher": "rate_limit", "hooks": [{"type": "command", "command": hook_command(root), "timeout": 5}]}
+    set_hook(settings, path, "StopFailure", HOOK_MARK, group if enabled else None)
+    drop_empty_hooks(settings)
     write_settings(settings)
 
 
+def claude_settings_path():
+    return Path.home() / ".claude" / "settings.json"
+
+
+def load_settings(path):
+    """A user's settings file as a dict to edit; a file that holds something else is left alone."""
+    settings = read_json(path, {})
+    if settings is None:
+        return {}
+    if not isinstance(settings, dict):
+        raise ValueError(f"{path} isn't a settings object; Side A left it unchanged.")
+    return settings
+
+
+def peek_settings(path):
+    """A settings file for reading only: None when it's unreadable or not an object."""
+    try:
+        settings = read_json(path, {})
+    except (ValueError, OSError):
+        return None
+    return settings if isinstance(settings, dict) else None
+
+
+def is_handler(handler, mark):
+    return isinstance(handler, dict) and mark in str(handler.get("command", ""))
+
+
+def hook_groups(settings, event):
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    groups = hooks.get(event) if isinstance(hooks, dict) else None
+    return groups if isinstance(groups, list) else []
+
+
+def has_hook(settings, event, mark):
+    """Whether one of Side A's handlers, told by its mark, is installed for an event."""
+    return any(is_handler(h, mark) for g in hook_groups(settings, event) if isinstance(g, dict)
+               for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else ()))
+
+
+def set_hook(settings, path, event, mark, group=None):
+    """Drops Side A's handlers with this mark from an event, then adds `group` when given. A group the user shares
+    with them keeps the rest; anything Side A doesn't recognise stays as it is."""
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict) or not isinstance(hooks.get(event, []), list):
+        raise ValueError(f"{path} has hooks Side A doesn't recognise; Side A left it unchanged.")
+    groups = []
+    for existing in hooks.get(event, []):
+        handlers = existing.get("hooks", []) if isinstance(existing, dict) else None
+        if not isinstance(handlers, list):
+            groups.append(existing)
+            continue
+        kept = [h for h in handlers if not is_handler(h, mark)]
+        if kept or not handlers:
+            groups.append({**existing, "hooks": kept} if len(kept) != len(handlers) else existing)
+    if group:
+        groups.append(group)
+    if groups:
+        hooks[event] = groups
+    else:
+        hooks.pop(event, None)
+
+
+def drop_empty_hooks(settings):
+    if settings.get("hooks") == {}:
+        settings.pop("hooks")
+
+
 def write_settings(settings):
-    path = Path.home() / ".claude" / "settings.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path = path.resolve()  # a symlinked settings file stays a symlink
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, prefix=".side-a-") as stream:
-        json.dump(settings, stream, indent=2)
-        stream.write("\n")
-    if path.exists():
-        os.chmod(stream.name, path.stat().st_mode & 0o777)
-    os.replace(stream.name, path)
+    write_json_file(claude_settings_path(), settings)
 
 
 LIVE_MARK = "side-a-live"
@@ -2079,7 +2134,7 @@ def set_live(root, enabled):
 
 
 def _set_live(root, enabled):
-    settings = read_json(Path.home() / ".claude" / "settings.json", {}) or {}
+    settings = load_settings(claude_settings_path())
     line = settings.get("statusLine")
     # Only a command statusline (or none) is wrapped; anything else is left exactly as it is.
     if line is not None and not (isinstance(line, dict) and line.get("type", "command") == "command"):
@@ -2105,7 +2160,7 @@ def _set_live(root, enabled):
 
 
 def live_installed():
-    settings = read_json(Path.home() / ".claude" / "settings.json", {}) or {}
+    settings = peek_settings(claude_settings_path()) or {}
     line = settings.get("statusLine") if isinstance(settings.get("statusLine"), dict) else {}
     return live_wrapped(line.get("command")) is not None
 
@@ -2155,8 +2210,7 @@ def live_limits(root, config):
 
 
 def limit_hook_installed():
-    settings = read_json(Path.home() / ".claude" / "settings.json", {}) or {}
-    return any(HOOK_MARK in h.get("command", "") for g in (settings.get("hooks") or {}).get("StopFailure", []) for h in g.get("hooks", []))
+    return has_hook(peek_settings(claude_settings_path()), "StopFailure", HOOK_MARK)
 
 
 ISLAND_MARK = "side-a-island"
@@ -2272,10 +2326,7 @@ def set_island(root, agent, enabled):
         if enabled:
             write_island_launcher(root)
         path = island_settings(agent)
-        settings = read_json(path, {}) or {}
-        if not isinstance(settings, dict):
-            raise ValueError(f"{path} isn't a settings object; Side A left it unchanged.")
-        hooks = settings.setdefault("hooks", {})
+        settings = load_settings(path)
         # Claude's Stop hook waits in the background for a follow-up (asyncRewake wakes the idle session);
         # Codex has no background hooks, so its Stop hook only says the session is done.
         stop = {"asyncRewake": True, "timeout": ISLAND_FOLLOW_UP} if agent == "claude" else {"timeout": 5}
@@ -2289,25 +2340,12 @@ def set_island(root, agent, enabled):
             # A model changed with /model shows on the session's row now, not at its next reply.
             events.append(("PostModelSwitch", command, {"timeout": 30}) if enabled and model_switch_hook() else ("PostModelSwitch", None, {}))
         for event, command, handler in events:
-            # Only Side A's own handlers go; a group the user shares with them keeps the rest.
-            groups = []
-            for group in hooks.get(event, []):
-                if not isinstance(group, dict):
-                    groups.append(group)
-                    continue
-                handlers = group.get("hooks", [])
-                kept = [h for h in handlers if not (isinstance(h, dict) and ISLAND_MARK in str(h.get("command", "")))]
-                if kept or not handlers:
-                    groups.append({**group, "hooks": kept} if len(kept) != len(handlers) else group)
+            group = None
             if enabled and command:
                 group = {"hooks": [{"type": "command", "command": command, **handler}]}
-                groups.append(group if event in ("Stop", "PostModelSwitch") else {"matcher": "*", **group})
-            if groups:
-                hooks[event] = groups
-            else:
-                hooks.pop(event, None)
-        if not hooks:
-            settings.pop("hooks")
+                group = group if event in ("Stop", "PostModelSwitch") else {"matcher": "*", **group}
+            set_hook(settings, path, event, ISLAND_MARK, group)
+        drop_empty_hooks(settings)
         if agent == "claude":
             write_settings(settings)
         elif enabled or path.exists():
@@ -2315,11 +2353,17 @@ def set_island(root, agent, enabled):
 
 
 def write_json_file(path, value):
-    """Like write_settings, for any JSON file the user owns: keeps its mode and a symlink."""
+    """Writes a JSON file the user owns, keeping its mode, a symlink, and their non-ASCII text as it is. Nothing is
+    written when the file already holds this value (a missing file counts as {}), so its formatting stays theirs."""
+    try:
+        if (read_json(path, {}) or {}) == value:
+            return
+    except (ValueError, OSError):
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     path = path.resolve()
-    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, prefix=".side-a-") as stream:
-        json.dump(value, stream, indent=2)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False, prefix=".side-a-") as stream:
+        json.dump(value, stream, indent=2, ensure_ascii=False)
         stream.write("\n")
     if path.exists():
         os.chmod(stream.name, path.stat().st_mode & 0o777)
@@ -2333,26 +2377,17 @@ def mail_events(agent):
 
 def island_current(agent):
     """Installed with every hook this version adds, so an update only rewrites settings when one is missing."""
-    try:
-        settings = read_json(island_settings(agent), {}) or {}
-    except ValueError:
+    settings = peek_settings(island_settings(agent))
+    if settings is None:
         return True
-    if not isinstance(settings, dict):
-        return True
-    marked = lambda event: any(ISLAND_MARK in str(h.get("command", "")) for g in (settings.get("hooks") or {}).get(event, [])
-                               for h in g.get("hooks", []))
+    marked = lambda event: has_hook(settings, event, ISLAND_MARK)
     events = ("PermissionRequest", "Stop") + mail_events(agent)
     # PostModelSwitch comes with a Claude Code that has it and goes if that Claude Code is replaced by an older one.
     return all(marked(event) for event in events) and (agent != "claude" or marked("PostModelSwitch") == model_switch_hook())
 
 
 def island_installed(agent):
-    try:
-        settings = read_json(island_settings(agent), {}) or {}
-    except ValueError:
-        return False
-    groups = (settings.get("hooks") or {}).get("PermissionRequest", []) if isinstance(settings, dict) else []
-    return any(ISLAND_MARK in str(h.get("command", "")) for g in groups for h in g.get("hooks", []))
+    return has_hook(peek_settings(island_settings(agent)), "PermissionRequest", ISLAND_MARK)
 
 
 def set_inbox(root, enabled):
@@ -2361,39 +2396,18 @@ def set_inbox(root, enabled):
         if enabled:
             write_island_launcher(root)
             (root / "runtime" / "inbox").mkdir(exist_ok=True, mode=0o700)
-        settings = read_json(island_settings("claude"), {}) or {}
-        if not isinstance(settings, dict):
-            raise ValueError(f"{island_settings('claude')} isn't a settings object; Side A left it unchanged.")
-        hooks = settings.setdefault("hooks", {})
+        path = island_settings("claude")
+        settings = load_settings(path)
         command = f"/bin/sh {shlex.quote(str(island_launcher(root)))} claude inbox # {INBOX_MARK}"
+        group = {"hooks": [{"type": "command", "command": command, "asyncRewake": True, "timeout": INBOX_TIMEOUT}]}
         for event in ("SessionStart", "Stop"):
-            groups = []
-            for group in hooks.get(event, []):
-                handlers = group.get("hooks", []) if isinstance(group, dict) else None
-                if handlers is None:
-                    groups.append(group)
-                    continue
-                kept = [h for h in handlers if not (isinstance(h, dict) and INBOX_MARK in str(h.get("command", "")))]
-                if kept or not handlers:
-                    groups.append({**group, "hooks": kept} if len(kept) != len(handlers) else group)
-            if enabled:
-                groups.append({"hooks": [{"type": "command", "command": command, "asyncRewake": True, "timeout": INBOX_TIMEOUT}]})
-            if groups:
-                hooks[event] = groups
-            else:
-                hooks.pop(event, None)
-        if not hooks:
-            settings.pop("hooks")
+            set_hook(settings, path, event, INBOX_MARK, group if enabled else None)
+        drop_empty_hooks(settings)
         write_settings(settings)
 
 
 def inbox_installed():
-    try:
-        settings = read_json(island_settings("claude"), {}) or {}
-    except ValueError:
-        return False
-    groups = (settings.get("hooks") or {}).get("SessionStart", []) if isinstance(settings, dict) else []
-    return any(INBOX_MARK in str(h.get("command", "")) for g in groups if isinstance(g, dict) for h in g.get("hooks", []) if isinstance(h, dict))
+    return has_hook(peek_settings(island_settings("claude")), "SessionStart", INBOX_MARK)
 
 
 def island_state(root, agents, state):
@@ -2445,7 +2459,6 @@ def run_sessions(root, args):
 def serve_sessions(root, parser):
     """Answers one JSON request per stdin line, so the viewer skips starting Python for every keystroke
     and reopening a conversation reuses its parsed transcript. Indexing stays in its own process."""
-    import sqlite3
     for line in sys.stdin:
         # A line that isn't JSON must not answer with the request before it.
         request = None
@@ -2459,8 +2472,9 @@ def serve_sessions(root, parser):
             reply = {"id": request["id"], "result": run_sessions(root, args)}
         except SystemExit:
             reply = {"id": request.get("id") if isinstance(request, dict) else None, "error": "Invalid request"}
-        except (ValueError, KeyError, TypeError, OSError, sqlite3.Error) as error:
-            reply = {"id": request.get("id") if isinstance(request, dict) else None, "error": str(error)}
+        except Exception as error:
+            # One odd transcript or request must not end the server every viewer shares.
+            reply = {"id": request.get("id") if isinstance(request, dict) else None, "error": str(error) or type(error).__name__}
         sys.stdout.write(json.dumps(reply) + "\n")
         sys.stdout.flush()
 

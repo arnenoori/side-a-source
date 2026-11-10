@@ -21,8 +21,13 @@ final class ImageStore {
     init(isDemo: Bool, disk: ImageCache = .shared) {
         self.isDemo = isDemo; self.disk = disk
         memory.totalCostLimit = 96 * 1024 * 1024
-        Task.detached(priority: .background) { disk.trim() }
+        // Every Mac's model and the demo share the folder: one scan a launch is enough.
+        if Self.trimmed.insert(disk.folder).inserted {
+            Task.detached(priority: .background) { disk.trim() }
+        }
     }
+
+    private static var trimmed: Set<URL> = []
 
     /// Already decoded, for the first frame of a view.
     func cached(_ ref: ImageRef, thumbnail: Bool) -> UIImage? {

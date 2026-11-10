@@ -36,7 +36,8 @@ struct TranscriptView: View {
         Binding { model.transcripts.drafts[sessionID] ?? "" } set: { model.transcripts.drafts[sessionID] = $0 }
     }
 
-    private var items: [TranscriptItem] {
+    /// The rows, laid out once per body; the follow badge and the scroll handlers take its count from there.
+    private func layout() -> [TranscriptItem] {
         TranscriptLayout.items(messages: model.transcripts.messages[sessionID] ?? [], earlier: model.transcripts.earlier[sessionID] ?? 0,
                                answered: answered, open: openRequests,
                                working: session.map { SessionPhase($0) == .working || SessionPhase($0) == .needsYou } ?? false,
@@ -44,7 +45,7 @@ struct TranscriptView: View {
     }
 
     var body: some View {
-        let items = items
+        let items = layout()
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(items) { item in
@@ -114,7 +115,7 @@ struct TranscriptView: View {
                             .padding(.horizontal, Space.m)
                             .transition(.opacity)
                     }
-                    composer
+                    composer(count: items.count)
                 }
                 .animation(Motion.smooth(reduceMotion), value: session.flatMap(model.tools.attention(for:)))
                 .animation(Motion.smooth(reduceMotion), value: session?.plan == nil)
@@ -170,9 +171,10 @@ struct TranscriptView: View {
         .sessionActions()
     }
 
-    private var composer: some View {
-        Composer(text: draftBinding, placeholder: placeholder, canInterrupt: canInterrupt, showsFollow: !atBottom, follow: followBadge,
-                 focused: $composerFocused, onSend: { send() }, onInterrupt: { model.interrupt(sessionID) }, onFollow: scrollToBottom,
+    private func composer(count: Int) -> some View {
+        Composer(text: draftBinding, placeholder: placeholder, canInterrupt: canInterrupt, showsFollow: !atBottom, follow: followBadge(count: count),
+                 focused: $composerFocused, onSend: { send() }, onInterrupt: { model.interrupt(sessionID) },
+                 onFollow: { scrollToBottom(count: count) },
                  session: session, steers: Steer.available(for: session), onSteer: steer, disabledReason: disabledReason,
                  unsent: model.transcripts.unsent[sessionID], onRetry: { model.retryUnsent(sessionID) },
                  notice: model.transcripts.notices[sessionID] ?? standingNotice,
@@ -283,7 +285,7 @@ struct TranscriptView: View {
         case .request(let request):
             RequestCard(request: request)
         case .question(let request):
-            QuestionCard(request: request, typed: draft) { composerFocused = true }
+            QuestionCard(request: request, typed: draftBinding) { composerFocused = true }
         case .outgoing(let turn):
             OutgoingBubble(sessionID: sessionID, turn: turn)
         case .mail(let mail):
@@ -361,9 +363,9 @@ struct TranscriptView: View {
         }
     }
 
-    private var followBadge: FollowBadge {
+    private func followBadge(count: Int) -> FollowBadge {
         if !openRequests.isEmpty { return .waiting }
-        let fresh = items.count - seenCount
+        let fresh = count - seenCount
         return fresh > 0 ? .newMessages(fresh) : .none
     }
 
@@ -405,13 +407,13 @@ struct TranscriptView: View {
         // After the new turn is laid out, or the scroll stops short of it.
         Task { @MainActor in
             await Task.yield()
-            scrollToBottom()
+            scrollToBottom(count: layout().count)
         }
     }
 
-    private func scrollToBottom() {
+    private func scrollToBottom(count: Int) {
         withAnimation(Motion.smooth(reduceMotion)) { position.scrollTo(edge: .bottom) }
-        seenCount = items.count
+        seenCount = count
     }
 
     // MARK: Toolbar

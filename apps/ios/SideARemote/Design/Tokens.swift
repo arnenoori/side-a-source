@@ -29,7 +29,6 @@ enum Space {
     static let m: CGFloat = 16
     static let l: CGFloat = 20
     static let xl: CGFloat = 24
-    static let xxl: CGFloat = 32
 }
 
 /// Corner radii, all continuous.

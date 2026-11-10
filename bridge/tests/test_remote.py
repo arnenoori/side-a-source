@@ -409,6 +409,49 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual([s['id'] for s in sessions.search(self.root, 'okapi')['sessions']], ['s'])
         self.assertEqual([m['text'] for m in self.page('s')['messages']], ['Keep the okapi searchable'])
 
+    def test_a_version_6_index_keeps_its_search_and_rebuilds_the_viewers_rows_with_their_kind(self):
+        parent = [user('u0', 'Keep the ibis searchable'), reply('a0', 'Sure')]
+        self.write('parent', parent)
+        self.write('child', [{**e, 'forkedFrom': {'sessionId': 'parent', 'messageUuid': e['uuid']}} for e in parent] +
+                   [user(f'c{n}', f'Child prompt {n}') for n in range(5)])
+        sessions.index(self.root)
+        db = sessions.connect(self.root)
+        db.executescript("DROP TABLE views; DROP TABLE view_state; "
+                         "CREATE TABLE views(session TEXT, seq INTEGER, uuids TEXT, data TEXT, rev INTEGER, PRIMARY KEY(session, seq)) WITHOUT ROWID; "
+                         "CREATE TABLE view_state(session TEXT PRIMARY KEY, path TEXT, offset INTEGER, head TEXT, count INTEGER, used REAL, "
+                         "generation TEXT, rev INTEGER, calls TEXT, agent_id TEXT); "
+                         "INSERT INTO views VALUES('child', 0, 'old', '{}', 1); PRAGMA user_version=6;")
+        indexed = db.execute('SELECT count(*) FROM msgs').fetchone()[0]
+        db.close()
+        db = sessions.connect(self.root)
+        self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], sessions.VERSION)
+        self.assertEqual((db.execute('SELECT count(*) FROM msgs').fetchone()[0], db.execute('SELECT count(*) FROM views').fetchone()[0]), (indexed, 0))
+        db.close()
+        self.assertEqual([s['id'] for s in sessions.search(self.root, 'ibis')['sessions']], ['parent'])
+        page = self.page('child', limit=3)
+        self.assertEqual((page['inherited_before'], [m['text'] for m in page['messages']]), (2, ['Child prompt 2', 'Child prompt 3', 'Child prompt 4']))
+        db = sessions.connect(self.root)
+        self.assertEqual(db.execute("SELECT role, inherited FROM views WHERE session='child' ORDER BY seq").fetchall(),
+                         [('user', 1), ('assistant', 1)] + [('user', 0)] * 5)
+        db.close()
+
+    def test_an_unchanged_conversation_is_served_without_a_write(self):
+        self.write('s', [user('u0', 'Hello'), reply('a0', 'Hi')])
+        first = self.page('s')
+        statements = []
+        connect = sessions.connect
+        def traced(root):
+            db = connect(root)
+            db.set_trace_callback(statements.append)
+            return db
+        with patch.object(sessions, 'connect', side_effect=traced):
+            self.page('s', after=first['after'])
+            sessions.show(self.root, 's')
+            self.assertFalse([s for s in statements if s.startswith(('BEGIN', 'UPDATE', 'INSERT', 'DELETE'))], statements)
+            with patch.object(sessions.time, 'time', return_value=time.time() + sessions.USED_STALE + 1):
+                self.page('s', after=first['after'])
+            self.assertEqual([s.split(' SET')[0] for s in statements if s.startswith(('BEGIN IMMEDIATE', 'UPDATE', 'INSERT', 'DELETE'))], ['UPDATE view_state'])
+
     def test_mains_version_5_index_gains_the_remote_tables(self):
         # main's version 5 has neither view revisions nor images, so the same number can't be trusted.
         self.write('s', [user('u0', 'Keep the tapir searchable')])
@@ -575,6 +618,76 @@ class RemoteTests(unittest.TestCase):
         # A long rollout with no turn event in reach is unknown, never idle.
         self.rollout('thread-1', [response({'type': 'reasoning', 'summary': [], 'text': 'z' * 5000})] * 1000)
         self.assertEqual(live()[0]['status'], 'unknown')
+
+    def test_live_codex_reads_a_rollout_again_only_when_it_changes(self):
+        main = self.rollout('thread-1', [{'type': 'event_msg', 'timestamp': '2026-10-09T10:00:01Z', 'payload': {'type': 'task_started', 'turn_id': 't1'}}])
+        state = self.home / '.codex/state_5.sqlite'
+        db = sqlite3.connect(state)
+        db.execute('CREATE TABLE threads(id TEXT, title TEXT, tokens_used INTEGER, git_branch TEXT)')
+        db.executemany('INSERT INTO threads VALUES(?,?,0,NULL)', [('thread-1', 'Fix the uploader'), ('thread-2', 'Other')])
+        db.commit(); db.close()
+        tree = ({100: 1.0}, {}, {100: 1791559000}, {100: 'codex'})
+        tails, queries = [], []
+        real_tail, real_threads = sessions.codex_tail, sessions.codex_threads
+        def live():
+            with patch.object(sessions, 'process_tree', return_value=tree), patch.object(sessions, 'listening', return_value={}), \
+                    patch.object(sessions, 'tmux_panes', return_value={}), \
+                    patch.object(sessions, 'codex_open', return_value={100: {'rollouts': [str(main)], 'cwd': '/code/api'}}), \
+                    patch.object(sessions, 'codex_tail', side_effect=lambda path: tails.append(path) or real_tail(path)), \
+                    patch.object(sessions, 'codex_threads', side_effect=lambda root, ids=None: queries.append(ids) or real_threads(root, ids)):
+                return sessions.live(self.root)['sessions']
+        first = live()
+        self.assertEqual((first[0]['status'], first[0]['title']), ('busy', 'Fix the uploader'))
+        self.assertEqual(live(), first)
+        self.assertEqual((len(tails), queries), (1, [['thread-1'], ['thread-1']]))
+        self.rollout('thread-1', [{'type': 'event_msg', 'timestamp': '2026-10-09T10:00:09Z', 'payload': {'type': 'task_complete', 'turn_id': 't1'}}], 'a')
+        self.assertEqual(live()[0]['status'], 'idle')
+        self.assertEqual(len(tails), 2)
+
+    def test_live_reads_unchanged_settings_once_and_opens_the_index_once(self):
+        registry = self.home / '.claude/sessions'; registry.mkdir(parents=True)
+        me = os.getpid()
+        (registry / '1.json').write_text(json.dumps({'pid': me, 'sessionId': 's1', 'cwd': '/code/app', 'status': 'busy'}))
+        self.write('s1', [user('u1', 'Plan it')])
+        state = self.root / 'runtime/state'; state.mkdir(parents=True)
+        (state / 's1.hook.json').write_text(json.dumps({'mode': 'plan', 'effort': 'high'}))
+        main = self.rollout('thread-1', [{'type': 'event_msg', 'timestamp': '2026-10-09T10:00:01Z', 'payload': {'type': 'task_started', 'turn_id': 't1'}}])
+        tree = ({me: 1.0, 100: 1.0}, {}, {}, {me: 'python', 100: 'codex'})
+        connect = sessions.connect
+        opened = []
+        def live():
+            with patch.object(sessions, 'process_tree', return_value=tree), patch.object(sessions, 'listening', return_value={}), \
+                    patch.object(sessions, 'tmux_panes', return_value={}), \
+                    patch.object(sessions, 'codex_open', return_value={100: {'rollouts': [str(main)], 'cwd': '/code/api'}}), \
+                    patch.object(sessions, 'connect', side_effect=lambda root: opened.append(root) or connect(root)):
+                return {s['agent']: s for s in sessions.live(self.root)['sessions']}
+        self.assertEqual((live()['claude']['effort'], len(opened)), ('high', 1))
+        with patch.object(sessions.json, 'load', side_effect=AssertionError('read again')):
+            self.assertEqual(live()['claude']['effort'], 'high')
+        (state / 's1.hook.json').write_text(json.dumps({'mode': 'plan', 'effort': 'max'}))
+        later = time.time() + 5
+        os.utime(state / 's1.hook.json', (later, later))
+        self.assertEqual(live()['claude']['effort'], 'max')
+        # Leftovers are swept on the first call and then at most once a minute.
+        (state / 'ended.tasks.json').write_text('{}')
+        live()
+        self.assertTrue((state / 'ended.tasks.json').exists())
+        with patch.object(sessions.time, 'time', return_value=time.time() + sessions.PRUNE_EVERY):
+            live()
+        self.assertFalse((state / 'ended.tasks.json').exists())
+
+    def test_codex_open_asks_lsof_once_per_pid_every_few_seconds(self):
+        asked = []
+        sessions.OPENED.clear()
+        with patch.object(sessions, 'lsof_open', side_effect=lambda pids: asked.append(sorted(pids)) or {p: {'rollouts': [], 'cwd': '/x'} for p in pids}):
+            self.assertEqual(set(sessions.codex_open([1, 2])), {1, 2})
+            self.assertEqual(set(sessions.codex_open([1, 2, 3])), {1, 2, 3})
+            self.assertEqual(set(sessions.codex_open([2])), {2})
+            self.assertEqual(asked, [[1, 2], [3]])
+            with patch.object(sessions.time, 'monotonic', return_value=time.monotonic() + sessions.OPEN_FRESH):
+                sessions.codex_open([2])
+            self.assertEqual(asked[-1], [2])
+        sessions.OPENED.clear()
 
     def test_live_codex_finds_a_closed_rollout_by_folder(self):
         today = self.home / '.codex/sessions' / time.strftime('%Y/%m/%d'); today.mkdir(parents=True, exist_ok=True)

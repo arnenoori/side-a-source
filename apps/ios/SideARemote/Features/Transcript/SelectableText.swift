@@ -204,8 +204,8 @@ struct EditMenuArea: UIViewRepresentable {
         let view = UIView()
         view.backgroundColor = .clear
         view.addInteraction(context.coordinator.editMenu)
-        view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pressed(_:))))
-        view.addGestureRecognizer(UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pressed(_:))))
+        view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:))))
+        view.addGestureRecognizer(UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.held(_:))))
         return view
     }
 
@@ -221,8 +221,17 @@ struct EditMenuArea: UIViewRepresentable {
 
         init(_ menu: [SelectableText.Action]) { self.menu = menu }
 
-        @objc func pressed(_ gesture: UIGestureRecognizer) {
-            guard gesture.state == .ended || gesture.state == .began, !menu.isEmpty, let view = gesture.view else { return }
+        @objc func tapped(_ gesture: UITapGestureRecognizer) {
+            if gesture.state == .ended { present(from: gesture) }
+        }
+
+        /// On the press, as a long press shows its menu; its `.ended` on lifting would present it a second time.
+        @objc func held(_ gesture: UILongPressGestureRecognizer) {
+            if gesture.state == .began { present(from: gesture) }
+        }
+
+        private func present(from gesture: UIGestureRecognizer) {
+            guard !menu.isEmpty, let view = gesture.view else { return }
             SelectableText.clearSelection()
             let point = CGPoint(x: view.bounds.midX, y: view.bounds.minY)
             editMenu.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))

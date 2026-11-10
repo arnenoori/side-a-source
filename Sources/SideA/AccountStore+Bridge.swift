@@ -24,33 +24,17 @@ extension AccountStore {
         defer { if changes { bridgeChanges -= 1 } }
         if let testBridge { return try await testBridge(args) }
         guard let python, let bridgeURL else { throw BridgeFailure(message: "Install Python 3 to connect your accounts.") }
-        let arguments = [bridgeURL.path, "--root", root.path] + args
-        return try await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: python)
-            process.arguments = arguments
-            process.qualityOfService = priority
-            let output = Pipe()
-            process.standardOutput = output
+        let deadline = BridgeDeadline.current(timeout)
+        // The bridge leads its own process group; stopping the group also stops a hung claude or codex child.
+        let run = await ProcessRunner.run(python, [bridgeURL.path, "--root", root.path] + args, timeout: deadline, priority: priority, group: true)
+        if let failure = run.launchError { throw failure }
+        if run.status != 0 {
             // The helper returns sanitized diagnostics; raw CLI stderr is never logged.
-            let errors = Pipe()
-            process.standardError = errors
-            try process.run()
-            // The bridge leads its own process group; stopping the group also stops a hung claude or codex child.
-            let watchdog = DispatchWorkItem { if process.isRunning { kill(-process.processIdentifier, SIGTERM); process.terminate() } }
-            let deadline = BridgeDeadline.current(timeout)
-            DispatchQueue.global().asyncAfter(deadline: .now() + deadline, execute: watchdog)
-            defer { watchdog.cancel() }
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            if process.terminationStatus != 0 {
-                let message = (String(data: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "Account verification failed.")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                // The watchdog's signal leaves nothing on stderr.
-                throw BridgeFailure(stderr: message.isEmpty ? "the helper didn't finish within \(Int(deadline))s" : message)
-            }
-            return data
-        }.value
+            let message = (String(data: run.errors, encoding: .utf8) ?? "Account verification failed.").trimmingCharacters(in: .whitespacesAndNewlines)
+            // The watchdog's signal leaves nothing on stderr.
+            throw BridgeFailure(stderr: message.isEmpty ? "the helper didn't finish within \(Int(deadline))s" : message)
+        }
+        return run.output
     }
 
     /// Whether one of Side A's setups outside its folder (`hook`, `shell`, `live`, `host-terminal`) is installed,

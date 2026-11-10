@@ -6,6 +6,7 @@ import plistlib
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +66,23 @@ class AppcastTests(unittest.TestCase):
         publisher.require_newer_feed(older, current)
         with self.assertRaises(ValueError):
             publisher.require_newer_feed(current, current + b"\n")
+
+    def test_release_state_needs_the_release_and_this_build_in_the_feed(self):
+        feed = {"content": base64.b64encode(ET.tostring(self.xml)).decode()}
+        build = self.xml.findtext(f"./channel/item/{{{NS}}}version")
+        stable = {"draft": False, "prerelease": False}
+        cases = [
+            ({}, "unpublished"),
+            ({"releases/tags/v1.2.3": {"draft": True, "prerelease": False}, "contents/appcast.xml?ref=main": feed}, "unpublished"),
+            ({"releases/tags/v1.2.3": stable}, "release-only"),
+            ({"releases/tags/v1.2.3": stable, "contents/appcast.xml?ref=main": feed}, "published"),
+        ]
+        for answers, expected in cases:
+            with self.subTest(expected=expected, answers=list(answers)):
+                with unittest.mock.patch.object(publisher, "find", side_effect=answers.get):
+                    self.assertEqual(publisher.release_state("1.2.3", build), expected)
+        with unittest.mock.patch.object(publisher, "find", side_effect={"releases/tags/v1.2.3": stable, "contents/appcast.xml?ref=main": feed}.get):
+            self.assertEqual(publisher.release_state("1.2.3", int(build) + 1), "release-only")
 
 
 if __name__ == "__main__":

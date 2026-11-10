@@ -39,7 +39,7 @@ final class NotificationCardModel {
     var question: IslandQuestion? { questions.indices.contains(page) ? questions[page] : nil }
 
     func tap(_ option: IslandQuestion.Option) {
-        guard let question, sending == .idle else { return }
+        guard let question, sending == .idle || sending.isRetryable else { return }
         if question.multiSelect {
             picked[page, default: []].formSymmetricDifference([option.label])
         } else {
@@ -213,7 +213,7 @@ private struct QuestionBody: View {
                     }
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
-                    .disabled(count == 0 || card.sending != .idle)
+                    .disabled(count == 0 || (card.sending != .idle && !card.sending.isRetryable))
                 }
             }
         } else {

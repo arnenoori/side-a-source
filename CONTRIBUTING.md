@@ -6,6 +6,10 @@ dependencies when the platform/standard library is sufficient.
 
 Checks run on your Mac, not GitHub Actions. `git config core.hooksPath .githooks` once per clone runs
 `scripts/check.sh` before each push, with the gates the changed files need; `scripts/check.sh --all` runs them all.
+Any change also gets the public-source scan (home paths, tailnet names, tokens) over `git archive HEAD`.
+A `Packages/` change runs the iOS tests too, since apps/ios builds against `Packages/SideAProtocol`; with no
+iPhone simulator it fails, unless `SIDEA_IOS_TESTS=skip` is set, which says loudly that they were skipped.
+An `apps/` change always needs them.
 `scripts/dev.sh` runs your checkout in place of the installed Side A and puts the installed one back when it quits.
 A change a Mac user would notice adds a paragraph under `## Unreleased` in CHANGELOG.md in the same PR;
 `scripts/check-release.py` refuses a release whose version has no changelog section, or that leaves

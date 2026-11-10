@@ -30,8 +30,8 @@ final class AccountStore {
             if config.smartMode != oldValue.smartMode || config.swapAt != oldValue.swapAt || config.followFable != oldValue.followFable { remote.events?.autopilotChanged() }
         }
     }
-    var dependencies = DependencyReport()
-    var checkingDependencies = false
+    private(set) var dependencies = DependencyReport()
+    private(set) var checkingDependencies = false
     let analytics: AppAnalytics
     var error: String?
     /// Accounts that own the Mac-wide Claude and Codex logins, when they are in the library.
@@ -39,7 +39,7 @@ final class AccountStore {
     /// Mac-wide login emails that are not in the library yet.
     var unknownLogins: [AgentProvider: String] = [:]
     /// Mac logins being added to the library, by provider.
-    var adopting: Set<AgentProvider> = []
+    private(set) var adopting: Set<AgentProvider> = []
     /// When adding a Mac login on its own last failed, by "provider:email"; it waits ten minutes to try again.
     @ObservationIgnored private var adoptFailedAt: [String: Date] = [:]
     /// When an unready account holding the Mac's login was last checked, so it's checked at most every ten minutes.
@@ -58,17 +58,13 @@ final class AccountStore {
     struct HeldMove: Equatable, Sendable {
         let slot: String, from: String, to: String, share: Bool, reason: String, since: Date
     }
-    @ObservationIgnored private var statusCheckedAt = Date.distantPast
+    @ObservationIgnored var telemetry = TelemetryChecks()
     /// Shown in the menu while sessions hold a lot of memory and macOS reports memory pressure.
     var memoryWarning: String?
-    @ObservationIgnored private var memoryCheckedAt = Date.distantPast
-    @ObservationIgnored private var memoryNotifiedAt: Date?
-    @ObservationIgnored private var pricesCheckedAt = Date.distantPast
     /// When the API price list was last fetched, for the Usage footer; nil while Side A's own table is used.
     var pricesUpdated: Date?
-    @ObservationIgnored private var outageNotified = UserDefaults.standard.string(forKey: "outageNotified")
     /// Model of the newest Claude Code response in the last half hour.
-    var claudeModel: String?
+    private(set) var claudeModel: String?
     var limitHook = false
     /// The `claude` shell function that makes new commands use the chosen account.
     var shellSwitching = false
@@ -82,7 +78,7 @@ final class AccountStore {
     /// nil when processes can't be listed.
     var busyLogins: [String: String]?
     /// Per running slot, the model each of its sessions last answered with.
-    @ObservationIgnored var slotModels: [String: [String?]] = [:]
+    @ObservationIgnored private(set) var slotModels: [String: [String?]] = [:]
     /// Per running slot, seconds since its sessions last wrote, so trades it can wait on land in a pause.
     @ObservationIgnored private var slotQuiet: [String: Double] = [:]
     /// Per account, the newest limit a running session reported hitting, when, and every session whose last reply says so.
@@ -122,7 +118,7 @@ final class AccountStore {
     var loginEnds: [String: Double] = [:]
     /// When each account was last read successfully, for marking old readings.
     var readAt: [String: Date] = [:] { didSet { remoteUsageChanged() } }
-    var lidOpen = false
+    private(set) var lidOpen = false
     /// The player only stays open when asked for; macOS would otherwise restore it at launch.
     var playerRequested = false
     /// Settings reopens on the tab last used.
@@ -135,7 +131,7 @@ final class AccountStore {
     @ObservationIgnored private var verifying: [String: Task<Result<Bool, Error>, Never>] = [:]
     /// Tests: a demo store's sign-in, login checks and pool take the real paths, on its temporary root.
     @ObservationIgnored var checksLogins = false
-    var startupError = false
+    private(set) var startupError = false
     let root: URL
     let isDemo: Bool
     private var pollTask: Task<Void, Never>?
@@ -990,78 +986,9 @@ final class AccountStore {
     private func nearLimit(_ id: String) -> Bool {
         (usage[id]?.fiveHour?.percent ?? 0) >= 85 || (minutesToLimit(id) ?? .infinity) < 15
     }
-    static let statusPage = URL(string: "https://status.claude.com")!
 
-    /// Errors during an incident are Anthropic's, not the account's: say so once, and show it in the menu while it lasts.
-    private func checkStatus() async {
-        var request = URLRequest(url: Self.statusPage.appendingPathComponent("api/v2/summary.json"), timeoutInterval: 15)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        guard let (data, response) = try? await URLSession.shared.data(for: request), (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        let found = Outage.parse(data)
-        if found != outage { outage = found }
-        guard let found, outageNotified != found.id else { return }
-        outageNotified = found.id
-        UserDefaults.standard.set(found.id, forKey: "outageNotified")
-        notify("Claude is having trouble", "\(found.name). Errors in your sessions may be Anthropic's, not your accounts'.")
-        island.show(.limit, "Claude is having trouble", found.name)
-    }
-
-    static let priceList = URL(string: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")!
-    private var pricesURL: URL { root.appendingPathComponent("runtime/prices.json") }
-
-    /// API list prices change with each model; the public list is fetched daily and kept for offline use.
-    private func refreshPrices() async {
-        if APIPrice.published.isEmpty, let saved = try? Data(contentsOf: pricesURL) {
-            let prices = APIPrice.parsePublished(saved)
-            if !prices.isEmpty {
-                APIPrice.published = prices
-                pricesUpdated = (try? pricesURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-            }
-        }
-        var request = URLRequest(url: Self.priceList, timeoutInterval: 30)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        guard let (data, response) = try? await URLSession.shared.data(for: request), (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-        let prices = APIPrice.parsePublished(data)
-        // A list without Claude prices is a broken download, not a price change.
-        guard prices.count >= 5 else { return }
-        APIPrice.published = prices
-        pricesUpdated = Date()
-        try? data.write(to: pricesURL, options: .atomic)
-    }
-
-    static let weeklyAlertKey = "weeklyAlert"
     /// How long before a sign-in ends the menu, the notification and Autopilot start saying so.
     static let signInWarning: TimeInterval = 3 * 86_400
-    static let weeklyAlertDefault = 80.0
-
-    /// The user's own line: one notification per account and week when weekly use passes it.
-    private func alertWeekly() {
-        let threshold: Double = PreferencesMirror.value(Self.weeklyAlertKey)
-        guard threshold > 0 else { return }
-        let before = UserDefaults.standard.dictionary(forKey: "weeklyAlerted") as? [String: Double] ?? [:]
-        var sent = before
-        let now = Date().timeIntervalSince1970
-        for account in config.accounts where account.ready {
-            guard let weekly = usage[account.id]?.weekly, weekly.percent >= threshold, let reset = weekly.resetsAt,
-                  reset > now, sent[account.id] != reset else { continue }
-            sent[account.id] = reset
-            notify("\(account.name) passed \(Int(threshold))% of its week", "\(weekly.text(at: now)) used; it resets \(UsageBar.format(reset)).")
-        }
-        if sent != before { UserDefaults.standard.set(sent, forKey: "weeklyAlerted") }
-    }
-
-    /// One sysctl most of the time; Python only runs to total the sessions once macOS reports memory pressure.
-    private func checkMemory() async {
-        guard let level = MemoryPressure.currentLevel(), MemoryPressure.levelTight(level) else { memoryWarning = nil; return }
-        struct Live: Decodable { struct Session: Decodable { let memory: Int? }; let sessions: [Session] }
-        guard let data = try? await bridgeOutput(["sessions", "live"], timeout: 30, priority: .utility),
-              let live = try? JSONDecoder().decode(Live.self, from: data) else { return }
-        let pressure = MemoryPressure(sessionsMB: live.sessions.compactMap(\.memory).reduce(0, +), level: level)
-        memoryWarning = pressure.tight ? pressure.line : nil
-        guard pressure.tight, MemoryPressure.shouldNotify(now: Date(), last: memoryNotifiedAt) else { return }
-        memoryNotifiedAt = Date()
-        notify("Memory is tight", pressure.notification)
-    }
 
     /// `signIn`: the account the notification's Sign In button signs in to.
     func notify(_ title: String, _ body: String, signIn: String? = nil) {
@@ -1071,8 +998,7 @@ final class AccountStore {
     /// Nonisolated: the authorization callback runs on a background queue, and a closure formed in
     /// this main-actor class traps there under Swift 6's isolation checks (found by brandedDaniel).
     private nonisolated static func post(_ title: String, _ body: String, signIn: String?) {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
-            guard granted else { return }
+        WaitingNotifier.whenAllowed {
             let content = UNMutableNotificationContent()
             content.title = title; content.body = body
             if let signIn {
@@ -1189,8 +1115,8 @@ final class AccountStore {
         if python == nil { await refreshDependencies() }
         guard python != nil else { return }
         await preferences?.effectsReady()
-        if Date().timeIntervalSince(memoryCheckedAt) > 120 {
-            memoryCheckedAt = Date()
+        if Date().timeIntervalSince(telemetry.memoryAt) > 120 {
+            telemetry.memoryAt = Date()
             Task { await checkMemory() }
             Task { await syncCodexPoolHomes() }
             // "Turn on Tailscale" clears by itself once it's on.
@@ -1204,15 +1130,7 @@ final class AccountStore {
         autopilotLog.note("active", nil)
         await refresh(config.accounts.filter { $0.ready && dueForRead($0) }.map(\.id))
         Task { await refreshReport(maxAge: 3600) }
-        if Date().timeIntervalSince(pricesCheckedAt) > 86400 {
-            pricesCheckedAt = Date()
-            Task { await refreshPrices() }
-        }
-        if Date().timeIntervalSince(statusCheckedAt) > 300 {
-            statusCheckedAt = Date()
-            Task { await checkStatus() }
-        }
-        alertWeekly()
+        checkTelemetry()
         // Keeps session search close to current, so opening Sessions shows results at once.
         if Date().timeIntervalSince(sessionsIndexedAt) > 1800 {
             sessionsIndexedAt = Date()
@@ -1221,147 +1139,9 @@ final class AccountStore {
         guard config.smartMode else { heldMoves = [:]; autopilotLog.note("mode", "Autopilot is off."); return }
         autopilotLog.note("mode", nil)
         let now = Date().timeIntervalSince1970
-        if let email = unknownLogins[.claude] { autopilotLog.note("unknown", "The Mac's Claude login (\(email)) isn't in the library; nothing moves until it's added.") } else { autopilotLog.note("unknown", nil) }
-        // Codex: the desktop app keeps its own copy of the login, and OpenAI revokes a login
-        // whose refresh token is used twice, so Codex is never switched automatically.
-        for provider in [AgentProvider.claude] where unknownLogins[provider] == nil {
-            let accounts = config.accounts.filter { $0.provider == provider }
-            let current = activeIDs[provider]
-            let plannable = planning(self.plannable)
-            let fable = self.plannable.compactMapValues(\.forFable)
-            // Each running login is planned by what its own sessions use; unknown models follow the newest session.
-            let planned = { (slot: String) in
-                switch Planner.needsFable(self.slotModels[slot]) { case true?: fable; case false?: self.plannable; case nil: plannable }
-            }
-            let name = { (id: String) in self.config.accounts.first { $0.id == id }?.name ?? "" }
-            // Logins running sessions read, by slot. Unknown (processes can't be listed) means no
-            // trades; only new commands move.
-            var slots = busyLogins ?? [:]
-            var held: [String: HeldMove] = [:]
-            defer { if heldMoves != held { heldMoves = held } }
-            autopilotLog.note("busy", busyLogins == nil ? "Running sessions couldn't be listed (\(busyProblem ?? "unknown")); only new commands move." : nil)
-            let busy = { Set(slots.values).union([current].compactMap { $0 }) }
-            for slot in slots.keys.sorted(by: { slots[$0] == current && slots[$1] != current }) {
-                // Settings may have changed during the last trade.
-                guard config.smartMode, let id = slots[slot], let account = config.accounts.first(where: { $0.id == id }) else { continue }
-                let key = "slot \(slot)"
-                // A failed read is not evidence of a limit; only a signed-out account moves.
-                if failing.contains(id), usage[id]?.stale != true {
-                    autopilotLog.note(key, "\(account.name): its last usage read failed (\(health[id]?.saved ?? "unknown")), so it isn't moved on that reading.")
-                    continue
-                }
-                // An account with Autopilot off, or mid sign-in, is never moved automatically.
-                if !account.allowAuto || signingIn.contains(id) {
-                    autopilotLog.note(key, "\(account.name): \(account.allowAuto ? "signing in" : "Autopilot is off for this account"); not moved.")
-                    continue
-                }
-                // Trade only with an account no session is using, so no session lands on the full one.
-                let free = config.accounts.filter { $0.provider == provider && ($0.id == id || (!busy().contains($0.id) && !signingIn.contains($0.id))) }
-                var target = Planner.best(free, usage: planned(slot), health: health, active: id, full: config.moveAt, now: now)
-                var partner: String?
-                if target == nil, let share = Planner.fableShare(for: slot, slots: slots, models: slotModels, accounts: accounts, usage: self.plannable, health: health,
-                                                                 excluded: Set([current].compactMap { $0 }).union(signingIn).union(failing), full: config.moveAt, now: now) {
-                    target = share.account; partner = share.slot
-                }
-                guard let best = target, best != id else {
-                    let full = usage[id].map { !Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? false
-                    if autopilotLog.note(key, full ? "\(account.name) is full and no free account has room." : nil), full, let value = planned(slot)[id] {
-                        recordRotation(RotationRecord(at: now, kind: .stuck, from: account.name, reason: Planner.tightest(value, now: now).map { "\($0.label) \($0.text(at: now))" } ?? ""))
-                    }
-                    if full { noteStuck(account, slot: slot, others: accounts, now: now) } else { stuckNotified.remove(slot) }
-                    continue
-                }
-                if let target = config.accounts.first(where: { $0.id == best }),
-                   Planner.priorityMoveWaits(from: account, to: target, usage: planned(slot)[id], movedAt: slotMovedAt[slot], full: config.moveAt, now: now) {
-                    if autopilotLog.note(key, "\(account.name) → \(target.name): this login moved recently, so a move only for priority waits.") {
-                        recordRotation(RotationRecord(at: now, kind: .priorityWait, from: account.name, to: target.name, reason: "Moved recently"))
-                    }
-                    continue
-                }
-                let hold = { (reason: String) in
-                    held[slot] = HeldMove(slot: slot, from: id, to: best, share: partner != nil, reason: reason,
-                                          since: self.heldMoves[slot].flatMap { $0.from == id && $0.to == best ? $0.since : nil } ?? Date())
-                }
-                if Planner.waitsForPause(planned(slot)[id], quiet: slotQuiet[slot], full: config.moveAt, now: now) {
-                    autopilotLog.note(key, "\(account.name) → \(name(best)): waiting for its sessions to pause (quiet \(Int(slotQuiet[slot] ?? 0))s of \(Int(Planner.pause))s).")
-                    hold("Waiting for its sessions to pause, so they keep their cache.")
-                    continue
-                }
-                // A share moves the partner's sessions too; they keep their cache unless they've paused as well.
-                if let partner, (slotQuiet[partner] ?? .infinity) < Planner.pause {
-                    autopilotLog.note(key, "\(account.name) → \(name(best)): waiting for \(name(best))'s sessions to pause before a Fable share.")
-                    hold("Waiting for \(name(best))'s sessions to pause before a Fable share.")
-                    continue
-                }
-                let attempt = "\(slot) \(best)"
-                // Before the trade: afterwards these sessions read as the new account's, and its numbers are the old login's.
-                let moved = rotationSessions(on: id)
-                let reason = partner != nil ? "Fable share" : config.accounts.first { $0.id == best }.map { MoveReason.text(from: account, to: $0, usage: planned(slot)[id], now: now, full: config.moveAt) } ?? ""
-                do {
-                    try await swap(slot, best, share: partner != nil)
-                } catch {
-                    autopilotLog.note(key, "\(account.name) → \(name(best)): move failed: \(error.localizedDescription)")
-                    if !swapFailures.contains(attempt) {
-                        swapFailures.insert(attempt)
-                        notify("Couldn't move off \(account.name)", "\(name(best)) has room, but moving \(account.name)'s sessions failed: \(error.localizedDescription) Switch in the menu, or see autopilot.log.")
-                    }
-                    continue
-                }
-                swapFailures.remove(attempt)
-                stuckNotified.remove(slot)
-                slotMovedAt[slot] = now
-                autopilotLog.note(key, nil)
-                autopilotLog.write("\(account.name) → \(name(best)): moved\(partner.map { " (Fable share with \(name($0)))" } ?? "").")
-                recordRotation(RotationRecord(at: now, kind: .moved, from: account.name, to: name(best), reason: reason, sessions: moved))
-                pushMoved(to: name(best), reason: reason)
-                slots[slot] = best
-                if let partner {
-                    slots[partner] = id
-                    notify("Fable continues on \(name(best))", "\(name(id)) spent its Fable share. Its Fable sessions continue as \(name(best)), and \(name(best))'s other sessions continue as \(name(id)).")
-                    island.show(.track, "Fable continues on \(name(best))", "\(name(best))'s other sessions now run on \(name(id)), which still has room.")
-                } else {
-                    notify("Now playing: \(name(best))", "\(name(id)) is near its limit. Its running sessions continue as \(name(best)) within a minute, nothing to restart.")
-                    island.show(.track, "Now playing: \(name(best))", "\(name(id)) is near its limit; its sessions continue as \(name(best)).")
-                }
-            }
-            // New commands: if the account they use is still full (no trade, or no sessions on it), point them elsewhere.
-            if config.smartMode, shellSwitching, let current = activeIDs[provider], !signingIn.contains(current),
-               config.accounts.first(where: { $0.id == current })?.allowAuto != false,
-               !(failing.contains(current) && usage[current]?.stale != true),
-               let best = Planner.best(config.accounts.filter { $0.provider == provider && ($0.id == current || !busy().contains($0.id)) },
-                                       usage: plannable, health: health, active: current, full: config.moveAt, now: now), best != current {
-                let from = config.accounts.first { $0.id == current }, to = config.accounts.first { $0.id == best }
-                let reason = from.flatMap { from in to.map { MoveReason.text(from: from, to: $0, usage: plannable[current], now: now, full: config.moveAt) } } ?? ""
-                await activate(best)
-                autopilotLog.write("New commands: \(name(current)) → \(name(best))\(activeIDs[provider] == best ? "" : " failed\(error.map { ": \($0)" } ?? "")").")
-                if activeIDs[provider] == best {
-                    recordRotation(RotationRecord(at: now, kind: .newCommands, from: name(current), to: name(best), reason: reason))
-                    pushMoved(to: name(best), reason: reason)
-                    notify("Now playing: \(name(best))", "\(name(current)) is near its limit. New claude commands use \(name(best)).")
-                    island.show(.track, "Now playing: \(name(best))", "New claude commands use \(name(best)).")
-                }
-            }
-            if config.smartMode, activeIDs[provider] == nil, shellSwitching, let best = Planner.best(accounts, usage: plannable, health: health, active: nil, full: config.moveAt, now: now) {
-                await activate(best)
-            }
-            // No listed session named it, or none could be listed: it can still be full with only a signed-out account free.
-            if let current = activeIDs[provider], !slots.values.contains(current), let account = accounts.first(where: { $0.id == current }), account.allowAuto {
-                let full = usage[current].map { !Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? false
-                if full, (Planner.best(accounts, usage: plannable, health: health, active: current, full: config.moveAt, now: now) ?? current) == current {
-                    noteStuck(account, slot: "new commands", others: accounts, now: now)
-                } else { stuckNotified.remove("new commands") }
-            }
-            if provider == .claude, let next = Planner.nextAvailable(accounts, usage: plannable, full: config.moveAt, now: now), Planner.best(accounts, usage: plannable, health: health, active: current, full: config.moveAt, now: now) == nil {
-                if !exhaustedNotified {
-                    exhaustedNotified = true
-                    pushAllOut(fable: fableMode, back: next.0.name, at: next.1)
-                    notify(fableMode ? "Fable is used up" : "All tracks played",
-                           fableMode ? "Every account has spent its Fable share. Switch to another model, or wait until \(UsageBar.format(next.1))."
-                                     : "\(next.0.name) is back \(UsageBar.format(next.1)).")
-                    island.show(.limit, fableMode ? "Fable is used up" : "All tracks played",
-                                fableMode ? "Every account has spent its Fable share until \(UsageBar.format(next.1))." : "\(next.0.name) is back \(UsageBar.format(next.1)).")
-                }
-            } else if provider == .claude { exhaustedNotified = false }
+        if let email = unknownLogins[.claude] { autopilotLog.note("unknown", "The Mac's Claude login (\(email)) isn't in the library; nothing moves until it's added.") } else {
+            autopilotLog.note("unknown", nil)
+            await steer(now: now)
         }
         let minute = Calendar.current.component(.hour, from: Date()) * 60 + Calendar.current.component(.minute, from: Date())
         // Until the report has loaded, the schedule is unknown, not absent: wait for it.
@@ -1377,6 +1157,150 @@ final class AccountStore {
             // Listed but not started by a message: a verified Ultra account has no such limit, so ask again tomorrow, not every half hour.
             if primed, (usage[account.id]?.capacity ?? 1) >= 20, usage[account.id]?.fiveHour?.resetsAt == nil { primedAt[account.id] = Date().addingTimeInterval(86_400); saveUsageCache() }
         }
+    }
+
+    /// Moves the Mac's Claude login, and the logins running sessions read, off full accounts.
+    /// Codex: the desktop app keeps its own copy of the login, and OpenAI revokes a login
+    /// whose refresh token is used twice, so Codex is never switched automatically.
+    private func steer(now: Double) async {
+        let provider = AgentProvider.claude
+        let accounts = config.accounts.filter { $0.provider == provider }
+        let current = activeIDs[provider]
+        let plannable = planning(self.plannable)
+        let fable = self.plannable.compactMapValues(\.forFable)
+        // Each running login is planned by what its own sessions use; unknown models follow the newest session.
+        let planned = { (slot: String) in
+            switch Planner.needsFable(self.slotModels[slot]) { case true?: fable; case false?: self.plannable; case nil: plannable }
+        }
+        let name = { (id: String) in self.config.accounts.first { $0.id == id }?.name ?? "" }
+        // Logins running sessions read, by slot. Unknown (processes can't be listed) means no
+        // trades; only new commands move.
+        var slots = busyLogins ?? [:]
+        var held: [String: HeldMove] = [:]
+        defer { if heldMoves != held { heldMoves = held } }
+        autopilotLog.note("busy", busyLogins == nil ? "Running sessions couldn't be listed (\(busyProblem ?? "unknown")); only new commands move." : nil)
+        let busy = { Set(slots.values).union([current].compactMap { $0 }) }
+        for slot in slots.keys.sorted(by: { slots[$0] == current && slots[$1] != current }) {
+            // Settings may have changed during the last trade.
+            guard config.smartMode, let id = slots[slot], let account = config.accounts.first(where: { $0.id == id }) else { continue }
+            let key = "slot \(slot)"
+            // A failed read is not evidence of a limit; only a signed-out account moves.
+            if failing.contains(id), usage[id]?.stale != true {
+                autopilotLog.note(key, "\(account.name): its last usage read failed (\(health[id]?.saved ?? "unknown")), so it isn't moved on that reading.")
+                continue
+            }
+            // An account with Autopilot off, or mid sign-in, is never moved automatically.
+            if !account.allowAuto || signingIn.contains(id) {
+                autopilotLog.note(key, "\(account.name): \(account.allowAuto ? "signing in" : "Autopilot is off for this account"); not moved.")
+                continue
+            }
+            // Trade only with an account no session is using, so no session lands on the full one.
+            let free = config.accounts.filter { $0.provider == provider && ($0.id == id || (!busy().contains($0.id) && !signingIn.contains($0.id))) }
+            var target = Planner.best(free, usage: planned(slot), health: health, active: id, full: config.moveAt, now: now)
+            var partner: String?
+            if target == nil, let share = Planner.fableShare(for: slot, slots: slots, models: slotModels, accounts: accounts, usage: self.plannable, health: health,
+                                                             excluded: Set([current].compactMap { $0 }).union(signingIn).union(failing), full: config.moveAt, now: now) {
+                target = share.account; partner = share.slot
+            }
+            guard let best = target, best != id else {
+                let full = usage[id].map { !Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? false
+                if autopilotLog.note(key, full ? "\(account.name) is full and no free account has room." : nil), full, let value = planned(slot)[id] {
+                    recordRotation(RotationRecord(at: now, kind: .stuck, from: account.name, reason: Planner.tightest(value, now: now).map { "\($0.label) \($0.text(at: now))" } ?? ""))
+                }
+                if full { noteStuck(account, slot: slot, others: accounts, now: now) } else { stuckNotified.remove(slot) }
+                continue
+            }
+            if let target = config.accounts.first(where: { $0.id == best }),
+               Planner.priorityMoveWaits(from: account, to: target, usage: planned(slot)[id], movedAt: slotMovedAt[slot], full: config.moveAt, now: now) {
+                if autopilotLog.note(key, "\(account.name) → \(target.name): this login moved recently, so a move only for priority waits.") {
+                    recordRotation(RotationRecord(at: now, kind: .priorityWait, from: account.name, to: target.name, reason: "Moved recently"))
+                }
+                continue
+            }
+            let hold = { (reason: String) in
+                held[slot] = HeldMove(slot: slot, from: id, to: best, share: partner != nil, reason: reason,
+                                      since: self.heldMoves[slot].flatMap { $0.from == id && $0.to == best ? $0.since : nil } ?? Date())
+            }
+            if Planner.waitsForPause(planned(slot)[id], quiet: slotQuiet[slot], full: config.moveAt, now: now) {
+                autopilotLog.note(key, "\(account.name) → \(name(best)): waiting for its sessions to pause (quiet \(Int(slotQuiet[slot] ?? 0))s of \(Int(Planner.pause))s).")
+                hold("Waiting for its sessions to pause, so they keep their cache.")
+                continue
+            }
+            // A share moves the partner's sessions too; they keep their cache unless they've paused as well.
+            if let partner, (slotQuiet[partner] ?? .infinity) < Planner.pause {
+                autopilotLog.note(key, "\(account.name) → \(name(best)): waiting for \(name(best))'s sessions to pause before a Fable share.")
+                hold("Waiting for \(name(best))'s sessions to pause before a Fable share.")
+                continue
+            }
+            let attempt = "\(slot) \(best)"
+            // Before the trade: afterwards these sessions read as the new account's, and its numbers are the old login's.
+            let moved = rotationSessions(on: id)
+            let reason = partner != nil ? "Fable share" : config.accounts.first { $0.id == best }.map { MoveReason.text(from: account, to: $0, usage: planned(slot)[id], now: now, full: config.moveAt) } ?? ""
+            do {
+                try await swap(slot, best, share: partner != nil)
+            } catch {
+                autopilotLog.note(key, "\(account.name) → \(name(best)): move failed: \(error.localizedDescription)")
+                if !swapFailures.contains(attempt) {
+                    swapFailures.insert(attempt)
+                    notify("Couldn't move off \(account.name)", "\(name(best)) has room, but moving \(account.name)'s sessions failed: \(error.localizedDescription) Switch in the menu, or see autopilot.log.")
+                }
+                continue
+            }
+            swapFailures.remove(attempt)
+            stuckNotified.remove(slot)
+            slotMovedAt[slot] = now
+            autopilotLog.note(key, nil)
+            autopilotLog.write("\(account.name) → \(name(best)): moved\(partner.map { " (Fable share with \(name($0)))" } ?? "").")
+            recordRotation(RotationRecord(at: now, kind: .moved, from: account.name, to: name(best), reason: reason, sessions: moved))
+            pushMoved(to: name(best), reason: reason)
+            slots[slot] = best
+            if let partner {
+                slots[partner] = id
+                notify("Fable continues on \(name(best))", "\(name(id)) spent its Fable share. Its Fable sessions continue as \(name(best)), and \(name(best))'s other sessions continue as \(name(id)).")
+                island.show(.track, "Fable continues on \(name(best))", "\(name(best))'s other sessions now run on \(name(id)), which still has room.")
+            } else {
+                notify("Now playing: \(name(best))", "\(name(id)) is near its limit. Its running sessions continue as \(name(best)) within a minute, nothing to restart.")
+                island.show(.track, "Now playing: \(name(best))", "\(name(id)) is near its limit; its sessions continue as \(name(best)).")
+            }
+        }
+        // New commands: if the account they use is still full (no trade, or no sessions on it), point them elsewhere.
+        if config.smartMode, shellSwitching, let current = activeIDs[provider], !signingIn.contains(current),
+           config.accounts.first(where: { $0.id == current })?.allowAuto != false,
+           !(failing.contains(current) && usage[current]?.stale != true),
+           let best = Planner.best(config.accounts.filter { $0.provider == provider && ($0.id == current || !busy().contains($0.id)) },
+                                   usage: plannable, health: health, active: current, full: config.moveAt, now: now), best != current {
+            let from = config.accounts.first { $0.id == current }, to = config.accounts.first { $0.id == best }
+            let reason = from.flatMap { from in to.map { MoveReason.text(from: from, to: $0, usage: plannable[current], now: now, full: config.moveAt) } } ?? ""
+            await activate(best)
+            autopilotLog.write("New commands: \(name(current)) → \(name(best))\(activeIDs[provider] == best ? "" : " failed\(error.map { ": \($0)" } ?? "")").")
+            if activeIDs[provider] == best {
+                recordRotation(RotationRecord(at: now, kind: .newCommands, from: name(current), to: name(best), reason: reason))
+                pushMoved(to: name(best), reason: reason)
+                notify("Now playing: \(name(best))", "\(name(current)) is near its limit. New claude commands use \(name(best)).")
+                island.show(.track, "Now playing: \(name(best))", "New claude commands use \(name(best)).")
+            }
+        }
+        if config.smartMode, activeIDs[provider] == nil, shellSwitching, let best = Planner.best(accounts, usage: plannable, health: health, active: nil, full: config.moveAt, now: now) {
+            await activate(best)
+        }
+        // No listed session named it, or none could be listed: it can still be full with only a signed-out account free.
+        if let current = activeIDs[provider], !slots.values.contains(current), let account = accounts.first(where: { $0.id == current }), account.allowAuto {
+            let full = usage[current].map { !Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? false
+            if full, (Planner.best(accounts, usage: plannable, health: health, active: current, full: config.moveAt, now: now) ?? current) == current {
+                noteStuck(account, slot: "new commands", others: accounts, now: now)
+            } else { stuckNotified.remove("new commands") }
+        }
+        if let next = Planner.nextAvailable(accounts, usage: plannable, full: config.moveAt, now: now), Planner.best(accounts, usage: plannable, health: health, active: current, full: config.moveAt, now: now) == nil {
+            if !exhaustedNotified {
+                exhaustedNotified = true
+                pushAllOut(fable: fableMode, back: next.0.name, at: next.1)
+                notify(fableMode ? "Fable is used up" : "All tracks played",
+                       fableMode ? "Every account has spent its Fable share. Switch to another model, or wait until \(UsageBar.format(next.1))."
+                                 : "\(next.0.name) is back \(UsageBar.format(next.1)).")
+                island.show(.limit, fableMode ? "Fable is used up" : "All tracks played",
+                            fableMode ? "Every account has spent its Fable share until \(UsageBar.format(next.1))." : "\(next.0.name) is back \(UsageBar.format(next.1)).")
+            }
+        } else { exhaustedNotified = false }
     }
     /// Sessions at a limit with nowhere to go are otherwise silent: says once what would free them.
     private func noteStuck(_ account: Account, slot: String, others: [Account], now: Double) {

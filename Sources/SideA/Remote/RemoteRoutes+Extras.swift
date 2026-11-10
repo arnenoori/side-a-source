@@ -1,4 +1,3 @@
-import CryptoKit
 import Darwin
 import Foundation
 import SideACore
@@ -118,7 +117,7 @@ extension RemoteRoutes {
     @Sendable static func changeHistory(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         guard let change = context.body(HistoryChange.self) else { return badJSON }
-        guard safeID(id) else { return RemoteServer.error(404, "session_not_found", "That conversation isn't on the Mac.") }
+        guard IDs.safe(id) else { return RemoteServer.error(404, "session_not_found", "That conversation isn't on the Mac.") }
         if change.pinned == true, change.archived == true { return RemoteServer.error(400, "bad_request", "A conversation can't be pinned and archived.") }
         if let title = change.title, title.count > 200 { return RemoteServer.error(422, "invalid_reply", "That title is too long.") }
         struct Listing: Decodable { let sessions: [SessionInfo] }
@@ -188,14 +187,11 @@ extension RemoteRoutes {
         }
         if let refused = await refusal(context, .restart, target: id, body: body, needs: needs) { return refused }
         let key = context.request.headers["Idempotency-Key"].map { "phone-\(context.device)-\($0)" }
-        return await MainActor.run { () -> Task<HTTPResponse, Never>? in
-            guard let store = context.controller.store else { return nil }
-            return Task { @MainActor in
-                do throws(SessionCommands.Failure) {
-                    return hosted(try await SessionCommands(store: store).restart(id, body, key: key, origin: "phone"), store: store)
-                } catch { return response(error) }
-            }
-        }?.value ?? notReady
+        return await onMainAsync(context) { store in
+            do throws(SessionCommands.Failure) {
+                return hosted(try await SessionCommands(store: store).restart(id, body, key: key, origin: "phone"), store: store)
+            } catch { return response(error) }
+        }
     }
 
     // MARK: Clean Up
@@ -260,7 +256,7 @@ extension RemoteRoutes {
     }
 
     static func worktreeID(_ path: String) -> String {
-        SHA256.hash(data: Data(path.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        IDs.hashed(path)
     }
 
     @Sendable static func archive(_ context: Context) async -> HTTPResponse {
@@ -314,20 +310,17 @@ extension RemoteRoutes {
 
     @Sendable static func moveNow(_ context: Context) async -> HTTPResponse {
         if let refused = await refusal(context, .moveNow) { return refused }
-        return await MainActor.run { () -> Task<HTTPResponse, Never>? in
-            guard let store = context.controller.store else { return nil }
-            return Task { @MainActor in
-                do {
-                    guard try await store.moveNow() != nil else {
-                        return RemoteServer.error(409, "nothing_to_move", "Autopilot isn't holding a move right now.")
-                    }
-                } catch {
-                    return RemoteServer.error(409, "cannot_deliver", error.localizedDescription)
+        return await onMainAsync(context) { store in
+            do {
+                guard try await store.moveNow() != nil else {
+                    return RemoteServer.error(409, "nothing_to_move", "Autopilot isn't holding a move right now.")
                 }
-                let log = store.root.appendingPathComponent("runtime/autopilot.log")
-                return json(200, Autopilot.state(store, log: await Task.detached { Autopilot.tail(log) }.value))
+            } catch {
+                return RemoteServer.error(409, "cannot_deliver", error.localizedDescription)
             }
-        }?.value ?? notReady
+            let log = store.root.appendingPathComponent("runtime/autopilot.log")
+            return json(200, Autopilot.state(store, log: await Task.detached { Autopilot.tail(log) }.value))
+        }
     }
 
     static let shellSwitchingOff = RemoteServer.error(409, "cannot_deliver", "Turn on shell switching in Side A on your Mac first.",
@@ -338,11 +331,7 @@ extension RemoteRoutes {
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, "bad_request", "Send enabled, true or false.") }
         // Turning it on would turn on shell switching, which edits the shell's startup file: only the Mac does that.
         if change.enabled, await MainActor.run(body: { context.controller.store?.shellSwitching == false }) { return shellSwitchingOff }
-        guard let server = await MainActor.run(body: { context.controller.server }) else { return notReady }
-        if let refusal = server.confirm(context.request, device: context.device, purpose: .autopilot,
-                                        subject: ConfirmMessage.subject(autopilot: change), needs: .biometric) {
-            return refusal
-        }
+        if let refusal = await refusal(context, .autopilot, subject: ConfirmMessage.subject(autopilot: change), needs: .biometric) { return refusal }
         let found = await MainActor.run { () -> URL? in
             guard let store = context.controller.store else { return nil }
             store.setAutopilot(change.enabled)
@@ -356,11 +345,7 @@ extension RemoteRoutes {
     /// Answering with the recommended choice on or off, signed by the confirm key after Face ID like Autopilot itself.
     @Sendable static func setAutopilotAnswers(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, "bad_request", "Send enabled, true or false.") }
-        guard let server = await MainActor.run(body: { context.controller.server }) else { return notReady }
-        if let refusal = server.confirm(context.request, device: context.device, purpose: .autopilot,
-                                        subject: ConfirmMessage.subject(autopilotAnswers: change), needs: .biometric) {
-            return refusal
-        }
+        if let refusal = await refusal(context, .autopilot, subject: ConfirmMessage.subject(autopilotAnswers: change), needs: .biometric) { return refusal }
         await MainActor.run { context.controller.store?.setAnswerRecommended(change.enabled) }
         return await autopilot(context)
     }
@@ -370,9 +355,9 @@ extension RemoteRoutes {
     @Sendable static func useAccount(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         let notFound = RemoteServer.error(404, "not_found", "That account isn't on the Mac.")
-        let found = await MainActor.run { () -> (ready: Bool, shell: Bool, server: RemoteServer?)? in
+        let found = await MainActor.run { () -> (ready: Bool, shell: Bool)? in
             guard let store = context.controller.store, let account = store.config.accounts.first(where: { $0.id == id }) else { return nil }
-            return (account.ready, account.provider != .claude || store.shellSwitching, context.controller.server)
+            return (account.ready, account.provider != .claude || store.shellSwitching)
         }
         guard let found, let subject = try? ConfirmMessage.subject(useAccount: id) else { return notFound }
         guard found.ready else {
@@ -380,21 +365,14 @@ extension RemoteRoutes {
         }
         // A Claude account is used through the shell line, which only the Mac turns on.
         guard found.shell else { return shellSwitchingOff }
-        guard let server = found.server else { return notReady }
-        if let refusal = server.confirm(context.request, device: context.device, purpose: .account, subject: subject, needs: .biometric) {
-            return refusal
-        }
-        let failure = await MainActor.run { () -> Task<HTTPResponse?, Never>? in
-            guard let store = context.controller.store else { return nil }
-            return Task { @MainActor in
-                do { try await store.use(id) } catch {
-                    return RemoteServer.error(502, "cannot_deliver", "Side A couldn't switch to that account: \(error.localizedDescription)")
-                }
-                return nil
+        if let refusal = await refusal(context, .account, subject: subject, needs: .biometric) { return refusal }
+        let used = await onMainAsync(context) { store in
+            do { try await store.use(id) } catch {
+                return RemoteServer.error(502, "cannot_deliver", "Side A couldn't switch to that account: \(error.localizedDescription)")
             }
+            return HTTPResponse(status: 204)
         }
-        guard let failure else { return notReady }
-        if let response = await failure.value { return response }
+        guard used.status == 204 else { return used }
         return await accounts(context)
     }
 
@@ -514,7 +492,7 @@ enum Autopilot {
     }
 
     static func decision(_ text: String, at: Double) -> AutopilotDecision? {
-        let id = SHA256.hash(data: Data("\(at) \(text)".utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let id = IDs.hashed("\(at) \(text)")
         if text.hasPrefix("New commands: ") {
             let move = text.dropFirst("New commands: ".count)
             let names = move.components(separatedBy: " → ")

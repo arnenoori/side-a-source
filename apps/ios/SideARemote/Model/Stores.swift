@@ -47,8 +47,12 @@ final class SessionsStore {
     var groupBy: GroupBy = .project
     var showIdle = false
 
+    /// `rows(_:)`'s answer for each phase, made once per change: the Sessions screen asks a dozen times a render.
+    private var buckets: [SessionPhase: [RemoteSession]] = [:]
+
     init(_ sessions: [RemoteSession], extras: [SessionKey: SessionExtras] = [:]) {
         self.sessions = sessions; self.extras = extras
+        rebucket()
     }
 
     func session(_ id: SessionKey) -> RemoteSession? { sessions.first { $0.id == id } }
@@ -56,18 +60,27 @@ final class SessionsStore {
     /// A new snapshot from the Mac. A session first seen now keeps that as its start, so the order
     /// within a phase never shifts under the user's thumb.
     func replace(_ sessions: [RemoteSession], finished: [SessionKey: FinishedSession], now: Date = .now) {
+        var started = false
         for session in sessions where extras[session.id] == nil {
             extras[session.id] = SessionExtras(startedAt: session.statusAt.map { Date(timeIntervalSince1970: $0) } ?? now)
+            started = true
         }
         for (id, done) in finished { extras[id]?.lastReply = done.summary }
-        if self.sessions != sessions { self.sessions = sessions }
+        if self.sessions != sessions {
+            self.sessions = sessions
+            rebucket()
+        } else if started {
+            rebucket()
+        }
     }
 
     /// Rows per phase. Within a phase the order is fixed (newest started first), so rows only move
     /// when their phase changes.
-    func rows(_ phase: SessionPhase) -> [RemoteSession] {
-        sessions.filter { SessionPhase($0) == phase }
-            .sorted { (extras[$0.id]?.startedAt ?? .distantPast) > (extras[$1.id]?.startedAt ?? .distantPast) }
+    func rows(_ phase: SessionPhase) -> [RemoteSession] { buckets[phase] ?? [] }
+
+    private func rebucket() {
+        let sorted = sessions.sorted { (extras[$0.id]?.startedAt ?? .distantPast) > (extras[$1.id]?.startedAt ?? .distantPast) }
+        buckets = Dictionary(grouping: sorted, by: SessionPhase.init)
     }
 
     /// Rows of a phase under quiet subheaders, in order of first appearance.
@@ -88,6 +101,7 @@ final class SessionsStore {
     func setMail(_ mail: MailState?, for id: SessionKey) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[index].mail = mail
+        rebucket()
     }
 
     func resolve(_ request: RequestID, in id: SessionKey) {
@@ -97,6 +111,7 @@ final class SessionsStore {
             sessions[index].status = .working
             sessions[index].statusAt = Date.now.timeIntervalSince1970
         }
+        rebucket()
     }
 }
 

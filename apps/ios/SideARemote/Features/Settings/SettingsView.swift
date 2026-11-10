@@ -9,7 +9,6 @@ struct SettingsView: View {
     @Environment(AppRoot.self) private var root
     @State private var pairing = false
     @AppStorage("terminal.fontSize") private var fontSize = 13
-    @AppStorage("terminal.predictiveEcho") private var predictiveEcho = true
     @AppStorage(AppLock.key) private var requireFaceID = true
 
     var body: some View {
@@ -40,9 +39,7 @@ struct SettingsView: View {
                 Stepper(value: $fontSize, in: 10...18) {
                     LabeledContent("Font size") { Text("\(fontSize) pt").monospacedDigit() }
                 }
-                Toggle("Predictive echo", isOn: $predictiveEcho)
             }
-            .tint(.green)
             Section {
                 NavigationLink("Privacy") { PrivacyView() }
                 NavigationLink("Acknowledgements") { AcknowledgementsView() }

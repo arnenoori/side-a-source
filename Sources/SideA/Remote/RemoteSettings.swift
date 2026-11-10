@@ -100,7 +100,7 @@ struct RemoteSettings: View {
             }
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
-                if let error = remote.error, !shownWithPairing(error) { Text(error).foregroundStyle(.red) }
+                if let error = remote.error, error != remote.devices.unreadable { Text(error).foregroundStyle(.red) }
                 Text(remote.hello(paired: nil).versionLine)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -174,12 +174,6 @@ struct RemoteSettings: View {
         case .devicesUnreadable:
             EmptyView()
         }
-    }
-
-    /// Errors the iPhones section already says, with their fix.
-    private func shownWithPairing(_ error: String) -> Bool {
-        [RemoteController.keyWaiting, RemoteController.keyRefused, RemoteController.keyUnreadable, RemoteController.portBusy(remote.port),
-         remote.devices.unreadable].contains(error)
     }
 
     private func seen(_ device: RemoteDevice) -> String {
@@ -258,7 +252,7 @@ struct RemoteSettings: View {
     @ViewBuilder private var listenerRow: some View {
         if remote.pairReadiness == .ready,
            let failure = remote.listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first {
-            statusLabel(Text(failure == "Port in use" ? "Port \(String(remote.port)) is in use by another app" : "Side A couldn't listen: \(failure)"),
+            statusLabel(Text(failure == RemoteServer.portInUse ? "Port \(String(remote.port)) is in use by another app" : "Side A couldn't listen: \(failure)"),
                    "exclamationmark.triangle.fill", .yellow)
         }
     }

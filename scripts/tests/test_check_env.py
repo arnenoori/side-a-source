@@ -63,7 +63,8 @@ class CheckRoutingTests(unittest.TestCase):
         self.tools.mkdir()
         self.log.touch()
         (self.repo / "scripts").mkdir(parents=True)
-        (self.repo / "scripts/check.sh").write_text((ROOT / "scripts/check.sh").read_text())
+        for script in ("check.sh", "scan-public-source.py"):
+            (self.repo / "scripts" / script).write_text((ROOT / "scripts" / script).read_text())
         (self.repo / "bridge/tests").mkdir(parents=True)
         (self.repo / "bridge/a.py").write_text("")
         (self.repo / "bridge/tests/test_a.py").write_text("import unittest\nclass T(unittest.TestCase):\n    def test(self): pass\n")
@@ -72,6 +73,7 @@ class CheckRoutingTests(unittest.TestCase):
         (self.repo / "Packages/P").mkdir(parents=True)
         self.env = clean_env(PATH=f"{self.tools}:{os.environ['PATH']}")
         self.env.pop("SIDEA_IOS_SIMULATOR", None)
+        self.env.pop("SIDEA_IOS_TESTS", None)
         for arguments in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "base"]):
             subprocess.run(["git", *arguments], cwd=self.repo, env=self.env, check=True)
         for name in ("swift", "xcodegen", "xcodebuild"):
@@ -81,10 +83,10 @@ class CheckRoutingTests(unittest.TestCase):
         listing = json.dumps({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-0": devices}})
         stub(self.tools, "xcrun", f"cat <<'EOF'\n{listing}\nEOF")
 
-    def change(self, path):
+    def change(self, path, text="changed\n"):
         target = self.repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("changed\n")
+        target.write_text(text)
         for arguments in (["add", "-A"], ["commit", "-qm", "change"]):
             subprocess.run(["git", *arguments], cwd=self.repo, env=self.env, check=True)
         return subprocess.run(["bash", "scripts/check.sh", "HEAD~1"], cwd=self.repo, env=self.env, capture_output=True, text=True)
@@ -116,10 +118,38 @@ class CheckRoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("-destination id=NAMED", self.log.read_text())
 
-    def test_packages_run_their_own_tests_and_the_macs(self):
+    def test_packages_run_their_own_tests_the_macs_and_the_ios_tests(self):
+        self.simulators([{"name": "iPhone 16", "udid": "UP", "state": "Booted"}])
         result = self.change("Packages/P/A.swift")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.log.read_text().splitlines(), ["swift test", "swift test --package-path Packages/SideAProtocol"])
+        log = self.log.read_text().splitlines()
+        self.assertEqual(log[:2], ["swift test", "swift test --package-path Packages/SideAProtocol"])
+        self.assertIn("-destination id=UP", log[-1])
+
+    def test_packages_without_a_simulator_fail_unless_told_to_skip_out_loud(self):
+        self.simulators([])
+        result = self.change("Packages/P/A.swift")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SIDEA_IOS_TESTS=skip", result.stderr)
+        self.env["SIDEA_IOS_TESTS"] = "skip"
+        result = self.change("Packages/P/B.swift")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("SKIPPED the iOS tests", result.stderr)
+        self.assertIn("iOS tests were skipped", result.stdout)
+
+    def test_the_skip_never_covers_an_apps_change(self):
+        self.simulators([])
+        self.env["SIDEA_IOS_TESTS"] = "skip"
+        result = self.change("apps/ios/View.swift")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no iPhone simulator", result.stderr)
+
+    def test_any_change_runs_the_public_source_scan(self):
+        self.assertEqual(self.change("docs/clean.md").returncode, 0)
+        leak = "Reach it at my-mac.tail" + "9f8e7d.ts.net\n"  # assembled so this file passes the scan
+        result = self.change("docs/notes.md", leak)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("docs/notes.md:1: tailnet name", result.stdout + result.stderr)
 
     def test_the_hook_no_longer_skips_main(self):
         hook = (ROOT / ".githooks/pre-push").read_text()

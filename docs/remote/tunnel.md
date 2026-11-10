@@ -161,8 +161,9 @@ trip faster than the window (measured: p50 18.7 ms on the local relay against 1.
 | Streams per phone slot | 8, and 24 across all phones (enforced on the Mac, inside `RemoteServer`'s 64 connections, so relay phones can't crowd out LAN or tailnet ones) | RESET `too_many_streams` |
 | Wrong pairing tickets | Refused with 403, no lockout. A ticket is 128 random bits, so guessing gets nowhere, while a lockout would let anyone who knows the install id stop its pairing | |
 
-The DO keeps no payloads, no logs of payloads, and no IP addresses. It counts `tunnel.open`,
-`tunnel.bytes` and the close codes in Analytics Engine.
+The DO keeps no payloads, no logs of payloads, and no IP addresses. Analytics Engine counts each
+upgrade as `tunnel.mac` or `tunnel.phone` with its HTTP status; bytes, frames and close codes
+aren't counted.
 
 ### Close codes (relay sockets)
 
@@ -283,10 +284,10 @@ made per pairing sheet. `a` may be absent when the Mac has no direct address. Th
 ticket at once, so a ticket is good only while its sheet is open, plus at most 2 minutes if the Mac
 vanishes with the sheet still up.
 
-Brute force: the ticket is 128 bits, and the relay keeps only its SHA-256. A wrong ticket while a
-window is open counts against the install (10 an hour, then no relay pairing for the rest of the
-hour, right ticket or not). A wrong ticket with no window open doesn't count, so an old QR code
-can't lock the user out. Behind the ticket, the Mac's own pairing limits still apply: the shared
+Brute force: the ticket is 128 bits, and the relay keeps only its SHA-256. A wrong ticket gets 403
+`no_pairing` and nothing else: there is no lockout, since guessing 128 bits gets nowhere and a
+lockout would let anyone who knows the install id stop its pairing. Upgrades are also limited per
+network before any object wakes. Behind the ticket, the Mac's own pairing limits still apply: the shared
 unauthenticated bucket, five tries per code, single-use codes and the SAS. The phone tries `a` and each
 `l`, then the relay with `SideA-Pair <installID>.<ticket>`, under the same `fp` pin. The SAS and code
 rules are unchanged. They are what make pairing safe; the ticket only keeps strangers who know an

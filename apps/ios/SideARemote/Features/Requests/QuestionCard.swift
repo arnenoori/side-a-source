@@ -7,12 +7,14 @@ struct QuestionCard: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: RemoteRequest
-    /// Typed text in the composer: the current question's "write your own" answer.
-    var typed: String = ""
+    /// Typed text in the composer: the current question's "write your own" answer. Next takes it and clears it.
+    @Binding var typed: String
     var focusComposer: () -> Void = {}
 
     @State private var index = 0
     @State private var picks: [Int: [String]] = [:]
+    /// Each question's "write your own" answer, by index, taken from the composer on Next.
+    @State private var written: [Int: String] = [:]
     @State private var forward = true
     @State private var selections = 0
     /// The pick that will advance after 250 ms; cancelled by another tap.
@@ -100,15 +102,15 @@ struct QuestionCard: View {
             .background(Color(.systemBackground))
             .clipShape(.rect(cornerRadius: Radius.inlineCard, style: .continuous))
 
-            if question.multiSelect {
+            if question.multiSelect || (!single && !trimmedTyped.isEmpty) {
                 Button {
-                    advance()
+                    next()
                 } label: {
                     Text("Next").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.glass)
                 .controlSize(.large)
-                .disabled(picks[index, default: []].isEmpty && typed.isEmpty)
+                .disabled(picks[index, default: []].isEmpty && trimmedTyped.isEmpty && written[index] == nil)
             }
         }
     }
@@ -141,8 +143,22 @@ struct QuestionCard: View {
             picks[index] = current
         } else {
             picks[index] = [label]
+            written[index] = nil
             pendingAdvance = (pendingAdvance ?? 0) + 1
         }
+    }
+
+    private var trimmedTyped: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Next takes the composer's text as this question's own answer; a typed single-choice answer replaces the pick,
+    /// as the notification does.
+    private func next() {
+        if index < questions.count, !trimmedTyped.isEmpty {
+            written[index] = trimmedTyped
+            if !questions[index].multiSelect { picks[index] = [] }
+            typed = ""
+        }
+        advance()
     }
 
     private func advance() {
@@ -157,12 +173,12 @@ struct QuestionCard: View {
     }
 
     private func summary(_ offset: Int) -> String {
-        picks[offset, default: []].map(IslandQuestion.Option.titleOf).joined(separator: ", ")
+        (picks[offset, default: []].map(IslandQuestion.Option.titleOf) + [written[offset]].compactMap { $0 }).joined(separator: ", ")
     }
 
     private func send() {
         let answers = questions.enumerated().map { offset, question in
-            QuestionAnswer(question: question.question, picked: picks[offset, default: []], other: nil)
+            QuestionAnswer(question: question.question, picked: picks[offset, default: []], other: written[offset])
         }
         withAnimation(Motion.smooth(reduceMotion)) {
             model.requests.answer(request.id, .answers(answers))
