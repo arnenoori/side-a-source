@@ -85,7 +85,8 @@ public final class RelayBridge: @unchecked Sendable {
         socket?.cancel(with: .goingAway, reason: nil)
     }
 
-    /// The proxy's port, listening from the first call on for as long as the bridge lives.
+    /// The proxy's port, listening from the first call on. A listener that failed, or that `relisten` replaced, has a
+    /// new one, so this is asked before each use rather than remembered.
     public func port() async throws -> UInt16 {
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<UInt16, Error>) in
             queue.async { [self] in
@@ -100,6 +101,20 @@ public final class RelayBridge: @unchecked Sendable {
     public func warm() async -> Bool {
         await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
             queue.async { [self] in whenOpen { done.resume(returning: $0) } }
+        }
+    }
+
+    /// The port to dial now; nil while the proxy isn't listening.
+    public var listeningPort: UInt16? { queue.sync { listenerPort } }
+
+    /// The app came back to the front. iOS can take a suspended app's listening socket without a word, and a dial to
+    /// the old port is then refused for good; a new listener costs nothing and what the old one accepted carries on.
+    public func relisten() {
+        queue.async { [self] in
+            guard let old = listener else { return }
+            listener = nil; listenerPort = nil
+            old.cancel()
+            listen()
         }
     }
 
@@ -129,14 +144,18 @@ public final class RelayBridge: @unchecked Sendable {
         guard let listener = try? NWListener(using: parameters) else { return failPort(URLError(.cannotConnectToHost)) }
         self.listener = listener
         listener.stateUpdateHandler = { [weak self, weak listener] state in
-            guard let self, let listener else { return }
+            // One that `relisten` replaced says nothing more.
+            guard let self, let listener, self.listener === listener else { return }
             switch state {
             case .ready:
                 self.listenerPort = listener.port?.rawValue
                 for waiter in self.portWaiters { waiter.resume(returning: self.listenerPort ?? 0) }
                 self.portWaiters = []
-            case .failed:
+            case .failed(let error), .waiting(let error):
+                // Waiting is as good as gone for a loopback port: the next `port()` listens afresh.
+                KitLog.log(.transport, "relay proxy stopped listening: \(error)")
                 self.listener = nil; self.listenerPort = nil
+                listener.cancel()
                 self.failPort(URLError(.cannotConnectToHost))
             default: break
             }

@@ -110,6 +110,7 @@ struct PathsTests {
         private let lock = NSLock()
         private var all: [String] = []
         func add(_ line: String) { lock.withLock { all.append(line) } }
+        func count(_ matches: (String) -> Bool) -> Int { lock.withLock { all.count(where: matches) } }
         func first(_ matches: (String) -> Bool) async throws -> String {
             for _ in 0..<200 {
                 if let line = lock.withLock({ all.first(where: matches) }) { return line }
@@ -161,6 +162,48 @@ struct PathsTests {
         #expect(await paths.path() == .direct(mac.url))
         guard case .failed = await paths.checkRelay() else { Issue.record("a relay that isn't there passed"); return }
         #expect(await paths.current == .direct(mac.url))
+    }
+
+    /// The app opened again is when a try is owed: a relay resting after a miss is back in the race.
+    @Test func theForegroundRacesTheRelayAgain() async throws {
+        let lines = Lines()
+        KitLog.sink = { _, line in lines.add(line) }
+        defer { KitLog.sink = nil }
+        let relay = RelayRoute(url: URL(string: "http://127.0.0.1:\(freePort())")!, installID: "i1", deviceID: "d1")
+        let endpoint = Endpoint(macID: "mac", baseURL: refusing(), serverKeyHash: "pin", name: "Mac", relay: relay)
+        let paths = Paths(endpoint: endpoint, monitorNetwork: false, authorization: { "Bearer d1.i1.d1.x" })
+        #expect(await paths.path() == nil)
+        _ = try await lines.first { $0.hasPrefix("relay didn't answer; skipping it for 5 s") }
+        let before = lines.count { $0.hasPrefix("race ") && $0.contains(", relay:") }
+        await paths.foreground()
+        #expect(lines.count { $0.hasPrefix("race ") && $0.contains(", relay:") } == before + 1)
+        // And what the phone says names each way in, not an error code.
+        let why = await paths.unreachable.localizedDescription
+        #expect(why.contains("Local network: nothing listening") && why.contains("Relay: "))
+    }
+
+    @Test func noPathSaysWhyForEachWayIn() {
+        let tailnet = Paths.Path.direct(URL(string: "https://100.93.122.83:47800")!)
+        let name = Paths.Path.direct(URL(string: "https://mac.tail07.ts.net:47800")!)
+        let lan = Paths.Path.direct(URL(string: "https://192.168.1.20:47800")!)
+        #expect(Paths.explain([tailnet: URLError(.timedOut), name: URLError(.timedOut), lan: URLError(.timedOut)],
+                              relay: .open(mac: false), relayResting: false)
+                == "Tailscale: no answer. Local network: no answer. Relay: the Mac isn't connected.")
+        #expect(Paths.explain([tailnet: URLError(.timedOut)], relay: .failed("The relay didn't answer"), relayResting: true)
+                == "Tailscale: no answer. Relay: the relay didn't answer.")
+        #expect(Paths.explain([tailnet: URLError(.timedOut)], relay: .idle, relayResting: true) == "Tailscale: no answer. Relay: no answer.")
+        #expect(Paths.explain([tailnet: URLError(.timedOut)], relay: nil, relayResting: false) == "Tailscale: no answer.")
+        #expect(Paths.explain([:], relay: nil, relayResting: false).isEmpty)
+    }
+
+    /// iOS takes a suspended app's listening socket: the proxy listens again on a port the next dial finds.
+    @Test func theRelayProxyListensAgain() async throws {
+        let bridge = RelayBridge(route: RelayRoute(url: URL(string: "http://127.0.0.1:\(freePort())")!, installID: "i1"), authorization: { nil })
+        let first = try await bridge.port()
+        #expect(bridge.listeningPort == first)
+        bridge.relisten()
+        let second = try await bridge.port()
+        #expect(second != 0 && bridge.listeningPort == second)
     }
 
     @Test func theMacsMovePortsAreItsOwnBuildsOnly() {

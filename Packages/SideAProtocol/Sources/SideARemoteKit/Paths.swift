@@ -38,8 +38,9 @@ public actor Paths {
         public var promoteAfter = 2
         /// After a race finds nothing, no new race for 1 s, doubling to this; a network change or the foreground ends the wait.
         public var quietCap: TimeInterval = 30
-        /// A relay that doesn't answer sits out races for 30 s, doubling to this.
-        public var relayQuietCap: TimeInterval = 300
+        /// A relay that doesn't answer sits out races for 5 s, doubling to this. Short: for a Mac with no address this
+        /// phone can reach, the relay is the only way in, and a minute is as long as "offline" may outlast it.
+        public var relayQuietCap: TimeInterval = 60
         /// After a network change, how long a relay that doesn't answer is asked once more instead of sitting out: its
         /// socket may still be on the interface that went, as when Wi-Fi hands over to cellular.
         public var settle: TimeInterval = 10
@@ -97,9 +98,7 @@ public actor Paths {
         trust = PinnedTrust(.pinned(endpoint.serverKeyHash))
         direct = NWTransport(trust: trust)
         if let relay = endpoint.relay, let authorization {
-            let bridge = RelayBridge(route: relay, authorization: authorization)
-            bridge.stateChanged = { state in KitLog.log(.transport, "relay \(state)") }
-            self.bridge = bridge
+            self.bridge = RelayBridge(route: relay, authorization: authorization)
         } else {
             bridge = nil
         }
@@ -108,6 +107,10 @@ public actor Paths {
         #else
         relayOnly = false
         #endif
+        bridge?.stateChanged = { [weak self] state in
+            KitLog.log(.transport, "relay \(state)")
+            if state == .open(mac: true) { Task { await self?.macJoinedRelay() } }
+        }
         if monitorNetwork { Task { await self.watchNetwork() } }
     }
 
@@ -206,12 +209,29 @@ public actor Paths {
         return winner
     }
 
-    /// The app came to the foreground: race at once, whatever the backoff says. A resting relay keeps resting:
-    /// the foreground doesn't make it any likelier to answer, while a network change might.
+    /// The app came to the foreground: race at once with every path, whatever the backoff says. What was open before
+    /// may have died while the app was away, the relay's socket and its proxy's port included, so the relay gets the
+    /// second try a network change gives it.
     public func foreground() async {
+        guard !stopped else { return }
         misses = 0
         quietUntil = nil
+        relayQuietUntil = nil
+        networkChangedAt = .now
+        bridge?.relisten()
+        bridge?.check()
         if current == nil { await choose() } else { await networkChanged() }
+    }
+
+    /// The relay says the Mac just connected to it: the wait is over, whatever the backoff says.
+    private func macJoinedRelay() async {
+        guard !stopped, current == nil else { return }
+        KitLog.log(.transport, "the Mac joined the relay, racing")
+        misses = 0
+        quietUntil = nil
+        relayMisses = 0
+        relayQuietUntil = nil
+        await choose()
     }
 
     /// Test Connection: the path in use, or a fresh race with the relay back in, whatever the backoff says. A test opened
@@ -293,7 +313,7 @@ public actor Paths {
             relayQuietUntil = nil
         } else {
             relayMisses += 1
-            let wait = min(timing.relayQuietCap, 30 * pow(2, Double(relayMisses - 1)))
+            let wait = min(timing.relayQuietCap, 5 * pow(2, Double(relayMisses - 1)))
             relayQuietUntil = .now.addingTimeInterval(wait)
             KitLog.log(.transport, "relay didn't answer; skipping it for \(Int(wait)) s")
         }
@@ -351,7 +371,9 @@ public actor Paths {
                     return (.relay, [:])
                 case .answered(let path, let error?):
                     failures[path] = error
-                    if path.isRelay, Self.relayRests(after: error, settling: settling) { self.relayAnswered(false) }
+                    // A relay that is there and says the Mac isn't costs nothing to ask, and says when the Mac comes.
+                    let macAway = bridge?.current == .open(mac: false)
+                    if path.isRelay, !macAway, Self.relayRests(after: error, settling: settling) { self.relayAnswered(false) }
                 }
             }
             return (relayAnswered ? .relay : nil, failures)
@@ -474,10 +496,12 @@ public actor Paths {
     /// The relay path: the same pinned TLS, dialled to the bridge's loopback port, which hands each connection to the
     /// tunnel as a stream.
     private func relayTransportReady() async -> NWTransport? {
+        // Asked every time: a proxy that stopped listening starts again here, on another port.
+        guard let bridge, (try? await bridge.port()) != nil else { return nil }
         if let relayTransport { return relayTransport }
-        guard let bridge, let port = try? await bridge.port(), let nwPort = NWEndpoint.Port(rawValue: port) else { return nil }
-        if let relayTransport { return relayTransport }
-        let transport = NWTransport(trust: trust, poolSize: 2) { _ in .hostPort(host: .ipv4(.loopback), port: nwPort) }
+        let transport = NWTransport(trust: trust, poolSize: 2) { [bridge] _ in
+            bridge.listeningPort.flatMap(NWEndpoint.Port.init(rawValue:)).map { .hostPort(host: .ipv4(.loopback), port: $0) }
+        }
         relayTransport = transport
         return transport
     }
@@ -524,7 +548,42 @@ public actor Paths {
         if !direct.isEmpty, direct.allSatisfy({ changed[$0] != nil }), let any = changed.values.first { return any }
         if let denied = failures.values.first(where: { $0 is LocalNetworkDenied }) { return denied }
         if bridge?.current == .refused { return RelayRefused() }
-        return URLError(.cannotConnectToHost)
+        let resting = relayQuietUntil.map { $0 > .now } ?? false
+        let why = Self.explain(failures, relay: bridge?.current, relayResting: resting)
+        return URLError(.cannotConnectToHost, userInfo: why.isEmpty ? [:] : [NSLocalizedDescriptionKey: why])
+    }
+
+    /// "Tailscale: no answer. Relay: the Mac isn't connected.": each way in and why it didn't answer, in place of a
+    /// bare error code. Direct addresses first, the same kind said once.
+    static func explain(_ failures: [Path: Error], relay: RelayBridge.State?, relayResting: Bool) -> String {
+        var lines: [String] = []
+        let direct = failures.filter { !$0.key.isRelay }.sorted { $0.key.description < $1.key.description }
+        for (path, error) in direct {
+            let line = "\(KitLog.route(path.description) == "tailnet" ? "Tailscale" : "Local network"): \(reason(error))"
+            if !lines.contains(line) { lines.append(line) }
+        }
+        switch relay {
+        case nil: break
+        case .open(mac: false): lines.append("Relay: the Mac isn't connected")
+        case .failed(let why): lines.append("Relay: \(why.prefix(1).lowercased() + why.dropFirst())")
+        default:
+            if let error = failures[.relay] { lines.append("Relay: \(reason(error))") } else if relayResting { lines.append("Relay: no answer") }
+        }
+        return lines.isEmpty ? "" : lines.joined(separator: ". ") + "."
+    }
+
+    private static func reason(_ error: Error) -> String {
+        if error is ServerKeyChanged { return "another security key" }
+        if error is LocalNetworkDenied { return "Local Network access is off" }
+        guard let error = error as? URLError else { return KitLog.describe(error) }
+        switch error.code {
+        case .timedOut: return "no answer"
+        case .cannotConnectToHost: return refused(error) ? "nothing listening" : "can't connect"
+        case .cannotFindHost, .dnsLookupFailed: return "name not found"
+        case .notConnectedToInternet, .networkConnectionLost: return "no network"
+        case .secureConnectionFailed: return "secure connection failed"
+        default: return KitLog.describe(error)
+        }
     }
 
     /// The path for a new socket, and the generation it's registered under, settled together: a switch while the

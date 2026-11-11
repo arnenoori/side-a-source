@@ -1,21 +1,125 @@
 import Foundation
 import SideAProtocol
 
+/// How Send delivers a message to a session mid-turn, offered on its long-press.
+enum Delivery: Hashable, CaseIterable {
+    /// Into the running turn: Codex through its shared server.
+    case steer
+    /// Read before the agent's next step: Claude's typed input, or a note its hooks read.
+    case nextStep
+    /// Once the turn ends.
+    case afterTurn
+    /// The turn stopped, then the message as the next prompt.
+    case interrupt
+
+    var title: String {
+        switch self {
+        case .steer: "Steer Now"
+        case .nextStep: "Send at Next Step"
+        case .afterTurn: "Send After This Turn"
+        case .interrupt: "Interrupt and Send"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .steer: "arrow.up"
+        case .nextStep: "clock"
+        case .afterTurn: "text.append"
+        case .interrupt: "stop.circle"
+        }
+    }
+}
+
 /// Replies, notes, interrupts and Take Back (sections 4.4 and 4.14). Live they leave through the
 /// link's outbox; the demo plays the Mac's side locally so every state can be seen.
 extension AppModel {
     /// The composer's send: `mode: auto`, so the Mac's delivery table decides what it becomes. A
     /// second note while one waits travels with it, since the Mac keeps one note per session.
-    func reply(_ text: String, to session: SessionKey, submit: ReplySubmit? = nil) {
-        let mode = predictedMode(session)
-        if mode == .note, let waiting = transcripts.pendingNote(session), waiting.state == .note,
+    /// `mode` overrides that, for a delivery picked from Send's long-press.
+    func reply(_ text: String, to session: SessionKey, mode: ReplyMode? = nil, submit: ReplySubmit? = nil) {
+        if (mode ?? predictedMode(session)) == .note, let waiting = transcripts.pendingNote(session), waiting.state == .note,
            let combined = transcripts.merge(text, into: waiting.id, in: session) {
             deliver(combined, turn: waiting.id, to: session, mode: .note)
             return
         }
         let turn = transcripts.send(text, to: session)
         // `auto` to a session with an open request is 409 `session_waiting`; only a note gets through (`replyMode`).
-        deliver(text, turn: turn.id, to: session, mode: replyMode(session), submit: submit)
+        deliver(text, turn: turn.id, to: session, mode: mode ?? replyMode(session), submit: submit)
+    }
+
+    /// The ways Send's long-press offers to deliver a message mid-turn, as the Mac's delivery table and the session's
+    /// abilities allow; empty when it isn't working.
+    func deliveries(_ id: SessionKey) -> [Delivery] {
+        guard let session = sessions.session(id), session.status == .working || session.status == .starting, !waiting(id) else { return [] }
+        let abilities = session.abilities
+        var deliveries: [Delivery] = []
+        if abilities.contains(.replyTerminal) {
+            // Codex's shared server: a reply steers the turn, or waits in Codex's own queue.
+            deliveries.append(.steer)
+            if abilities.contains(.followUp) { deliveries.append(.afterTurn) }
+        } else if session.hosted != nil {
+            // Hosted Claude reads typed input at its next step; hosted Codex refuses a reply until its turn ends.
+            if session.agent == .claude {
+                deliveries.append(.nextStep)
+                if abilities.contains(.followUp) { deliveries.append(.afterTurn) }
+            }
+        } else {
+            // Outside Side A's terminals: a note the hooks read at the next step, or Claude's Stop waiter at the turn's end.
+            if abilities.contains(.note) { deliveries.append(.nextStep) }
+            if session.agent == .claude, abilities.contains(.followUp) { deliveries.append(.afterTurn) }
+        }
+        // Esc in a hosted terminal, or Codex's turn interrupt. Unhosted Claude has only stop mail, which waits for the next step.
+        if abilities.contains(.interrupt), session.hosted != nil || abilities.contains(.replyTerminal) { deliveries.append(.interrupt) }
+        return deliveries
+    }
+
+    /// A delivery picked from Send's long-press.
+    func send(_ text: String, to id: SessionKey, as delivery: Delivery) {
+        switch delivery {
+        case .steer: reply(text, to: id, submit: .steer)
+        case .nextStep:
+            // Codex outside a terminal takes only a note; Claude's `auto` already comes to a note, or to typed input.
+            if sessions.session(id)?.agent == .claude { reply(text, to: id) } else { note(text, to: id) }
+        case .afterTurn:
+            if reachesTerminal(id) { reply(text, to: id, submit: .queue) } else { reply(text, to: id, mode: .followUp) }
+        case .interrupt: interruptAndSend(text, to: id)
+        }
+    }
+
+    /// Stops the turn, then sends the message as the next prompt. The reply leaves only once the Mac has taken the
+    /// interrupt, so it never arrives first; a failed interrupt sends nothing and puts the text back in the field.
+    func interruptAndSend(_ text: String, to id: SessionKey) {
+        transcripts.notice(nil, in: id)
+        let turn = transcripts.send(text, to: id)
+        guard let link else {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(450))
+                _ = tools.attachments.take(id, for: turn.id)
+                transcripts.mark(turn.id, in: id, .sent)
+            }
+            return
+        }
+        link.flights.interrupt(id, when: .now) { [weak self, weak link] stopped in
+            guard let self else { return }
+            guard stopped else {
+                transcripts.withdraw(turn.id, in: id)
+                return
+            }
+            Task { @MainActor in
+                await self.turnEnded(id)
+                link?.flights.reply(text, turn: turn.id, to: id, mode: self.replyMode(id))
+            }
+        }
+    }
+
+    /// Codex takes a message as a new prompt only once the Mac sees its turn over; Claude's terminal takes it at once.
+    private func turnEnded(_ id: SessionKey, within: Duration = .seconds(8)) async {
+        guard sessions.session(id)?.agent == .codex else { return }
+        let deadline = ContinuousClock.now + within
+        while sessions.session(id)?.status == .working, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
     }
 
     /// `auto`, or while a request waits on the session, what it can still take.
@@ -131,13 +235,13 @@ extension AppModel {
 
     private func deliver(_ text: String, turn: String, to session: SessionKey, mode: ReplyMode, submit: ReplySubmit? = nil) {
         if let link { link.flights.reply(text, turn: turn, to: session, mode: mode, submit: submit); return }
-        let leavesMail = mode == .note || predictedMode(session) == .note
+        let leavesMail = mode == .note || mode == .auto && predictedMode(session) == .note
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(450))
             if leavesMail {
                 transcripts.mark(turn, in: session, .note)
                 sessions.setMail(MailState(kind: .note, at: Date.now.timeIntervalSince1970), for: session)
-            } else if submit == .queue {
+            } else if submit == .queue || mode == .followUp {
                 transcripts.mark(turn, in: session, .queued)
             } else {
                 transcripts.mark(turn, in: session, .sent)

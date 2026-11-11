@@ -152,7 +152,7 @@ struct MainTabs: View {
                 .environment(\.zoomNamespace, sessionsZoom)
         }
         .sheet(item: Bindable(approvals).note) { target in
-            NoteSheet(sessionID: target.session)
+            MessageSheet(sessionID: target.session)
                 .environment(root.model(owning: target.session) ?? model)
         }
         .onOpenURL(perform: open)

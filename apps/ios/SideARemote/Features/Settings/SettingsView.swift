@@ -132,6 +132,7 @@ struct MacDetailView: View {
     var body: some View {
         Form {
             Section {
+                NavigationLink { MacNameView(mac: model.mac, macID: model.macID) } label: { LabeledContent("Name", value: model.mac.name) }
                 LabeledContent("Connection", value: model.mac.state == .live ? model.mac.route?.title ?? "Connected" : model.mac.state.title)
                 if let link {
                     LabeledContent("Address", value: (link.state.address ?? link.mac.endpoint.baseURL).host() ?? "")
@@ -176,6 +177,44 @@ struct MacDetailView: View {
             }
         } message: {
             Text("You'll need to pair again to use it.")
+        }
+    }
+}
+
+/// The Mac's name on this iPhone, as Settings › General › About › Name edits a device's. Cleared, it's the Mac's own again.
+private struct MacNameView: View {
+    let mac: MacConnection
+    let macID: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Form {
+            HStack {
+                TextField(mac.reportedName, text: $text)
+                    .focused($focused)
+                    .submitLabel(.done)
+                    .onSubmit { dismiss() }
+                if !text.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") { text = "" }
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.tertiary)
+                        .buttonStyle(.borderless)
+                }
+            }
+        }
+        .navigationTitle("Name")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            text = mac.name
+            focused = true
+        }
+        // The Mac's own name typed back follows the Mac again if it's renamed there.
+        .onDisappear {
+            let before = mac.name
+            mac.rename(text == mac.reportedName ? nil : text, macID: macID)
+            if mac.name != before { WidgetPublisher.shared.refresh() }
         }
     }
 }

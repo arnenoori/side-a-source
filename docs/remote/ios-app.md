@@ -319,10 +319,10 @@ semibold, secondary, folder glyph), following ChatGPT Codex's projects-as-folder
   npm test"). One fact. A flag (stuck, looping, failing) replaces the step with a triangle glyph,
   and only "failing" is red.
 - Line 3 also carries, trailing, the session's listening ports and memory in mono tertiary
-  (`:3000 · 1.4 GB`), and a waiting note or stop ("Note waiting · reads it after this step").
+  (`:3000 · 1.4 GB`), and a waiting message or stop ("Message waiting", "Stops after this step").
 - **Swipe actions and context menu** (preview: the last assistant message) by row state: the
   table at the end of section 4.14. In short: Allow / Reply / Note / Continue on iPhone leading;
-  Stop, Take Back, Quit, Open Terminal trailing; the context menu adds Send a Note…, Interrupt
+  Stop, Take Back, Quit, Open Terminal trailing; the context menu adds Send a Message…, Interrupt
   Now, Preview :port, Stop Server…, Restart Fresh…, Quit Session…, Copy Session ID. Continue on
   iPhone (only when idle or waiting and not hosted) confirms that it closes the Mac tab.
 
@@ -416,8 +416,8 @@ the conversation id (copyable mono).
 **Toolbar.** Trailing: `terminal` (hosted only; opens Terminal), then an `ellipsis.circle` menu
 in sections:
 
-- Steer: Send a Note…, Stop Before Next Step, Interrupt Now (hosted), Take Back (only while a
-  note or stop waits).
+- Steer: Send a Message…, Stop Before Next Step, Interrupt Now (hosted), Take Back (only while a
+  message or stop waits).
 - Session: Restart Fresh…, Continue on iPhone, Quit Session….
 - Ports (only while the session listens): Preview :3000, Stop Server on :3000….
 - Share: Copy Transcript as Markdown, Share, Show on Mac.
@@ -504,7 +504,7 @@ says what each action does.
   request again, read-only.
 - **Health card:** when the session is flagged (stuck, looping, failing, or idle on a bloated
   context), a quiet card as the last item: triangle glyph, the flag's own words ("No progress for
-  12 minutes"), and two buttons: Send a Note… and Restart Fresh…. It goes away when the flag
+  12 minutes"), and two buttons: Send a Message… and Restart Fresh…. It goes away when the flag
   clears. Section 4.14.
 - **Turn end** (Grok): under the turn's last reply, a 32 pt row of icon buttons in tertiary: Copy
   (the reply as Markdown), Share, Fork From Here (hosted, section 4.14); trailing
@@ -594,8 +594,8 @@ holding three glass shapes that blend and morph together:
    Add sheet (below).
 2. **Field pill**: `glassEffect(.regular.interactive(), in: .capsule)` while one line, growing
    into `.rect(cornerRadius: 22)` as it gains lines (Dot). `TextField(axis: .vertical)`, 1–6 lines
-   then scrolls, `.body`. Placeholder by mode: "Reply…" (waiting / ready), "Add a note…" (working,
-   not hosted), "Message…" (working, hosted), "Or type your own answer…" (a question card waits,
+   then scrolls, `.body`. Placeholder by mode: "Reply…" (waiting / ready), "Message…" (working,
+   hosted or not), "Or type your own answer…" (a question card waits,
    section 4.6). Attachments, when present, sit inside the pill above the text: 56 pt thumbnails,
    radius 10, each with a small `xmark` remove button; upload progress as a thin ring on the
    tile.
@@ -609,9 +609,33 @@ The follow-mode button (section 4.3) lives in the same container with its own `g
 it buds off the composer and melts back into it.
 
 **Send.** Sending: the button shows a progress arc until the server accepts; failure keeps the
-text and shows "Not sent · Retry" under the field. Long press on the stop button opens a `Menu`
-(the button's `primaryAction` stays Interrupt): Interrupt Now, Stop Before Next Step, Send as
-Note. Section 4.14.
+text and shows "Not sent · Retry" under the field. Long press on the stop button (empty field)
+opens a context menu (the tap stays Interrupt): Interrupt Now, Stop Before Next Step, Send a
+Message…. Section 4.14.
+
+**Long press on Send** while the session works (or starts) and there is text: a context menu of
+the deliveries that session takes (`AppModel.deliveries`), from the Mac's delivery table and the
+session's `abilities`. The plain tap keeps the default for each kind.
+
+| Session | Tap | Long-press menu |
+|---|---|---|
+| Hosted Claude | `auto` (typed; Claude reads it at its next step) | Send at Next Step, Send After This Turn (`followUp`, when listed), Interrupt and Send |
+| Hosted Codex | `auto` (the Mac refuses it mid-turn: 409 `cannot_deliver`) | Interrupt and Send |
+| Codex with `replyTerminal` | steer | Steer Now, Send After This Turn (`submit: queue`), Interrupt and Send |
+| Claude outside Side A's terminals | `auto` (a note, read at its next step) | Send at Next Step, Send After This Turn (`followUp`: the Stop waiter's queue, when listed) |
+| Codex outside, mail hooks on | `auto` | Send at Next Step (`note`) |
+
+Unhosted Claude has no instant interrupt (only stop mail, which waits for the next step and
+shares the one mail slot), so it offers no Interrupt and Send. **Interrupt and Send** sends the
+interrupt first and queues the reply only once the Mac has taken it, so the two never arrive out
+of order; for Codex it also waits (up to 8 s) for the session to stop working, since a turn
+still running refuses or steers the text. A refused interrupt sends nothing: the text goes back
+into the field with "Couldn't stop it. …" under it.
+
+While the Mac is offline, Send is off and dimmed and the one status line under the field gives
+the reason. Back in front after the link dropped in the background, an unreachable Mac reads as
+Reconnecting… for its minute again (`MacConnection.foregrounded`), so Send stays usable while
+the link comes back; the outbox holds what's sent meanwhile.
 
 **Dictation.** `mic` records with the iOS 26 Speech framework's on-device `SpeechTranscriber`
 and writes into the field as it hears; tap again (or Send) ends it. The mic is hidden when speech
@@ -620,9 +644,11 @@ permission is denied; the keyboard's own dictation key still works.
 **Modes.** The composer sends `mode: auto` and protocol's [delivery table](protocol.md#delivery-table)
 decides; the placeholder reads from the same table so it never promises something else: Ready →
 follow-up (carrying the finished turn's `turnID`). Working and hosted → typed into the TUI now
-(Claude) or queued for the end of the turn (Codex). Working and not hosted → a note for Claude
-(reaches the session at its next step and can be taken back until then: the sent note shows as a
-pending user turn with "Take back"), queued for Codex. Status `unknown` → the composer is disabled
+(Claude) or refused (Codex). Working and not hosted → a note for Claude (reaches the session at
+its next step and can be taken back until then: it shows as an ordinary outgoing bubble with
+"Next step" and a `clock` under it, Edit and Delete in its menu, and once read it looks like any
+delivered message), refused for Codex. While the Mac is offline, a bubble not yet confirmed
+(sending, next step, after this turn) reads "Not confirmed" with the offline reason's glyph. Status `unknown` → the composer is disabled
 with "MacBook Pro can't tell what this session is doing." Waiting on a question → the text
 becomes that question's "write your own" answer (`answers` with `other`) and posts through
 `POST /v1/requests/{rid}/answer`; a plain reply would get 409 `session_waiting`.
@@ -1023,8 +1049,10 @@ References: v0's image in a user turn ([Mobbin](https://mobbin.com/screens/9ec98
 The Settings tab, between Accounts and Search. Inset grouped `Form`.
 
 - **Macs:** each paired Mac: name, status dot, "Side A 0.6.1 · Connected via Relay" (Wi‑Fi, Tailscale or
-  Relay: the path `Paths` chose, a LAN address being Wi‑Fi), or how long ago it was seen. Detail: Connection, rename on
-  phone, Tailscale address (copyable mono), **Remove this iPhone** (destructive, confirmation;
+  Relay: the path `Paths` chose, a LAN address being Wi‑Fi), or how long ago it was seen. Detail: **Name** (pushes a field,
+  as Settings › General › About › Name does; a nickname kept per Mac in the App Group's defaults,
+  `MacNicknames`, that wins over the Mac's own name everywhere the phone shows it and survives its
+  hellos; cleared, it's the Mac's name again; Forget clears it), Connection, Tailscale address (copyable mono), **Remove this iPhone** (destructive, confirmation;
   revokes the token on the Mac when reachable). **Pair Another Mac** opens the scanner.
 - **Macs** detail also has **Test Connection** (setup, Diagnostics), and that Mac's own
   Notifications and Live Activity switches:
@@ -1101,7 +1129,7 @@ tokens of context).
 
 - On the Sessions row: line 3 shows the flag's words with a triangle glyph, replacing the step;
   only failing is red. Bloated reads "Idle · 162k context".
-- In the session: the health card as the last transcript item (section 4.3) with Send a Note…
+- In the session: the health card as the last transcript item (section 4.3) with Send a Message…
   and Restart Fresh…, and the flag at the top of Session Info.
 - Push: one notification when a flag starts (category `HEALTH`, passive interruption level,
   actions Restart Fresh… and Open), at most once per session per hour.
@@ -1123,20 +1151,22 @@ card, in the toolbar's Session section, in the row's context menu, and on bloate
 - If the old session is working, Restart first asks in a `confirmationDialog`: "It's still
   working. Stop it and restart?".
 
-**Steer without typing.** Send a Note, Stop Before Next Step, Take Back; every session, hosted or
-not, gated by `abilities`.
+**Steer without typing.** Send a Message…, Stop Before Next Step, Take Back; every session, hosted
+or not, gated by `abilities`. The phone never shows the mail metaphor: a note on the wire is a
+message waiting for the next step on screen.
 
-- **Swipe** on a working row: leading **Note** (opens the note sheet), trailing **Stop** (Stop
-  Before Next Step; full swipe off). While a note or stop waits (`mail`), the trailing action
-  becomes **Take Back** and line 3 reads "Note waiting · reads it after this step" or "Stops
-  after this step" in secondary text with an `envelope` or `pause.circle` glyph.
-- **Context menu** on the row and the session's toolbar `⋯` Steer section: Send a Note…, Stop
+- **Swipe** on a working row: leading **Message** (opens the message sheet), trailing **Stop**
+  (Stop Before Next Step; full swipe off). While a message or stop waits (`mail`), the trailing
+  action becomes **Take Back** and line 3 reads "Message waiting" or "Stops after this step" in
+  secondary text with a `clock` or `pause.circle` glyph.
+- **Context menu** on the row and the session's toolbar `⋯` Steer section: Send a Message…, Stop
   Before Next Step, Interrupt Now (hosted only: Esc right away), Take Back.
-- In the session, the composer's stop button has the same three as its long-press menu
-  (section 4.4), and a note typed in the composer while the session works is a note (section 4.4
-  modes) that shows as a pending user turn with "Take back".
-- The note sheet: `presentationDetents([.height(240), .medium])`, a focused multi-line field,
-  "Claude reads this after its current step" as the footer, **Send** in the toolbar.
+- In the session, the composer's stop button has the same three as its long-press menu, and Send
+  has its own delivery menu (section 4.4). A message typed while an unhosted Claude works waits
+  for its next step (section 4.4 modes); a tap on it offers Edit, Copy and Delete. A waiting
+  message this phone didn't send shows as a quiet "Message waiting" line with Delete Message.
+- The message sheet: `presentationDetents([.height(240), .medium])`, a focused multi-line field,
+  **Send** in the toolbar.
 
 **Ports and servers.**
 
@@ -1192,7 +1222,7 @@ not, gated by `abilities`.
 | Row state | Leading swipe | Trailing swipe | Context menu (in groups) |
 |---|---|---|---|
 | Needs you | Allow (non-destructive only, full swipe off) | Open Terminal (hosted) | Open, Answer…, Open Terminal |
-| Working | Note | Stop (Take Back while mail waits) | Send a Note…, Stop Before Next Step, Interrupt Now, Take Back · Preview :port, Stop Server…, Quit Session… · Restart Fresh… · Open Terminal, Copy Session ID |
+| Working | Message | Stop (Take Back while a message waits) | Send a Message…, Stop Before Next Step, Interrupt Now, Take Back · Preview :port, Stop Server…, Quit Session… · Restart Fresh… · Open Terminal, Copy Session ID |
 | Ready | Reply | Quit | Reply, Fork · Restart Fresh… · Quit Session… |
 | Idle | Continue on iPhone | Quit | Continue on iPhone, Restart Fresh…, Quit Session…, Pin, Rename… |
 | Idle fold row | none | Quit Idle | Quit Idle… |
@@ -1466,7 +1496,7 @@ waiting request.
 | Preview dev server (4.14) | Preview :port | swipe down when the page is at its top, Done | `.sheet`, `.large`, SwiftUI `WebView` with a pinning navigation delegate |
 | Confirmations (Quit, Stop Server, Remove worktree) | tap the action | tap outside, Cancel | `confirmationDialog`, anchored to its source (iOS 26 shows it as a popover from the button); iOS 27 `confirmationDialog(item:)` |
 | Rename | Title menu or context menu → Rename… | Cancel, swipe | `.alert` with a `TextField` |
-| Send a Note (4.14) | context menu, swipe, toolbar | swipe down, Send | `.sheet` with `presentationDetents([.height(240), .medium])`, field focused on appear |
+| Send a Message (4.14) | context menu, swipe, toolbar | swipe down, Send | `.sheet` with `presentationDetents([.height(240), .medium])`, field focused on appear |
 | Restart Fresh (4.14) | toolbar, health card, context menu | swipe down; once edited, swipe asks first | `.sheet`, `.large`; `interactiveDismissDisabled(edited)` plus a "Discard changes?" `confirmationDialog` |
 | Session row → transcript | tap | edge swipe, back | plain `NavigationLink` push; no zoom (a row isn't the same object as a screen) |
 | Navigation bar on scroll | scroll down | scroll up | soft scroll edge effect (default on iOS 26); iOS 27 `toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)` |
@@ -1597,7 +1627,7 @@ min height carries rhythm); floating glass sits 16 pt from edges and 8 pt above 
 | Question | `questionmark.bubble` |
 | Thinking | `brain` |
 | Step group | `square.stack.3d.up` |
-| Note / Stop before next step / Take back | `envelope` / `pause.circle` / `arrow.uturn.backward` |
+| Message / Next step / After this turn / Stop before next step / Take back | `text.bubble` / `clock` / `text.append` / `pause.circle` / `arrow.uturn.backward` |
 | Restart fresh | `arrow.trianglehead.counterclockwise` |
 | Preview dev server / stop server | `safari` / `stop.circle` |
 | Fork / Resume | `arrow.triangle.branch` / `play.circle` |
@@ -1665,7 +1695,7 @@ light and dark, at default and AX3 text sizes, compared against the references, 
 3. Question card (inline, section 4.6) and plan approval.
 4. Composer: reply / follow-up / note with take-back, interrupt, the Add sheet with Model and
    Effort, dictation, slash suggestions, hardware keyboard.
-5. Steer from rows and the toolbar: Send a Note, Stop Before Next Step, Take Back (section 4.14).
+5. Steer from rows and the toolbar: Send a Message, Stop Before Next Step, Take Back (section 4.14).
    Health flags on rows and the health card.
 6. Streaming transcript: delta merge, paced reveal, follow mode and "N new".
 7. Diffs (Claude `structuredPatch`, Codex unified diff) and the full diff page.

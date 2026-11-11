@@ -212,6 +212,7 @@ final class AppRoot {
         if macs.isEmpty { epoch += 1 }
         StateCache.remove(macID)
         NotificationPrefs.forget(macID: macID)
+        MacNicknames.set(nil, for: macID)
         guard let link = gone.link else { return }
         link.flights.forgetFlights()
         link.mac.forget()

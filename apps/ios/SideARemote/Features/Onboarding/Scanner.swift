@@ -161,7 +161,7 @@ struct ScannerScreen: View {
     private func proceed(_ invitation: PairingClient.Invitation) {
         let name = invitation.macName ?? "This Mac"
         if otherTailnet == nil, let other = PairedMac.otherTailnet(invitation) {
-            otherTailnet = OtherTailnet(invitation: invitation, title: "\(name) is on a different tailnet from \(other.endpoint.name).")
+            otherTailnet = OtherTailnet(invitation: invitation, title: "\(name) is on a different tailnet from \(other.displayName).")
             return
         }
         pair(invitation)

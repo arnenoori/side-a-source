@@ -105,11 +105,14 @@ final class LiveLink {
     private func watchRoute(_ model: AppModel) {
         let paths = Paths.shared(for: mac.endpoint, credentials: KeychainCredentials())
         let (changes, continuation) = AsyncStream.makeStream(of: Paths.Path?.self, bufferingPolicy: .bufferingNewest(1))
-        routeWatch = Task { [weak model] in
+        routeWatch = Task { [weak model, engine] in
             let id = await paths.observe { continuation.yield($0) }
             for await path in changes {
                 let route = MacConnection.Route(path)
                 if model?.mac.route != route { model?.mac.route = route }
+                // A way in was just found, as when the relay says the Mac is back: connect now, not when the backoff ends.
+                // It only ends a wait, so a switch while connected changes nothing.
+                if path != nil { await engine.reconnectNow() }
             }
             await paths.stopObserving(id)
         }
@@ -117,6 +120,7 @@ final class LiveLink {
 
     func setForeground(_ foreground: Bool) {
         if !foreground { save() }
+        if foreground { model?.mac.foregrounded() }
         Task { [engine, mac] in
             // Back in front: race the paths now rather than wait out a backoff from while it was away.
             if foreground { await Paths.shared(for: mac.endpoint, credentials: KeychainCredentials()).foreground() }
@@ -398,7 +402,7 @@ extension MacConnection {
     /// A drop shows as "Reconnecting…" for a minute, then as offline with the reason.
     /// `onTailnet`: the Mac's address needs Tailscale, so a missing VPN explains the drop, unless the relay reaches it anyway.
     func apply(_ remote: RemoteState, name: String, onTailnet: Bool = true, hasRelay: Bool = false, now: Date = .now) {
-        if self.name != name { self.name = name }
+        if reportedName != name { reportedName = name }
         if let mac = remote.mac {
             onPower = mac.onPower
             battery = mac.battery

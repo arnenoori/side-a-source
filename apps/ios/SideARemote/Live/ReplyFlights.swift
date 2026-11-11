@@ -18,7 +18,7 @@ final class ReplyFlights {
     /// Flight writes, in order.
     private var flightWrites: Task<Void, Never>?
     private var takeBacks: [String: (session: SessionKey, turn: String?, keepText: Bool)] = [:]
-    private var steers: [String: SessionKey] = [:]
+    private var steers: [String: (session: SessionKey, then: ((Bool) -> Void)?)] = [:]
     /// Sessions whose waiting note this phone has seen as mail, so mail going away reads as taken.
     private var mailSeen: [SessionKey: Date] = [:]
 
@@ -207,10 +207,11 @@ final class ReplyFlights {
         }
     }
 
-    func interrupt(_ session: SessionKey, when: InterruptRequest.When) {
+    /// `then` hears whether the Mac took it, once it has answered: Interrupt and Send queues its reply only after that.
+    func interrupt(_ session: SessionKey, when: InterruptRequest.When, then: ((Bool) -> Void)? = nil) {
         Task { [engine] in
             let item = await engine.interrupt(session, when: when)
-            steers[item.id] = session
+            steers[item.id] = (session, then)
             track(state)
         }
     }
@@ -268,13 +269,17 @@ final class ReplyFlights {
                 transcripts.notice("Couldn't take it back. Try again.", in: back.session)
             }
         }
-        for (item, session) in steers {
+        for (item, steer) in steers {
             guard let outcome = state.outcomes[item] else { continue }
             steers[item] = nil
             switch outcome {
-            case .delivered, .answeredElsewhere: break
-            case .failed(let error): transcripts.notice("Couldn't stop it. \(error.message)", in: session)
-            case .unknown, .notDelivered: transcripts.notice("Couldn't reach the Mac to stop it.", in: session)
+            case .delivered, .answeredElsewhere: steer.then?(true)
+            case .failed(let error):
+                transcripts.notice("Couldn't stop it. \(error.message)", in: steer.session)
+                steer.then?(false)
+            case .unknown, .notDelivered:
+                transcripts.notice("Couldn't reach the Mac to stop it.", in: steer.session)
+                steer.then?(false)
             }
         }
         // A note the Mac showed as mail and no longer does was read. One read before the phone ever saw

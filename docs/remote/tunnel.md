@@ -244,9 +244,13 @@ Choosing a path, with `Paths` as one actor per Mac per process:
 3. **Re-race** on an `NWPathMonitor` change (interface added or lost, Wi-Fi ↔ cellular), on a
    connection-level failure of the current path, and every 30 s while on the relay. Promotion has
    hysteresis: a direct path must answer two probes in a row before it replaces the relay. That is
-   DERP's rule in miniature. A relay that doesn't answer sits out races for 30 s, doubling to 5 min,
-   except within 10 s of a network change: then its probe is tried once more and a miss doesn't
-   count, since the bridge socket may still have been on the interface that went.
+   DERP's rule in miniature. A relay that doesn't answer sits out races for 5 s, doubling to 1 min,
+   except within 10 s of a network change or of the app coming to the foreground: then its probe is
+   tried once more and a miss doesn't count, since the bridge socket may still have been on the
+   interface that went, or died while the app was suspended. A relay that is up and says the Mac
+   isn't connected doesn't sit out at all, and its "Mac online" message starts a race at once. The
+   foreground also replaces the bridge's loopback listener, which iOS can take from a suspended app
+   without notice; the relay transport asks the bridge for its port on every dial.
 4. **Migrate make-before-break:** the new path has answered a pinned hello before anything moves.
    New requests go to it at once, in-flight REST calls finish where they are, and sockets opened on
    the old path close with `SocketClosed(4008, "path changed")`. `SyncEngine` already treats 4008 as

@@ -342,6 +342,9 @@ public struct MailState: Codable, Hashable, Sendable {
 - **`abilities`** is the server's answer to "what can I do here right now", so the phone never
   re-derives Mac rules. Examples: a non-hosted Claude session that is working has `.note`,
   `.interrupt`, `.followUp` (queued); a finished one with a waiting Stop hook has `.followUp`.
+  A Claude note joins the session after its own next tool call, never a subagent's; a session
+  whose turn is paused on background work has no next tool call, so its Stop hook waits for the
+  note (holding `runtime/mail/<pid>.waiter`) and wakes the session with it through `asyncRewake`.
   Codex sessions take notes but not stops: the Mac leaves `runtime/mail/codex/<thread id>.json`
   and the island's Codex PostToolUse hook hands it over as `additionalContext` after the next
   tool (by thread id, since a turn's hooks run in the TUI or the shared app server). That needs

@@ -30,7 +30,7 @@ final class ConnectionTest {
 
     init(mac: PairedMac) {
         self.mac = mac
-        name = mac.endpoint.name
+        name = mac.displayName
         steps = Self.titles
     }
 

@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         case .sent, .answeredElsewhere: break
         case .queued(let mac): await couldNotReach(mac, payload)
         case .failed(let message) where response is UNTextInputNotificationResponse: await notice("\(message) Open to send it again.", payload)
-        case .failed, .noMac: await couldNotReach(PairedMac.load(payload.mac)?.endpoint.name ?? "your Mac", payload)
+        case .failed, .noMac: await couldNotReach(PairedMac.load(payload.mac)?.displayName ?? "your Mac", payload)
         }
     }
 

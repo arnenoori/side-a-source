@@ -255,8 +255,8 @@ struct PairingScreen: View {
             if confirmed {
                 PairingCard(run: run) { dismiss() }
             } else {
-                ConfirmPairing(invitation: run.invitation, name: run.macName, replacing: current?.endpoint.name, identityWarning: identityWarning,
-                               otherTailnet: otherTailnet.map { "\(run.macName) is on a different tailnet from \($0.endpoint.name). \(OtherTailnet.message)" }) {
+                ConfirmPairing(invitation: run.invitation, name: run.macName, replacing: current?.displayName, identityWarning: identityWarning,
+                               otherTailnet: otherTailnet.map { "\(run.macName) is on a different tailnet from \($0.displayName). \(OtherTailnet.message)" }) {
                     withAnimation(Motion.smooth(reduceMotion)) { confirmed = true }
                     run.start(replacing: current)
                 } cancel: {

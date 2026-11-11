@@ -1,8 +1,8 @@
 import SideAProtocol
 import SwiftUI
 
-/// Send a Note…: a focused field, the promise in the footer, Send in the toolbar.
-struct NoteSheet: View {
+/// Send a Message…: a focused field and Send in the toolbar; the session reads it at its next step.
+struct MessageSheet: View {
     let sessionID: SessionKey
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +21,7 @@ struct NoteSheet: View {
                         .focused($focused)
                 }
             }
-            .navigationTitle("Note")
+            .navigationTitle("Message")
             .navigationSubtitle(session?.title ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -47,8 +47,8 @@ struct NoteSheet: View {
 }
 
 /// A turn this phone sent that the Mac's transcript doesn't show yet, with where it is under it:
-/// "Sending…", a waiting note, or a note the session read. A tap on a waiting note offers Edit (back into the
-/// field, to send again), Copy and Delete; a long-press selects part of it.
+/// "Sending…", "Next step" while it waits for the session's next step, or nothing once taken. A tap on a waiting
+/// message offers Edit (back into the field, to send again), Copy and Delete; a long-press selects part of it.
 struct OutgoingBubble: View {
     let sessionID: SessionKey
     let turn: TranscriptStore.Outgoing
@@ -78,6 +78,7 @@ struct OutgoingBubble: View {
                     .opacity(turn.state == .sending || turn.state == .takingBack ? 0.6 : 1)
             }
             status
+                .labelStyle(.titleAndIcon)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .padding(.trailing, Space.xxs)
@@ -88,22 +89,22 @@ struct OutgoingBubble: View {
     }
 
     @ViewBuilder private var status: some View {
-        switch turn.state {
-        case .sending:
-            Text("Sending…")
-        case .sent:
-            EmptyView()
-        case .queued:
-            Label("After this turn", systemImage: "clock")
-                .labelStyle(.titleAndIcon)
-        case .note:
-            Label("Reads it after this step", systemImage: "envelope")
-                .labelStyle(.titleAndIcon)
-        case .takingBack:
-            Label("Taking back…", systemImage: "arrow.uturn.backward")
-        case .read:
-            Label("Note · read", systemImage: "envelope.open")
-                .foregroundStyle(.tertiary)
+        if case .offline(let reason) = model.mac.state, turn.state != .sent, turn.state != .read {
+            // Out of reach, nothing here is known to have gone or still to be waiting.
+            Label("Not confirmed", systemImage: reason.symbol)
+        } else {
+            switch turn.state {
+            case .sending:
+                Text("Sending…")
+            case .sent, .read:
+                EmptyView()
+            case .queued:
+                Label("After this turn", systemImage: "text.append")
+            case .note:
+                Label("Next step", systemImage: "clock")
+            case .takingBack:
+                Label("Taking back…", systemImage: "arrow.uturn.backward")
+            }
         }
     }
 
@@ -123,7 +124,8 @@ struct OutgoingBubble: View {
     }
 }
 
-/// Mail waiting on the Mac that this phone didn't leave (or a stop): a quiet line; a tap or long-press offers to withdraw it.
+/// A message waiting for the next step that this phone didn't send (or a stop): a quiet line; a tap or long-press
+/// offers to withdraw it.
 struct MailLine: View {
     let sessionID: SessionKey
     let mail: MailState
@@ -133,12 +135,12 @@ struct MailLine: View {
 
     private var offline: Bool { model.mac.isOffline }
 
-    private var withdraw: String { mail.kind == .stop ? "Cancel Stop" : "Delete Note" }
+    private var withdraw: String { mail.kind == .stop ? "Cancel Stop" : "Delete Message" }
 
     var body: some View {
         Label(taking ? (mail.kind == .stop ? "Cancelling…" : "Deleting…")
-                     : mail.kind == .stop ? "Stops after this step" : "Note waiting",
-              systemImage: mail.kind == .stop ? "pause.circle" : "envelope")
+                     : mail.kind == .stop ? "Stops after this step" : "Message waiting",
+              systemImage: mail.kind == .stop ? "pause.circle" : "clock")
             .foregroundStyle(.secondary)
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)

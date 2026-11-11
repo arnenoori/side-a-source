@@ -103,8 +103,8 @@ struct SessionRow: View {
             InlineFact(symbol: flag.kind == .failing ? "exclamationmark.triangle.fill" : "exclamationmark.triangle", text: flag.text)
                 .foregroundStyle(flag.kind == .failing ? AnyShapeStyle(Color.destructive) : AnyShapeStyle(.secondary))
         } else if let mail = session.mail {
-            InlineFact(symbol: mail.kind == .note ? "envelope" : "pause.circle",
-                       text: mail.kind == .note ? "Note waiting" : "Stops after this step")
+            InlineFact(symbol: mail.kind == .note ? "clock" : "pause.circle",
+                       text: mail.kind == .note ? "Message waiting" : "Stops after this step")
                 .foregroundStyle(.secondary)
         } else if let step = session.step {
             Text(step)
@@ -146,7 +146,7 @@ struct SessionRow: View {
             }
         case .working:
             if session.abilities.contains(.note) {
-                Button("Note", systemImage: "envelope") { approvals.note = NoteTarget(session: session.id) }.tint(.indigo)
+                Button("Message", systemImage: Steer.note.symbol) { approvals.note = NoteTarget(session: session.id) }.tint(.indigo)
             }
         case .ready: ReplyButton(session: session).tint(.blue)
         case .idle:
@@ -179,7 +179,7 @@ struct SessionRow: View {
         case .working:
             Section {
                 if steers.contains(.note) {
-                    Button("Send a Note…", systemImage: "envelope") { approvals.note = NoteTarget(session: session.id) }
+                    Button(Steer.note.title, systemImage: Steer.note.symbol) { approvals.note = NoteTarget(session: session.id) }
                 }
                 if steers.contains(.stopBeforeNextStep) {
                     Button("Stop Before Next Step", systemImage: "pause.circle") { model.interrupt(session.id, when: .nextStep) }

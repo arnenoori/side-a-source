@@ -314,6 +314,11 @@ final class RemoteController {
 
     /// Every minute while Remote serves: a pairing whose phone never used its token is revoked (see DeviceStore.orphans).
     @ObservationIgnored private var sweeper: Task<Void, Never>?
+    /// Asks Tailscale again while it's installed but not up; tests shorten the wait.
+    @ObservationIgnored private var reprobe: Task<Void, Never>?
+    @ObservationIgnored var reprobeAfter: Duration = .seconds(60)
+    /// Asked this many times in a row without finding it up: the wait doubles, to ten times as long.
+    @ObservationIgnored private var reprobes = 0
 
     func sweepOrphans(now: Date = Date()) {
         for device in devices.orphans(now: now) {
@@ -337,6 +342,7 @@ final class RemoteController {
         server?.stop()
         server = nil
         monitor?.cancel(); monitor = nil
+        reprobe?.cancel(); reprobe = nil
         listening = [:]
         connected = [:]
         portsRanOut = false
@@ -352,8 +358,25 @@ final class RemoteController {
         guard fixed == nil else { return rebind() }
         Task {
             let status = await probe()
+            let changed = status.state != tailscale?.state || status.addresses != tailscale?.addresses
             tailscale = status
+            if changed { RemoteLog.shared("tailscale: \(status.state), \(status.addresses.count) addresses, \(boundTailnet.count) to listen on") }
             rebind()
+            // Tailscale installed but not up when asked, as it can be for a moment at login or after its own update:
+            // nothing else would ask again until the network changed, and the phone would find no one at the address.
+            reprobe?.cancel()
+            reprobe = nil
+            if on, [.stopped, .noAddress, .needsLogin].contains(status.state) {
+                let wait = reprobeAfter * min(1 << reprobes, 10)
+                reprobe = Task { [weak self] in
+                    try? await Task.sleep(for: wait)
+                    guard !Task.isCancelled else { return }
+                    self?.reprobes += 1
+                    self?.refresh()
+                }
+            } else {
+                reprobes = 0
+            }
             // Loopback is exempt, so a blocked Mac answers itself and drops only the phone; this is the one place it shows.
             if on {
                 let checked = await Firewall.status()

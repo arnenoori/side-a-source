@@ -9,7 +9,12 @@ actor TailscaleCLI {
     private var path: String?
 
     func status() async -> TailscaleStatus {
-        guard let path = await find() else { return TailscaleStatus(state: .notInstalled) }
+        guard let path = await find() else {
+            // There but not answering, as it can be for a moment while it or this app restarts: asked again, where
+            // "not installed" would be believed for good.
+            let present = Self.candidates.contains { FileManager.default.isExecutableFile(atPath: $0) }
+            return TailscaleStatus(state: present ? .stopped : .notInstalled)
+        }
         guard let output = await Self.run(path, ["status", "--json"]) else { return TailscaleStatus(state: .stopped) }
         var status = TailscaleStatus.parse(output.stdout)
         // Stopped prints its state on stderr and an empty Self; the backend state is still in the JSON when there is any.

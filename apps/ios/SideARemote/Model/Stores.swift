@@ -325,10 +325,10 @@ final class TranscriptStore {
             case sent
             /// Waits for the turn to end: a hosted session's queue, or Codex's own (`submit: .queue`).
             case queued
-            /// Left as mail: the session reads it after its current step, and Take Back works until then.
+            /// Waits for the session's next step (the Mac holds it as a note), and Take Back works until then.
             case note
             case takingBack
-            /// The session took the note.
+            /// The session took it: shown as delivered.
             case read
         }
 

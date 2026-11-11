@@ -178,7 +178,7 @@ struct TranscriptView: View {
                  session: session, steers: Steer.available(for: session), onSteer: steer, disabledReason: disabledReason,
                  unsent: model.transcripts.unsent[sessionID], onRetry: { model.retryUnsent(sessionID) },
                  notice: model.transcripts.notices[sessionID] ?? standingNotice,
-                 onQueue: queues ? { send(submit: .queue) } : nil,
+                 deliveries: model.deliveries(sessionID), onDeliver: { send(as: $0) },
                  dropped: dropped == nil ? nil : session?.flag?.text, onRetryDropped: retryDropped)
     }
 
@@ -317,7 +317,6 @@ struct TranscriptView: View {
     private var placeholder: String {
         guard let session else { return "Reply…" }
         if openRequests.contains(where: \.isQuestion) { return "Or type your own answer…" }
-        if model.predictedMode(sessionID) == .note { return "Add a note…" }
         // Through the inbox or a Stop hook, Claude reads it as a note, never as the user's own consent.
         if model.arrivesAsNote(sessionID) { return "Reply · arrives as a note" }
         switch SessionPhase(session) {
@@ -329,12 +328,6 @@ struct TranscriptView: View {
     /// Under the field while nothing else is: where this session's replies go when that isn't the usual.
     private var standingNotice: String? {
         model.outsideSharedServer(sessionID) ? "Started outside Codex's shared server: replies arrive only after it finishes." : nil
-    }
-
-    /// Codex steers its turn with a reply; a long-press on send waits for the turn instead.
-    private var queues: Bool {
-        guard let session else { return false }
-        return model.reachesTerminal(sessionID) && SessionPhase(session) == .working
     }
 
     /// What Codex or Claude dropped, to send again.
@@ -388,7 +381,8 @@ struct TranscriptView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private func send(submit: ReplySubmit? = nil) {
+    /// `delivery`: picked from Send's long-press; nil is the plain tap, which the Mac's delivery table decides.
+    private func send(as delivery: Delivery? = nil) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         model.transcripts.drafts[sessionID] = ""
@@ -400,9 +394,10 @@ struct TranscriptView: View {
             return
         }
         withAnimation(Motion.smooth(reduceMotion)) {
-            model.reply(text, to: sessionID, submit: submit)
-            // The live link took the photos with the reply; the demo has nowhere to send them.
-            _ = model.tools.attachments.take(sessionID, for: model.transcripts.outgoing[sessionID]?.last?.id)
+            if let delivery { model.send(text, to: sessionID, as: delivery) } else { model.reply(text, to: sessionID) }
+            // The live link took the photos with the reply; the demo has nowhere to send them. Interrupt and Send
+            // takes them once its reply goes, after the interrupt.
+            if delivery != .interrupt { _ = model.tools.attachments.take(sessionID, for: model.transcripts.outgoing[sessionID]?.last?.id) }
         }
         // After the new turn is laid out, or the scroll stops short of it.
         Task { @MainActor in
@@ -480,7 +475,7 @@ struct HealthCard: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(flag.kind == .failing ? AnyShapeStyle(Color.destructive) : AnyShapeStyle(.primary))
             HStack(spacing: Space.xs) {
-                if canNote { Button("Send a Note…", action: onNote).buttonStyle(.glass) }
+                if canNote { Button(Steer.note.title, action: onNote).buttonStyle(.glass) }
                 RestartButton(session: session, title: "Restart Fresh…", symbol: nil).buttonStyle(.glass)
             }
             .controlSize(.regular)

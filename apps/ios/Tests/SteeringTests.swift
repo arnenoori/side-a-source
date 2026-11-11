@@ -88,6 +88,57 @@ final class SteeringTests: XCTestCase {
         XCTAssertEqual(Steer.available(for: session(DemoData.ID.lan)), [.interruptNow])
     }
 
+    private func working(_ id: String, _ agent: AgentProvider, hosted: String? = nil, abilities: Set<SessionAbility>,
+                         status: SessionStatus = .working) -> RemoteSession {
+        RemoteSession(id: id, conversationID: id, agent: agent, title: id, project: "p", status: status, hosted: hosted, abilities: abilities)
+    }
+
+    private func model(_ sessions: [RemoteSession]) -> AppModel {
+        AppModel(mac: MacConnection(name: "Mac", state: .live, lastSeen: .now), sessions: SessionsStore(sessions),
+                 requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
+                 history: HistoryStore([]), isDemo: true, paired: true)
+    }
+
+    /// Only what the Mac's delivery table carries out mid-turn, by kind of session.
+    func testSendsLongPressOffersWhatTheSessionTakes() {
+        let model = model([
+            working("hosted-claude", .claude, hosted: "sa-1", abilities: [.type, .terminal, .interrupt, .followUp]),
+            working("hosted-codex", .codex, hosted: "sa-2", abilities: [.type, .terminal, .interrupt]),
+            working("shared-codex", .codex, abilities: [.replyTerminal, .interrupt, .followUp]),
+            working("claude", .claude, abilities: [.note, .interrupt, .followUp]),
+            working("claude-no-stop-hook", .claude, abilities: [.note, .interrupt]),
+            working("codex-mail", .codex, abilities: [.note]),
+            working("idle", .claude, hosted: "sa-3", abilities: [.type, .terminal], status: .idle),
+            working("asking", .claude, abilities: [.note], status: .waiting),
+        ])
+        XCTAssertEqual(model.deliveries("hosted-claude"), [.nextStep, .afterTurn, .interrupt])
+        // The Mac refuses a reply to hosted Codex mid-turn, so it can only be stopped first.
+        XCTAssertEqual(model.deliveries("hosted-codex"), [.interrupt])
+        XCTAssertEqual(model.deliveries("shared-codex"), [.steer, .afterTurn, .interrupt])
+        // Unhosted Claude has no instant interrupt, only stop mail.
+        XCTAssertEqual(model.deliveries("claude"), [.nextStep, .afterTurn])
+        XCTAssertEqual(model.deliveries("claude-no-stop-hook"), [.nextStep])
+        XCTAssertEqual(model.deliveries("codex-mail"), [.nextStep])
+        XCTAssertEqual(model.deliveries("idle"), [])
+        XCTAssertEqual(model.deliveries("asking"), [])
+    }
+
+    func testSendAfterThisTurnQueuesAndNextStepWaits() async throws {
+        let model = model([working("claude", .claude, abilities: [.note, .interrupt, .followUp])])
+        model.send("After you finish, run the linter", to: "claude", as: .afterTurn)
+        model.send("Use the staging DB", to: "claude", as: .nextStep)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(model.transcripts.outgoing["claude"]?.map(\.state), [.queued, .note])
+    }
+
+    func testInterruptAndSendSendsAfterTheStop() async throws {
+        let model = model([working("hosted-claude", .claude, hosted: "sa-1", abilities: [.type, .terminal, .interrupt, .followUp])])
+        model.send("Stop, use the other branch", to: "hosted-claude", as: .interrupt)
+        XCTAssertEqual(model.transcripts.outgoing["hosted-claude"]?.map(\.state), [.sending])
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(model.transcripts.outgoing["hosted-claude"]?.map(\.state), [.sent])
+    }
+
     func testAutoPredictsANoteOnlyForWorkingUnhostedClaude() {
         let model = AppModel.demo()
         XCTAssertEqual(model.predictedMode(DemoData.ID.postgres), .note)

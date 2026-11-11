@@ -15,7 +15,7 @@ enum Steer: Hashable, CaseIterable {
         switch self {
         case .interruptNow: "Interrupt Now"
         case .stopBeforeNextStep: "Stop Before Next Step"
-        case .note: "Send a Note…"
+        case .note: "Send a Message…"
         }
     }
 
@@ -23,13 +23,13 @@ enum Steer: Hashable, CaseIterable {
         switch self {
         case .interruptNow: "stop.fill"
         case .stopBeforeNextStep: "pause.circle"
-        case .note: "envelope"
+        case .note: "text.bubble"
         }
     }
 
     /// What this session takes, from the abilities the Mac lists. Interrupt Now is Esc in a hosted terminal,
-    /// or Codex's own interrupt for one it reaches through its shared server; stops and notes are mail, which
-    /// only Claude's hooks read.
+    /// or Codex's own interrupt for one it reaches through its shared server; stops and next-step messages go
+    /// through the agent's hooks.
     static func available(for session: RemoteSession?) -> [Steer] {
         guard let session, SessionPhase(session) == .working || SessionPhase(session) == .needsYou else { return [] }
         var steers: [Steer] = []
@@ -67,8 +67,9 @@ struct Composer: View {
     var onRetry: () -> Void = {}
     /// A steer the Mac refused, or a standing fact about where replies go.
     var notice: String?
-    /// Mid-turn in a terminal Codex shares: the send button's long-press waits for the turn instead of steering it.
-    var onQueue: (() -> Void)?
+    /// Mid-turn: how the send button's long-press offers to deliver what's typed.
+    var deliveries: [Delivery] = []
+    var onDeliver: (Delivery) -> Void = { _ in }
     /// What Codex dropped («Didn't reach Codex: "…"»), with Retry.
     var dropped: String?
     var onRetryDropped: () -> Void = {}
@@ -234,13 +235,12 @@ struct Composer: View {
                 ForEach(steers, id: \.self) { steer in
                     Button(steer.title, systemImage: steer.symbol) { onSteer(steer) }
                 }
-            } else if mode == .send, hasText, let onQueue {
+            } else if mode == .send, hasText {
                 // Sending takes the attachment tray, so a photo still uploading would be dropped.
-                Group {
-                    Button("Send Now", systemImage: "arrow.up") { send() }
-                    Button("Send After This Turn", systemImage: "clock") {
+                ForEach(deliveries, id: \.self) { delivery in
+                    Button(delivery.title, systemImage: delivery.symbol) {
                         sends += 1
-                        onQueue()
+                        onDeliver(delivery)
                     }
                 }
                 .disabled(uploading || offline)

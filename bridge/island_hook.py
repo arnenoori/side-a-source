@@ -153,14 +153,15 @@ def take(folder, pid):
     return note if note and note.get("kind") == "note" else None
 
 
-def mail(folder, pid, event, agent="claude"):
+def mail(folder, pid, event, agent="claude", notes=True):
     """Side A's Stop ends the turn before the next tool runs; a note joins the context after a tool finishes.
-    Codex 0.163 fails a PreToolUse hook that says continue:false and runs the tool anyway, so it only gets the deny."""
+    Codex 0.163 fails a PreToolUse hook that says continue:false and runs the tool anyway, so it only gets the deny.
+    `notes` is off for a subagent's tool calls: a note is for the session, and a subagent that took it would keep it."""
     if event == "PreToolUse" and stop(folder, pid):
         deny = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                        "permissionDecisionReason": "The user stopped this session from Side A."}}
         return deny if agent == "codex" else {"continue": False, "stopReason": "Stopped from Side A.", **deny}
-    if event in ("PostToolUse", "PostToolUseFailure"):
+    if notes and event in ("PostToolUse", "PostToolUseFailure"):
         note = take(folder, pid)
         text = note.get("text") if note else None
         if isinstance(text, str) and text.strip():
@@ -225,6 +226,38 @@ def inbox(folder, pid):
             with contextlib.suppress(OSError):
                 os.unlink(owner)
             return text.strip()
+
+
+def paused_note(folder, pid):
+    """A turn paused on background work has no next tool call for a note to join, so its Stop hook waits here for
+    one and wakes the session with it. Claude Code keeps earlier Stop hooks running, so the newest holds
+    <pid>.waiter and the others leave; so does one whose session is gone."""
+    owner = os.path.join(folder, f"{pid}.waiter")
+    parent = os.getppid()
+    me = str(os.getpid())
+    try:
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        write_atomic(owner, me)
+    except OSError:
+        return None
+    while True:
+        try:
+            with open(owner) as stream:
+                if stream.read().strip() != me:
+                    return None
+        except OSError:
+            return None
+        if os.getppid() != parent:
+            with contextlib.suppress(OSError):
+                os.unlink(owner)
+            return None
+        note = take(folder, pid)
+        text = note.get("text") if note else None
+        if isinstance(text, str) and text.strip():
+            with contextlib.suppress(OSError):
+                os.unlink(owner)
+            return text.strip()
+        time.sleep(INBOX_POLL)
 
 
 TAIL_CHUNK = 1 << 20
@@ -646,7 +679,7 @@ def main(argv):
                 return
             result = mail(os.path.join(folder, "codex"), thread, event, agent)
         else:
-            result = mail(folder, message["pid"], event, agent)
+            result = mail(folder, message["pid"], event, agent, notes=not request.get("agent_id"))
         if result:
             sys.stdout.write(json.dumps(result))
             sys.stdout.flush()
@@ -654,7 +687,16 @@ def main(argv):
     if event == "Stop":
         # A turn waiting on background work isn't the session being done. stop_hook_active is no sign of that:
         # Claude Code sets it on the Stop that ends a turn a follow-up woke, so skipping it lost every later reply.
+        folder = os.path.join(os.path.dirname(path), "mail")
+        if agent == "claude":
+            # Whichever earlier Stop still waits for a note leaves: this one takes over, or the turn is over.
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(folder, f"{message['pid']}.waiter"))
         if request.get("background_tasks") or request.get("session_crons"):
+            text = paused_note(folder, message["pid"]) if agent == "claude" else None
+            if text:
+                sys.stderr.write(INBOX_PREAMBLE + text + "\n")
+                sys.exit(2)
             return
         if agent != "claude":
             with contextlib.suppress(OSError):

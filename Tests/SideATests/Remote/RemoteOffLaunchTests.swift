@@ -59,6 +59,25 @@ private final class Calls: @unchecked Sendable {
     #expect(calls.probed == 1)
 }
 
+/// Tailscale not answering at launch, as after an update relaunches the app, isn't believed for good: asked again
+/// until it's up, then left alone.
+@MainActor @Test func aTailscaleThatWasntUpIsAskedAgain() async throws {
+    let calls = Calls()
+    let remote = RemoteController(store: AccountStore(demo: true), keychain: .inMemory())
+    remote.reprobeAfter = .milliseconds(30)
+    remote.probe = {
+        calls.probe()
+        return TailscaleStatus(state: calls.probed < 3 ? .stopped : .ready)
+    }
+    remote.on = true
+    remote.refresh()
+    for _ in 0..<100 where calls.probed < 3 { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(calls.probed == 3)
+    try await Task.sleep(for: .milliseconds(150))
+    #expect(calls.probed == 3 && remote.tailscale?.state == .ready)
+    remote.on = false
+}
+
 /// The Sessions window's composer, row menus and suggestions read state only: with Remote and hosting off, showing
 /// them and sending a note start no tmux, read no Keychain and open no log.
 @MainActor @Test func theSessionsWindowsNewControlsTouchNothingWithRemoteOff() async throws {

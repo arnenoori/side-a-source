@@ -100,7 +100,8 @@ final class AppModel {
         let link = outbox.map { LiveLink(mac: mac, outbox: $0) }
         var live: MacTools.Live?
         if let link, let outbox { live = MacTools.Live(engine: link.engine, paired: mac, outbox: outbox) }
-        let model = AppModel(mac: MacConnection(name: mac.endpoint.name, state: .connecting, lastSeen: .now), sessions: SessionsStore([]),
+        let connection = MacConnection(name: mac.endpoint.name, nickname: MacNicknames.nickname(for: mac.endpoint.macID), state: .connecting, lastSeen: .now)
+        let model = AppModel(mac: connection, sessions: SessionsStore([]),
                              requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
                              history: HistoryStore([]), isDemo: false, paired: true, live: live)
         model.foldAnswers()
@@ -158,7 +159,11 @@ final class MacConnection: Identifiable {
     var isOffline: Bool { state.isOffline }
 
     let id = UUID()
-    var name: String
+    /// What the Mac calls itself, from its pairing and hellos.
+    var reportedName: String
+    /// The name given it on this iPhone, which wins everywhere the phone shows the Mac.
+    var nickname: String?
+    var name: String { nickname ?? reportedName }
     var state: State
     var lastSeen: Date
     /// nil until the Mac's first `remote.mac` report, so nothing shows a guess.
@@ -198,5 +203,52 @@ final class MacConnection: Identifiable {
         return "Connected via \(route.title)"
     }
 
-    init(name: String, state: State, lastSeen: Date) { self.name = name; self.state = state; self.lastSeen = lastSeen }
+    init(name: String, nickname: String? = nil, state: State, lastSeen: Date) {
+        reportedName = name; self.nickname = nickname; self.state = state; self.lastSeen = lastSeen
+    }
+
+    /// Renamed on this iPhone, or back to the Mac's own name with nil or blank; kept per Mac across launches.
+    func rename(_ nickname: String?, macID: String, in defaults: UserDefaults = MacNicknames.store) {
+        MacNicknames.set(nickname, for: macID, in: defaults)
+        let next = MacNicknames.nickname(for: macID, in: defaults)
+        if self.nickname != next { self.nickname = next }
+    }
+
+    /// Back in front: a drop the app only saw while it was away gets the same minute of "Reconnecting…" as a fresh one,
+    /// so Send isn't held off while the link comes back. A pairing that ended, or a Mac that said it's asleep, stays.
+    func foregrounded(now: Date = .now) {
+        switch state {
+        case .offline(.macUnreachable): state = .reconnecting(since: now)
+        case .offline(.tailscaleOff) where vpnUp: state = .reconnecting(since: now)
+        default: break
+        }
+    }
+}
+
+/// Names given to paired Macs on this iPhone, by Mac id, in the App Group so every part of the app reads the same.
+enum MacNicknames {
+    nonisolated(unsafe) static let store = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard
+    static let key = "mac.nicknames"
+
+    static func nickname(for macID: String, in defaults: UserDefaults = store) -> String? {
+        (defaults.dictionary(forKey: key) as? [String: String])?[macID]
+    }
+
+    /// Blank or nil goes back to the Mac's own name.
+    static func set(_ nickname: String?, for macID: String, in defaults: UserDefaults = store) {
+        var all = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
+        let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        all[macID] = trimmed?.isEmpty == false ? trimmed : nil
+        defaults.set(all, forKey: key)
+    }
+
+    /// What the phone calls a Mac it only knows the pairing of.
+    static func name(_ reported: String, macID: String, in defaults: UserDefaults = store) -> String {
+        nickname(for: macID, in: defaults) ?? reported
+    }
+}
+
+extension PairedMac {
+    /// Its name as this iPhone shows it.
+    var displayName: String { MacNicknames.name(endpoint.name, macID: endpoint.macID) }
 }

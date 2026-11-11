@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.51 — 2026-11-10
+
+A message you send from your iPhone to a Claude session that is waiting on background agents now reaches it within about a second. The session counted as working, so the message used to wait for its next tool call, which could be many minutes away. A subagent can no longer take a message meant for the main session either.
+
+Side A Remote keeps listening on Tailscale when Tailscale wasn't up yet as Side A launched. It used to check once and then wait for the network to change, so your iPhone could only reach the Mac through the relay until you opened Settings › Remote. It now asks again until Tailscale answers, and the Remote log records what Tailscale said.
+
+Fixes:
+- A Mac with the Tailscale app installed but not running is shown as stopped instead of not installed.
+
 ## 0.5.50 — 2026-11-10
 
 Side A does less work while sessions are streaming. Each line a session wrote used to start a new helper process and re-scan every session; while anything is streaming that now happens at most every 2 seconds, and the conversation you have open still updates right away. A Codex session's status line can lag by up to 2 seconds as a result. Checking which sessions are live is far quicker with Codex sessions open, opening and paging a conversation is faster, and Side A Remote no longer rebuilds every session for your iPhone each time one of them changes. The first time you open a conversation after this update it takes a moment longer while its saved view is rebuilt.

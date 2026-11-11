@@ -306,6 +306,17 @@ class BridgeTests(unittest.TestCase):
             # Turning Codex off never creates a hooks file that wasn't there.
             (home/'.codex/hooks.json').unlink(); bridge.island_state(self.root,['codex'],'off')
             self.assertFalse((home/'.codex/hooks.json').exists())
+    def paused_stop(self,command,payload,pid='4242'):
+        """A Stop paused on background work waits for a note; this lets it start, then sends it away as the next Stop would."""
+        waiter=bridge.island_mail(self.root)/f'{pid}.waiter'
+        hook=subprocess.Popen(['/bin/sh','-c',command],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env={**os.environ,'CLAUDE_PID':pid})
+        hook.stdin.write(json.dumps(payload)); hook.stdin.close()
+        for _ in range(250):
+            if waiter.exists() or hook.poll() is not None: break
+            time.sleep(0.02)
+        waiter.unlink(missing_ok=True)
+        try: return hook.wait(5)
+        finally: hook.stdout.close(); hook.stderr.close()
     def test_island_mail_reaches_a_working_session_at_its_next_tool_call(self):
         home=self.root/'home'; (home/'.claude').mkdir(parents=True)
         with patch.object(Path,'home',return_value=home):
@@ -326,6 +337,31 @@ class BridgeTests(unittest.TestCase):
         note=run('PostToolUse')['hookSpecificOutput']
         self.assertEqual(note['hookEventName'],'PostToolUse'); self.assertTrue(note['additionalContext'].endswith('Use the staging database'))
         self.assertFalse(mailbox.exists()); self.assertIsNone(run('PostToolUse'))
+        # A subagent's tool call leaves the note for the session itself, but is stopped like any other.
+        mailbox.write_text(json.dumps({'kind':'note','text':'Use the staging database'}))
+        sub=lambda event: subprocess.run(['/bin/sh','-c',hooks[event][0]['hooks'][0]['command']],capture_output=True,text=True,timeout=20,
+                                         input=json.dumps({'hook_event_name':event,'tool_name':'Bash','agent_id':'a1'}),env={**os.environ,'CLAUDE_PID':'4242'}).stdout
+        self.assertEqual(sub('PostToolUse'),''); self.assertTrue(mailbox.exists())
+        self.assertIsNotNone(run('PostToolUse'))
+        # Paused on background work, there is no next tool call: the Stop hook waits and wakes the session with the note.
+        stop=hooks['Stop'][0]['hooks'][0]['command']
+        payload=json.dumps({'hook_event_name':'Stop','session_id':'s','cwd':'/tmp','background_tasks':[{'id':'b1'}]})
+        def paused():
+            hook=subprocess.Popen(['/bin/sh','-c',stop],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env={**os.environ,'CLAUDE_PID':'4242'})
+            hook.stdin.write(payload); hook.stdin.close(); return hook
+        waiter=mailbox.with_name('4242.waiter')
+        def held(by=None):
+            for _ in range(200):
+                if waiter.exists() and waiter.read_text().strip() not in ('',by): return waiter.read_text().strip()
+                time.sleep(0.02)
+            self.fail('no Stop hook took the wait')
+        first=paused(); mine=held(); self.assertIsNone(first.poll())
+        # The next Stop takes over, and the earlier hook leaves without a word.
+        second=paused(); held(mine); self.assertEqual((first.wait(5),first.stderr.read()),(0,''))
+        mailbox.write_text(json.dumps({'kind':'note','text':'Skip the migration'}))
+        self.assertEqual(second.wait(5),2); self.assertTrue(second.stderr.read().endswith('Skip the migration\n'))
+        self.assertFalse(mailbox.exists()); self.assertFalse(waiter.exists())
+        first.stdout.close(); first.stderr.close(); second.stdout.close(); second.stderr.close()
         mailbox.write_text(json.dumps({'kind':'stop'}))
         self.assertIsNone(run('PostToolUse'))
         stopped=run('PreToolUse')
@@ -464,11 +500,11 @@ class BridgeTests(unittest.TestCase):
         # A finished turn is reported without waiting; one paused on background work isn't.
         stop={'hook_event_name':'Stop','session_id':'s','cwd':'/tmp','last_assistant_message':'Done.','background_tasks':[]}
         stop_run=lambda payload: subprocess.run(['/bin/sh','-c',command],input=json.dumps(payload),capture_output=True,text=True,timeout=5)
-        woken=stop_run(stop); released=stop_run({**stop,'stop_hook_active':True}); paused=stop_run({**stop,'background_tasks':[{'id':'1'}]})
+        woken=stop_run(stop); released=stop_run({**stop,'stop_hook_active':True}); paused=self.paused_stop(command,{**stop,'background_tasks':[{'id':'1'}]})
         # A follow-up wakes the idle session through asyncRewake: exit 2 with the request on stderr.
         # The turn a follow-up woke ends with stop_hook_active set, and still waits for the next one.
         self.assertEqual((woken.returncode,woken.stdout),(2,'')); self.assertIn('Now open a PR',woken.stderr)
-        self.assertEqual((released.returncode,released.stderr,paused.returncode),(0,'',0))
+        self.assertEqual((released.returncode,released.stderr,paused),(0,'',0))
         thread.join(5)
         self.assertEqual((seen[4]['request']['last_assistant_message'],seen[4]['wait']),('Done.',True)); self.assertEqual(len(seen),6)
         self.assertEqual((seen[0]['agent'],seen[0]['slot'],seen[0]['request']['tool_input']),('claude','abc',{'command':'ls'}))
@@ -673,8 +709,9 @@ class BridgeTests(unittest.TestCase):
                                 capture_output=True,text=True,timeout=20,env={**os.environ,'CLAUDE_PID':'4242'})
             self.assertEqual((done.returncode,done.stdout),(0,''))
         run('PostModelSwitch',from_model='claude-opus-5-5',to_model='claude-sonnet-5-5',source='command',permission_mode='plan',effort={'level':'high'})
-        run('Stop',last_assistant_message='Started the dev server.',permission_mode='acceptEdits',
-            background_tasks=[{'id':'b1','type':'shell','status':'running','description':'npm run dev','command':'npm run dev -- --port 3000'},'junk'])
+        self.assertEqual(self.paused_stop(hooks['Stop'][0]['hooks'][0]['command'],{'hook_event_name':'Stop','session_id':'s1','cwd':'/tmp',
+            'last_assistant_message':'Started the dev server.','permission_mode':'acceptEdits',
+            'background_tasks':[{'id':'b1','type':'shell','status':'running','description':'npm run dev','command':'npm run dev -- --port 3000'},'junk']}),0)
         read=lambda kind: json.loads((state/f's1.{kind}.json').read_text())
         self.assertEqual(read('model'),{'model':'claude-sonnet-5-5'})
         self.assertEqual(read('hook'),{'mode':'acceptEdits','effort':None})
