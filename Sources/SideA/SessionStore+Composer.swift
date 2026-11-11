@@ -62,7 +62,7 @@ enum ComposerSend: Equatable { case now, afterTurn, note }
     }
 
     /// ⌥↩ means something: the turn can be waited for.
-    var queues: Bool { working && (hosted && claude || terminal || abilities.contains(.followUp)) }
+    var queues: Bool { working && (hosted || terminal || abilities.contains(.followUp)) }
 
     /// Esc: Stop Now in a pane or through Codex's server, else stop mail before the next step.
     var interrupt: InterruptRequest.When? {
@@ -84,7 +84,7 @@ enum ComposerSend: Equatable { case now, afterTurn, note }
             return "It finished. Your reply is copied and its terminal comes forward."
         }
         if terminal { return working ? "↩ steers this turn  ·  ⌥↩ sends it after this turn" : "Shows in its terminal as your message." }
-        if hosted, !claude, working { return "Reply when this turn ends  ·  esc stops it" }
+        if hosted, !claude, working { return "↩ steers this turn  ·  ⌥↩ sends it after this turn  ·  esc stops it" }
         if hosted { return working ? "↩ types it now  ·  ⌥↩ waits for this turn  ·  esc stops it" : "Types into its terminal." }
         if becomesNote { return "It reads a note after its current step  ·  ⌥↩ sends it after this turn  ·  esc stops before its next step" }
         if abilities.contains(.replyInbox) { return "It picks this up within a second, as a note." }

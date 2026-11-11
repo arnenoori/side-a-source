@@ -137,7 +137,8 @@ import SideAProtocol
         if live.hosted != nil {
             // A hosted session takes typing and keys at any time, and Esc while it works.
             abilities.formUnion([.type, .terminal])
-            if status == .working { abilities.formUnion(live.provider == .claude ? [.interrupt, .followUp] : [.interrupt]) }
+            // Mid-turn Claude queues what's typed; Codex steers on Enter and queues on Tab.
+            if status == .working { abilities.formUnion([.interrupt, .followUp]) }
         } else if live.provider == .claude, island.installed[.claude] == true {
             // An unhosted Claude session takes notes and stops through its mail hooks, and follow-ups through its Stop waiter.
             if status == .working { abilities.formUnion([.note, .interrupt, .followUp]) }
@@ -245,9 +246,13 @@ import SideAProtocol
                     return ReplyResult(delivery: try await store.remote.codex.send(live, text: text, queue: queue), sessionID: key)
                 } catch { throw Failure.codex(error) }
             case .type(let name, let key, let working):
+                // Codex mid-turn: a follow-up, or a reply sent to queue, waits for the turn to end; anything else steers
+                // it, as through its app server. Claude queues what's submitted mid-turn either way.
+                let queue = message.mode == .followUp || message.submit == .queue
                 try await hosted.reply(name, text: message.text.trimmingCharacters(in: .whitespacesAndNewlines), images: message.images,
-                                       submit: message.submit == .steer ? .steer : .queue, working: working)
-                return ReplyResult(delivery: .typed, sessionID: key)
+                                       submit: queue ? .queue : .steer, working: working)
+                let waits = queue && working && store.hosted.sessions.first { $0.name == name }?.agent == .codex
+                return ReplyResult(delivery: waits ? .queued : .typed, sessionID: key)
             case .keys(let name, let key, _):
                 try await hosted.keys(name, (message.keys ?? []).map(\.rawValue))
                 return ReplyResult(delivery: .typed, sessionID: key)

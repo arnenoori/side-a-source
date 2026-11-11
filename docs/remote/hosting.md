@@ -670,8 +670,9 @@ queues, notes or refuses is protocol's [delivery table](protocol.md#delivery-tab
 
 `mode: note` for a hosted Claude session that's working uses the existing mail hook (it arrives
 as `additionalContext` at the next tool call) rather than typing. For `auto` on a busy hosted
-session the table says `.typed` for Claude (Claude queues a message submitted mid-turn) and
-409 `cannot_deliver` for Codex until open question 7 is answered.
+session the table says `.typed` for both: Claude queues a message submitted mid-turn, and Codex
+steers on Enter. `followUp` or `submit: queue` to Codex is typed and submitted with Tab, which
+queues it for the next turn.
 
 ### Single keys
 
@@ -1023,8 +1024,8 @@ These override anything above that says otherwise.
   live thread are allowed, like Claude's.
 - **Codex mid-turn (0.163.0):** Enter steers the running turn (one task_started/complete pair,
   both messages answered); Tab queues it as the next turn ("Queued follow-up inputs"). Claude
-  queues on Enter. `RemoteReply.submit` is `queue` (default) or `steer`; steer applies only to
-  hosted Codex, and the Mac advertises it with the `reply.steer` capability.
+  queues on Enter. `RemoteReply.submit` is `steer` (default) or `queue`; the difference applies only
+  to Codex, and the Mac advertises it with the `reply.steer` capability.
 - **Trust carries over to worktrees** in both CLIs (a linked worktree maps to its main
   repository's trust). New-session worktrees copy gitignored `.env*` files, and the UI says so.
 - **Codex update prompt:** a resumed Codex can draw "Update available … › 1. Update now (runs
@@ -1054,9 +1055,9 @@ SubmitVerifier, Images and the caveats above):
 6. **Worktree trust and setup.** Does Claude's folder trust cover `<repo>/.sidea-worktrees/<name>`
    through its parent, and does Codex map a worktree to its repository's trust? Should New session
    offer to copy `.env` files into the worktree?
-7. **Codex while busy.** Is a submitted message during a Codex turn queued or steering? This
-   decides the `auto` cell for busy hosted Codex sessions in protocol's delivery table (`.queued`
-   until then).
+7. **Codex while busy.** Answered (0.163.0, under Experiments): Enter steers the turn and Tab queues
+   the message for the next. Protocol's delivery table types `auto` with Enter and `followUp` or
+   `submit: queue` with Tab.
 8. **SwiftTerm details.** Synchronized output (mode 2026) support, how SwiftTerm measures cells,
    and per-cell access for the confirm step.
 9. **Continue on phone while `waiting`.** Offer it, with the warning, or only when idle?

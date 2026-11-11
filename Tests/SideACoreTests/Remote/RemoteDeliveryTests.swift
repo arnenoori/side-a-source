@@ -11,7 +11,7 @@ private typealias D = RemoteDelivery
     (.unknown, false, .claude, [.refused(.cannot), .refused(.cannot), .refused(.cannot), .refused(.notHosted)]),
     (.unknown, true, .claude, [.refused(.cannot), .refused(.cannot), .refused(.cannot), .keys]),
     (.working, true, .claude, [.typed, .queued, .note, .keys]),
-    (.working, true, .codex, [.refused(.cannot), .refused(.cannot), .note, .keys]),
+    (.working, true, .codex, [.typed, .typed, .note, .keys]),
     (.working, false, .claude, [.note, .queued, .note, .refused(.notHosted)]),
     (.working, false, .codex, [.refused(.cannot), .refused(.cannot), .note, .refused(.notHosted)]),
     (.finishedWaiting, false, .claude, [.followUp, .followUp, .refused(.cannot), .refused(.notHosted)]),
@@ -29,7 +29,9 @@ func replyDeliveryFollowsTheTable(_ state: RemoteDelivery.State, _ hosted: Bool,
     // Codex's Stop hook never waits, so hooks being on or off changes nothing.
     for stopHooks in [true, false] {
         #expect(D.decide(.working, hosted: false, agent: .codex, mode: .auto, mailHooks: true, stopHooks: stopHooks) == .refused(.cannot))
-        #expect(D.decide(.working, hosted: true, agent: .codex, mode: .followUp, mailHooks: true, stopHooks: stopHooks) == .refused(.cannot))
+        #expect(D.decide(.working, hosted: false, agent: .codex, mode: .followUp, mailHooks: true, stopHooks: stopHooks) == .refused(.cannot))
+        // In a Side A terminal Codex's own composer queues it, hooks or not.
+        #expect(D.decide(.working, hosted: true, agent: .codex, mode: .followUp, mailHooks: false, stopHooks: stopHooks) == .typed)
     }
     // Codex's notes go through the same mail hooks.
     #expect(D.decide(.working, hosted: false, agent: .codex, mode: .note, mailHooks: false, stopHooks: true) == .refused(.cannot))

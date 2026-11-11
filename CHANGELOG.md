@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.52 — 2026-11-10
+
+You can message a Codex session in a Side A terminal while it works. It used to refuse anything until its turn ended. From the Sessions window, ↩ steers the turn and ⌥↩ sends your message after it. From your iPhone, Send steers the turn, and a long press on Send offers Steer Now, Send After This Turn, and Interrupt and Send.
+
 ## 0.5.51 — 2026-11-10
 
 A message you send from your iPhone to a Claude session that is waiting on background agents now reaches it within about a second. The session counted as working, so the message used to wait for its next tool call, which could be many minutes away. A subagent can no longer take a message meant for the main session either.

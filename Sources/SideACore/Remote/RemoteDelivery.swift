@@ -43,7 +43,8 @@ public enum RemoteDelivery {
 
     /// `mailHooks`: the agent's PreToolUse/PostToolUse mail hooks are installed. `stopHooks`: the session's Stop hook can take a
     /// queued follow-up. Only Claude's Stop hook waits for one: Codex's tells the island and exits, so nothing queued for it
-    /// would ever go, and it is refused here. (Codex through its app server has its own queue, before this table.)
+    /// would ever go, and it is refused here unless Side A hosts its terminal, where Codex's own composer queues it.
+    /// (Codex through its app server has its own queue, before this table.)
     public static func decide(_ state: State, hosted: Bool, agent: AgentProvider, mode: ReplyMode,
                               mailHooks: Bool, stopHooks: Bool) -> Decision {
         let claude = agent == .claude
@@ -61,9 +62,10 @@ public enum RemoteDelivery {
             return mode == .keys ? keys : .refused(.cannot)
         case .working where hosted:
             switch mode {
-            // Claude Code queues a message submitted mid-turn; Codex is refused until hosting's open question 7 is settled.
-            case .auto: return claude ? .typed : queued
-            case .followUp: return queued
+            // Claude Code queues a message submitted mid-turn. Codex's composer takes one too: Enter steers the turn
+            // and Tab queues it for the next, so a follow-up is typed as well and submitted with Tab.
+            case .auto: return .typed
+            case .followUp: return claude ? queued : .typed
             case .note: return note
             case .keys: return .keys
             }

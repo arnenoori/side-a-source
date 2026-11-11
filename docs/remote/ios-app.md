@@ -620,7 +620,7 @@ session's `abilities`. The plain tap keeps the default for each kind.
 | Session | Tap | Long-press menu |
 |---|---|---|
 | Hosted Claude | `auto` (typed; Claude reads it at its next step) | Send at Next Step, Send After This Turn (`followUp`, when listed), Interrupt and Send |
-| Hosted Codex | `auto` (the Mac refuses it mid-turn: 409 `cannot_deliver`) | Interrupt and Send |
+| Hosted Codex | `auto` (typed; steers the turn) | Steer Now, Send After This Turn (`followUp`), Interrupt and Send. A Mac before 0.5.52 lists no `followUp` and refuses a reply mid-turn: Interrupt and Send only |
 | Codex with `replyTerminal` | steer | Steer Now, Send After This Turn (`submit: queue`), Interrupt and Send |
 | Claude outside Side A's terminals | `auto` (a note, read at its next step) | Send at Next Step, Send After This Turn (`followUp`: the Stop waiter's queue, when listed) |
 | Codex outside, mail hooks on | `auto` | Send at Next Step (`note`) |

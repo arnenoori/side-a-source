@@ -3,7 +3,7 @@ import SideAProtocol
 
 /// How Send delivers a message to a session mid-turn, offered on its long-press.
 enum Delivery: Hashable, CaseIterable {
-    /// Into the running turn: Codex through its shared server.
+    /// Into the running turn: Codex, through its shared server or typed into a Side A terminal.
     case steer
     /// Read before the agent's next step: Claude's typed input, or a note its hooks read.
     case nextStep
@@ -59,10 +59,13 @@ extension AppModel {
             deliveries.append(.steer)
             if abilities.contains(.followUp) { deliveries.append(.afterTurn) }
         } else if session.hosted != nil {
-            // Hosted Claude reads typed input at its next step; hosted Codex refuses a reply until its turn ends.
+            // Hosted Claude reads typed input at its next step. Hosted Codex steers on Enter and queues on Tab; a Mac
+            // before 0.5.52 refuses it a reply mid-turn and lists no `followUp`.
             if session.agent == .claude {
                 deliveries.append(.nextStep)
                 if abilities.contains(.followUp) { deliveries.append(.afterTurn) }
+            } else if abilities.contains(.followUp) {
+                deliveries += [.steer, .afterTurn]
             }
         } else {
             // Outside Side A's terminals: a note the hooks read at the next step, or Claude's Stop waiter at the turn's end.

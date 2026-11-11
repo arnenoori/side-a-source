@@ -103,7 +103,8 @@ final class SteeringTests: XCTestCase {
     func testSendsLongPressOffersWhatTheSessionTakes() {
         let model = model([
             working("hosted-claude", .claude, hosted: "sa-1", abilities: [.type, .terminal, .interrupt, .followUp]),
-            working("hosted-codex", .codex, hosted: "sa-2", abilities: [.type, .terminal, .interrupt]),
+            working("hosted-codex", .codex, hosted: "sa-2", abilities: [.type, .terminal, .interrupt, .followUp]),
+            working("hosted-codex-older-mac", .codex, hosted: "sa-4", abilities: [.type, .terminal, .interrupt]),
             working("shared-codex", .codex, abilities: [.replyTerminal, .interrupt, .followUp]),
             working("claude", .claude, abilities: [.note, .interrupt, .followUp]),
             working("claude-no-stop-hook", .claude, abilities: [.note, .interrupt]),
@@ -112,8 +113,9 @@ final class SteeringTests: XCTestCase {
             working("asking", .claude, abilities: [.note], status: .waiting),
         ])
         XCTAssertEqual(model.deliveries("hosted-claude"), [.nextStep, .afterTurn, .interrupt])
-        // The Mac refuses a reply to hosted Codex mid-turn, so it can only be stopped first.
-        XCTAssertEqual(model.deliveries("hosted-codex"), [.interrupt])
+        XCTAssertEqual(model.deliveries("hosted-codex"), [.steer, .afterTurn, .interrupt])
+        // A Mac before 0.5.52 refuses a reply to hosted Codex mid-turn, so it can only be stopped first.
+        XCTAssertEqual(model.deliveries("hosted-codex-older-mac"), [.interrupt])
         XCTAssertEqual(model.deliveries("shared-codex"), [.steer, .afterTurn, .interrupt])
         // Unhosted Claude has no instant interrupt, only stop mail.
         XCTAssertEqual(model.deliveries("claude"), [.nextStep, .afterTurn])

@@ -529,7 +529,7 @@ public struct RemoteReply: Codable, Hashable, Sendable {
     public let text: String          // may be empty only in .keys mode
     public let mode: ReplyMode
     public let keys: [Key]?          // .keys mode only; hosted sessions only
-    public let submit: ReplySubmit?  // hosted and replyTerminal sessions; missing means queue on a hosted session, steer on a replyTerminal one
+    public let submit: ReplySubmit?  // hosted and replyTerminal sessions; missing means steer (Claude Code queues either way); `followUp` always queues
     public let attachments: [String] // Upload ids (Upload.id), never paths
     public let turnID: String?       // required when the session is finished: FinishedSession.turnID
 }
@@ -574,7 +574,7 @@ differ. Every cell is a `ReplyResult.delivery` or an error.
 | `unknown` | either | 409 `cannot_deliver` | 409 `cannot_deliver` | 409 `cannot_deliver` | hosted: sent |
 | working, Codex with `replyTerminal` | no | `.typed` (steers the turn) | `.queued` (Codex's own queue) | 409 `cannot_deliver` | 409 `not_hosted` |
 | idle or finished, Codex with `replyTerminal` | no | `.typed` (starts a turn) | `.typed` | 409 `cannot_deliver` | 409 `not_hosted` |
-| working | yes | Claude: `.typed` (Claude Code queues a message submitted mid-turn); Codex: 409 `cannot_deliver` until hosting open question 7 settles it | Claude: `.queued`; Codex: 409 `cannot_deliver` | Claude: `.note`; Codex: `.note` with its mail hooks on, else 409 `cannot_deliver` | sent |
+| working | yes | Claude: `.typed` (Claude Code queues a message submitted mid-turn); Codex: `.typed` (Enter, which steers the turn), or `.queued` with `submit: queue` (Tab, Codex's own queue) | Claude: `.queued`; Codex: `.queued` (typed and submitted with Tab) | Claude: `.note`; Codex: `.note` with its mail hooks on, else 409 `cannot_deliver` | sent |
 | working | no | Claude: `.note`; Codex: 409 `cannot_deliver` | Claude: `.queued`; Codex: 409 `cannot_deliver` | Claude: `.note`; Codex: `.note` with its mail hooks on, else 409 `cannot_deliver` | 409 `not_hosted` |
 | finished, Stop hook waiting | either | `.followUp` | `.followUp` | 409 `cannot_deliver` | hosted: sent; unhosted: 409 `not_hosted` |
 | idle (or finished with no waiter), Claude with `replyInbox` | no | `.inbox` | `.inbox` | `.inbox` | 409 `not_hosted` |
@@ -2065,5 +2065,5 @@ A scripted `Transport` fake plays REST responses and socket frames.
    this works for `https://100.x.y.z:47800` and for `URLSessionWebSocketTask` on the same session
    before M0; the fallback is a narrow `NSExceptionDomains` entry, which an IP literal can't use,
    so it matters.
-6. **Codex while busy** (hosting open question 7) decides the `auto` cell for working hosted Codex
-   sessions, `.queued` until then.
+6. **Codex while busy** is settled (hosting open question 7): `auto` to a working hosted Codex session
+   is typed and steers the turn, and `followUp` or `submit: queue` waits in Codex's own queue.
