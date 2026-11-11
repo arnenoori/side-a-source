@@ -6,12 +6,32 @@ import SwiftUI
 /// The Sparkle error code of the last update cycle that failed, until one goes right.
 struct UpdateFailure: Equatable {
     private(set) var code: Int?
+    /// The last check couldn't fetch the feed, usually because the Mac is offline. Not a failed update, so the menu
+    /// doesn't offer a download for it; the schedule tries again sooner.
+    private(set) var offline = false
     /// No update, a cancel, or "install later" aren't failures; "no update" also means the feed answered.
     mutating func aborted(domain: String, code: Int) {
         guard domain == SUSparkleErrorDomain else { return }
-        if code == 1001 { self.code = nil } else if ![4007, 4008].contains(code) { self.code = code }
+        if code == 1001 { checked() } else if code == 1002 { offline = true } else if ![4007, 4008].contains(code) { self.code = code }
     }
-    mutating func checked() { code = nil }
+    mutating func checked() { code = nil; offline = false }
+}
+
+/// When Side A reads the feed itself. Sparkle's own schedule waits a day after any check, failed or not, and its timer
+/// doesn't count time asleep, so a release could go unseen for longer than a day.
+enum UpdateSchedule {
+    static let interval: TimeInterval = 3600
+    /// After a check that couldn't reach the feed.
+    static let retry: TimeInterval = 10 * 60
+    /// How often Side A looks at the clock; also on wake.
+    static let tick: TimeInterval = 5 * 60
+
+    static func due(lastCheck: Date?, offline: Bool, now: Date) -> Bool {
+        guard let lastCheck else { return true }
+        let age = now.timeIntervalSince(lastCheck)
+        // A clock set back would otherwise hold checks off until it caught up.
+        return age < 0 || age >= (offline ? retry : interval)
+    }
 }
 
 /// While a downloaded update waits for Side A to quit, Sparkle resumes it on every check instead of reading the feed.
@@ -119,6 +139,8 @@ final class UpdateUserDriver: NSObject, SPUUserDriver {
 
     func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         guard state.stage != .notDownloaded, let resumed else {
+            // Found in the background: the menu shows Update to X, and Sparkle's window would come back every hour.
+            if state.stage == .notDownloaded, !state.userInitiated, !appcastItem.isCriticalUpdate { return reply(.dismiss) }
             return standard.showUpdateFound(with: appcastItem, state: state, reply: reply)
         }
         resumed(appcastItem, state) { [standard] choice in
@@ -192,6 +214,7 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
             if !updater.automaticallyChecksForUpdates { updater.automaticallyChecksForUpdates = true }
             if let version { history.launched(version) }
             try? updater.start()
+            scheduleChecks()
         }
         automaticallyUpdates = updater.automaticallyDownloadsUpdates
         observation = updater.publisher(for: \.canCheckForUpdates).receive(on: DispatchQueue.main)
@@ -233,7 +256,30 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         if staged != nil { return true }
         guard canCheck else { return false }
         updater.checkForUpdatesInBackground()
+        attempted = Date()
         return true
+    }
+    private var attempted: Date?
+    private var ticker: Timer?
+    private var wake: NSObjectProtocol?
+
+    /// Checks on `UpdateSchedule`, by the wall clock, so sleep and failed checks only delay the next look by minutes.
+    private func scheduleChecks() {
+        let timer = Timer(timeInterval: UpdateSchedule.tick, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkIfDue() }
+        }
+        timer.tolerance = 30
+        RunLoop.main.add(timer, forMode: .common)
+        ticker = timer
+        wake = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkIfDue() }
+        }
+    }
+
+    func checkIfDue(now: Date = Date()) {
+        let last = [updater.lastUpdateCheckDate, attempted].compactMap { $0 }.max()
+        guard UpdateSchedule.due(lastCheck: last, offline: lastFailure.offline, now: now) else { return }
+        _ = checkQuietly()
     }
     /// The newer version Sparkle found; shown in the menu so a silent update is never invisible.
     @Published private(set) var available: String?

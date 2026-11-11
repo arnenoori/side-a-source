@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.53 — 2026-11-11
+
+Side A keeps itself current. It used to look for an update once a day, so a Mac could run an old version for a day after a release. It now looks every hour and when the Mac wakes. A check made while offline is tried again 10 minutes later and no longer shows as a failed update. With Update Automatically off, an update found in the background appears in the menu as "Update to" that version instead of opening a window.
+
+A background check that never finishes no longer stops the others. Accounts, limits and usage could stay as they were hours earlier until you quit and reopened Side A. Side A now gives up on a round after 25 minutes awake, records where it stopped in the Autopilot log, and starts the next one. Waking the Mac starts a round right away, and usage for Today is counted again when the day changes.
+
+Fixes:
+- Side A Remote reconnects to the relay on the first try after a dropped connection. The relay used to turn the first attempt away when the connection had been open longer than two minutes.
+
 ## 0.5.52 — 2026-11-10
 
 You can message a Codex session in a Side A terminal while it works. It used to refuse anything until its turn ended. From the Sessions window, ↩ steers the turn and ⌥↩ sends your message after it. From your iPhone, Send steers the turn, and a long press on Send offers Steer Now, Send After This Turn, and Interrupt and Send.

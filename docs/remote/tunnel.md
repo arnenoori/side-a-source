@@ -181,6 +181,13 @@ restarting, 1009 frame too big.
 - One `URLSessionWebSocketTask`, re-signed on every connect. Backoff 1 s doubling to 60 s with
   jitter. `NWPathMonitor` and `didWake` trigger an immediate reconnect. Pings every 25 s, and a
   pong missing after 10 s means the socket is dead.
+- A refused upgrade can't show the Mac its error code, so a 401 is read by its `Date`. If that
+  `Date` and the signed `ts` are more than the relay's 120 s apart, the relay refused the time: the
+  Mac adopts the relay's clock and retries at once, still registered. Otherwise the relay doesn't
+  know the install: the Mac shows "The relay didn't recognise this Mac" and registers again before
+  the next try. Only a refusal's `Date` is used. A socket that ran and then ended still holds its
+  101, dated when it opened; signing with that clock got the first reconnect after any socket older
+  than 120 s refused.
 - Each OPEN connects to `RemoteServer`'s loopback TLS port and splices, with credit. The inner
   listener stays up while the tunnel runs, even with no LAN or tailnet address to serve.
   `RemoteServer` gets `tunnelPort()`, which starts the inner listener if it isn't up.

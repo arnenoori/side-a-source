@@ -20,6 +20,8 @@ final class TunnelClient: @unchecked Sendable {
     static let pingEvery: TimeInterval = 25
     static let pongWithin: TimeInterval = 10
     static let backoffCap: TimeInterval = 60
+    /// The relay's CLOCK_SKEW: how far a signed `ts` may be from its clock.
+    static let clockWindow: TimeInterval = 120
 
     let queue = DispatchQueue(label: "com.arnenoori.sidea.remote.tunnel")
     private let log = Logger(subsystem: "com.arnenoori.sidea", category: "tunnel")
@@ -37,6 +39,10 @@ final class TunnelClient: @unchecked Sendable {
     private var running = false
     private var attempt = 0
     private var skew = 0
+    /// The `ts` the latest upgrade was signed with.
+    private var signed = 0
+    /// Set once a clock refusal has been retried at once; cleared when a socket connects.
+    private var reclocked = false
     private var registered = false
     /// Nil until the Mac can read its list: the relay keeps the one it has rather than being told nobody is paired.
     private var devices: [TunnelControl.Device]?
@@ -168,6 +174,7 @@ final class TunnelClient: @unchecked Sendable {
     private func open(_ generation: Int) {
         var request = URLRequest(url: url, timeoutInterval: 20)
         let ts = Int(Date().timeIntervalSince1970) + skew
+        signed = ts
         guard let authorization = try? RelaySignature.authorization(key, method: "GET", path: "/v1/tunnel/mac", body: Data(), ts: ts) else {
             return fail("The relay key can't sign", unregistered: false)
         }
@@ -193,7 +200,7 @@ final class TunnelClient: @unchecked Sendable {
                 switch result {
                 case .failure(let error): self.failed(task, error)
                 case .success(let message):
-                    if self.status != .connected { self.attempt = 0; self.set(.connected) }
+                    if self.status != .connected { self.attempt = 0; self.reclocked = false; self.set(.connected) }
                     self.lastPong = Date()
                     switch message {
                     case .string(let text): self.control(text)
@@ -210,8 +217,20 @@ final class TunnelClient: @unchecked Sendable {
         let http = task.response as? HTTPURLResponse
         log.error("relay socket ended: HTTP \(http?.statusCode ?? 0), close \(task.closeCode.rawValue), \((error as NSError).domain, privacy: .public) \((error as NSError).code)")
         RemoteLog.shared("tunnel: relay socket ended: HTTP \(http?.statusCode ?? 0), close \(task.closeCode.rawValue), \((error as NSError).domain) \((error as NSError).code)")
-        if let date = http?.value(forHTTPHeaderField: "Date").flatMap(RelayClient.httpDate) { skew = Int(date.timeIntervalSinceNow.rounded()) }
+        // Only a refusal's Date is the relay's clock now. A socket that ran and then ended still holds its 101, dated when
+        // it opened: taken as the clock, it signed the next upgrade that far in the past.
+        let relayNow = http?.statusCode == 101 ? nil : http?.value(forHTTPHeaderField: "Date").flatMap(RelayClient.httpDate)
+        if let relayNow { skew = Int(relayNow.timeIntervalSinceNow.rounded()) }
         switch (http?.statusCode, task.closeCode.rawValue) {
+        case (401?, _) where relayNow.map({ Self.outsideWindow(signed: signed, relay: $0) }) == true:
+            // The socket can't read the refusal's code, but its Date says the time was refused, not the Mac.
+            guard reclocked else {
+                reclocked = true
+                RemoteLog.shared("tunnel: the relay refused the time, \(skew) s off; trying again on its clock")
+                drop()
+                return connect()
+            }
+            fail("This Mac's clock is too far from the relay's", unregistered: false)
         // An install the relay forgot comes back under the same key, as with pushes.
         case (401?, _): fail("The relay didn't recognise this Mac", unregistered: true)
         case (503?, _): fail("The relay's tunnel is paused", unregistered: false, wait: 300)
@@ -219,6 +238,13 @@ final class TunnelClient: @unchecked Sendable {
         case (_, 4401): fail("The relay key changed", unregistered: false)
         default: fail(error.localizedDescription, unregistered: false)
         }
+    }
+
+    /// Whether the relay, answering at `relay`, would have refused `signed` as skewed. Its `Date` is cut to the second
+    /// and written a moment after the check, hence the two seconds' slack; a refusal it lets through as a clock
+    /// refusal costs one immediate retry, which then reads as what it is.
+    static func outsideWindow(signed: Int, relay: Date) -> Bool {
+        abs(relay.timeIntervalSince1970 - Double(signed)) > clockWindow - 2
     }
 
     /// Drops the socket and every stream on it, then tries again after a backoff.

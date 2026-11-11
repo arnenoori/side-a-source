@@ -104,6 +104,9 @@ final class AccountStore {
     /// Failed moves already notified, by slot and target, so a retry every tick doesn't notify again.
     @ObservationIgnored private var swapFailures: Set<String> = []
     @ObservationIgnored private var reading: Set<String> = []
+    /// Where the running autopilot step is, and whether the loop should start its next one now.
+    @ObservationIgnored private var stepAt = ""
+    @ObservationIgnored private var kicked = false
     /// Bumped by every switch, so an "active" answer that started earlier cannot overwrite it.
     @ObservationIgnored private var selectionGeneration = 0
     /// Recent (time, 5-hour percent) samples per account for the burn-rate forecast.
@@ -299,13 +302,63 @@ final class AccountStore {
             await self?.refreshDependencies()
             await self?.loadIntegrations()
             while !Task.isCancelled {
-                await self?.tick()
+                await self?.watched { await $0.tick() }
                 for _ in 0..<30 {
-                    if self?.limitHit() == true || self?.liveChanged() == true { break }
+                    if self?.limitHit() == true || self?.liveChanged() == true || self?.takeKick() == true { break }
                     try? await Task.sleep(for: .seconds(2))
                 }
             }
         }
+        // Asleep, the Mac read nothing and its network may have gone: look again now, not after a back-off set last night.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.woke() }
+        }
+    }
+
+    /// How long one autopilot step may run, in time awake, before the loop goes on without it. A step under heavy
+    /// load can take minutes (a prime waits up to 800 s), so this is well past any that will finish.
+    static let stepLimit = Duration.seconds(1500)
+
+    /// Runs one step of the loop and comes back even when the step never does: a bridge call, a hook or a network
+    /// wait that hangs would otherwise stop every reading, the report and Autopilot until Side A is restarted.
+    /// The log says where it stopped. False when it was left behind.
+    @discardableResult func watched(limit: Duration = stepLimit, _ step: @escaping @MainActor (AccountStore) async -> Void) async -> Bool {
+        stepAt = ""
+        let run = Task { await step(self) }
+        let finished = await withUnsafeContinuation { (continuation: UnsafeContinuation<Bool, Never>) in
+            var answered = false
+            let answer = { @MainActor (value: Bool) in
+                guard !answered else { return }
+                answered = true
+                continuation.resume(returning: value)
+            }
+            // Awake time only: a night asleep is not a step that hung.
+            let timer = Task { try? await Task.sleep(for: limit, clock: .suspending); answer(false) }
+            Task { await run.value; answer(true); timer.cancel() }
+        }
+        guard !finished else { return true }
+        run.cancel()
+        autopilotLog.write("A background check stopped at \(stepAt.isEmpty ? "its start" : stepAt) and didn't come back; Side A went on without it.")
+        // What it was in the middle of no longer holds the next one back.
+        reading = []
+        return false
+    }
+
+    /// Marks where the step is, for the log. False once the loop has gone on without it, so it changes nothing more.
+    private func at(_ name: String) -> Bool {
+        guard !Task.isCancelled else { return false }
+        stepAt = name
+        return true
+    }
+
+    private func takeKick() -> Bool {
+        defer { kicked = false }
+        return kicked
+    }
+
+    private func woke() {
+        for (id, state) in health where state == .offline { backoffUntil[id] = nil }
+        kicked = true
     }
 
     private func loadIntegrations() async {
@@ -1079,7 +1132,8 @@ final class AccountStore {
     }
     /// Ten minutes old is fresh enough on screen; in the background only the schedule needs it, hourly.
     func refreshReport(maxAge: TimeInterval = 600) async {
-        guard !isDemo, Date().timeIntervalSince(reportAt) > maxAge else { return }
+        // Past midnight the last report has no row for today, which the menu would show as zero.
+        guard !isDemo, Date().timeIntervalSince(reportAt) > maxAge || !Calendar.current.isDateInToday(reportAt) else { return }
         reportAt = Date()
         // The first scan reads every transcript from the last 30 days; later scans use a cache.
         if let data = try? await bridgeOutput(["report"] + (config.sync == true ? syncFolder.map { ["--sync", $0.path] } ?? [] : []), timeout: 900), let value = try? JSONDecoder().decode(UsageReport.self, from: data) {
@@ -1112,9 +1166,10 @@ final class AccountStore {
     private func tick() async {
         guard !isDemo, !startupError else { return }
         defer { remote.events?.autopilotChanged() }
-        if python == nil { await refreshDependencies() }
-        guard python != nil else { return }
+        if python == nil { _ = at("finding Python"); await refreshDependencies() }
+        guard python != nil, at("applying preferences") else { return }
         await preferences?.effectsReady()
+        guard at("reading which logins are in use") else { return }
         if Date().timeIntervalSince(telemetry.memoryAt) > 120 {
             telemetry.memoryAt = Date()
             Task { await checkMemory() }
@@ -1128,7 +1183,9 @@ final class AccountStore {
             return
         }
         autopilotLog.note("active", nil)
+        guard at("reading usage") else { return }
         await refresh(config.accounts.filter { $0.ready && dueForRead($0) }.map(\.id))
+        guard at("after reading usage") else { return }
         Task { await refreshReport(maxAge: 3600) }
         checkTelemetry()
         // Keeps session search close to current, so opening Sessions shows results at once.
@@ -1141,13 +1198,16 @@ final class AccountStore {
         let now = Date().timeIntervalSince1970
         if let email = unknownLogins[.claude] { autopilotLog.note("unknown", "The Mac's Claude login (\(email)) isn't in the library; nothing moves until it's added.") } else {
             autopilotLog.note("unknown", nil)
+            guard at("moving logins") else { return }
             await steer(now: now)
+            guard at("after moving logins") else { return }
         }
         let minute = Calendar.current.component(.hour, from: Date()) * 60 + Calendar.current.component(.minute, from: Date())
         // Until the report has loaded, the schedule is unknown, not absent: wait for it.
         guard let report, WorkSchedule(report.activity)?.allowsPriming(atMinute: minute) ?? true else { return }
         for account in config.accounts where Planner.shouldPrime(account, usage: plannable[account.id], full: config.moveAt, now: now)
             && Date().timeIntervalSince(primedAt[account.id] ?? .distantPast) > 1800 {
+            guard at("priming \(account.name)") else { return }
             primedAt[account.id] = Date()
             saveUsageCache()
             autopilotLog.write("\(account.name): primed its 5-hour window.")

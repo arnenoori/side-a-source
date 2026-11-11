@@ -6,7 +6,7 @@ The app checks `https://getsidea.com/appcast.xml`, requires an Ed25519-signed fe
 
 ## Automatic updates
 
-Side A always checks for updates in the background (`SUEnableAutomaticChecks`; a Mac that had turned checks off gets them back on). Settings › General › Updates has one switch, **Update Automatically**, on by default. It is Sparkle's `automaticallyDownloadsUpdates`, so a Mac that had turned "Install updates automatically" off keeps it off.
+Side A always checks for updates in the background (`SUEnableAutomaticChecks`; a Mac that had turned checks off gets them back on). Sparkle's own schedule is daily, waits a full day after a check that failed, and its timer doesn't count time asleep, so a release could go unseen for over a day. `Updates` therefore runs its own: every 5 minutes and on wake it compares the wall clock with the last check (`UpdateSchedule`), and checks when an hour has passed, or 10 minutes after a check that couldn't reach the feed (Sparkle error 1002, treated as offline rather than a failed update, so the menu doesn't offer a download for it). An awake, online Mac sees a new release within about 65 minutes. A background check that finds an update doesn't open Sparkle's window; the menu shows "Update to X.Y.Z" (critical updates still get the window). Settings › General › Updates has one switch, **Update Automatically**, on by default. It is Sparkle's `automaticallyDownloadsUpdates`, so a Mac that had turned "Install updates automatically" off keeps it off.
 
 **On.** Sparkle downloads the update and offers its install-now block (`updater(_:willInstallUpdateOnQuit:immediateInstallationBlock:)`). `Updates` keeps it and returns true, then once a minute asks `QuietInstall.hold`, a pure function, whether now is safe. It is safe only when all of these hold:
 
@@ -21,7 +21,7 @@ Turning the switch off after a block was taken stops the quiet-install timer but
 
 Critical updates and user-initiated checks with nothing held behave as Sparkle does on its own: a critical download is not taken over, and Check for Updates… shows Sparkle's window.
 
-**Off.** Nothing changes from before: Side A returns false from the delegate, Sparkle ends the session so later checks still reach the feed, the menu shows "Update to X.Y.Z" when a check finds one, and the update installs when clicked or on quit. A waiting build the feed has superseded is dropped (`StagedUpdate.superseded`) and the newest one fetched.
+**Off.** Side A returns false from the delegate, Sparkle ends the session so later checks still reach the feed, the menu shows "Update to X.Y.Z" when a check finds one, and the update installs when clicked or on quit. A waiting build the feed has superseded is dropped (`StagedUpdate.superseded`) and the newest one fetched.
 
 **After the relaunch.** For 24 hours the menu shows "Updated to X.Y.Z", which opens that version's GitHub release (made from `releases/vX.Y.Z.md`). `UpdateHistory` records each launched version in user defaults; only a newer version than the last one launched counts. What survives the relaunch:
 

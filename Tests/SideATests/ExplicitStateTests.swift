@@ -269,6 +269,43 @@ private func room(at now: Double) -> [UsageWindow] {
     #expect(failure.code == nil)
 }
 
+/// A feed the Mac couldn't reach isn't a failed update: no Download line, and the schedule retries sooner.
+@Test func anUnreachableFeedIsOfflineNotAFailedUpdate() {
+    var failure = UpdateFailure()
+    failure.aborted(domain: SUSparkleErrorDomain, code: 1002)
+    #expect(failure.code == nil)
+    #expect(failure.offline)
+    failure.aborted(domain: SUSparkleErrorDomain, code: 1001)
+    #expect(!failure.offline)
+    failure.aborted(domain: SUSparkleErrorDomain, code: 3001)
+    failure.aborted(domain: SUSparkleErrorDomain, code: 1002)
+    #expect(failure.code == 3001)
+    failure.checked()
+    #expect(failure == UpdateFailure())
+}
+
+/// The day Side A sat on 0.5.50: the last check at launch, two releases that evening, a night asleep and offline.
+/// Sparkle's daily schedule wasn't due again until the next morning at 11:22; this one is due an hour after any check.
+@Test func updateChecksAreDueByTheClockWhateverHappenedSince() {
+    let launch = Date(timeIntervalSince1970: 1_794_000_000)
+    func due(_ after: TimeInterval, offline: Bool = false) -> Bool {
+        UpdateSchedule.due(lastCheck: launch, offline: offline, now: launch + after)
+    }
+    #expect(UpdateSchedule.due(lastCheck: nil, offline: false, now: launch))
+    #expect(!due(0))
+    #expect(!due(59 * 60))
+    #expect(due(3600))
+    // Waking after a night asleep: due at once, not a day of awake time later.
+    #expect(due(14 * 3600))
+    // A check that couldn't reach the feed is retried in minutes.
+    #expect(!due(9 * 60, offline: true))
+    #expect(due(10 * 60, offline: true))
+    // A clock set back doesn't hold checks off.
+    #expect(due(-60))
+    // Checked every tick: the longest an awake, online Mac goes between checks.
+    #expect(UpdateSchedule.interval + UpdateSchedule.tick <= 2 * 3600)
+}
+
 @Test func aWaitingUpdateIsDroppedOnlyWhenTheFeedHasANewerBuild() {
     let feed = Data("""
     <?xml version="1.0" standalone="yes"?><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel>

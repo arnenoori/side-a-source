@@ -64,7 +64,8 @@ signed string:  "SideA-Sig-v1\n" + METHOD + "\n" + pathname + "\n" + ts + "\n" +
 
 `pathname` is the URL path only, with no query string. Signatures are checked inside the install's
 Durable Object. The relay rejects a `ts` more than 120 seconds from its clock (the response
-carries `Date`, so the Mac can correct for skew once and retry), and a nonce seen in the last
+carries `Date`, so the Mac can correct for skew once and retry; the tunnel upgrade, whose body the
+Mac can't read, tells the two 401s apart by that `Date`, see tunnel.md, The Mac), and a nonce seen in the last
 5 minutes. Nonces, limiter windows and `last_send` are persisted in one `state` row per install
 (below), so an evicted object can't be replayed against or have its limits reset. Ed25519 is
 standard Web Crypto in Workers (checked: listed in the supported-algorithms table) and
