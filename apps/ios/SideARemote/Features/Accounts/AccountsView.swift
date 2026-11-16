@@ -31,18 +31,48 @@ struct AccountsView: View {
             }
         }
         .refreshable {
-            await withTaskGroup { group in
+            let failed = await withTaskGroup(of: Bool.self) { group in
                 for mac in macs {
-                    group.addTask { try? await mac.link?.engine.refreshAccounts() }
-                    group.addTask { await mac.tools.loadOutlook() }
+                    group.addTask {
+                        do { try await mac.link?.engine.refreshAccounts() } catch { return true }
+                        return false
+                    }
+                    group.addTask {
+                        await mac.tools.loadOutlook()
+                        return false
+                    }
                 }
+                var failed = false
+                for await result in group where result { failed = true }
+                return failed
             }
+            if failed { Pill.show("Couldn't refresh accounts") }
         }
         .overlay {
             if macs.allSatisfy({ $0.accounts.accounts.isEmpty }) {
-                ContentUnavailableView("No Accounts", systemImage: "person.crop.circle")
+                switch Self.emptyState(macs.map(\.mac.state)) {
+                case .noAccounts: ContentUnavailableView("No Accounts", systemImage: "person.crop.circle")
+                case .pairAgain(let reason):
+                    PairAgainView(reason: reason, mac: root.current.mac.name).background(Color(.systemGroupedBackground))
+                case .waiting: ProgressView()
+                // Offline: the list's banner says why and what to do.
+                case .banner: EmptyView()
+                }
             }
         }
+    }
+
+    enum Empty: Equatable {
+        case noAccounts, waiting, banner
+        case pairAgain(MacConnection.Offline)
+    }
+
+    /// What an empty Accounts says, by the shown Macs' states: "No Accounts" only once every Mac has said so.
+    static func emptyState(_ states: [MacConnection.State]) -> Empty {
+        if states.allSatisfy({ $0 == .live }) { return .noAccounts }
+        if states.count == 1, case .offline(let reason) = states[0], reason.needsPairing { return .pairAgain(reason) }
+        if states.contains(where: \.isOffline) { return .banner }
+        return .waiting
     }
 }
 
@@ -72,6 +102,7 @@ private struct MacAccounts: View {
             .headerProminence(.increased)
         }
         IncidentBanner()
+        ConnectionBanners()
         RotationSummarySection(now: now)
         if !attention.isEmpty {
             Section("Needs Attention") { rows(attention) }
@@ -340,7 +371,9 @@ struct AccountDetailView: View {
             }
             .navigationTitle(account.name)
             .navigationSubtitle(account.email)
-            .refreshable { try? await model.link?.engine.refreshAccounts() }
+            .refreshable {
+                do { try await model.link?.engine.refreshAccounts() } catch { Pill.show("Couldn't refresh accounts") }
+            }
             // Its session rows' swipes and menus.
             .sessionActions()
             .zoomDestination("account-\(model.macID)-\(account.id)")

@@ -53,11 +53,9 @@ struct CopyButton: View {
             UIPasteboard.general.string = text
             copies += 1
         }
-        .labelStyle(.iconOnly)
+        .labelStyle(IconTarget(size: CGSize(width: 36, height: 36), vertical: 4))
         .font(.footnote)
         .foregroundStyle(.secondary)
-        .frame(width: 36, height: 36)
-        .contentShape(.rect)
         .buttonStyle(.plain)
         .contentTransition(.symbolEffect(.replace))
         .sensoryFeedback(.success, trigger: copies)

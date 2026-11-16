@@ -32,6 +32,8 @@ struct TranscriptView: View {
     @State private var showsInfo = false
     @State private var seenCount = 0
     @State private var landed = false
+    /// Try Again on a page that wouldn't load: a new value restarts the feed.
+    @State private var loadAttempt = 0
     /// The reader has dragged the transcript since opening it.
     @State private var scrolled = false
     /// A reply that starts after this is written out from its first word; one already there just shows.
@@ -91,6 +93,19 @@ struct TranscriptView: View {
             .padding(.bottom, Space.xl)
             .animation(.easeOut(duration: 0.2), value: items.last?.id)
         }
+        .overlay {
+            if model.link != nil, subagent == nil, items.isEmpty, model.transcripts.messages[sessionID] == nil {
+                if model.transcripts.loadFailures.contains(sessionID) {
+                    ContentUnavailableView {
+                        Label("Can't Load Messages", systemImage: "exclamationmark.triangle")
+                    } actions: {
+                        Button("Try Again") { loadAttempt += 1 }.buttonStyle(.glass)
+                    }
+                } else {
+                    DelayedProgress()
+                }
+            }
+        }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -138,6 +153,7 @@ struct TranscriptView: View {
         .sheet(isPresented: $showsInfo) {
             if let session { SessionInfoSheet(session: session) }
         }
+        .sensoryFeedback(.error, trigger: model.transcripts.notices[sessionID]) { _, new in new != nil }
         .sensoryFeedback(trigger: answered.count) { old, new in
             guard new > old, let last = answered.last, ApprovalSheet.felt.remove(last.id) == nil else { return nil }
             switch last.outcome {
@@ -156,7 +172,7 @@ struct TranscriptView: View {
             await Task.yield()
             position.scrollTo(edge: .bottom)
         }
-        .task(id: sessionID) {
+        .task(id: "\(sessionID)#\(loadAttempt)") {
             // Live: the newest page, then the Mac's appends, while this transcript is on screen.
             if let subagent { return await model.tools.follow(subagent, into: model.transcripts) }
             await model.link?.follow(sessionID)
@@ -623,15 +639,29 @@ private struct MessageActions: View {
             let text = model.transcripts.text(message, in: sessionID) ?? ""
             CopyButton(text: text)
             ShareLink(item: text) {
-                Image(systemName: "square.and.arrow.up").frame(width: 32, height: 32)
+                Image(systemName: "square.and.arrow.up").frame(width: 32, height: 32).hitArea(horizontal: 2, vertical: 6)
             }
             .accessibilityLabel("Share")
             ForkFromHereButton(sessionID: sessionID, message: message)
-                .labelStyle(.iconOnly)
-                .frame(width: 32, height: 32)
+                .labelStyle(IconTarget(size: CGSize(width: 32, height: 32), horizontal: 2, vertical: 6))
         }
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .buttonStyle(.borderless)
+    }
+}
+
+/// A spinner for a page with nothing to show yet, only once the wait is long enough to notice: a quick load shows no flash.
+private struct DelayedProgress: View {
+    @State private var shown = false
+
+    var body: some View {
+        ProgressView()
+            .controlSize(.large)
+            .opacity(shown ? 1 : 0)
+            .task {
+                try? await Task.sleep(for: .milliseconds(400))
+                shown = true
+            }
     }
 }

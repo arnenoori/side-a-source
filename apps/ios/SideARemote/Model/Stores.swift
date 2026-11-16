@@ -231,6 +231,13 @@ final class TranscriptStore {
 
     enum WholeLoad: Hashable { case loading, failed }
 
+    /// Sessions whose newest page wouldn't load, until one does.
+    private(set) var loadFailures: Set<SessionKey> = []
+
+    func loadFailed(_ failed: Bool, for session: SessionKey) {
+        if failed { loadFailures.insert(session) } else { loadFailures.remove(session) }
+    }
+
     /// Live: page earlier messages in, and send an answer again. Nil in the demo.
     @ObservationIgnored var onLoadEarlier: ((SessionKey) -> Void)?
     /// `GET …/messages/{seq}`; nil where nothing can fetch it.
@@ -346,7 +353,11 @@ final class TranscriptStore {
     private(set) var outgoing: [SessionKey: [Outgoing]] = [:]
     private(set) var unsent: [SessionKey: Unsent] = [:]
     /// What's typed in each session's composer, kept across visits; a failed reply or a taken-back note returns here.
-    var drafts: [SessionKey: String] = [:]
+    var drafts: [SessionKey: String] = [:] {
+        didSet { if drafts != oldValue { onDraftsChanged?() } }
+    }
+    /// Live: the link saves the drafts a moment after they settle, so a kill doesn't lose what was typed.
+    @ObservationIgnored var onDraftsChanged: (() -> Void)?
     /// A steer the Mac refused ("Couldn't stop it"), shown under the field until the next one.
     private(set) var notices: [SessionKey: String] = [:]
 
@@ -446,11 +457,16 @@ final class TranscriptStore {
         restore(text, in: session)
     }
 
-    @discardableResult func fail(_ id: String, in session: SessionKey, reason: String, item: String?) -> Bool {
+    /// `earlier`: replies that failed before this one and are folded into it, since a session shows one unsent reply. Their
+    /// words lead, and replace the field when the field still holds just them.
+    @discardableResult func fail(_ id: String, in session: SessionKey, reason: String, item: String?, joining earlier: [String] = []) -> Bool {
         guard let turn = outgoing[session]?.first(where: { $0.id == id }) else { return false }
         outgoing[session]?.removeAll { $0.id == id }
-        unsent[session] = Unsent(text: turn.text, reason: reason, item: item)
-        restore(turn.text, in: session)
+        let text = (earlier + [turn.text]).joined(separator: "\n\n")
+        unsent[session] = Unsent(text: text, reason: reason, item: item)
+        let typed = drafts[session, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
+        if earlier.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == typed }) { drafts[session] = "" }
+        restore(text, in: session)
         return true
     }
 

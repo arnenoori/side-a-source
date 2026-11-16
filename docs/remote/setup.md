@@ -58,7 +58,7 @@ carried only in the QR code; pairing is QR-only. No MagicDNS, HTTPS certificates
    - **Settings > Setup** gets a "Side A Remote" section at the top (see [Setup tab](#setup-tab)).
    - **The guided tour** gets one more step, `.remote`, ringed around the gear button: "Your
      sessions on iPhone: Settings › Remote." It's shown only while nothing is paired, and only in
-     the tour (new installs, or Settings > General > Guided tour > Show again). Existing users see
+     the tour (new installs). Existing users see
      it once on the first launch of the version that ships Remote: the tour runs with only that
      step (`tourSeenRemote` in `UserDefaults`, separate from `tourSeen`).
    - **The release notes** of that version, as for any feature.

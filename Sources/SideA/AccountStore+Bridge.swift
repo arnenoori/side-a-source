@@ -67,6 +67,23 @@ extension AccountStore {
         do { limitHook = try await integration("hook", enabled ? "on" : "off") } catch { self.error = error.localizedDescription }
     }
 
+    /// Asks first, from a right-click on Quit: the one way to take Side A off this Mac and undo what it set up.
+    func confirmUninstall() {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Remove Side A?"
+        alert.informativeText = "Side A takes its line out of ~/.zshrc, restores your Claude Code statusline and hooks, stops opening at login, deletes its caches and search index, and moves itself to the Trash. Your conversations aren't touched, and your accounts and their logins stay unless you choose otherwise."
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = "Also sign out of and forget my accounts"
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons[0].hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let forget = alert.suppressionButton?.state == .on
+        Task { await uninstall(forgetAccounts: forget) }
+    }
+
     /// Undoes what Side A set up outside its folder, then moves the app to the Trash. Logins stay in the Keychain
     /// unless the accounts are forgotten, which signs each out through its own CLI first.
     func uninstall(forgetAccounts: Bool) async {

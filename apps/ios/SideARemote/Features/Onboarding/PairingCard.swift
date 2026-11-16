@@ -135,7 +135,7 @@ struct PairingCard: View {
         case .scanAgain, .scanNewCode: back()
         case .openTailscale: openURL(Tailscale.app)
         case .openSettings: openURL(URL(string: UIApplication.openSettingsURLString)!)
-        case .appStore: openURL(URL(string: "itms-apps://apps.apple.com/app/side-a-remote")!)
+        case .appStore: openURL(SideARemoteApp.appStore)
         }
     }
 }

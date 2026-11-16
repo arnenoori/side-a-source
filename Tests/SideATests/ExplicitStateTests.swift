@@ -529,3 +529,114 @@ private final class Signatures: @unchecked Sendable {
     signatures.finish(1)
     try await until(remote.server != nil)
 }
+
+/// A refused key can be asked again without making a new one, so a mistaken Deny doesn't unpair every iPhone.
+@MainActor @Test func aRefusedKeyCanBeTriedAgainWithoutLosingDevices() async throws {
+    let keychain = try TestKeychain()
+    let store = AccountStore(demo: true, root: temporaryRoot())
+    let remote = RemoteController(store: store, keychain: keychain.store, addresses: ["127.0.0.1"], port: freePort())
+    store.remote = remote
+    defer { remote.server?.stop() }
+    try remote.devices.add(RemoteDevice(id: "d1", name: "iPhone", model: "", system: "", app: "", build: 1, hash: Data(count: 32), secretHash: "s", created: 1, lastSeen: 2), replacing: nil)
+    let answers = Answers([false, true])
+    remote.signs = { _ in answers.next() }
+    remote.on = true
+    remote.start()
+    try await until(remote.key.state == .refused)
+    #expect(remote.pairReadiness == .keyBroken)
+    remote.tryKeyAgain()
+    try await until(remote.server != nil)
+    #expect(remote.key.state == .signed)
+    #expect(remote.devices.devices.count == 1)
+}
+
+private final class Answers: @unchecked Sendable {
+    private let lock = NSLock()
+    private var left: [Bool]
+    init(_ answers: [Bool]) { left = answers }
+    func next() -> Bool { lock.withLock { left.isEmpty ? true : left.removeFirst() } }
+}
+
+/// The block was called but Side A is still running: the update is let go so checking works again.
+@MainActor @Test func anInstallThatNeverRelaunchesDoesNotStallUpdatesForTheRestOfTheLaunch() async throws {
+    let updates = Updates()
+    updates.automaticallyUpdates = true
+    updates.relaunchGrace = .milliseconds(50)
+    updates.presence = { UserPresence(idle: 601, locked: false) }
+    let updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: UpdateUserDriver(), delegate: nil)
+    var installs = 0
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installs += 1 }))
+    updates.installIfQuiet()
+    try await until(installs == 1)
+    #expect(updates.staged != nil)
+    try await until(updates.staged == nil)
+    // A fresh download can be held and installed again.
+    #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installs += 1 }))
+    updates.installIfQuiet()
+    try await until(installs == 2)
+}
+
+// MARK: Library that couldn't be read
+
+/// An unreadable library is read again, never written over meanwhile, and the app carries on once it reads.
+@MainActor @Test func anUnreadableLibraryIsReadAgainAndNeverOverwritten() throws {
+    let root = temporaryRoot()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("config.json")
+    let garbage = Data("not json".utf8)
+    try garbage.write(to: file)
+    let store = AccountStore(demo: true, root: root)
+    store.readConfig()
+    #expect(store.startupError && store.error != nil)
+    #expect(!store.persist())
+    store.readConfig()
+    #expect(store.startupError)
+    #expect(try Data(contentsOf: file) == garbage)
+
+    var fixed = Configuration()
+    fixed.accounts = [Account(name: "Kept", email: "k@example.com", allowAuto: true)]
+    try PrivateFile.write(fixed, to: file)
+    store.readConfig()
+    #expect(!store.startupError && store.error == nil)
+    #expect(store.config.accounts.map(\.name) == ["Kept"])
+}
+
+/// The file can be gone for a moment while an editor saves it; an empty library written then would replace the fix.
+@MainActor @Test func aLibraryThatIsMissingForAMomentIsNotStartedOver() throws {
+    let root = temporaryRoot()
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let file = root.appendingPathComponent("config.json")
+    try Data("not json".utf8).write(to: file)
+    let store = AccountStore(demo: true, root: root)
+    store.readConfig()
+    #expect(store.startupError)
+    try FileManager.default.removeItem(at: file)
+    store.readConfig()
+    #expect(store.startupError)
+    #expect(!store.persist())
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+}
+
+// MARK: Pool start retries
+
+@MainActor @Test func aFailedPoolStartIsTriedAgainFromTheTickWithABackOff() async throws {
+    let store = AccountStore(demo: true, root: temporaryRoot())
+    store.checksLogins = true
+    store.poolPreferredPort = 0
+    store.config.pool = true
+    store.poolRun = .failed("busy")
+    store.retryPoolIfDue()
+    try await Task.sleep(for: .milliseconds(100))
+    guard case .failed = store.poolRun else { Issue.record("retried with no back-off set"); return }
+
+    let now = Date()
+    store.poolRetryAt = now + 60
+    store.retryPoolIfDue(now: now)
+    try await Task.sleep(for: .milliseconds(100))
+    guard case .failed = store.poolRun else { Issue.record("retried before its time"); return }
+
+    store.retryPoolIfDue(now: now + 61)
+    try await until(store.pool != nil)
+    #expect(store.poolFailures == 0 && store.poolRetryAt == nil)
+    store.pool?.stop()
+}

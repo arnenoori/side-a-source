@@ -66,24 +66,77 @@ final class RemotePush {
         perform(activities.reported(device, activities: Array(registration.activityTokens.keys), now: Date().timeIntervalSince1970), state: activities.state)
         // The phone's Live Activity switch comes with this report, and a card it turned off ends now.
         defer { activity(activities.state) }
-        guard let relay else { return false }
+        return await put(device, registration, secretHash: record.secretHash, app: record.app)
+    }
+
+    /// Phones whose stored registration the relay hasn't acknowledged. The phone reports once per connection, so
+    /// without a retry here a relay that was down at that moment would leave it without notifications.
+    private(set) var unacknowledged: Set<String> = []
+    @ObservationIgnored private var retrying: Task<Void, Never>?
+    private var attempts = 0
+    /// The first wait before a retry; it doubles to ten times as long. Tests shorten it.
+    var retryAfter: Duration = .seconds(15)
+    /// Tests stand in for the relay's `PUT /v1/devices/{id}`.
+    var putDevice: ((String, RelayClient.Device) async throws -> Bool)?
+
+    private func put(_ device: String, _ registration: PushRegistration, secretHash: String, app: String) async -> Bool {
         let input = RelayClient.Device(apnsToken: registration.apnsToken, bundleID: registration.bundleID,
-                                       apnsEnvironment: registration.apnsEnvironment.rawValue, secretHash: record.secretHash,
-                                       pushToStartToken: registration.pushToStartToken, appVersion: Self.version(record.app))
+                                       apnsEnvironment: registration.apnsEnvironment.rawValue, secretHash: secretHash,
+                                       pushToStartToken: registration.pushToStartToken, appVersion: Self.version(app))
+        let send: (String, RelayClient.Device) async throws -> Bool
+        if let putDevice { send = putDevice } else if let relay { send = { try await relay.put($0, $1) } } else { return false }
         do {
-            let verified = try await relay.put(device, input)
+            let verified = try await send(device, input)
             relayState = "ok"
             note(device, verified ? "ok" : "unverified")
+            unacknowledged.remove(device)
             return true
         } catch {
-            failed(error, device: device, doing: "register a phone")
+            if failed(error, device: device, doing: "register a phone") {
+                unacknowledged.insert(device)
+                scheduleRetry()
+            } else {
+                unacknowledged.remove(device)
+            }
             return false
         }
+    }
+
+    private func scheduleRetry() {
+        guard retrying == nil, !unacknowledged.isEmpty else { return }
+        let wait = retryAfter * min(1 << attempts, 10)
+        attempts += 1
+        retrying = Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self else { return }
+            retrying = nil
+            await retryUnacknowledged()
+        }
+    }
+
+    private func retryUnacknowledged() async {
+        for device in unacknowledged.sorted() {
+            guard let record = controller?.devices.devices.first(where: { $0.id == device }), let registration = record.push else {
+                unacknowledged.remove(device)
+                continue
+            }
+            _ = await put(device, registration, secretHash: record.secretHash, app: record.app)
+        }
+    }
+
+    /// The tunnel connected or the network changed: the relay may be reachable now, so waiting registrations go at once.
+    func relayMayBeBack() {
+        guard !unacknowledged.isEmpty else { return }
+        retrying?.cancel()
+        retrying = nil
+        attempts = 0
+        Task { [weak self] in await self?.retryUnacknowledged() }
     }
 
     /// Revoke and Remove: the relay forgets the device. Best effort; an unknown device is no error.
     func forget(_ device: String) {
         activities.forget(device)
+        unacknowledged.remove(device)
         guard let relay else { return }
         Task { try? await relay.delete(device) }
     }
@@ -216,6 +269,10 @@ final class RemotePush {
     /// Remote off: nothing held goes, and nothing waits to. Turned on again, it starts empty, as the events do: what was
     /// already open then isn't pushed. Live Activities end, since nothing would update them.
     func stopScheduling() {
+        retrying?.cancel()
+        retrying = nil
+        attempts = 0
+        unacknowledged = []
         wake?.cancel()
         wake = nil
         held = [:]
@@ -452,11 +509,15 @@ final class RemotePush {
         try? controller.devices.update(device) { $0.pushResult = result }
     }
 
-    private func failed(_ error: Error, device: String?, doing: String) {
+    /// Whether the failure is the relay being out of reach, which a later try can mend.
+    @discardableResult
+    private func failed(_ error: Error, device: String?, doing: String) -> Bool {
         let failure = error as? RelayClient.Failure
-        if failure == nil || failure == .unreachable || (failure?.status ?? 0) >= 500 { relayState = "unreachable" }
+        let transient = failure == nil || failure == .unreachable || (failure?.status ?? 0) >= 500
+        if transient { relayState = "unreachable" }
         log.error("couldn't \(doing, privacy: .public): \(error.localizedDescription, privacy: .public)")
         if let device, let failure, failure.status == 409 || failure.status == 400 { note(device, "rejected") }
+        return transient
     }
 
     nonisolated static func key(_ device: RemoteDevice) -> PushKey? {

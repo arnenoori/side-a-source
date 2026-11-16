@@ -132,6 +132,31 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
+/// Pull to refresh, Test Connection and a network change all ask again; the loop had ended, so they used to do nothing.
+@Test func needsUpdateComesBackWhenAskedAgain() async throws {
+    let mac = FakeMac()
+    mac.hello(.init(body: try helloData { $0["minClientBuild"] = 99 }))
+    let sync = try engine(mac)
+    await sync.start()
+    try await until("needs update") { await sync.state.connection == .needsUpdate(mac: false) }
+    mac.hello(.init(body: try Fixtures.data("Hello.paired")))
+    await sync.reconnectNow()
+    try await live(sync, try await mac.socket(0))
+    await sync.stop()
+}
+
+/// Updating the Mac is the fix, and the Mac tells nobody it happened.
+@Test func aMacThatWasTooOldIsFoundAgainOnceItUpdates() async throws {
+    let mac = FakeMac()
+    mac.hello(.init(body: try helloData { $0["maxProtocol"] = 0 }))
+    let sync = try engine(mac)
+    await sync.start()
+    try await until("mac needs update") { await sync.state.connection == .needsUpdate(mac: true) }
+    mac.hello(.init(body: try Fixtures.data("Hello.paired")))
+    try await live(sync, try await mac.socket(0))
+    await sync.stop()
+}
+
 /// A retry with the Mac out of reach proves nothing, so the screen keeps saying what it said until the Mac answers.
 @Test func aRetryThatCantReachTheMacDoesntChangeWhatsShown() async throws {
     let mac = FakeMac()

@@ -77,6 +77,7 @@ final class LiveLink {
         let engine = engine
         model.requests.onAnswer = { [weak self] request, answer, mode, confirm in self?.send(request, answer, mode: mode, confirm: confirm) }
         model.transcripts.onRetry = { [weak self] answered in self?.retry(answered) }
+        model.transcripts.onDraftsChanged = { [weak self] in self?.saveSoon() }
         PushRegistrar.shared.observers[mac.endpoint.macID] = { [weak self] in self?.reportPush() }
         model.transcripts.onLoadEarlier = { session in Task { try? await engine.transcript(session).loadEarlier() } }
         model.transcripts.onLoadWhole = { session, seq in
@@ -88,6 +89,7 @@ final class LiveLink {
             let vpn = update.availableInterfaces.contains { $0.type == .other }
             Task { @MainActor in
                 model?.mac.vpnUp = vpn
+                PushRegistrar.shared.reportOwed()
                 await engine.reconnectNow()
             }
         }
@@ -123,7 +125,10 @@ final class LiveLink {
 
     func setForeground(_ foreground: Bool) {
         if !foreground { save() }
-        if foreground { model?.mac.foregrounded() }
+        if foreground {
+            model?.mac.foregrounded()
+            PushRegistrar.shared.reportOwed()
+        }
         Task { [engine, mac] in
             // Back in front: race the paths now rather than wait out a backoff from while it was away.
             if foreground { await Paths.shared(for: mac.endpoint, credentials: KeychainCredentials()).foreground() }
@@ -151,10 +156,24 @@ final class LiveLink {
 
     /// A session just started is listed before its agent writes the transcript, which 404s until then (a trust dialog
     /// can hold it for minutes). Without a page nothing streams, so it asks again while the transcript is on screen.
+    /// A page that can't be had says so, which the transcript shows with Try Again; a refusal that retrying won't
+    /// change stops here, and the others keep trying behind that message.
     private func loadLatest(_ feed: TranscriptFeed, _ session: SessionKey) async {
         var wait = Duration.milliseconds(500)
+        model?.transcripts.loadFailed(false, for: session)
         while !Task.isCancelled {
-            do { return try await feed.loadLatest() } catch let failure as RemoteFailure where ![404, 409, 503].contains(failure.status) { return } catch {}
+            do {
+                try await feed.loadLatest()
+                model?.transcripts.loadFailed(false, for: session)
+                return
+            } catch let failure as RemoteFailure where ![404, 409, 503].contains(failure.status) {
+                model?.transcripts.loadFailed(true, for: session)
+                return
+            } catch is RemoteFailure {
+                // Not written yet: it's still starting, so the page keeps waiting rather than failing.
+            } catch {
+                if !Task.isCancelled { model?.transcripts.loadFailed(true, for: session) }
+            }
             try? await Task.sleep(for: wait)
             wait = min(wait * 2, .seconds(4))
         }
@@ -269,8 +288,10 @@ final class LiveLink {
 
     private func save() {
         saving?.cancel()
-        guard let model, state.epoch != nil else { return }
-        model.cache(finished: state.finished).save(mac.endpoint.macID)
+        guard let model else { return }
+        // Before the first snapshot there's nothing finished to say, and the cache's own list stays.
+        let finished = state.epoch != nil ? state.finished : StateCache.load(mac.endpoint.macID)?.finished ?? [:]
+        model.cache(finished: finished).save(mac.endpoint.macID)
     }
 
     /// The APNs token and notification settings to the Mac: on each connection, since the Mac is the
@@ -356,7 +377,7 @@ enum AnswerAttempt: Equatable {
     case sending(item: String, retried: Bool)
     /// Retry was tapped and it's being signed: no outcome to read until it's queued.
     case retrying(item: String)
-    /// 409 `outcome_unknown`, kept for Retry.
+    /// 409 `outcome_unknown`, or an answer that aged out of the outbox with the Mac out of reach; kept for Retry.
     case unknown(item: String)
 
     /// What the row shows (nil: leave it, the request settled elsewhere) and what's left; nil once settled.
@@ -387,9 +408,9 @@ extension TranscriptStore.Delivery {
         case .answeredElsewhere?: .answeredElsewhere
         // Gone after a retry isn't a refusal; the first attempt may be why.
         case .failed(let error)? where retried && error.code == .requestNotFound: .gone
-        case .unknown?: .unknown
+        // Never sent or never heard back: either way the answer may not be there, and Retry sends it again.
+        case .unknown?, .notDelivered?: .unknown
         case .failed(let error)?: .failed(error.message)
-        case .notDelivered?: .failed("The Mac couldn't be reached in time.")
         case nil: .sending
         }
     }

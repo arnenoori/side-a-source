@@ -30,21 +30,27 @@ public actor TranscriptFeed {
     private var buffered: [ServerEvent] = []
     private var repair: Task<Void, Never>?
     private var closed = false
+    /// A reset dropped the cursor and the newest page hasn't arrived: the window held is the old generation's, shown
+    /// until it does, and nothing streams into it.
+    private var reloading = false
+    private var reload: Task<Void, Never>?
+    private let reloadWait: Duration
 
-    init(sessionID: SessionKey, fetch: @escaping Fetch, subscribe: @escaping @Sendable (SessionKey, Cursor?) async -> Void,
-         unsubscribe: @escaping @Sendable (SessionKey) async -> Void) {
-        self.sessionID = sessionID; self.fetch = fetch; self.subscribe = subscribe; self.unsubscribe = unsubscribe
+    init(sessionID: SessionKey, reloadWait: Duration = .milliseconds(500), fetch: @escaping Fetch,
+         subscribe: @escaping @Sendable (SessionKey, Cursor?) async -> Void, unsubscribe: @escaping @Sendable (SessionKey) async -> Void) {
+        self.sessionID = sessionID; self.reloadWait = reloadWait; self.fetch = fetch; self.subscribe = subscribe; self.unsubscribe = unsubscribe
     }
 
     /// The highest contiguous seq held; -1 before anything is.
     public var last: Int { window.messages.last?.seq ?? -1 }
-    var loaded: Bool { !window.generation.isEmpty }
+    var loaded: Bool { !window.generation.isEmpty && !reloading }
 
     public func loadLatest() async throws {
         let page = try await fetch(.latest)
         window = TranscriptWindow(generation: page.generation, messages: page.messages, hasEarlier: page.before != nil)
         before = page.before
         cursor = page.after
+        reloading = false
         publish()
         await subscribe(sessionID, cursor)
     }
@@ -65,6 +71,7 @@ public actor TranscriptFeed {
     public func close() async {
         closed = true
         repair?.cancel()
+        reload?.cancel()
         for watcher in watchers.values { watcher.finish() }
         watchers = [:]
         await unsubscribe(sessionID)
@@ -120,14 +127,34 @@ public actor TranscriptFeed {
         }
     }
 
-    /// Drops the window and starts again from the newest page.
+    /// Starts again from the newest page. The old window stays on screen until it arrives, and a page that can't be had
+    /// is asked for again until it can: nothing else would, as every append is dropped meanwhile.
     func reset() async {
         repair = nil
         buffered = []
-        window = TranscriptWindow()
+        reloading = true
+        window.repairing = false
         cursor = nil
         publish()
-        try? await loadLatest()
+        do { try await loadLatest() } catch { startReload() }
+    }
+
+    /// The Mac is reachable again: ask for the page now rather than when the wait ends.
+    func reloadNow() {
+        guard reloading, !closed else { return }
+        startReload()
+    }
+
+    private func startReload() {
+        reload?.cancel()
+        reload = Task {
+            var wait = reloadWait
+            while reloading, !Task.isCancelled {
+                try? await Task.sleep(for: wait)
+                guard reloading, !Task.isCancelled else { return }
+                do { try await loadLatest() } catch { wait = min(wait * 2, .seconds(8)) }
+            }
+        }
     }
 
     private func startRepair() {

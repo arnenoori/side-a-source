@@ -69,8 +69,7 @@ private struct OneMacHistory: View {
     var body: some View {
         // Capabilities arrive with the Mac's hello; until then there's nothing to say.
         if model.mac.state == .live && !model.tools.can(.history) && !model.tools.can(.search) {
-            ContentUnavailableView("No History", systemImage: "clock",
-                                   description: Text("\(model.mac.name) doesn't share its history."))
+            ContentUnavailableView("Update Side A on \(model.mac.name)", systemImage: "arrow.down.circle")
         } else if !query.isEmpty, let search {
             HistoryResults(search: search, list: list, query: query)
         } else if let list {
@@ -172,6 +171,8 @@ private struct MacRecent: View {
             ForEach(pinned + latest) { HistoryRow(past: $0, list: list) }
             if !list.loaded && list.loading {
                 ProgressView().frame(maxWidth: .infinity)
+            } else if model.mac.state == .live, !model.tools.can(.history) {
+                BannerRow(symbol: "arrow.down.circle", text: "Update Side A on \(model.mac.name)")
             } else if list.sessions.isEmpty {
                 Text(list.error ?? "No past sessions").foregroundStyle(.secondary)
             } else {

@@ -213,7 +213,7 @@ See [how the island works](docs/architecture.md#dynamic-island) for the hooks it
   working" when nothing more urgent is there. See [security](SECURITY.md#keep-awake).
 - **Sync with your other Macs:** combines usage, working hours, your account list and your settings
   through iCloud Drive. Logins are never synced; sign in once on each Mac.
-- **Remove Side A** undoes its shell line, statusline, hooks and keep-awake helper, deletes its caches and search
+- **Remove Side A**, from a right-click on Quit in the menu, undoes its shell line, statusline, hooks and keep-awake helper, deletes its caches and search
   index, and moves it to the Trash. Accounts stay unless you also choose to forget them.
 - Only one copy of Side A runs at a time. Opened from Downloads or a disk image, it offers to move
   itself to Applications, where updates can install.

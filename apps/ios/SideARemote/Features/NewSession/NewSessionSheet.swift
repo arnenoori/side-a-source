@@ -23,6 +23,8 @@ struct NewSessionSheet: View {
     /// A terminal tab on the Mac attached to it as well, so it's in the Mac's tabs too. Remembered across sheets.
     @AppStorage("newSession.openOnMac") private var openOnMac = true
     @State private var error: String?
+    /// The folders wouldn't load: shown in place of the list, with Try Again, not in the chip bar.
+    @State private var loadError: String?
     @State private var starting = false
     @State private var loading = true
     @State private var picking = false
@@ -71,6 +73,20 @@ struct NewSessionSheet: View {
                     EmptyView()
                 } else if loading && tools.projects.isEmpty {
                     ProgressView()
+                } else if tools.projects.isEmpty, let loadError {
+                    ContentUnavailableView {
+                        Label("Can't Load Folders", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(loadError)
+                    } actions: {
+                        Button("Try Again") {
+                            loading = true
+                            Task { await load() }
+                        }
+                        .buttonStyle(.glass)
+                        .needsMac()
+                        .environment(model)
+                    }
                 } else if tools.projects.isEmpty {
                     ContentUnavailableView("No Folders Yet", systemImage: "folder",
                                            description: Text("Folders where you've used Claude or Codex on \(model.mac.name) show here."))
@@ -92,6 +108,8 @@ struct NewSessionSheet: View {
                         Button("Start") { start() }
                             .buttonStyle(.glassProminent)
                             .disabled(!canStart)
+                            .needsMac()
+                            .environment(model)
                     }
                 }
             }
@@ -253,7 +271,8 @@ struct NewSessionSheet: View {
 
     private func load() async {
         async let options: Void = tools.loadOptions()
-        do { try await tools.loadProjects() } catch { self.error = MacTools.message(error) }
+        loadError = nil
+        do { try await tools.loadProjects() } catch { loadError = MacTools.message(error) }
         await options
         loading = false
         if project == nil, tools.projects.count == 1 { project = tools.projects.first }

@@ -37,7 +37,7 @@ private actor Pages {
 }
 
 private func feed(_ pages: Pages) -> TranscriptFeed {
-    TranscriptFeed(sessionID: "s", fetch: { try await pages.next($0) }, subscribe: { _, cursor in await pages.subscribe(cursor) }, unsubscribe: { _ in })
+    TranscriptFeed(sessionID: "s", reloadWait: .milliseconds(5), fetch: { try await pages.next($0) }, subscribe: { _, cursor in await pages.subscribe(cursor) }, unsubscribe: { _ in })
 }
 
 private func seqs(_ feed: TranscriptFeed) async -> [Int] { await feed.window.messages.map(\.seq) }
@@ -98,6 +98,24 @@ private func seqs(_ feed: TranscriptFeed) async -> [Int] { await feed.window.mes
     let window = await feed.window
     #expect(window.generation == "g4" && window.messages.count == 7 && !window.repairing)
     #expect(await pages.subscribed == [cursor("g1", 9, 9), cursor("g2", 2, 2), cursor("g3", 3, 3), cursor("g4", 6, 6)])
+}
+
+@Test func aResetWhosePageFailsKeepsTheOldWindowAndLoadsAgainUntilItArrives() async throws {
+    let pages = Pages([.success(page(5...9)), .failure(URLError(.notConnectedToInternet)), .failure(URLError(.timedOut)),
+                       .success(page(0...3, generation: "g2"))])
+    let feed = feed(pages)
+    try await feed.loadLatest()
+    await feed.receive(.transcriptReset(sessionID: "s", generation: "g2"))
+    // Not blanked while the page is out of reach, and nothing streams into the old generation.
+    #expect(await seqs(feed) == Array(5...9))
+    await feed.receive(.transcriptAppend(delta([message(10)], rev: 10)))
+    #expect(await seqs(feed) == Array(5...9))
+    try await until("the page") { await feed.window.generation == "g2" }
+    #expect(await seqs(feed) == [0, 1, 2, 3])
+    #expect(await pages.subscribed.last == cursor("g2", 3, 3))
+    // Loaded again: the stream flows.
+    await feed.receive(.transcriptAppend(delta([message(4)], generation: "g2", rev: 4)))
+    #expect(await seqs(feed) == [0, 1, 2, 3, 4])
 }
 
 @Test func loadEarlierPrependsTheOlderPage() async throws {

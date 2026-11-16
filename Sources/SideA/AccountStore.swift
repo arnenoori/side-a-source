@@ -167,6 +167,8 @@ final class AccountStore {
     @ObservationIgnored var poolShareRunning = false
     /// Tests take any free port, whatever else on this Mac holds the real one.
     @ObservationIgnored var poolPreferredPort = PoolProxy.preferredPort
+    @ObservationIgnored var poolFailures = 0
+    @ObservationIgnored var poolRetryAt: Date?
     /// Tests stand in for tailscaled.
     @ObservationIgnored var tailscaleStatus: @Sendable () async -> TailscaleStatus = { await TailscaleCLI.shared.status() }
     @ObservationIgnored var poolQuitObserver: (any NSObjectProtocol)?
@@ -255,8 +257,7 @@ final class AccountStore {
                                      }
                                  })
         } else if FileManager.default.fileExists(atPath: configURL.path) {
-            do { config = try PrivateFile.read(Configuration.self, from: configURL).validated() }
-            catch { self.error = error.localizedDescription; startupError = true }
+            readConfig()
         } else if Bundle.main.bundleURL.pathExtension == "app" {
             // First launch: Autopilot only helps while running, so start with the Mac.
             try? SMAppService.mainApp.register()
@@ -268,17 +269,7 @@ final class AccountStore {
             mirror.start()
             preferences = mirror
         }
-        if !isDemo, let cache = try? PrivateFile.read(UsageCache.self, from: usageCacheURL) {
-            // Show the last numbers at once and keep each account on its normal polling schedule.
-            usage = cache.usage; usageAt = cache.at
-            backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []).intersection(config.accounts.map(\.id))
-            health = (cache.issues ?? [:]).reduce(into: [:]) { kept, entry in
-                if config.accounts.contains(where: { $0.id == entry.key }) { kept[entry.key] = LoginHealth(saved: entry.value) }
-            }
-            // Caches from before readAt existed only know when a read was last attempted.
-            readAt = cache.readAt ?? cache.at
-            activeIDs = (cache.active ?? [:]).reduce(into: [:]) { ids, item in AgentProvider(rawValue: item.key).map { ids[$0] = item.value } }
-        }
+        if !isDemo { loadUsageCache() }
         if !isDemo {
             report = try? PrivateFile.read(UsageReport.self, from: reportURL)
             // Files from the 0.4 session runner; nothing reads them any more.
@@ -313,6 +304,37 @@ final class AccountStore {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.woke() }
         }
+    }
+
+    /// Reads the library. While it can't be read nothing is written over it (`persist` refuses), and the tick reads it
+    /// again, so fixing the file brings Side A back without a relaunch.
+    func readConfig() {
+        let retrying = startupError
+        do {
+            config = try PrivateFile.read(Configuration.self, from: configURL).validated()
+            startupError = false
+            if retrying {
+                error = nil
+                if !isDemo { loadUsageCache() }
+            }
+        } catch {
+            self.error = error.localizedDescription
+            startupError = true
+        }
+    }
+
+    /// The last readings, shown at once; what belongs to accounts the library doesn't have is left out.
+    private func loadUsageCache() {
+        guard let cache = try? PrivateFile.read(UsageCache.self, from: usageCacheURL) else { return }
+        // Show the last numbers at once and keep each account on its normal polling schedule.
+        usage = cache.usage; usageAt = cache.at
+        backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []).intersection(config.accounts.map(\.id))
+        health = (cache.issues ?? [:]).reduce(into: [:]) { kept, entry in
+            if config.accounts.contains(where: { $0.id == entry.key }) { kept[entry.key] = LoginHealth(saved: entry.value) }
+        }
+        // Caches from before readAt existed only know when a read was last attempted.
+        readAt = cache.readAt ?? cache.at
+        activeIDs = (cache.active ?? [:]).reduce(into: [:]) { ids, item in AgentProvider(rawValue: item.key).map { ids[$0] = item.value } }
     }
 
     /// How long one autopilot step may run, in time awake, before the loop goes on without it. A step under heavy
@@ -1164,8 +1186,11 @@ final class AccountStore {
     }
     /// One autopilot step: refresh usage, move each provider's Mac-wide login, start idle windows.
     private func tick() async {
-        guard !isDemo, !startupError else { return }
+        guard !isDemo else { return }
+        if startupError { readConfig() }
+        guard !startupError else { return }
         defer { remote.events?.autopilotChanged() }
+        retryPoolIfDue()
         if python == nil { _ = at("finding Python"); await refreshDependencies() }
         guard python != nil, at("applying preferences") else { return }
         await preferences?.effectsReady()

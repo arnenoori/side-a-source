@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.55 — 2026-11-16
+
+Settings search finds what you meant. It reads a word as you type it, forgives a letter or two out of place ("updtaes" finds Updates) and words run together ("menubar"), and puts the closest match first with what you typed in bold. ↑ and ↓ move through the results and Return opens one. When nothing has every word, the nearest matches show; when nothing matches at all, No Results reads at the top of the list instead of the middle of the window.
+
+Guided tour is no longer in Settings › General, and Remove Side A moved out of it: right-click Quit in the menu.
+
+Side A Remote gets out of "update" by itself. When your iPhone said to update Side A on the Mac and you did, it kept saying so until you left the app and came back; pulling to refresh did nothing. It now asks the Mac again every 15 seconds and when you pull to refresh. The banner offers Check Again, or Update in App Store when it's the iPhone app that is behind, in place of Test Connection.
+
+Side A Remote says what is wrong instead of showing a blank page. A session that can't load shows "Can't Load Messages" with Try Again, after a spinner that only appears when the wait is long enough to notice. New Session is off while the Mac is out of reach, and when your folders won't load it says so with Try Again in place of "No Folders Yet". A session still starting for half a minute makes Open Terminal the main button. The Accounts tab shows why it's empty when the Mac is offline, needs pairing again or needs an update, rather than "No Accounts", and a pull to refresh that fails says so. A Mac whose Side A is older than the app expects gets one "Update Side A on" row in Sessions, and History says the same instead of blaming the Mac for not sharing.
+
+What you type is kept. A reply you started and never sent is still in the field after iOS closes the app, and a second reply that fails joins the first in the field rather than replacing it.
+
+A single-choice question selects your option and waits for Send Answer rather than sending on the tap. Stop gives a tap of feedback, and a Stop the Mac refuses gives another.
+
+Fixes:
+- A transcript that failed to reload after the Mac restarted its history, or after a repair that couldn't finish, stayed blank until you left the page. The messages already on screen stay while the new ones load, and it asks again until they arrive and when the connection comes back.
+- A session you started from your iPhone that ended before it appeared in Sessions said "Starting…" for good. It now says "Process Exited" and puts what you wrote back in the field.
+- One event from the Mac that the iPhone couldn't read made it reconnect again and again. It now skips that event, reads the Mac's state afresh, and waits between reconnects.
+- A reply, an answer or a Stop waiting to go out showed "Sending…" under a banner saying you were revoked or needed to update, and stayed that way. Once its time runs out it says "Not sent", with Retry, whatever state the connection is in.
+- The iPhone gives the Mac's push relay its notification token again until the relay has it, when the app opens, when the network changes and after a wait that grows, not only on the next launch.
+- A subagent's page keeps trying to read while it is open instead of giving up after five failures.
+- A launch before the first unlock after a restart left Side A Remote connecting until you quit it. It connects when you open the app.
+- A queued message that couldn't be read no longer holds back the ones behind it.
+- Unlock no longer does nothing when the phone's passcode was removed after Side A Remote's lock was turned on.
+- Copy, Share, Fork, Stop, the pager in an approval and the remove button on a photo are easier to hit. They look the same and sit where they were.
+- Tapping a notification for a request opens that request when the app wasn't already running. It used to open Sessions and stop there.
+- An Allow or Deny that never reached the Mac offers Retry instead of a line that only said "Not sent".
+- Update in App Store, shown when pairing with a newer Mac, opens Side A Remote's page.
+- A refused security key in Remote settings offers Try Again before Make New Key…. Try Again asks macOS once more and keeps your iPhones paired, so a Deny clicked by mistake no longer means pairing every phone again.
+- A notification registration the relay missed is retried, a few seconds later and then less often, and again as soon as the relay is reachable. Before, an iPhone could stay without notifications while everything looked fine.
+- An update that was told to install but never relaunched Side A no longer blocks the rest of the launch. After a minute and a half it lets go, and Check for Updates… and the scheduled checks work again.
+- A library file that couldn't be read at launch is read again every minute, so fixing it brings Autopilot, usage and Remote back without relaunching. Nothing is written over it until it reads.
+- A pool that failed to start is tried again by itself, after a minute and then at longer gaps, for as long as pool mode is on. Pool mode also no longer sits on Starting if the port never opens.
+- Opening a search result in a session and then clearing the selection no longer leaves the spinner on.
+
 ## 0.5.54 — 2026-11-16
 
 Side A Remote asks for Face ID once, not at every message. Replies to a session in a permissive mode needed Face ID each time because the phone never kept the first one; now one Face ID, including the one that unlocks the app, covers the next five minutes, and each message you send starts that window again. Leaving the app ends it.

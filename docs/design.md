@@ -39,7 +39,7 @@ Five tabs, each with one job:
 - **Autopilot:** the live ranking and its rule, Move at, Follow Fable, your day, Switch in
   Terminal, live limits, and the limit hook.
 - **General:** Dynamic Island, notifications, sounds, sync, the 3D player, updates, the search
-  index, privacy and Remove Side A.
+  index and privacy. Remove Side A is a right-click on Quit in the menu.
 
 ## Dynamic Island
 

@@ -139,6 +139,9 @@ final class FakeSocket: SocketConnection, @unchecked Sendable {
         feed.yield(.success(.text(String(decoding: try! JSONEncoder().encode(envelope), as: UTF8.self))))
     }
 
+    /// A frame as the Mac wrote it, whatever it holds.
+    func push(raw text: String) { feed.yield(.success(.text(text))) }
+
     func push(_ control: TermControl) {
         feed.yield(.success(.text(String(decoding: try! JSONEncoder().encode(control), as: UTF8.self))))
     }
@@ -183,6 +186,7 @@ let fastTiming: SyncTiming = {
     timing.backoffCap = 0.05
     timing.ping = 100
     timing.coalesce = 0
+    timing.updateCheck = 0.02
     return timing
 }()
 

@@ -5,6 +5,9 @@ import SwiftUI
 
 @main
 struct SideARemoteApp: App {
+    /// This app's page. The id is what the App Store opens by; a name alone finds nothing.
+    static let appStore = URL(string: "itms-apps://apps.apple.com/app/id6824351581")!
+
     @UIApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var root: AppRoot
     @State private var lock = AppLock()
@@ -152,8 +155,18 @@ final class AppRoot {
 
     func setForeground(_ foreground: Bool) {
         if reviewing { foreground ? ReviewDemo.cancelRequest() : ReviewDemo.scheduleRequest() }
+        if foreground { relinkMacs() }
         for mac in macs { mac.link?.setForeground(foreground) }
         if foreground { Launch.afterFirstFrame { Task { await Revocations.run() } } }
+    }
+
+    /// A Mac whose outbox wouldn't open (a launch before the first unlock) stays connecting for good; now the app is
+    /// in front, its model is built again.
+    private func relinkMacs() {
+        for index in macs.indices where macs[index].link == nil && !macs[index].isDemo {
+            guard let pairing = macs[index].pairing else { continue }
+            macs[index] = .live(pairing)
+        }
     }
 
     /// A new pairing, or Pair Again: that Mac's old link stops and its new one takes its place; other Macs carry on.

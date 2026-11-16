@@ -290,7 +290,10 @@ final class RemoteController {
             server.tunnelPort(done)
         }
         tunnel.statusChanged = { [weak self] status in
-            Task { @MainActor in self?.tunnelStatus = status }
+            Task { @MainActor in
+                self?.tunnelStatus = status
+                if status == .connected { self?.push.relayMayBeBack() }
+            }
         }
         server.setTunnel(true)
         if devices.unreadable == nil { tunnel.setDevices(tunnelDevices) }
@@ -355,6 +358,7 @@ final class RemoteController {
         guard on else { return }
         reloadDevices()
         tunnel?.networkChanged()
+        push.relayMayBeBack()
         guard fixed == nil else { return rebind() }
         Task {
             let status = await probe()
@@ -610,6 +614,15 @@ final class RemoteController {
         for id in gone { invalidate(id) }
         error = nil
         devicesChanged()
+    }
+
+    /// After a refused or unreadable key: asked again on the user's click, never on its own, since asking can raise a
+    /// keychain dialog. Paired iPhones stay.
+    func tryKeyAgain() {
+        guard on, key.state == .refused || key.state == .unreadable else { return }
+        key.reset()
+        bringUp()
+        refresh()
     }
 
     /// A new identity: every phone's pin stops matching, so every device goes.

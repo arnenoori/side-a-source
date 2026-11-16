@@ -90,6 +90,7 @@ final class LiveTests: XCTestCase {
     func testRetryOutcomes() {
         let gone = APIError(code: .requestNotFound, message: "That request isn't open on the Mac any more.", retryable: false)
         XCTAssertEqual(TranscriptStore.Delivery(nil, retried: true), .sending)
+        XCTAssertEqual(TranscriptStore.Delivery(.notDelivered, retried: false), .unknown)
         XCTAssertEqual(TranscriptStore.Delivery(.answeredElsewhere(nil), retried: false), .answeredElsewhere)
         XCTAssertEqual(TranscriptStore.Delivery(.answeredElsewhere(nil), retried: true), .delivered)
         XCTAssertEqual(TranscriptStore.Delivery(.failed(gone), retried: false), .failed(gone.message))
@@ -287,6 +288,23 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(PermissionMode.offered(.claude, current: .dontAsk).last, .dontAsk)
         XCTAssertEqual(PermissionMode.acceptEdits.title, "Accept edits")
         XCTAssertEqual(PermissionMode(rawValue: "yolo").title, "yolo")
+    }
+
+    func testAHostedRowTheMacDropsIsGoneButOneNeverListedIsNot() async throws {
+        let tools = MacTools(.demo(.init(options: OptionsList(agents: []), projects: [])))
+        let row = HostedSession(name: "sa-app-1", agent: .claude, cwd: "/p", project: "p", createdAt: 1)
+        var state = RemoteState()
+        tools.apply(state)
+        // Added by this phone as Start returned, before the Mac's list had it.
+        state.hosted["sa-app-1"] = row
+        tools.apply(state)
+        XCTAssertTrue(tools.dropped.isEmpty)
+        state.hosted["sa-app-1"] = nil
+        tools.apply(state)
+        XCTAssertEqual(tools.dropped, ["sa-app-1"])
+        state.hosted["sa-app-1"] = row
+        tools.apply(state)
+        XCTAssertTrue(tools.dropped.isEmpty)
     }
 
     func testAModeChangedHereShowsUntilTheRowSaysSo() async throws {

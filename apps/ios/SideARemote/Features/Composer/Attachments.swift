@@ -155,6 +155,8 @@ struct AttachmentTray: View {
                         .font(.caption2.weight(.bold))
                         .frame(width: 22, height: 22)
                         .glassEffect(.regular.interactive(), in: .circle)
+                        // Up only as far as the tray's own padding, which clips what sticks out above.
+                        .hitArea(top: 4, leading: 11, bottom: 18, trailing: 11)
                 }
                 .buttonStyle(.plain)
                 .padding(3)

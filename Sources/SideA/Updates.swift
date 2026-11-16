@@ -327,7 +327,10 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
     nonisolated func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         let error = error as NSError
         let domain = error.domain, code = error.code
-        MainActor.assumeIsolated { lastFailure.aborted(domain: domain, code: code) }
+        MainActor.assumeIsolated {
+            lastFailure.aborted(domain: domain, code: code)
+            installFailed()
+        }
     }
     nonisolated func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: (any Error)?) {
         MainActor.assumeIsolated { finishedCycle() }
@@ -438,6 +441,27 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         installed = true
         watchStaged()
         staged.install()
+        relaunchWait?.cancel()
+        relaunchWait = Task { [weak self] in
+            try? await Task.sleep(for: self?.relaunchGrace ?? .seconds(90))
+            guard !Task.isCancelled else { return }
+            self?.installFailed()
+        }
+    }
+
+    /// How long Sparkle gets to relaunch Side A after the block is called. Tests shorten it.
+    var relaunchGrace: Duration = .seconds(90)
+    private var relaunchWait: Task<Void, Never>?
+
+    /// The block was called and Side A is still here: the session was dead or the installer failed. The held update is
+    /// let go so Update to X, Check for Updates… and the schedule go through Sparkle again.
+    private func installFailed() {
+        relaunchWait?.cancel()
+        relaunchWait = nil
+        guard installed else { return }
+        staged = nil
+        installed = false
+        watchStaged()
     }
 }
 

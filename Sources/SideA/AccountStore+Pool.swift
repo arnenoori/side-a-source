@@ -133,6 +133,8 @@ extension AccountStore: PoolDecisions {
                 throw error
             }
             poolRun = .running(proxy, port: port)
+            poolFailures = 0
+            poolRetryAt = nil
             if poolQuitObserver == nil {
                 // The helper takes over once the claim is gone. Without one, no pool file is left for shells to find, so
                 // commands use logins again at once.
@@ -149,8 +151,18 @@ extension AccountStore: PoolDecisions {
             await syncCodexPoolHomes()
         } catch {
             poolRun = config.pool == true ? .failed(error.localizedDescription) : .off
+            poolFailures += 1
+            poolRetryAt = Date().addingTimeInterval(min(60 * Double(1 << min(poolFailures - 1, 4)), 900))
             self.error = "Pool mode couldn't start: \(error.localizedDescription)"
         }
+    }
+
+    /// A start that failed is tried again from the tick, a minute later and then each time twice as long, up to 15 minutes,
+    /// for as long as pool mode is on.
+    func retryPoolIfDue(now: Date = Date()) {
+        guard config.pool == true, case .failed = poolRun, let at = poolRetryAt, now >= at else { return }
+        poolRetryAt = nil
+        Task { await syncPool() }
     }
 
     /// The fixed port, waiting up to 10 s for the helper to let it go; any free port if something else holds it.

@@ -159,6 +159,8 @@ struct RemoteSettings: View {
             statusLabel(Text("Click Allow in the macOS keychain dialog"), "lock.fill", .secondary)
         case .keyBroken:
             LabeledContent {
+                Button("Try Again") { remote.tryKeyAgain() }
+                    .buttonStyle(.borderedProminent)
                 Button("Make New Key…") { renewingKey = true }
             } label: {
                 statusLabel(Text("Side A can't use its security key"), "exclamationmark.triangle.fill", .yellow)

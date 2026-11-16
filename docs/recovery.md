@@ -57,7 +57,7 @@ sharing it.
 
 ## Removing Side A
 
-Settings > General > Remove Side A takes its line out of `~/.zshrc`, restores your Claude Code
+Right-click the Quit button in the menu and choose Remove Side A. It takes its line out of `~/.zshrc`, restores your Claude Code
 statusline, removes its hooks from `~/.claude/settings.json` and `~/.codex/hooks.json`, stops
 opening at login, deletes its caches and search index, and moves the app to the Trash. Your
 conversations aren't touched. Accounts and their logins stay unless you also choose **Also sign

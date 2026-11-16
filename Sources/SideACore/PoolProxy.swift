@@ -154,7 +154,8 @@ public final class PoolProxy: @unchecked Sendable {
                 switch state {
                 case .ready:
                     once.run { continuation.resume(returning: (listener, listener.port?.rawValue ?? port.rawValue)) }
-                case .failed(let error):
+                case .failed(let error), .waiting(let error):
+                    // Waiting would never end for a loopback listener: the start would stay "Starting…" for good.
                     listener.cancel()
                     once.run { continuation.resume(throwing: error) }
                 default: break

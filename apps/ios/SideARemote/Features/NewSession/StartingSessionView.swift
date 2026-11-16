@@ -9,6 +9,10 @@ struct StartingSessionView: View {
     /// Where a reply that never went is put back: the session it was meant for.
     var giveBackTo: SessionKey? = nil
     @Environment(AppModel.self) private var model
+    /// Past this long, Starting… is probably a prompt or a stuck screen only the terminal shows: Open Terminal leads.
+    @State private var stuck = false
+
+    static let stuckAfter = Duration.seconds(30)
 
     private var name: String { started.name }
     private var hosted: HostedSession? { model.tools.hosted[name] ?? started }
@@ -26,9 +30,15 @@ struct StartingSessionView: View {
         }
         .onChange(of: session?.id, initial: true) { _, id in arrived(id) }
         .onChange(of: session?.hosted) { _, _ in arrived(session?.id) }
-        .onChange(of: hosted?.alive) { _, alive in
-            if alive == false { model.transcripts.dropFirstPrompt(name, giveBackTo: giveBackTo) }
+        .onChange(of: ended) { _, ended in
+            if ended { model.transcripts.dropFirstPrompt(name, giveBackTo: giveBackTo) }
         }
+    }
+
+    /// The Mac drops a dead pane without ever marking it, so a row it listed and then removed, with no session in its
+    /// place, is the process ending too.
+    private var ended: Bool {
+        session == nil && (hosted?.alive == false || model.tools.dropped.contains(name))
     }
 
     /// The session is listed: its first prompt shows in its transcript, and a reply that waited for Continue is typed
@@ -41,9 +51,9 @@ struct StartingSessionView: View {
 
     private var starting: some View {
         Group {
-            if let hosted, !hosted.alive {
+            if ended {
                 ContentUnavailableView("Process Exited", systemImage: "xmark.octagon",
-                                       description: Text(hosted.exitStatus.map { "It ended with status \($0)." } ?? "It ended before it started."))
+                                       description: Text(hosted?.exitStatus.map { "It ended with status \($0)." } ?? "It ended before it started."))
             } else {
                 ContentUnavailableView {
                     Label { Text("Starting…") } icon: { ProgressView().controlSize(.large) }
@@ -51,7 +61,7 @@ struct StartingSessionView: View {
                     if let hosted { Text(hosted.project).font(.callout.monospaced()) }
                 } actions: {
                     if model.tools.can(.terminal) {
-                        OpenTerminalButton(name: name)
+                        OpenTerminalButton(name: name, prominent: stuck)
                     }
                     ShowOnMacButton(name: name).buttonStyle(.glass)
                 }
@@ -71,6 +81,10 @@ struct StartingSessionView: View {
                 AttentionCard(attention: attention).padding(Space.m)
             }
         }
+        .task {
+            try? await Task.sleep(for: Self.stuckAfter)
+            stuck = true
+        }
         .navigationTitle(hosted?.project ?? "New Session")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarVisibility(.hidden, for: .tabBar)
@@ -80,10 +94,12 @@ struct StartingSessionView: View {
 
 private struct OpenTerminalButton: View {
     let name: String
+    let prominent: Bool
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
 
     var body: some View {
-        Button("Open Terminal", systemImage: "terminal") { actions.on(model).openTerminal(name) }.buttonStyle(.glass)
+        let open = Button("Open Terminal", systemImage: "terminal") { actions.on(model).openTerminal(name) }
+        if prominent { open.buttonStyle(.glassProminent) } else { open.buttonStyle(.glass) }
     }
 }

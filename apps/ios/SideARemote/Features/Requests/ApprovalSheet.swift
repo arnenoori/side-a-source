@@ -144,7 +144,7 @@ struct ApprovalSheet: View {
             Button("Next", systemImage: "chevron.right") { current = open[min(position + 1, open.count - 1)].id }
                 .disabled(position == open.count - 1)
         }
-        .labelStyle(.iconOnly)
+        .labelStyle(IconTarget(horizontal: 12, vertical: 12))
         .buttonStyle(.borderless)
     }
 

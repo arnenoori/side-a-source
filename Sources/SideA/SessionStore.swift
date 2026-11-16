@@ -838,7 +838,7 @@ final class SessionStore {
             } catch {
                 if selectedID == id { detail = nil; self.error = error.localizedDescription }
             }
-            if selectedID == id { loading = false }
+            if selectedID == id || selectedID == nil { loading = false }
         }
     }
 
@@ -854,6 +854,8 @@ final class SessionStore {
         }
         loading = true
         Task {
+            // Another session's own load owns the spinner; with nothing selected, no load does.
+            defer { if selectedID == id || selectedID == nil { loading = false } }
             do {
                 let page = try await loadPage(id, uuid)
                 guard selectedID == id else { return }
@@ -863,7 +865,6 @@ final class SessionStore {
             } catch {
                 if selectedID == id { detail = nil; self.error = error.localizedDescription }
             }
-            if selectedID == id { loading = false }
         }
     }
 

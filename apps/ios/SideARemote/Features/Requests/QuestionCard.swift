@@ -17,14 +17,19 @@ struct QuestionCard: View {
     @State private var written: [Int: String] = [:]
     @State private var forward = true
     @State private var selections = 0
-    /// The pick that will advance after 250 ms; cancelled by another tap.
+    /// The pick that will advance after 250 ms; cancelled by another tap. Only between questions: sending is never a tap on an option.
     @State private var pendingAdvance: Int?
 
     private var questions: [IslandQuestion] {
         if case .question(let questions) = request.action { questions } else { [] }
     }
 
-    private var single: Bool { questions.count == 1 && questions.first?.multiSelect == false }
+    private var single: Bool { Self.isSingle(questions) }
+    /// One single-choice question: a tap selects and Send Answer commits. Among several, a pick moves on to the next
+    /// question, and Send Answers at the end commits them all.
+    static func isSingle(_ questions: [IslandQuestion]) -> Bool { questions.count == 1 && questions.first?.multiSelect == false }
+    /// Whether tapping a single-choice option moves to the next question by itself.
+    static func advancesOnPick(_ questions: [IslandQuestion]) -> Bool { questions.count > 1 }
     private var finished: Bool { index >= questions.count }
 
     var body: some View {
@@ -64,7 +69,7 @@ struct QuestionCard: View {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, pendingAdvance == pending else { return }
             pendingAdvance = nil
-            if single { send() } else { advance() }
+            advance()
         }
     }
 
@@ -102,7 +107,18 @@ struct QuestionCard: View {
             .background(Color(.systemBackground))
             .clipShape(.rect(cornerRadius: Radius.inlineCard, style: .continuous))
 
-            if question.multiSelect || (!single && !trimmedTyped.isEmpty) {
+            if single {
+                Button {
+                    send()
+                } label: {
+                    Text("Send Answer").fontWeight(.semibold).frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.amber)
+                .controlSize(.large)
+                .disabled(picks[index, default: []].isEmpty)
+                .needsMac()
+            } else if question.multiSelect || !trimmedTyped.isEmpty {
                 Button {
                     next()
                 } label: {
@@ -144,7 +160,7 @@ struct QuestionCard: View {
         } else {
             picks[index] = [label]
             written[index] = nil
-            pendingAdvance = (pendingAdvance ?? 0) + 1
+            if Self.advancesOnPick(questions) { pendingAdvance = (pendingAdvance ?? 0) + 1 }
         }
     }
 

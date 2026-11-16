@@ -31,13 +31,84 @@ struct SettingsEntry: Hashable {
     let tab: SettingsTab
     var words = ""
 
+    /// The entries for a query, best first. Forgiving the way a search field should be: a term matches the start of a
+    /// word as it's typed, the middle of one, two words run together ("menubar"), or a word a letter or two off
+    /// ("notifcation"). Every term has to match; when no entry has them all, the ones with the most still show, since
+    /// a near miss beats an empty window.
     static func matching(_ query: String, in entries: [SettingsEntry] = all) -> [SettingsEntry] {
-        let terms = query.lowercased().split(whereSeparator: \.isWhitespace)
+        let terms = words(query)
         guard !terms.isEmpty else { return [] }
-        return entries.filter { entry in
-            let text = "\(entry.title) \(entry.tab.title) \(entry.words)".lowercased()
-            return terms.allSatisfy { text.contains($0) }
+        let scored = entries.enumerated().compactMap { index, entry -> (entry: SettingsEntry, matched: Int, score: Int, index: Int)? in
+            let scores = terms.compactMap(entry.score)
+            return scores.isEmpty ? nil : (entry, scores.count, scores.reduce(0, +), index)
         }
+        let most = scored.map(\.matched).max() ?? 0
+        return scored.filter { $0.matched == most }
+            .sorted { ($0.score, -$0.index) > ($1.score, -$1.index) }
+            .map(\.entry)
+    }
+
+    /// Lowercased, accents dropped, split on anything that isn't a letter or digit: "5-hour" is "5" and "hour".
+    static func words(_ text: String) -> [String] {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split { !$0.isLetter && !$0.isNumber }.map(String.init)
+    }
+
+    /// How well one term matches this entry, nil when it doesn't. The title counts for most, then the tab, then the
+    /// other words someone might type for it.
+    func score(_ term: String) -> Int? {
+        let title = Self.words(title)
+        let fields = [(title, 30), (Self.words(tab.title), 10), (Self.words(words), 0)]
+        var best = fields.compactMap { field, bonus in field.compactMap { Self.quality(term, $0) }.max().map { $0 + bonus } }.max()
+        // "menubar" for "menu bar".
+        if term.count >= 4, title.count > 1, title.joined().contains(term) { best = max(best ?? 0, 50 + 30) }
+        return best
+    }
+
+    /// Exact, then the start of the word, then inside it, then a typo.
+    static func quality(_ term: String, _ word: String) -> Int? {
+        if word == term { return 100 }
+        if word.hasPrefix(term) { return 80 }
+        if term.count >= 3, word.contains(term) { return 50 }
+        let allowed = term.count >= 8 ? 2 : term.count >= 4 ? 1 : 0
+        // A typo rarely lands on the first letter, and holding to it keeps short words from matching everything.
+        guard allowed > 0, word.first == term.first else { return nil }
+        if abs(word.count - term.count) <= allowed, distance(term, word, within: allowed) { return 30 }
+        // Still typing the word, with a slip already in it.
+        if word.count > term.count, distance(term, String(word.prefix(term.count)), within: allowed) { return 25 }
+        return nil
+    }
+
+    /// Whether two words are within `limit` edits, where swapping two neighbouring letters is one edit.
+    static func distance(_ a: String, _ b: String, within limit: Int) -> Bool {
+        let a = Array(a), b = Array(b)
+        guard abs(a.count - b.count) <= limit else { return false }
+        guard !a.isEmpty, !b.isEmpty else { return max(a.count, b.count) <= limit }
+        var before = [Int](), last = Array(0...b.count)
+        for i in 1...a.count {
+            var row = [i] + Array(repeating: 0, count: b.count)
+            for j in 1...b.count {
+                let cost = a[i - 1] == b[j - 1] ? 0 : 1
+                row[j] = min(last[j] + 1, row[j - 1] + 1, last[j - 1] + cost)
+                if i > 1, j > 1, a[i - 1] == b[j - 2], a[i - 2] == b[j - 1] { row[j] = min(row[j], before[j - 2] + 1) }
+            }
+            before = last
+            last = row
+        }
+        return last[b.count] <= limit
+    }
+
+    /// The title with what was typed in bold, where it appears as typed.
+    func highlighted(_ query: String) -> AttributedString {
+        var text = AttributedString(title)
+        for term in Self.words(query) {
+            var from = title.startIndex
+            while let found = title.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: from..<title.endIndex) {
+                if let range = Range(found, in: text) { text[range].inlinePresentationIntent = .stronglyEmphasized }
+                from = found.upperBound
+            }
+        }
+        return text
     }
 
     static let all: [SettingsEntry] = [
@@ -83,31 +154,36 @@ struct SettingsEntry: Hashable {
         .init(title: "Updates", tab: .general, words: "version upgrade automatic install"),
         .init(title: "Search index", tab: .general, words: "session rebuild"),
         .init(title: "Privacy", tab: .general, words: "analytics diagnostics"),
-        .init(title: "Guided tour", tab: .general, words: "help onboarding"),
-        .init(title: "Remove Side A", tab: .general, words: "uninstall delete"),
     ]
 }
 
 struct SettingsResults: View {
     let query: String
+    /// The row the arrow keys are on; Return opens it.
+    let selected: Int
     let pick: (SettingsTab) -> Void
 
     var body: some View {
         let results = SettingsEntry.matching(query)
-        if results.isEmpty {
-            ContentUnavailableView.search(text: query)
-        } else {
-            List(results, id: \.self) { entry in
-                Button { pick(entry.tab) } label: {
-                    HStack {
-                        Text(entry.title)
-                        Spacer()
-                        Label(entry.tab.title, systemImage: entry.tab.symbol).foregroundStyle(.secondary)
+        ScrollViewReader { scroll in
+            List {
+                // In the list, so nothing found reads where results would, not in the middle of the window.
+                if results.isEmpty { Text("No Results").foregroundStyle(.secondary) }
+                ForEach(Array(results.enumerated()), id: \.element) { index, entry in
+                    Button { pick(entry.tab) } label: {
+                        HStack {
+                            Text(entry.highlighted(query))
+                            Spacer()
+                            Label(entry.tab.title, systemImage: entry.tab.symbol).foregroundStyle(.secondary)
+                        }
+                        .contentShape(.rect)
                     }
-                    .contentShape(.rect)
+                    .buttonStyle(.plain)
+                    .listRowBackground(index == selected ? RoundedRectangle(cornerRadius: 6).fill(.selection).padding(.horizontal, 6) : nil)
+                    .id(index)
                 }
-                .buttonStyle(.plain)
             }
+            .onChange(of: selected) { scroll.scrollTo(selected) }
         }
     }
 }

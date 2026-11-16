@@ -15,6 +15,9 @@ final class MacTools {
     private(set) var capabilities: Set<Capability>
     /// Hosted sessions by tmux name.
     private(set) var hosted: [String: HostedSession] = [:]
+    /// Names the Mac listed and then dropped: its pane is gone. A row this phone added itself, before the Mac's list
+    /// had it, is not one.
+    private(set) var dropped: Set<String> = []
     /// What a hosted session's screen needs a person for (`hosted.attention`), by tmux name, until the session changes.
     private(set) var attention: [String: HostedAttention] = [:]
     private(set) var options: OptionsList?
@@ -117,6 +120,16 @@ final class MacTools {
 
     func can(_ capability: Capability) -> Bool { capabilities.contains(capability) }
 
+    /// What this app version leans on from a Mac whose Side A is current. Hosted sessions, Codex's server and the
+    /// inbox hooks depend on what's installed there rather than its version, so a Mac without them isn't old.
+    static let expected: Set<Capability> = [.history, .search, .quit, .mac, .cleanup, .incidents, .autopilot, .ports, .interrupt,
+                                            .interruptNextStep, .uploads, .accountsUse, .rotation]
+
+    /// A Mac that has said what it can do, and can't do all of that: its Side A is older than this app expects.
+    static func lacksExpected(_ capabilities: Set<Capability>) -> Bool { !capabilities.isEmpty && !expected.isSubset(of: capabilities) }
+
+    var needsMacUpdate: Bool { !isDemo && Self.lacksExpected(capabilities) }
+
     /// The Mac checks signatures and this pairing can't make any it accepts: allows past the Lock Screen, settings,
     /// the terminal, accounts and Autopilot wait for Pair Again, and Face ID isn't asked for in vain.
     var needsKeys: Bool { keyless && can(.confirmSigned) }
@@ -161,6 +174,8 @@ final class MacTools {
         }
     }
 
+    private var listed: Set<String> = []
+
     /// From each new state of the sync engine.
     func apply(_ state: RemoteState) {
         let capabilities = state.hello?.capabilities ?? []
@@ -169,6 +184,10 @@ final class MacTools {
             answersAs = id
             keyless = true
         }
+        let gone = listed.filter { state.hosted[$0] == nil }
+        if !gone.isEmpty { dropped.formUnion(gone) }
+        listed = Set(state.hosted.keys)
+        if !dropped.isDisjoint(with: listed) { dropped.subtract(listed) }
         if hosted != state.hosted { hosted = state.hosted }
         if attention != state.attention { attention = state.attention }
         if incidents != state.incidents { incidents = state.incidents }
@@ -294,14 +313,15 @@ final class MacTools {
     }
 
     /// A subagent's transcript while its page is open, since the Mac streams only sessions: the newest 200 rows every
-    /// 3 s while they keep changing, every 15 s once they've been still for a minute, and not at all after five failed
-    /// reads in a row. The parent's own rows stop updating under a pushed page, so they can't say when it's done.
+    /// 3 s while they keep changing, every 15 s once they've been still for a minute. Failed reads are tried again after
+    /// 6 s, doubling to a minute, for as long as the page is open.
+    /// The parent's own rows stop updating under a pushed page, so they can't say when it's done.
     func follow(_ ref: SubagentRef, into store: TranscriptStore) async {
         guard isLive else { return }
         var failures = 0
         var last: [TranscriptMessage]?
         var changedAt = ContinuousClock.now
-        while !Task.isCancelled, failures < 5 {
+        while !Task.isCancelled {
             do {
                 let page = try await client().transcript(ref.parent, limit: 200, agent: ref.agentID)
                 failures = 0
@@ -314,7 +334,7 @@ final class MacTools {
                 failures += 1
             }
             let still = ContinuousClock.now - changedAt > .seconds(60)
-            try? await Task.sleep(for: .seconds(failures > 0 ? 3 << failures : still ? 15 : 3))
+            try? await Task.sleep(for: .seconds(failures > 0 ? min(60, 3 << min(failures, 5)) : still ? 15 : 3))
         }
     }
 

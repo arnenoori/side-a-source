@@ -90,6 +90,7 @@ struct MainTabs: View {
     @State private var approvals = ApprovalPresenter()
     /// A pairing link opened while paired: Pair Again, or another Mac.
     @State private var linked: PairingTarget?
+    @State private var awaited: DeepLink?
     @State private var askingDemo = false
     @State private var historyQuery = ""
     @Namespace private var sessionsZoom
@@ -156,6 +157,7 @@ struct MainTabs: View {
                 .environment(root.model(owning: target.session) ?? model)
         }
         .onOpenURL(perform: open)
+        .task(id: awaited) { await awaitRequest() }
         .fullScreenCover(item: $linked) { PairingScreen(invitation: $0.invitation) }
         .demoConfirmation(isPresented: $askingDemo) { root.openDemo() }
     }
@@ -176,10 +178,9 @@ struct MainTabs: View {
             tab = .sessions
             sessionsPath = [.session(id, mac: mac)]
         case .request(let id, let mac):
-            guard let request = (root.model(for: mac) ?? model).requests.request(id) else { return }
             tab = .sessions
-            if let session = request.sessionID { sessionsPath = [.session(session, mac: mac)] }
-            if !request.isQuestion { approvals.request = request }
+            // Requests aren't kept between launches, so one tapped from a notification is usually still on its way.
+            if let request = (root.model(for: mac) ?? model).requests.request(id) { show(request, mac: mac) } else { awaited = link }
         case .mac(let id):
             tab = .sessions
             sessionsPath = []
@@ -194,6 +195,25 @@ struct MainTabs: View {
         case .settings:
             tab = .settings
         }
+    }
+
+    private func show(_ request: RemoteRequest, mac: String) {
+        if let session = request.sessionID { sessionsPath = [.session(session, mac: mac)] }
+        if !request.isQuestion { approvals.request = request }
+    }
+
+    /// Opens the request a link named once the Mac has sent it, and gives up after ten seconds.
+    private func awaitRequest() async {
+        guard case .request(let id, let mac) = awaited else { return }
+        for _ in 0..<50 {
+            if let request = (root.model(for: mac) ?? model).requests.request(id) {
+                show(request, mac: mac)
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+            if Task.isCancelled { return }
+        }
+        awaited = nil
     }
 
     /// A question is answered in its card, so it opens its session; everything else opens the sheet

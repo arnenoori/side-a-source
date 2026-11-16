@@ -158,12 +158,25 @@ final class ReplyFlights {
     /// Back into the field with "Not sent · Retry". That shows one reply per session; a turn no longer there shows none.
     private func settleUnsent(_ item: String, reason: String) {
         guard var flight = flights[item] else { return }
-        for (other, earlier) in flights where other != item && earlier.session == flight.session && earlier.isUnsent {
-            setFlight(nil, item: other)
-        }
+        let earlier = flights.filter { $0.key != item && $0.value.session == flight.session && $0.value.isUnsent }
+            .sorted { $0.value.at < $1.value.at }
+        for (other, _) in earlier { setFlight(nil, item: other) }
+        flight = Self.joined(flight, after: earlier.map(\.value))
         flight.phase = .unsent(reason: reason)
         setFlight(flight, item: item)
-        if model?.transcripts.fail(flight.turn, in: flight.session, reason: reason, item: item) == false { setFlight(nil, item: item) }
+        if model?.transcripts.fail(flight.turn, in: flight.session, reason: reason, item: item, joining: earlier.map(\.value.body.text)) == false {
+            setFlight(nil, item: item)
+        }
+    }
+
+    /// The session shows one unsent reply, so a second failure carries the first's words and photos rather than dropping them.
+    static func joined(_ flight: ReplyFlight, after earlier: [ReplyFlight]) -> ReplyFlight {
+        guard !earlier.isEmpty else { return flight }
+        let body = flight.body
+        let text = (earlier.map(\.body.text) + [body.text]).joined(separator: "\n\n")
+        let attachments = (earlier.flatMap(\.body.attachments) + body.attachments).prefix(ComposerAttachments.limit)
+        let joined = RemoteReply(text: text, mode: body.mode, keys: body.keys, attachments: Array(attachments), turnID: body.turnID, submit: body.submit)
+        return ReplyFlight(session: flight.session, turn: flight.turn, body: joined, at: flight.at, phase: flight.phase, needs: flight.needs)
     }
 
     private func setFlight(_ flight: ReplyFlight?, item: String) {

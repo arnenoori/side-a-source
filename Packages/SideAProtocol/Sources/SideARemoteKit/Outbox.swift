@@ -143,18 +143,44 @@ public actor Outbox {
     /// so each target still goes in order.
     public func claim(for macID: String, by owner: String, now: Timestamp, skipping held: Set<String> = []) -> Item? {
         var claimed: Item?
-        transaction {
-            let free = "(claimedBy IS NULL OR claimedBy = ? OR claimedAt < ?)"
-            run("""
-                SELECT item FROM outbox AS o WHERE mac = ? AND \(free)
-                AND target NOT IN (\(held.map { _ in "?" }.joined(separator: ",")))
-                AND NOT EXISTS (SELECT 1 FROM outbox AS e WHERE e.mac = o.mac AND e.target = o.target
-                    AND (e.created < o.created OR (e.created = o.created AND e.id < o.id)))
-                ORDER BY answer DESC, created, id LIMIT 1
-                """, values: [.text(macID), .text(owner), .real(now - Self.claimLifetime)] + held.sorted().map { .text($0) }) { claimed = Self.item($0, 0) }
-            if let claimed { run("UPDATE outbox SET claimedBy = ?, claimedAt = ? WHERE id = ?", .text(owner), .real(now), .text(claimed.id)) }
+        // A row that no longer decodes would be the oldest of its target for good, so it goes and the next is tried.
+        var unreadable = true
+        while unreadable {
+            unreadable = false
+            transaction {
+                let free = "(claimedBy IS NULL OR claimedBy = ? OR claimedAt < ?)"
+                run("""
+                    SELECT id, item FROM outbox AS o WHERE mac = ? AND \(free)
+                    AND target NOT IN (\(held.map { _ in "?" }.joined(separator: ",")))
+                    AND NOT EXISTS (SELECT 1 FROM outbox AS e WHERE e.mac = o.mac AND e.target = o.target
+                        AND (e.created < o.created OR (e.created = o.created AND e.id < o.id)))
+                    ORDER BY answer DESC, created, id LIMIT 1
+                    """, values: [.text(macID), .text(owner), .real(now - Self.claimLifetime)] + held.sorted().map { .text($0) }) { statement in
+                    if let item = Self.item(statement, 1) {
+                        claimed = item
+                    } else {
+                        unreadable = true
+                        run("DELETE FROM outbox WHERE id = ?", .text(String(cString: sqlite3_column_text(statement, 0))))
+                    }
+                }
+                if let claimed { run("UPDATE outbox SET claimedBy = ?, claimedAt = ? WHERE id = ?", .text(owner), .real(now), .text(claimed.id)) }
+            }
         }
         return claimed
+    }
+
+    /// Takes the items of `macID` past their `expiresAt` that nobody is sending, in any order: the engine settles them
+    /// as undelivered whether or not it is connected.
+    public func claimExpired(for macID: String, by owner: String, now: Timestamp) -> [Item] {
+        var expired: [Item] = []
+        transaction {
+            run("SELECT item FROM outbox WHERE mac = ? AND (claimedBy IS NULL OR claimedAt < ?)",
+                .text(macID), .real(now - Self.claimLifetime)) { statement in
+                if let item = Self.item(statement, 0), item.expiresAt <= now { expired.append(item) }
+            }
+            for item in expired { run("UPDATE outbox SET claimedBy = ?, claimedAt = ? WHERE id = ?", .text(owner), .real(now), .text(item.id)) }
+        }
+        return expired
     }
 
     /// Gives an item back to the queue after a failed attempt.

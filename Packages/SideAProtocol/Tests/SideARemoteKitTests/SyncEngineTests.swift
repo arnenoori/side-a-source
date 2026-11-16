@@ -82,6 +82,49 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     await sync.stop()
 }
 
+@Test func anEventThatDoesNotDecodeStillTakesItsPlaceInTheSequence() async throws {
+    let mac = FakeMac()
+    mac.respond { request in
+        request.url?.path == "/v1/state" ? .init(body: json(StateSnapshot(seq: 42, epoch: "e5b0c7d2a1f3"))) : .init(status: 404)
+    }
+    let sync = try engine(mac)
+    await sync.start()
+    let socket = try await mac.socket(0)
+    try socket.push(fixture: "ServerEvent.welcome")
+    try socket.push(fixture: "ServerEvent.snapshot")
+    try await until("snapshot") { await sync.state.seq == 41 }
+    var frame = try JSONSerialization.jsonObject(with: json(EventEnvelope(seq: 42, at: 1, event: .hostedRemove(name: "x")))) as! [String: Any]
+    frame["data"] = ["name": 7]
+    socket.push(raw: String(decoding: try JSONSerialization.data(withJSONObject: frame), as: UTF8.self))
+    socket.push(43, .hostedRemove(name: "sa-app-3f9c"))
+    try await until("both") { await sync.state.seq == 43 }
+    // Not a gap: no reconnect, and the state the lost event changed is read again.
+    #expect(mac.sockets.count == 1)
+    #expect(mac.calls.contains { $0.url?.path == "/v1/state" })
+    await sync.stop()
+}
+
+@Test func aMacThatKeepsReplayingAGapIsNotCalledBackWithoutEnd() async throws {
+    let mac = FakeMac()
+    var timing = fastTiming
+    timing.backoffBase = 0.5
+    let sync = try engine(mac, timing: timing)
+    await sync.start()
+    let first = try await mac.socket(0)
+    try first.push(fixture: "ServerEvent.welcome")
+    try first.push(fixture: "ServerEvent.snapshot")
+    try await until("snapshot") { await sync.state.seq == 41 }
+    first.push(99, .hostedRemove(name: "x"))
+    for index in 1...3 {
+        let next = try await mac.socket(index)
+        next.push(nil, welcome("e5b0c7d2a1f3", seq: 41, replay: true))
+        next.push(99, .hostedRemove(name: "x"))
+    }
+    try await until("a wait") { if case .offline = await sync.state.connection { true } else { false } }
+    #expect(mac.sockets.count == 4)
+    await sync.stop()
+}
+
 @Test func aNewEpochTakesTheSnapshotWholesale() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -307,6 +350,7 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     let c = try engine(newer)
     await c.start()
     try await until("mac needs update") { await c.state.connection == .needsUpdate(mac: true) }
+    await c.stop()
 }
 
 @Test func anUnreachableAddressFallsBackToTheNext() async throws {

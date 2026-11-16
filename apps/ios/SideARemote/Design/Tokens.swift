@@ -31,6 +31,33 @@ enum Space {
     static let xl: CGFloat = 24
 }
 
+extension View {
+    /// Grows what answers a tap past what's drawn, by the given amounts, without moving or resizing anything.
+    func hitArea(top: CGFloat = 0, leading: CGFloat = 0, bottom: CGFloat = 0, trailing: CGFloat = 0) -> some View {
+        padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
+            .contentShape(.rect)
+            .padding(EdgeInsets(top: -top, leading: -leading, bottom: -bottom, trailing: -trailing))
+    }
+
+    func hitArea(horizontal: CGFloat = 0, vertical: CGFloat = 0) -> some View {
+        hitArea(top: vertical, leading: horizontal, bottom: vertical, trailing: horizontal)
+    }
+}
+
+/// An icon-only label in its own frame, whose tap area reaches past it. Inside the label, so the button feels it.
+struct IconTarget: LabelStyle {
+    var size: CGSize?
+    var horizontal: CGFloat = 0
+    var vertical: CGFloat = 0
+
+    func makeBody(configuration: Configuration) -> some View {
+        Label(configuration)
+            .labelStyle(.iconOnly)
+            .frame(width: size?.width, height: size?.height)
+            .hitArea(horizontal: horizontal, vertical: vertical)
+    }
+}
+
 /// Corner radii, all continuous.
 enum Radius {
     static let userBubble: CGFloat = 20

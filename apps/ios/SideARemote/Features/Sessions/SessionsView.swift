@@ -111,6 +111,7 @@ struct SessionsView: View {
             if canStart {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("New Session", systemImage: "square.and.pencil") { showsNewSession = true }
+                        .needsMac()
                 }
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
             }
@@ -179,8 +180,6 @@ private struct MacSessions: View {
     let header: Bool
     let status: () -> Void
     @Environment(AppModel.self) private var model
-    @Environment(\.openURL) private var openURL
-    @State private var pairingAgain = false
 
     var body: some View {
         if header {
@@ -204,7 +203,8 @@ private struct MacSessions: View {
             .headerProminence(.increased)
         }
         IncidentBanner()
-        banners
+        ConnectionBanners()
+        UpdateMacBanner()
         pinnedSection
         startingSection
         ForEach([SessionPhase.needsYou, .working, .ready], id: \.self) { phase in
@@ -227,47 +227,6 @@ private struct MacSessions: View {
             }
         }
         idleSection
-    }
-
-    /// Under the navigation bar as an inset row, never a toast; the content below keeps its age.
-    @ViewBuilder private var banners: some View {
-        switch model.mac.state {
-        case .reconnecting:
-            // The chip says "Reconnecting…"; the row joins once the data is a minute old.
-            if let age = Formatting.age(of: model.mac.lastSeen) {
-                Section { BannerRow(symbol: "arrow.trianglehead.2.clockwise", text: "\(age) · Reconnecting…") }
-            }
-        case .offline(let reason) where reason.needsPairing:
-            Section {
-                BannerRow(symbol: reason == .keyChanged ? "key.slash" : "iphone.slash", text: reason.message(mac: model.mac.name),
-                          age: Formatting.age(of: model.mac.lastSeen))
-                Button("Pair Again", systemImage: "qrcode.viewfinder") { pairingAgain = true }
-            }
-            .pairAgain($pairingAgain, mac: model.mac.name)
-        case .offline(let reason):
-            Section {
-                BannerRow(symbol: reason.symbol, text: reason.message(mac: model.mac.name),
-                          age: Formatting.age(of: model.mac.lastSeen))
-                if reason == .tailscaleOff {
-                    Button("Open Tailscale", systemImage: "arrow.up.forward.app") { openURL(Tailscale.installed ? Tailscale.app : Tailscale.appStore) }
-                }
-                if let link = model.link {
-                    NavigationLink { TestConnectionView(link: link) } label: { Label("Test Connection", systemImage: "stethoscope") }
-                }
-                if reason.offersPairAgain {
-                    Button("Pair Again", systemImage: "qrcode.viewfinder") { pairingAgain = true }
-                }
-            }
-            .pairAgain($pairingAgain, mac: model.mac.name)
-        case .live where model.tools.needsKeys:
-            Section {
-                BannerRow(symbol: "faceid", text: "Pair this iPhone again with \(model.mac.name) to approve, change settings or open the terminal from it.")
-                Button("Pair Again", systemImage: "qrcode.viewfinder") { pairingAgain = true }
-            }
-            .pairAgain($pairingAgain, mac: model.mac.name)
-        default:
-            EmptyView()
-        }
     }
 
     /// Pinned from a row's long-press, whatever they're doing, above the rest; each keeps its status glyph.

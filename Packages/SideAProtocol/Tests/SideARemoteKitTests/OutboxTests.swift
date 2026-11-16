@@ -2,6 +2,7 @@ import Foundation
 @testable import SideARemoteKit
 import SideAProtocol
 import SideAProtocolFixtures
+import SQLite3
 import Testing
 
 private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
@@ -104,6 +105,31 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     try await until("dropped") { await sync.state.outcomes["old"] == .notDelivered }
     #expect(mac.calls.isEmpty)
     await sync.stop()
+}
+
+@Test func anExpiredItemSettlesWhereverTheConnectionStopped() async throws {
+    let (outbox, _) = try temporaryOutbox()
+    await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 1))
+    // Never paired: the loop returns at once and drains nothing.
+    let sync = try engine(FakeMac(), token: nil, outbox: outbox)
+    await sync.start()
+    // The outcome is recorded before the item leaves `pending`, so all three are waited for together.
+    try await until("settled") {
+        let state = await sync.state
+        return state.outcomes["old"] == .notDelivered && state.connection == .unpaired && state.pending.isEmpty
+    }
+    await sync.stop()
+}
+
+@Test func anItemThatDoesNotDecodeDoesNotBlockTheOnesBehindIt() async throws {
+    let (outbox, file) = try temporaryOutbox()
+    await outbox.enqueue(Outbox.Item(id: "good", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 5, expiresAt: 9))
+    var db: OpaquePointer?
+    #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
+    let bad = "INSERT INTO outbox(id, mac, target, created, answer, item) VALUES('bad', 'mac1', 'session:s', 1, 0, x'7b7d')"
+    #expect(sqlite3_exec(db, bad, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(db)
+    #expect(await outbox.claim(for: "mac1", by: "me", now: 6)?.id == "good")
 }
 
 @Test func unauthorizedStopsDraining() async throws {

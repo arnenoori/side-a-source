@@ -77,6 +77,7 @@ struct Composer: View {
     @Namespace private var glass
     @State private var showsAdd = false
     @State private var sends = 0
+    @State private var interrupts = 0
     /// Where the caret is, for the "/" or "$" word it's in.
     @State private var selection: TextSelection?
     /// The suggestion a hardware keyboard's Return or Tab takes, and the text Esc closed the list for.
@@ -161,6 +162,7 @@ struct Composer: View {
         .animation(Motion.smooth(reduceMotion), value: blocked)
         .animation(Motion.smooth(reduceMotion), value: session.map { model.tools.attachments.items($0.id).map(\.id) })
         .sensoryFeedback(.impact(weight: .light), trigger: sends)
+        .sensoryFeedback(.impact(weight: .medium), trigger: interrupts)
         .sensoryFeedback(.error, trigger: unsent) { _, new in new != nil }
         .sheet(isPresented: $showsAdd) {
             AddSheet(session: session) { command in
@@ -213,7 +215,9 @@ struct Composer: View {
         Button {
             switch mode {
             case .send: send()
-            case .interrupt: onInterrupt()
+            case .interrupt:
+                interrupts += 1
+                onInterrupt()
             }
         } label: {
             Image(systemName: mode.symbol)
@@ -226,6 +230,7 @@ struct Composer: View {
                 }
                 // Glass renders what's on it vibrant; the send circle stays solid label colour.
                 .compositingGroup()
+                .hitArea(horizontal: 4, vertical: 4)
         }
         .buttonStyle(.plain)
         .disabled(idle)

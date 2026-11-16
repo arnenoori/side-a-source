@@ -88,6 +88,7 @@ struct MenuPlayer: View {
                         .help("Settings").accessibilityLabel("Settings")
                         .modifier(TourAnchorIf(step: .add, active: !store.config.accounts.isEmpty))
                     Button { NSApp.terminate(nil) } label: { Image(systemName: "power") }.help("Quit Side A").accessibilityLabel("Quit Side A")
+                        .contextMenu { Button("Remove Side A…", role: .destructive) { store.confirmUninstall() } }
                 }
             }.buttonStyle(.borderless).font(.system(size: 12))
         }.padding(16).frame(width: 320)

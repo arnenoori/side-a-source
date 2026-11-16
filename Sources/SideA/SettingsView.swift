@@ -12,6 +12,7 @@ struct SettingsView: View {
     @Bindable var store: AccountStore
     @ObservedObject var updates: Updates
     @State private var query = ""
+    @State private var selected = 0
     @FocusState private var searching: Bool
     var body: some View {
         VStack(spacing: 0) {
@@ -19,19 +20,35 @@ struct SettingsView: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($searching)
                 .onExitCommand { query = "" }
+                .onKeyPress(.downArrow) { move(1) }
+                .onKeyPress(.upArrow) { move(-1) }
+                .onSubmit {
+                    let results = SettingsEntry.matching(query)
+                    if results.indices.contains(selected) { open(results[selected].tab) }
+                }
+                .onChange(of: query) { selected = 0 }
                 .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 4)
             if query.trimmingCharacters(in: .whitespaces).isEmpty {
                 tabs
             } else {
-                SettingsResults(query: query) { tab in
-                    store.settingsTab = tab
-                    query = ""
-                    searching = false
-                }
+                SettingsResults(query: query, selected: selected, pick: open)
             }
         }
         .frame(width: 520, height: 600)
         .background { TabShortcuts(store: store) { searching = true } }
+    }
+
+    private func open(_ tab: SettingsTab) {
+        store.settingsTab = tab
+        query = ""
+        searching = false
+    }
+
+    private func move(_ by: Int) -> KeyPress.Result {
+        let count = SettingsEntry.matching(query).count
+        guard count > 0 else { return .ignored }
+        selected = min(max(selected + by, 0), count - 1)
+        return .handled
     }
 
     private var tabs: some View {
@@ -608,7 +625,7 @@ struct AutopilotSettings: View {
         }
         switch store.poolRun {
         case .off, .starting: return "Starting…"
-        case .failed(let why): return "Couldn't start: \(why) Turn it off and on again to retry."
+        case .failed(let why): return "Couldn't start: \(why) Trying again."
         case .running: break
         }
         let conversations = store.poolConversations.values.reduce(0, +)
@@ -764,7 +781,6 @@ struct GeneralSettings: View {
     @Bindable var store: AccountStore
     @ObservedObject var updates: Updates
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @AppStorage("tourSeen") private var tourSeen = false
     @AppStorage(MenuPlayer.enabledKey) private var playerEnabled: Bool = PreferencesMirror.fallback(MenuPlayer.enabledKey)
     @State private var indexBytes: Int64 = 0
     @State private var rebuilding = false
@@ -809,33 +825,9 @@ struct GeneralSettings: View {
                     Button("Save Diagnostics…") { store.saveDiagnostics(updateError: updates.failure) }
                 } label: { Link("Privacy details", destination: URL(string: "https://getsidea.com/index.md")!) }
             }
-            Section {
-                LabeledContent("Guided tour") { Button("Show Again") { tourSeen = false } }
-                LabeledContent {
-                    Button("Remove…", role: .destructive) { confirmUninstall() }
-                } label: {
-                    Text("Remove Side A")
-                    Text("Undoes its shell line, statusline and hooks, and moves it to the Trash.")
-                }
-            }
         }
         .formStyle(.grouped)
         .onAppear { indexBytes = store.sessions.indexBytes }
-    }
-
-    private func confirmUninstall() {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Remove Side A?"
-        alert.informativeText = "Side A takes its line out of ~/.zshrc, restores your Claude Code statusline and hooks, stops opening at login, deletes its caches and search index, and moves itself to the Trash. Your conversations aren't touched, and your accounts and their logins stay unless you choose otherwise."
-        alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Also sign out of and forget my accounts"
-        alert.addButton(withTitle: "Remove")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons[0].hasDestructiveAction = true
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let forget = alert.suppressionButton?.state == .on
-        Task { await store.uninstall(forgetAccounts: forget) }
     }
 }
 

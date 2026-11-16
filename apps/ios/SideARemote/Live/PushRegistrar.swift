@@ -17,7 +17,17 @@ final class PushRegistrar {
 
     static let shared = PushRegistrar()
 
-    private let defaults = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard
+    private let defaults: UserDefaults
+    /// Hands the token to every paired Mac's relay; false when one couldn't be reached.
+    private let reportToRelay: (String) async -> Bool
+    private let retryWait: Duration
+
+    init(defaults: UserDefaults = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard, retryWait: Duration = .seconds(5),
+         reportToRelay: @escaping (String) async -> Bool = { token in
+             await RelayDevice.report(token: token, bundleID: PushRegistrar.bundleID, environment: PushRegistrar.environment)
+         }) {
+        self.defaults = defaults; self.retryWait = retryWait; self.reportToRelay = reportToRelay
+    }
     private static let tokenKey = "push.apnsToken"
     /// A new token some relay hasn't heard of yet, for want of a connection.
     private static let relayOwedKey = "push.relayOwed"
@@ -38,6 +48,7 @@ final class PushRegistrar {
     /// Each running activity's `MacActivityAttributes.macID`, the only thing that says whose it is.
     private var activityMacs: [String: String] = [:]
     private var watching = false
+    private var retrying: Task<Void, Never>?
 
     /// At launch: once notifications are allowed, iOS needs asking every launch to hand back the token.
     func registerIfAllowed() async {
@@ -54,13 +65,26 @@ final class PushRegistrar {
             defaults.set(true, forKey: Self.relayOwedKey)
             onChange()
         }
-        guard defaults.bool(forKey: Self.relayOwedKey) else { return }
-        let bundleID = Self.bundleID
-        Task {
-            if await RelayDevice.report(token: hex, bundleID: bundleID, environment: Self.environment) {
-                defaults.set(false, forKey: Self.relayOwedKey)
+        reportOwed()
+    }
+
+    /// A token the relay hasn't heard is sent again until it has: now, and then after a wait that doubles, and at once
+    /// when the app comes forward or the network changes (each of those calls this again).
+    func reportOwed() {
+        guard defaults.bool(forKey: Self.relayOwedKey), apnsToken != nil else { return }
+        retrying?.cancel()
+        retrying = Task {
+            var wait = retryWait
+            while defaults.bool(forKey: Self.relayOwedKey), !Task.isCancelled, let token = apnsToken {
+                if await reportToRelay(token) {
+                    // A newer token may have arrived meanwhile and owes its own report.
+                    if token == apnsToken { defaults.set(false, forKey: Self.relayOwedKey) }
+                    await reportActivities()
+                    continue
+                }
+                try? await Task.sleep(for: wait)
+                wait = min(wait * 2, .seconds(300))
             }
-            await reportActivities()
         }
     }
 

@@ -10,6 +10,8 @@ struct StateCache: Codable {
     var accounts: [RemoteAccount]
     var transcripts: [SessionKey: [TranscriptMessage]]
     var savedAt: Date
+    /// What was typed in each session's composer and not sent. Missing in a file written before drafts were kept.
+    var drafts: [SessionKey: String]?
 
     /// Transcripts kept, the sessions most recently active first, and messages kept of each.
     static let keptTranscripts = 12
@@ -52,6 +54,7 @@ extension AppModel {
         for (session, list) in cache.transcripts {
             transcripts.set(list, hasEarlier: (list.first?.seq ?? 0) > 0, for: session)
         }
+        for (session, text) in cache.drafts ?? [:] where transcripts.drafts[session, default: ""].isEmpty { transcripts.drafts[session] = text }
         mac.lastSeen = cache.savedAt
     }
 
@@ -62,6 +65,8 @@ extension AppModel {
         for id in recent where kept.count < StateCache.keptTranscripts {
             if let list = transcripts.messages[id], !list.isEmpty { kept[id] = Array(list.suffix(StateCache.keptMessages)) }
         }
-        return StateCache(sessions: sessions.sessions, finished: finished, accounts: accounts.accounts, transcripts: kept, savedAt: .now)
+        let drafts = transcripts.drafts.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return StateCache(sessions: sessions.sessions, finished: finished, accounts: accounts.accounts, transcripts: kept, savedAt: .now,
+                          drafts: drafts.isEmpty ? nil : drafts)
     }
 }

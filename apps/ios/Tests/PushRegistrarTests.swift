@@ -35,10 +35,32 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertFalse(NotificationPrefs.stored(for: "studio", in: defaults).finished)
     }
 
+    /// A relay that couldn't be reached is asked again without waiting for the next launch.
+    func testATokenTheRelayHasNotHeardIsReportedUntilItHas() async throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PushRegistrarTests.\(UUID())"))
+        let calls = Calls()
+        let registrar = PushRegistrar(defaults: defaults, retryWait: .milliseconds(5)) { _ in await calls.next() >= 3 }
+        registrar.received(Data([0xab, 0xcd]))
+        for _ in 0..<400 where defaults.bool(forKey: "push.relayOwed") { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertFalse(defaults.bool(forKey: "push.relayOwed"))
+        let count = await calls.count
+        XCTAssertEqual(count, 3)
+        // Nothing owed: nothing sent.
+        registrar.reportOwed()
+        try await Task.sleep(for: .milliseconds(30))
+        let after = await calls.count
+        XCTAssertEqual(after, 3)
+    }
+
     func testAVerifyPushForAnotherDeviceIsLeftAlone() async {
         let answered = await RelayDevice.answer(["verify": ["install": "someone-else", "device": "x", "challenge": "c"]])
         XCTAssertFalse(answered)
         let plain = await RelayDevice.answer(["aps": ["content-available": 1]])
         XCTAssertFalse(plain)
     }
+}
+
+private actor Calls {
+    private(set) var count = 0
+    func next() -> Int { count += 1; return count }
 }

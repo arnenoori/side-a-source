@@ -93,6 +93,8 @@ public struct SyncTiming: Sendable {
     public var presence: Double = 30
     public var coalesce: Double = 0.016
     public var tooManyConnections: Double = 10
+    /// How often to ask a Mac that was too old whether it has updated. Nothing tells the phone when it does.
+    public var updateCheck: Double = 15
     public init() {}
     public static let standard = SyncTiming()
 
@@ -142,6 +144,7 @@ public actor SyncEngine {
     private var afterEmptyClaim: (@Sendable () async -> Void)?
     private var drainAttempt = 0
     private var drainRetry: Task<Void, Never>?
+    private var expiry: Task<Void, Never>?
     private var flushing = false
     /// Started and not stopped by its owner: a loop that ended on its own comes back with the foreground.
     private var started = false
@@ -167,6 +170,7 @@ public actor SyncEngine {
 
     public func stop() {
         started = false
+        expiry?.cancel()
         halt()
     }
 
@@ -181,7 +185,10 @@ public actor SyncEngine {
     }
 
     /// Skips the wait before the next attempt: the app came forward or the network changed.
-    public func reconnectNow() { waiting?.cancel() }
+    public func reconnectNow() {
+        // A loop that ended on a terminal state has no wait to skip: only starting it again asks the Mac.
+        if run == nil { if started { start() } } else { waiting?.cancel() }
+    }
 
     // MARK: Presence
 
@@ -408,6 +415,8 @@ public actor SyncEngine {
         // Addresses in this round that offered a key other than the pinned one.
         var keyChanged = 0
         var refused = false
+        // Reconnects in a row that asked for no wait, from a connection that didn't last.
+        var immediate = 0
         while !Task.isCancelled {
             await reloadPending()
             let token: String?
@@ -424,11 +433,23 @@ public actor SyncEngine {
             // Halted while awaiting: `socket`, `run` and the connection may already be the next run's.
             if Task.isCancelled { return }
             socket = nil
-            if now() - opened >= timing.resetAfter { attempt = 0 }
+            if now() - opened >= timing.resetAfter {
+                attempt = 0
+                immediate = 0
+            }
             let delay: Double
             switch next! {
+            case .stop(.needsUpdate(mac: true)):
+                set(.needsUpdate(mac: true))
+                delay = timing.updateCheck
             case .stop(let connection): run = nil; return set(connection)
-            case .now: continue
+            case .now:
+                // A Mac that replays what drops the socket again would otherwise be called back without end.
+                immediate += 1
+                if immediate <= Self.immediateReconnects { continue }
+                delay = timing.backoff(attempt)
+                attempt += 1
+                offline(retryAt: now() + delay, reason: "Connection kept dropping")
             case .nextAddress(let reason, let changed, let turnedAway):
                 // Try the Mac's other addresses before waiting; wait once all of them have failed.
                 if changed { keyChanged += 1 }
@@ -460,6 +481,8 @@ public actor SyncEngine {
     /// Rounds of the Mac's addresses before a relay's refusal is worth offering Pair Again for: a relay that lost its
     /// device list says the same until the Mac reconnects to it.
     static let refusalsToOfferPairing = 3
+
+    static let immediateReconnects = 3
 
     private func offline(retryAt: Timestamp, reason: String) {
         if !stored.connection.isTerminal { set(.offline(retryAt: retryAt, reason: reason)) }
@@ -523,8 +546,11 @@ public actor SyncEngine {
             while !Task.isCancelled {
                 let message = try await socket.receive()
                 guard !Task.isCancelled else { return .stop(.idle) }
-                guard case .text(let text) = message,
-                      let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: Data(text.utf8)) else { continue }
+                guard case .text(let text) = message else { continue }
+                guard let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: Data(text.utf8)) else {
+                    await skipped(Data(text.utf8))
+                    continue
+                }
                 if let next = await handle(envelope) {
                     socket.close(code: 1000, reason: nil)
                     return next
@@ -536,6 +562,17 @@ public actor SyncEngine {
         } catch {
             return .backoff(error.localizedDescription)
         }
+    }
+
+    /// A frame that doesn't decode still took its place in the sequence: without its seq the next frame reads as a gap,
+    /// and the Mac replays this one again. Its change is lost, so the state is read afresh over REST.
+    private func skipped(_ data: Data) async {
+        struct Sequence: Decodable { var seq: Int? }
+        guard let seq = (try? JSONDecoder().decode(Sequence.self, from: data))?.seq,
+              !awaitingSnapshot, seq == stored.seq + 1 else { return }
+        stored.seq = seq
+        KitLog.log(.sync, "event \(seq) did not decode; refreshing state")
+        try? await refresh()
     }
 
     static func next(after closed: SocketClosed, bye: String?) -> Next {
@@ -600,7 +637,10 @@ public actor SyncEngine {
                 publish()
             }
             var cursors: [SessionKey: Cursor?] = [:]
-            for (key, feed) in feeds { cursors[key] = await feed.cursor }
+            for (key, feed) in feeds {
+                cursors[key] = await feed.cursor
+                await feed.reloadNow()
+            }
             guard !Task.isCancelled else { return .stop(.idle) }
             await subscribe(cursors)
             await sendPresence()
@@ -796,6 +836,24 @@ public actor SyncEngine {
     private func reloadPending() async {
         stored.pending = await outbox.items(for: endpoint.macID)
         publish()
+        watchExpiry()
+    }
+
+    /// An item past its `expiresAt` settles as undelivered even when the engine can't connect: a stopped one never
+    /// drains, and the screens wait for an outcome.
+    private func watchExpiry() {
+        expiry?.cancel()
+        guard let soonest = stored.pending.map(\.expiresAt).min() else { return expiry = nil }
+        // At least a second, so an expired item another process holds is not asked about in a spin.
+        let wait = max(1, soonest - now())
+        expiry = Task {
+            try? await Task.sleep(for: .seconds(wait))
+            if !Task.isCancelled { await self.settleExpired() }
+        }
+    }
+
+    private func settleExpired() async {
+        for item in await outbox.claimExpired(for: endpoint.macID, by: owner, now: now()) { await finish(item, .notDelivered) }
     }
 
     // MARK: Plumbing

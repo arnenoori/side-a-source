@@ -59,9 +59,12 @@ final class AppLock {
             locked = false
             return
         }
-        if (try? await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Side A Remote")) == true {
+        do {
+            if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Side A Remote") { locked = false }
+        } catch let error as LAError where error.code == .passcodeNotSet {
+            // The passcode was removed after the lock was turned on: nothing can ask, and nothing is protected.
             locked = false
-        }
+        } catch {}
     }
 }
 

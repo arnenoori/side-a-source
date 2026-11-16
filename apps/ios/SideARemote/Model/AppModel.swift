@@ -27,8 +27,11 @@ final class AppModel {
     /// The demo's Macs are named by these.
     private var demoID = NotificationAnswer.demoMac
 
+    /// The pairing this model was built for, kept so a link that failed to open can be built again.
+    private(set) var pairing: PairedMac?
+
     /// The Mac's id, as pushes, deep links and the outbox name it.
-    var macID: String { link?.mac.endpoint.macID ?? demoID }
+    var macID: String { link?.mac.endpoint.macID ?? pairing?.endpoint.macID ?? demoID }
 
     init(mac: MacConnection, sessions: SessionsStore, requests: RequestsStore, transcripts: TranscriptStore,
          accounts: AccountsStore, history: HistoryStore, isDemo: Bool, paired: Bool, live: MacTools.Live? = nil) {
@@ -104,6 +107,7 @@ final class AppModel {
         let model = AppModel(mac: connection, sessions: SessionsStore([]),
                              requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
                              history: HistoryStore([]), isDemo: false, paired: true, live: live)
+        model.pairing = mac
         model.foldAnswers()
         if let cache = StateCache.load(mac.endpoint.macID) {
             model.restore(cache)
