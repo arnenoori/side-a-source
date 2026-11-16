@@ -366,6 +366,48 @@ final class TranscriptStore {
         if state == .sent || state == .queued { settleOutgoing(session) }
     }
 
+    /// The prompt of a session started from this phone, by its hosted name, until the session's transcript shows it.
+    private(set) var firstPrompts: [String: Outgoing] = [:]
+
+    /// Start returned: the prompt shows at once, as a reply does, already accepted.
+    func started(_ name: String, prompt: String, at: Date) {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        firstPrompts[name] = Outgoing(id: UUID().uuidString.lowercased(), text: text, at: at, state: .sent)
+    }
+
+    /// The session each first prompt was last carried into.
+    private var carried: [String: SessionKey] = [:]
+
+    /// A reply for a session coming back hosted under that name (Continue), typed once its row is listed hosted.
+    private(set) var waitingReplies: [String: Outgoing] = [:]
+
+    func wait(_ text: String, for name: String, at: Date) {
+        waitingReplies[name] = Outgoing(id: UUID().uuidString.lowercased(), text: text, at: at, state: .sending)
+    }
+
+    func takeWaitingReply(_ name: String) -> String? { waitingReplies.removeValue(forKey: name)?.text }
+
+    /// The hosted session has a row: its prompt waits in that transcript until the Mac's copy arrives. Again under a
+    /// new key when the row's key changes, as a Codex `pid-…` one does once its thread starts.
+    func carryFirstPrompt(_ name: String, to session: SessionKey) {
+        guard let turn = firstPrompts[name] else { return }
+        if let old = carried[name], old != session { outgoing[old]?.removeAll { $0.id == turn.id } }
+        carried[name] = session
+        if outgoing[session]?.contains(where: { $0.id == turn.id }) != true { outgoing[session, default: []].append(turn) }
+        settleOutgoing(session)
+    }
+
+    /// The process ended: nothing it was asked will show, and its text goes back to `session`'s field when given.
+    func dropFirstPrompt(_ name: String, giveBackTo session: SessionKey? = nil) {
+        let lost = [firstPrompts.removeValue(forKey: name), waitingReplies.removeValue(forKey: name)].compactMap { $0 }
+        if let old = carried.removeValue(forKey: name) { outgoing[old]?.removeAll { turn in lost.contains { $0.id == turn.id } } }
+        if let session { giveBack(lost.map(\.text), in: session, reason: "It ended before it took this.") }
+    }
+
+    /// A turn shown while something else happens first (Continue, Resume), gone without giving its text back.
+    func discard(_ id: String, in session: SessionKey) { outgoing[session]?.removeAll { $0.id == id } }
+
     /// The Mac didn't take it: the turn goes, its text waits in the field. False when the turn is already gone.
     /// The Mac gave up on what it was holding for this session.
     func failQueued(in session: SessionKey, reason: String) {
@@ -469,8 +511,17 @@ final class TranscriptStore {
                     && (user.at ?? .infinity) >= turn.at.timeIntervalSince1970 - 30
             }
         }
-        guard !shown.isEmpty else { return }
-        outgoing[session]?.removeAll { shown.contains($0) }
+        // A first prompt the agent rewrote (a slash command is logged as its expansion) goes once any user turn follows it.
+        let rewritten = carried.filter { $0.value == session }.compactMap { firstPrompts[$0.key] }.filter { turn in
+            users.contains { ($0.at ?? 0) >= turn.at.timeIntervalSince1970 - 30 }
+        }
+        let gone = Set((shown + rewritten).map(\.id))
+        guard !gone.isEmpty else { return }
+        outgoing[session]?.removeAll { gone.contains($0.id) }
+        for (name, turn) in firstPrompts where gone.contains(turn.id) {
+            firstPrompts[name] = nil
+            carried[name] = nil
+        }
     }
 }
 

@@ -250,11 +250,14 @@ public struct StartHosted: Codable, Hashable, Sendable {
     /// Conversation id to resume.
     public let resume: String?
     public let fork: Bool
+    /// Also open a terminal tab on the Mac attached to it, as a start from the Mac does. Sent only to a Mac that lists
+    /// `Capability.hostedShow`: the start's signature covers the body as the Mac decodes it.
+    public let openOnMac: Bool?
     public init(cwd: String, agent: AgentProvider, model: String? = nil, effort: String? = nil, worktree: Bool = false,
                 accountID: String? = nil, prompt: String? = nil, attachments: [String] = [], resume: String? = nil, fork: Bool = false,
-                permissionMode: PermissionMode? = nil) {
+                permissionMode: PermissionMode? = nil, openOnMac: Bool? = nil) {
         self.cwd = cwd; self.agent = agent; self.model = model; self.effort = effort; self.worktree = worktree
-        self.permissionMode = permissionMode
+        self.permissionMode = permissionMode; self.openOnMac = openOnMac
         self.accountID = accountID; self.prompt = prompt; self.attachments = attachments; self.resume = resume; self.fork = fork
     }
 }

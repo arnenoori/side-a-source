@@ -79,7 +79,10 @@ final class LiveLink {
         model.transcripts.onRetry = { [weak self] answered in self?.retry(answered) }
         PushRegistrar.shared.observers[mac.endpoint.macID] = { [weak self] in self?.reportPush() }
         model.transcripts.onLoadEarlier = { session in Task { try? await engine.transcript(session).loadEarlier() } }
-        model.transcripts.onLoadWhole = { session, seq in try await engine.message(session, seq: seq) }
+        model.transcripts.onLoadWhole = { session, seq in
+            if let ref = SubagentRef(key: session) { return try await engine.message(ref.parent, seq: seq, agent: ref.agentID) }
+            return try await engine.message(session, seq: seq)
+        }
         // A network change retries at once instead of waiting out the backoff.
         path.pathUpdateHandler = { [weak model] update in
             let vpn = update.availableInterfaces.contains { $0.type == .other }
@@ -136,7 +139,7 @@ final class LiveLink {
         let feed = await engine.watch(session)
         let windows = await feed.windows()
         let start = ContinuousClock.now
-        try? await feed.loadLatest()
+        await loadLatest(feed, session)
         let shown = model?.transcripts.messages[session]?.count ?? 0
         RemoteLog.log(.sync, "transcript \(session.prefix(8)) latest page in \(Launch.ms(since: start)) ms, \(shown) shown before it")
         for await window in windows {
@@ -144,6 +147,17 @@ final class LiveLink {
             saveSoon()
         }
         await engine.unwatch(session)
+    }
+
+    /// A session just started is listed before its agent writes the transcript, which 404s until then (a trust dialog
+    /// can hold it for minutes). Without a page nothing streams, so it asks again while the transcript is on screen.
+    private func loadLatest(_ feed: TranscriptFeed, _ session: SessionKey) async {
+        var wait = Duration.milliseconds(500)
+        while !Task.isCancelled {
+            do { return try await feed.loadLatest() } catch let failure as RemoteFailure where ![404, 409, 503].contains(failure.status) { return } catch {}
+            try? await Task.sleep(for: wait)
+            wait = min(wait * 2, .seconds(4))
+        }
     }
 
     private func send(_ request: RemoteRequest, _ answer: RemoteAnswer, mode: PermissionMode?, confirm: String?) {
@@ -296,6 +310,7 @@ final class LiveLink {
             saveSoon()
         }
         model.tools.apply(state)
+        model.deliverWaitingReplies()
         model.mac.apply(state, name: mac.endpoint.name,
                         onTailnet: Tailscale.isTailnet((state.address ?? mac.endpoint.baseURL).host() ?? ""), hasRelay: mac.endpoint.relay != nil)
         track(state)

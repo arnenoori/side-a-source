@@ -10,6 +10,8 @@ enum TranscriptItem: Identifiable, Hashable {
     case user(TranscriptMessage)
     case assistant(TranscriptMessage)
     case tool(TranscriptTool)
+    /// A Task/Agent call: a card that opens the subagent's own transcript.
+    case subagent(TranscriptTool)
     case thinking(TranscriptTool)
     case group(StepGroup)
     case diff(TranscriptTool, FileDiff)
@@ -30,7 +32,7 @@ enum TranscriptItem: Identifiable, Hashable {
         case .earlier: "earlier"
         case .separator(let date): "sep-\(date.timeIntervalSince1970)"
         case .user(let m), .assistant(let m), .notice(let m): "m-\(m.seq)"
-        case .tool(let t), .thinking(let t): "t-\(t.id)"
+        case .tool(let t), .thinking(let t), .subagent(let t): "t-\(t.id)"
         case .images(let t): "i-\(t.id)"
         case .diff(let t, let d): "d-\(t.id)-\(d.path)"
         case .file(let t, _, _): "f-\(t.id)"
@@ -185,6 +187,7 @@ enum TranscriptLayout {
     }
 
     private static func standalone(_ tool: TranscriptTool) -> [TranscriptItem]? {
+        if tool.subagent != nil { return [.subagent(tool)] }
         if case .write(let path, let content) = tool.action, documentExtensions.contains((path as NSString).pathExtension.lowercased()) {
             return [.file(tool, path: path, bytes: content.utf8.count)]
         }

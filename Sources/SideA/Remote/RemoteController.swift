@@ -674,7 +674,7 @@ final class RemoteController {
     /// Hosting only while tmux is there to host.
     var capabilities: Set<Capability> {
         // Hosted Claude changes its settings through its own pickers.
-        var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .sessionSettings, .hostedTrust])
+        var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .sessionSettings, .hostedTrust, .hostedShow])
             : Self.capabilities
         if checkForUpdates != nil { capabilities.insert(.updateCheck) }
         if codex.offered { capabilities.formUnion([.replyTerminal, .sessionSettings]) }

@@ -310,7 +310,7 @@ struct ApprovalSheet: View {
     }
 
     /// Destructive Allow needs the device owner: Face ID signs the answer with the confirm key, which the Mac checks.
-    /// Within a minute of unlocking the app with Face ID that unlock signs it (`DeviceKeys.adopt`). A pairing from
+    /// A Face ID from the last few minutes in the app, its unlock included, signs it (`DeviceKeys.adopt`). A pairing from
     /// before the keys falls back to asking here.
     private func allowDestructive(_ request: RemoteRequest) async {
         let allow = RemoteAnswer.allow(confirmDestructive: true)

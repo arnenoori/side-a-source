@@ -778,6 +778,7 @@ public struct StartHosted: Codable, Hashable, Sendable {
     public let attachments: [String]         // Upload ids
     public let resume: String?               // conversation id to resume
     public let fork: Bool
+    public let openOnMac: Bool?              // also attach a Mac terminal tab; sent only to a Mac listing hosted.show
 }
 
 public struct RemoteProject: Codable, Hashable, Sendable, Identifiable {
@@ -1157,6 +1158,7 @@ Core endpoints. The "Only in Side A" endpoints are in [their own section](#only-
 | `POST /v1/hosted` | `StartHosted` | 201 `HostedSession` | 404 (no such folder), 409 `cannot_deliver` (`details.hint = "alreadyLive"`), 503 |
 | `DELETE /v1/hosted/{name}` | | 204 | 404 |
 | `POST /v1/hosted/{name}/trust` | | 200 `HostedSession` (capability `hosted.trust`) | 401 `confirm_required` / `confirm_invalid` (`details.level = biometric`), 404, 409 `cannot_deliver` (no trust dialog showing) |
+| `POST /v1/hosted/{name}/show` | | 200 `HostedSession`, after its Mac terminal tab comes forward or a new one attaches (capability `hosted.show`) | 404 |
 | `GET /v1/accounts` | | 200 `{accounts: [RemoteAccount], seq}` | |
 | `GET /v1/search` | `?q=&cursor=&limit=` | 200 `{results: [PastSession], next: Cursor?}` | |
 

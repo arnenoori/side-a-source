@@ -11,6 +11,7 @@ extension RemoteRoutes {
         Route("POST", "v1/hosted", startHosted),
         Route("DELETE", "v1/hosted/{name}", endHosted),
         Route("POST", "v1/hosted/{name}/trust", trustHosted),
+        Route("POST", "v1/hosted/{name}/show", showHosted),
         Route("POST", "v1/sessions/{id}/continue", continueOnPhone),
     ]
 
@@ -61,8 +62,31 @@ extension RemoteRoutes {
 
     @MainActor static func start(_ start: StartHosted, images: [String], key: String?, store: AccountStore) async -> HTTPResponse {
         do throws(SessionCommands.Failure) {
-            return hosted(try await SessionCommands(store: store).start(start, images: images, key: key, origin: "phone"), store: store)
+            let name = try await SessionCommands(store: store).start(start, images: images, key: key, origin: "phone")
+            // A repeated key answers with the session it already started, which already has its tab.
+            if start.openOnMac == true, store.hosted.macClients[name] == nil {
+                store.sessions.attachOnce(name, cwd: store.hosted.sessions.first { $0.name == name }?.cwd ?? start.cwd, in: store.sessions.resumeTerminal)
+            }
+            // Its row then shows on the phone at once, as a start from the Mac's own sheet does.
+            Task { await store.sessions.refreshLive() }
+            return hosted(name, store: store)
         } catch { return response(error) }
+    }
+
+    /// Show on Mac: the session's terminal tab comes forward, or a new one attaches. Only a tab on the Mac, so unsigned.
+    @Sendable static func showHosted(_ context: Context) async -> HTTPResponse {
+        let name = context.params["name"] ?? ""
+        return await MainActor.run { () -> Task<HTTPResponse, Never>? in
+            guard let store = context.controller.store else { return nil }
+            return Task { @MainActor in
+                guard store.hosted.sessions.contains(where: { $0.name == name && $0.agent != nil }) else {
+                    return RemoteServer.error(404, "not_found", "That hosted session isn't running.")
+                }
+                await store.sessions.showOnMac(name)
+                await store.hosted.refresh()
+                return hosted(name, store: store, status: 200)
+            }
+        }?.value ?? notReady
     }
 
     /// A session just started (201) or answered (200), as the phone gets it.

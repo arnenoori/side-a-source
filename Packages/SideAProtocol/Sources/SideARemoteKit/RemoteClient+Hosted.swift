@@ -21,6 +21,12 @@ extension RemoteClient {
         return try JSONDecoder().decode(HostedSession.self, from: try await send(request).0)
     }
 
+    /// Show on Mac: the session's terminal tab on the Mac comes forward, or a new one attaches (capability `hosted.show`).
+    public func showOnMac(_ name: String) async throws -> HostedSession {
+        let request = try await request("POST", "/v1/hosted/\(name)/show", idempotencyKey: UUID().uuidString.lowercased())
+        return try JSONDecoder().decode(HostedSession.self, from: try await send(request).0)
+    }
+
     /// Ends a hosted session (`DELETE /v1/hosted/{name}`).
     public func endHosted(_ name: String, confirm: String? = nil) async throws {
         try await signedSend("DELETE", "/v1/hosted/\(name)", confirm: confirm)

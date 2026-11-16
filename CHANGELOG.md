@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.54 — 2026-11-16
+
+Side A Remote asks for Face ID once, not at every message. Replies to a session in a permissive mode needed Face ID each time because the phone never kept the first one; now one Face ID, including the one that unlocks the app, covers the next five minutes, and each message you send starts that window again. Leaving the app ends it.
+
+Starting a session from your iPhone feels immediate. What you asked shows straight away instead of a blank page until Claude wrote its transcript, and the page fills in on its own rather than staying empty until you went back and opened it again. The new session shows in Sessions at once, under Starting, and by default it also opens a terminal tab on your Mac, so it's in your tabs there too (New Session's Tab on Mac chip turns that off). Any session Side A runs has Show on Mac in its menu.
+
+Replying to an idle session from the iPhone works. A session idle in a terminal Side A doesn't run used to say "Not sent" whatever you tried; sending now moves it into Side A and types your message there. A session that ended takes a reply too: it resumes the conversation with your message.
+
+Subagents have their own cards in the iPhone transcript, with what each was asked, how long it has been working and the first line of its answer. Tap one to read its transcript, even while it's still running.
+
 ## 0.5.53 — 2026-11-11
 
 Side A keeps itself current. It used to look for an update once a day, so a Mac could run an old version for a day after a release. It now looks every hour and when the Mac wakes. A check made while offline is tried again 10 minutes later and no longer shows as a failed update. With Update Automatically off, an update found in the background appears in the menu as "Update to" that version instead of opening a window.

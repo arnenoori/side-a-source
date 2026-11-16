@@ -15,6 +15,22 @@ struct TerminalButton: View {
     }
 }
 
+/// Show on Mac: the hosted session's terminal tab comes forward on the Mac, or one opens there.
+struct ShowOnMacButton: View {
+    let name: String?
+    @Environment(AppModel.self) private var model
+    @Environment(SessionActions.self) private var actions
+
+    var body: some View {
+        if let name, model.tools.can(.hostedShow) {
+            Button(model.tools.onMac(name) ? "Show on \(model.mac.name)" : "Open on \(model.mac.name)", systemImage: "macwindow") {
+                actions.on(model).showOnMac(name)
+            }
+            .disabled(actions.isBusy("show-\(name)"))
+        }
+    }
+}
+
 /// Continue on iPhone, where the Mac offers it for this session.
 struct ContinueButton: View {
     let session: RemoteSession?

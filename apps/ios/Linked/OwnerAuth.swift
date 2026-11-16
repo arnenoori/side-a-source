@@ -3,14 +3,20 @@ import LocalAuthentication
 import SideARemoteShared
 
 /// Face ID or the passcode before something a stolen, unlocked phone shouldn't do on its own: terminal input,
-/// keys while a request waits, answers from a locked Lock Screen. One success holds for `grace` in this process.
+/// keys while a request waits, answers from a locked Lock Screen. One success holds while the app is in use (`grace`).
 enum OwnerAuth {
     static let grace: TimeInterval = 5 * 60
     nonisolated(unsafe) private static var confirmedAt: Date?
     private static let lock = NSLock()
 
     static func confirm(reason: String, grace: TimeInterval = grace) async -> Bool {
-        if let at = lock.withLock({ confirmedAt }), Date.now.timeIntervalSince(at) < grace { return true }
+        // Each use within `grace` of the last keeps it, so a phone in use asks once.
+        let held = lock.withLock { () -> Bool in
+            guard let at = confirmedAt, Date.now.timeIntervalSince(at) < grace else { return false }
+            confirmedAt = .now
+            return true
+        }
+        if held { return true }
         let context = LAContext()
         do {
             guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) else { return false }

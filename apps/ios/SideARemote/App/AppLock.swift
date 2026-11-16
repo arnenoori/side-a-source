@@ -51,10 +51,15 @@ final class AppLock {
         guard locked, !asking else { return }
         asking = true
         defer { asking = false }
-        let context = LAContext()
-        if (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Side A Remote")) == true {
-            // A destructive Allow a moment later signs with this Face ID rather than asking again.
-            DeviceKeys.adopt(context)
+        // Face ID first, so replies and allows after it sign without asking again; the passcode only when that's refused.
+        let biometric = LAContext()
+        biometric.localizedFallbackTitle = ""
+        if (try? await biometric.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Unlock Side A Remote")) == true {
+            DeviceKeys.adopt(biometric)
+            locked = false
+            return
+        }
+        if (try? await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Side A Remote")) == true {
             locked = false
         }
     }

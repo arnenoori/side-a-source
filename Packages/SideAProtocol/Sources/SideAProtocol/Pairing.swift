@@ -43,6 +43,9 @@ public struct Capability: OpenEnum {
     public static let turnDiff = Self(rawValue: "turns.diff")
     /// `POST /v1/hosted/{name}/trust` answers a hosted session's folder-trust dialog (`HostedAttention.Kind.trust`).
     public static let hostedTrust = Self(rawValue: "hosted.trust")
+    /// `POST /v1/hosted/{name}/show` brings the session's Mac terminal tab forward, opening one when none is attached, and
+    /// `StartHosted.openOnMac` opens that tab as the session starts.
+    public static let hostedShow = Self(rawValue: "hosted.show")
 }
 
 public struct MacInfo: Codable, Hashable, Sendable {

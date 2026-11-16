@@ -1073,6 +1073,18 @@ final class SessionStore {
     /// Restart Fresh's sheet: the session it restarts.
     var restarting: LiveSession?
 
+    /// Tabs asked for in the last few seconds, by session: tmux lists the client only once the tab has attached.
+    private var opening: [String: Date] = [:]
+
+    /// `attach`, unless a tab for `name` is already on its way, so a second tap or a retried start doesn't open two.
+    func attachOnce(_ name: String, cwd: String?, in app: TerminalApp) {
+        let now = Date.now
+        opening = opening.filter { now.timeIntervalSince($0.value) < 15 }
+        guard opening[name] == nil else { return }
+        opening[name] = now
+        attach(name, cwd: cwd, in: app)
+    }
+
     /// Opens a tab running `sidea-tmux attach <name>`. The tab's own shell stays behind it, so
     /// detaching or the session ending leaves a prompt.
     func attach(_ name: String, cwd: String?, in app: TerminalApp) {
@@ -1166,11 +1178,20 @@ final class SessionStore {
     /// tmux daemonizes, so a hosted session's own parents end at launchd: its Mac tab is found
     /// through the tab's tmux client instead. With no tab open, Show opens one.
     private func showHosted(_ name: String, _ session: LiveSession) {
-        Task {
-            let tab = await store.hosted.clients(name).first { !$0.phone }
-            guard let tab, let host = TerminalFocus.host(of: Int(tab.pid)) else { return attach(name, cwd: session.cwd, in: usualTerminal) }
-            if let message = await TerminalFocus.show(host, cwd: session.cwd, title: session.title ?? session.name) { error = message }
-        }
+        Task { await showHosted(name, cwd: session.cwd, title: session.title ?? session.name) }
+    }
+
+    /// The phone's Show on Mac, for a hosted session that may have no row yet.
+    func showOnMac(_ name: String) async {
+        let live = self.live.first { $0.hosted == name }
+        let cwd = live?.cwd ?? store.hosted.sessions.first { $0.name == name }?.cwd
+        await showHosted(name, cwd: cwd, title: live.flatMap { $0.title ?? $0.name })
+    }
+
+    private func showHosted(_ name: String, cwd: String?, title: String?) async {
+        let tab = await store.hosted.clients(name).first { !$0.phone }
+        guard let tab, let host = TerminalFocus.host(of: Int(tab.pid)) else { return attachOnce(name, cwd: cwd, in: usualTerminal) }
+        if let message = await TerminalFocus.show(host, cwd: cwd, title: title) { error = message }
     }
 
     func hostName(_ session: LiveSession) -> String? {

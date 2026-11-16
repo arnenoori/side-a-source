@@ -112,7 +112,7 @@ final class MacTools {
 
     static let everything: Set<Capability> = [.hosted, .terminal, .continueOnPhone, .uploads, .options, .history, .search, .restart, .ports,
                                               .quit, .mac, .cleanup, .autopilot, .incidents, .interrupt, .interruptNextStep, .replyNote,
-                                              .replyTerminal, .replyInbox, .hostedTrust, .accountsUse,
+                                              .replyTerminal, .replyInbox, .hostedTrust, .hostedShow, .accountsUse,
                                               .autopilotToggle, .autopilotAnswers, .rotation]
 
     func can(_ capability: Capability) -> Bool { capabilities.contains(capability) }
@@ -178,6 +178,14 @@ final class MacTools {
             let left = settings.pending(over: row.settings)
             if left != settings { changed[id] = left }
         }
+    }
+
+    /// Hosted sessions still alive that no row has picked up yet, newest first: just started, before the agent registers.
+    func unlisted(in sessions: [RemoteSession]) -> [HostedSession] {
+        let names = Set(sessions.compactMap(\.hosted))
+        let ids = Set(sessions.map(\.id))
+        return hosted.values.filter { $0.alive && !names.contains($0.name) && !($0.sessionID.map(ids.contains) ?? false) }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     func attention(for session: RemoteSession) -> HostedAttention? {
@@ -284,6 +292,44 @@ final class MacTools {
         } catch let failure as RemoteFailure where failure.error.code == .cannotDeliver {}
         attention[name] = nil
     }
+
+    /// A subagent's transcript while its page is open, since the Mac streams only sessions: the newest 200 rows every
+    /// 3 s while they keep changing, every 15 s once they've been still for a minute, and not at all after five failed
+    /// reads in a row. The parent's own rows stop updating under a pushed page, so they can't say when it's done.
+    func follow(_ ref: SubagentRef, into store: TranscriptStore) async {
+        guard isLive else { return }
+        var failures = 0
+        var last: [TranscriptMessage]?
+        var changedAt = ContinuousClock.now
+        while !Task.isCancelled, failures < 5 {
+            do {
+                let page = try await client().transcript(ref.parent, limit: 200, agent: ref.agentID)
+                failures = 0
+                if page.messages != last {
+                    last = page.messages
+                    changedAt = .now
+                    store.set(page.messages, hasEarlier: false, for: ref.key)
+                }
+            } catch {
+                failures += 1
+            }
+            let still = ContinuousClock.now - changedAt > .seconds(60)
+            try? await Task.sleep(for: .seconds(failures > 0 ? 3 << failures : still ? 15 : 3))
+        }
+    }
+
+    /// Brings the session's tab forward on the Mac, or opens one there.
+    func showOnMac(_ name: String) async throws {
+        guard !isDemo else { return }
+        hosted[name] = try await client().showOnMac(name)
+        openedOnMac.insert(name)
+    }
+
+    /// Asked for from here: the Mac lists the tab only once it has attached.
+    private var openedOnMac: Set<String> = []
+
+    /// Whether `name` has a tab on the Mac, as far as the phone last heard.
+    func onMac(_ name: String) -> Bool { hosted[name]?.macAttached == true || openedOnMac.contains(name) }
 
     // MARK: Settings
 

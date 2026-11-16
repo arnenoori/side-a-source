@@ -92,6 +92,15 @@ final class SessionActions {
         }
     }
 
+    /// Its tab on the Mac, brought forward or opened.
+    func showOnMac(_ name: String) {
+        run("show-\(name)") { tools in
+            try await tools.showOnMac(name)
+            self.successes += 1
+            Pill.show("Open on \(self.model?.mac.name ?? "the Mac")")
+        }
+    }
+
     static let quitIdleKey = "quit-idle"
     /// Quit Idle's rule: idle for 30 minutes or more.
     static let idleMinutes = 30

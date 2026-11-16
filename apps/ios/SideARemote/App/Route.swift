@@ -17,13 +17,37 @@ enum Route: Hashable {
     case account(String, mac: String)
     /// The sessions stopped on a limit, on one Mac.
     case waiting(mac: String)
+    /// A hosted session with no row yet, by its tmux name: "Starting…" until its transcript takes over.
+    case starting(String, mac: String)
+    /// One of a session's subagents, read-only.
+    case subagent(SubagentRef)
 
     /// The session a page is about, which says which Mac it's on.
     var session: SessionKey? {
         switch self {
         case .session(let id, _), .step(let id, _), .file(let id, _, _), .images(let id, _, _), .turnDiff(let id, _): id
+        case .subagent(let ref): ref.parent
         default: nil
         }
+    }
+}
+
+/// A subagent of `parent`, by the id its Task/Agent call names.
+struct SubagentRef: Hashable {
+    let parent: SessionKey
+    let agentID: String
+    let title: String
+    /// Where its messages sit in `TranscriptStore`, beside the parent's.
+    var key: SessionKey { "\(parent)\(Self.separator)\(agentID)" }
+    private static let separator = "~agent~"
+
+    init(parent: SessionKey, agentID: String, title: String) { self.parent = parent; self.agentID = agentID; self.title = title }
+
+    /// From a `key`; nil for a session's own key.
+    init?(key: SessionKey) {
+        let parts = key.components(separatedBy: Self.separator)
+        guard parts.count == 2 else { return nil }
+        self.init(parent: parts[0], agentID: parts[1], title: "")
     }
 }
 
@@ -83,7 +107,7 @@ struct RouteDestinations: ViewModifier {
 
     private func owner(_ route: Route) -> AppModel {
         switch route {
-        case .account(_, let mac), .session(_, let mac), .waiting(let mac): if let owner = root.model(for: mac) { return owner }
+        case .account(_, let mac), .session(_, let mac), .waiting(let mac), .starting(_, let mac): if let owner = root.model(for: mac) { return owner }
         default: break
         }
         guard let session = route.session else { return model }
@@ -104,6 +128,22 @@ struct RouteDestinations: ViewModifier {
         case .images(_, let images, let start): ImageViewer(images: images, start: start)
         case .account(let id, _): AccountDetailView(accountID: id)
         case .waiting: WaitingSessionsView()
+        case .starting(let name, _): StartingRoute(name: name)
+        case .subagent(let ref): TranscriptView(sessionID: ref.key, subagent: ref)
+        }
+    }
+}
+
+/// `Route.starting`, from the hosted session the Mac last listed under that name.
+private struct StartingRoute: View {
+    let name: String
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let hosted = model.tools.hosted[name] {
+            StartingSessionView(started: hosted)
+        } else {
+            ContentUnavailableView("Session Ended", systemImage: "xmark.octagon")
         }
     }
 }

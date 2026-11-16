@@ -59,9 +59,14 @@ nonisolated enum DeviceKeys {
             return nil
         }
         return await Task.detached {
+            let context: LAContext
+            if signer == .confirm {
+                guard let confirmed = await faceID(reason: reason) else { return nil }
+                context = confirmed
+            } else {
+                context = LAContext()
+            }
             let at = Int(Date.now.timeIntervalSince1970)
-            let context = signer == .confirm ? faceID() : LAContext()
-            context.localizedReason = reason
             guard let text = try? ConfirmMessage.text(macID: macID, deviceID: deviceID, purpose: purpose, subject: subject, at: at),
                   let key = key(signer, macID: macID, context: context) else { return nil }
             var error: Unmanaged<CFError>?
@@ -83,36 +88,62 @@ nonisolated enum DeviceKeys {
 
     nonisolated(unsafe) private static var locked = false
 
-    /// One Face ID holds for 5 minutes (`OwnerAuth.grace`), so reopening the terminal a minute later doesn't ask again.
-    /// The app lock's own Face ID holds for `unlockReuse` (`adopt`), so a destructive Allow just after it doesn't ask twice.
+    /// One Face ID holds while the phone is in use: each signature within `grace` of the last one reuses it, so a
+    /// conversation in a permissive session asks once, not at every reply. Leaving the app ends it (`expire`).
+    /// The app lock's own Face ID counts as that first one (`adopt`).
     nonisolated(unsafe) private static var shared: (context: LAContext, until: Date)?
+    /// The Face ID prompt on screen: a second signature waits for it, since iOS cancels one of two at once.
+    nonisolated(unsafe) private static var evaluating: Task<Evaluated?, Never>?
+    /// Bumped by `expire`, so an evaluation that finishes after the app left doesn't start a grace.
+    nonisolated(unsafe) private static var epoch = 0
+
+    /// LAContext is thread-safe but not marked Sendable.
+    private struct Evaluated: @unchecked Sendable { let context: LAContext }
     private static let lock = NSLock()
-    static let unlockReuse: TimeInterval = 60
     /// As `OwnerAuth.grace`, which the extensions can't see.
     static let grace: TimeInterval = 5 * 60
 
-    private static func faceID() -> LAContext {
-        lock.withLock {
-            if let shared, Date.now < shared.until { return shared.context }
-            shared?.context.invalidate()
-            let context = LAContext()
-            context.touchIDAuthenticationAllowableReuseDuration = grace
-            shared = (context, .now.addingTimeInterval(grace))
-            return context
+    /// The context that signs with the confirm key. A fresh one is evaluated for biometry here, before the keychain
+    /// sees it: only an evaluated context spares later signatures the prompt, which
+    /// `touchIDAuthenticationAllowableReuseDuration` doesn't do for a Secure Enclave key. A replaced context isn't
+    /// invalidated, as a signature may still be using it.
+    private static func faceID(reason: String) async -> LAContext? {
+        let (reused, pending, started) = lock.withLock { () -> (LAContext?, Task<Evaluated?, Never>, Int) in
+            if let current = shared, Date.now < current.until {
+                shared = (current.context, .now.addingTimeInterval(grace))
+                return (current.context, Task { nil }, epoch)
+            }
+            if let evaluating { return (nil, evaluating, epoch) }
+            let task = Task<Evaluated?, Never> {
+                let context = LAContext()
+                do {
+                    guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) else { return nil }
+                } catch {
+                    RemoteLog.log(.app, "Face ID declined: \((error as NSError).code)")
+                    return nil
+                }
+                return Evaluated(context: context)
+            }
+            evaluating = task
+            return (nil, task, epoch)
         }
+        if let reused { return reused }
+        let context = await pending.value?.context
+        lock.withLock {
+            if evaluating == pending { evaluating = nil }
+            if let context, epoch == started { shared = (context, .now.addingTimeInterval(grace)) }
+        }
+        return context
     }
 
-    /// The app lock's context, just evaluated. The confirm key still demands biometry (`.biometryCurrentSet`): an
-    /// unlock by passcode satisfies nothing here, and the signature then asks for Face ID as before.
+    /// The app lock's context, just evaluated for biometry. The confirm key demands biometry (`.biometryCurrentSet`), so
+    /// an unlock by passcode isn't adopted.
     static func adopt(_ context: LAContext) {
-        lock.withLock {
-            shared?.context.invalidate()
-            shared = (context, .now.addingTimeInterval(unlockReuse))
-        }
+        lock.withLock { shared = (context, .now.addingTimeInterval(grace)) }
     }
 
     /// Ends the Face ID grace, as the app goes to the background.
-    static func expire() { lock.withLock { shared?.context.invalidate(); shared = nil } }
+    static func expire() { lock.withLock { shared?.context.invalidate(); shared = nil; epoch += 1 } }
 
     /// The terminal's signer, for `TerminalSession(confirm:)`.
     static func terminal(macID: String, deviceID: String) -> @Sendable (String) async -> String? {

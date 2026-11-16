@@ -235,8 +235,10 @@ public struct RemoteClient: Sendable {
 
     public enum Page: Sendable, Hashable { case latest, before(Cursor), after(Cursor) }
 
-    public func transcript(_ session: SessionKey, _ page: Page = .latest, limit: Int? = nil) async throws -> TranscriptPage {
+    /// `agent`: one of the session's subagents, by `TranscriptTool.agentID`.
+    public func transcript(_ session: SessionKey, _ page: Page = .latest, limit: Int? = nil, agent: String? = nil) async throws -> TranscriptPage {
         var query = limit.map { [URLQueryItem(name: "limit", value: String($0))] } ?? []
+        if let agent { query.append(URLQueryItem(name: "agent", value: agent)) }
         switch page {
         case .latest: break
         case .before(let cursor): query.append(URLQueryItem(name: "before", value: cursor.raw))
@@ -245,8 +247,9 @@ public struct RemoteClient: Sendable {
         return try await get("/v1/sessions/\(session)/transcript", query: query)
     }
 
-    public func message(_ session: SessionKey, seq: Int, generation: String) async throws -> TranscriptMessage {
-        try await get("/v1/sessions/\(session)/messages/\(seq)", query: [URLQueryItem(name: "generation", value: generation)])
+    public func message(_ session: SessionKey, seq: Int, generation: String, agent: String? = nil) async throws -> TranscriptMessage {
+        try await get("/v1/sessions/\(session)/messages/\(seq)", query: [URLQueryItem(name: "generation", value: generation)]
+                      + (agent.map { [URLQueryItem(name: "agent", value: $0)] } ?? []))
     }
 
     // Only in Side A. Each needs its capability in `Hello`.

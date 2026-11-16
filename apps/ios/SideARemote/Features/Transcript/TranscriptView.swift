@@ -11,11 +11,21 @@ struct TranscriptView: View {
     let sessionID: SessionKey
     /// A past conversation from History: read-only, with Resume and Fork in place of the composer.
     var past: PastSession?
+    /// One of a session's subagents: read-only, refreshed while open, with the way back to its parent.
+    var subagent: SubagentRef?
     /// A message to scroll to and flash once loaded: a search's match.
     var match: String?
     @State private var flashed: String?
     /// The title while the session was live: an ended session keeps its page readable under its name.
     @State private var lastTitle: String?
+    /// The row while it was live: an ended session's reply resumes its conversation in its folder.
+    @State private var lastSession: RemoteSession?
+    /// Continued or resumed from the composer: the hosted session takes this page's place, so it follows the session
+    /// whatever key it comes back under.
+    @State private var replaced: HostedSession?
+    /// Continue or Resume in flight from the composer.
+    @State private var bringingBack = false
+    @AppStorage("newSession.openOnMac") private var openOnMac = true
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
@@ -45,6 +55,14 @@ struct TranscriptView: View {
     }
 
     var body: some View {
+        if let replaced {
+            StartingSessionView(started: replaced, giveBackTo: sessionID)
+        } else {
+            transcript
+        }
+    }
+
+    @ViewBuilder private var transcript: some View {
         let items = layout()
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -100,33 +118,14 @@ struct TranscriptView: View {
                     .animation(Motion.smooth(reduceMotion), value: usage)
             }
         }
-        .safeAreaBar(edge: .bottom) {
-            if let past {
-                ResumeBar(past: past)
-            } else {
-                VStack(spacing: Space.xs) {
-                    if let plan = session?.plan, !plan.steps.isEmpty {
-                        PlanCard(plan: plan)
-                            .padding(.horizontal, Space.m)
-                            .transition(.opacity)
-                    }
-                    if let attention = session.flatMap(model.tools.attention(for:)) {
-                        AttentionCard(attention: attention)
-                            .padding(.horizontal, Space.m)
-                            .transition(.opacity)
-                    }
-                    composer(count: items.count)
-                }
-                .animation(Motion.smooth(reduceMotion), value: session.flatMap(model.tools.attention(for:)))
-                .animation(Motion.smooth(reduceMotion), value: session?.plan == nil)
-            }
-        }
-        .navigationTitle(session.map { model.tools.title(for: $0) } ?? past?.title ?? lastTitle ?? "Session")
-        .onChange(of: session?.title, initial: true) { _, title in if let title { lastTitle = title } }
+        .safeAreaBar(edge: .bottom) { bottomBar(count: items.count) }
+        .navigationTitle(title)
         .navigationSubtitle(subtitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarTitleMenu {
-            if let past {
+            if subagent != nil {
+                EmptyView()
+            } else if let past {
                 Button("Copy Conversation ID", systemImage: "doc.on.doc") { UIPasteboard.general.string = past.id }
             } else {
                 RenameButton(session: session)
@@ -134,7 +133,7 @@ struct TranscriptView: View {
                 Button("Session Info", systemImage: "info.circle") { showsInfo = true }
             }
         }
-        .toolbar { if past == nil { toolbarContent } }
+        .toolbar { if past == nil, subagent == nil { toolbarContent } }
         .toolbarVisibility(.hidden, for: .tabBar)
         .sheet(isPresented: $showsInfo) {
             if let session { SessionInfoSheet(session: session) }
@@ -159,6 +158,7 @@ struct TranscriptView: View {
         }
         .task(id: sessionID) {
             // Live: the newest page, then the Mac's appends, while this transcript is on screen.
+            if let subagent { return await model.tools.follow(subagent, into: model.transcripts) }
             await model.link?.follow(sessionID)
         }
         .task(id: session?.abilities) {
@@ -168,7 +168,39 @@ struct TranscriptView: View {
             await model.tools.loadModels(for: session)
         }
         .task(id: match) { await reveal() }
+        .onChange(of: session?.title, initial: true) { _, title in if let title { lastTitle = title } }
+        .onChange(of: session, initial: true) { _, session in if let session { lastSession = session } }
         .sessionActions()
+    }
+
+    private var title: String {
+        if let subagent { return subagent.title }
+        if let session { return model.tools.title(for: session) }
+        return past?.title ?? lastTitle ?? "Session"
+    }
+
+    @ViewBuilder private func bottomBar(count: Int) -> some View {
+        if let subagent {
+            SubagentBar(ref: subagent)
+        } else if let past {
+            ResumeBar(past: past)
+        } else {
+            VStack(spacing: Space.xs) {
+                if let plan = session?.plan, !plan.steps.isEmpty {
+                    PlanCard(plan: plan)
+                        .padding(.horizontal, Space.m)
+                        .transition(.opacity)
+                }
+                if let attention = session.flatMap(model.tools.attention(for:)) {
+                    AttentionCard(attention: attention)
+                        .padding(.horizontal, Space.m)
+                        .transition(.opacity)
+                }
+                composer(count: count)
+            }
+            .animation(Motion.smooth(reduceMotion), value: session.flatMap(model.tools.attention(for:)))
+            .animation(Motion.smooth(reduceMotion), value: session?.plan == nil)
+        }
     }
 
     private func composer(count: Int) -> some View {
@@ -263,6 +295,8 @@ struct TranscriptView: View {
             }
         case .tool(let tool):
             ToolRow(sessionID: sessionID, tool: tool)
+        case .subagent(let tool):
+            SubagentCard(sessionID: sessionID, tool: tool)
         case .thinking(let tool):
             ThinkingRow(tool: tool)
         case .group(let group):
@@ -315,10 +349,11 @@ struct TranscriptView: View {
     // MARK: Composer
 
     private var placeholder: String {
-        guard let session else { return "Reply…" }
+        guard let session else { return resumable ? "Reply to resume it…" : "Reply…" }
         if openRequests.contains(where: \.isQuestion) { return "Or type your own answer…" }
         // Through the inbox or a Stop hook, Claude reads it as a note, never as the user's own consent.
         if model.arrivesAsNote(sessionID) { return "Reply · arrives as a note" }
+        if model.needsContinue(sessionID) { return "Reply · picks it up in Side A" }
         switch SessionPhase(session) {
         case .working, .needsYou: return "Message…"
         default: return "Reply…"
@@ -327,7 +362,14 @@ struct TranscriptView: View {
 
     /// Under the field while nothing else is: where this session's replies go when that isn't the usual.
     private var standingNotice: String? {
-        model.outsideSharedServer(sessionID) ? "Started outside Codex's shared server: replies arrive only after it finishes." : nil
+        if bringingBack { return session == nil ? "Resuming it on \(model.mac.name)…" : "Moving it into Side A on \(model.mac.name)…" }
+        if model.needsContinue(sessionID) { return "It's idle in a terminal Side A can't type into. Sending moves it into Side A first." }
+        return model.outsideSharedServer(sessionID) ? "Started outside Codex's shared server: replies arrive only after it finishes." : nil
+    }
+
+    /// Ended, with what Resume needs kept from its row.
+    private var resumable: Bool {
+        session == nil && past == nil && model.tools.can(.hosted) && lastSession?.conversationID != nil && lastSession?.cwd != nil
     }
 
     /// What Codex or Claude dropped, to send again.
@@ -344,7 +386,8 @@ struct TranscriptView: View {
 
     /// Status `unknown` authorizes nothing, so the field says why it's off.
     private var disabledReason: String? {
-        if session == nil, lastTitle != nil { return "This session has ended." }
+        if bringingBack { return nil }
+        if session == nil, lastTitle != nil, !resumable { return "This session has ended." }
         return session?.status == .unknown ? "\(model.mac.name) can't tell what this session is doing." : nil
     }
 
@@ -363,6 +406,7 @@ struct TranscriptView: View {
     }
 
     private var subtitle: String {
+        if let subagent { return "Subagent · " + (model.sessions.session(subagent.parent).map { model.tools.title(for: $0) } ?? "Session") }
         if let past { return [past.project, past.branch].compactMap { $0 }.joined(separator: " · ") }
         guard let session else { return "" }
         if let parent = session.hosted.flatMap({ model.tools.forkedFrom[$0] }) { return "Forked from \(parent)" }
@@ -384,7 +428,7 @@ struct TranscriptView: View {
     /// `delivery`: picked from Send's long-press; nil is the plain tap, which the Mac's delivery table decides.
     private func send(as delivery: Delivery? = nil) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, !bringingBack else { return }
         model.transcripts.drafts[sessionID] = ""
         // A waiting question takes the text as its "write your own" answer; a reply would get 409.
         if let question = openRequests.first(where: \.isQuestion), case .question(let questions) = question.action, questions.count == 1 {
@@ -393,6 +437,8 @@ struct TranscriptView: View {
             }
             return
         }
+        if model.needsContinue(sessionID) { return continueThenSend(text) }
+        if session == nil, resumable, let last = lastSession { return resume(last, with: text) }
         withAnimation(Motion.smooth(reduceMotion)) {
             if let delivery { model.send(text, to: sessionID, as: delivery) } else { model.reply(text, to: sessionID) }
             // The live link took the photos with the reply; the demo has nowhere to send them. Interrupt and Send
@@ -403,6 +449,45 @@ struct TranscriptView: View {
         Task { @MainActor in
             await Task.yield()
             scrollToBottom(count: layout().count)
+        }
+    }
+
+    /// Continue on iPhone, then the reply, typed once the session is back in Side A's tmux. With the Mac tab setting on
+    /// (New Session's), it gets a tab on the Mac again too.
+    private func continueThenSend(_ text: String) {
+        let turn = model.transcripts.send(text, to: sessionID)
+        bringingBack = true
+        Task {
+            defer { bringingBack = false }
+            do {
+                let hosted = try await model.tools.continueOnPhone(sessionID)
+                model.transcripts.discard(turn.id, in: sessionID)
+                model.transcripts.wait(text, for: hosted.name, at: turn.at)
+                if openOnMac, model.tools.can(.hostedShow) { try? await model.tools.showOnMac(hosted.name) }
+                replaced = hosted
+            } catch {
+                model.transcripts.fail(turn.id, in: sessionID, reason: MacTools.message(error), item: nil)
+            }
+        }
+    }
+
+    /// Resume the ended conversation hosted, with the reply as its prompt.
+    private func resume(_ last: RemoteSession, with text: String) {
+        guard let conversation = last.conversationID, let cwd = last.cwd else { return }
+        let turn = model.transcripts.send(text, to: sessionID)
+        bringingBack = true
+        let start = StartHosted(cwd: cwd, agent: last.agent, prompt: text, resume: conversation,
+                                openOnMac: openOnMac && model.tools.can(.hostedShow) ? true : nil)
+        Task {
+            defer { bringingBack = false }
+            do {
+                let hosted = try await model.tools.start(start, key: UUID().uuidString.lowercased())
+                model.transcripts.discard(turn.id, in: sessionID)
+                model.transcripts.started(hosted.name, prompt: text, at: turn.at)
+                replaced = hosted
+            } catch {
+                model.transcripts.fail(turn.id, in: sessionID, reason: MacTools.message(error), item: nil)
+            }
         }
     }
 
@@ -443,6 +528,7 @@ struct TranscriptView: View {
                     CompactButton(session: session)
                 }
                 Section("Session") {
+                    ShowOnMacButton(name: session?.hosted)
                     ForkButton(session: session)
                     RestartButton(session: session)
                     ContinueButton(session: session)

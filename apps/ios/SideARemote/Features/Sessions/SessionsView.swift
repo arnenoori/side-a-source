@@ -80,7 +80,7 @@ struct SessionsView: View {
         .navigationTitle("Sessions")
         .overlay {
             if everyMac {
-                if root.macs.allSatisfy({ $0.sessions.sessions.isEmpty && $0.mac.state == .live }) {
+                if root.macs.allSatisfy({ $0.sessions.sessions.isEmpty && $0.tools.unlisted(in: []).isEmpty && $0.mac.state == .live }) {
                     ContentUnavailableView {
                         Label { Text("No sessions running") } icon: { DiscGlyph(size: 44) }
                     } actions: {
@@ -90,7 +90,7 @@ struct SessionsView: View {
             } else if case .offline(let reason) = model.mac.state, reason.needsPairing, model.sessions.sessions.isEmpty {
                 PairAgainView(reason: reason, mac: model.mac.name)
                     .background(Color(.systemGroupedBackground))
-            } else if model.sessions.sessions.isEmpty, model.mac.state == .live {
+            } else if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.mac.state == .live {
                 ContentUnavailableView {
                     Label { Text("No sessions running") } icon: { DiscGlyph(size: 44) }
                 } actions: {
@@ -185,7 +185,7 @@ private struct MacSessions: View {
     var body: some View {
         if header {
             Section {
-                if model.sessions.sessions.isEmpty, model.mac.state == .live {
+                if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.mac.state == .live {
                     Text("No sessions running").foregroundStyle(.secondary)
                 }
             } header: {
@@ -206,6 +206,7 @@ private struct MacSessions: View {
         IncidentBanner()
         banners
         pinnedSection
+        startingSection
         ForEach([SessionPhase.needsYou, .working, .ready], id: \.self) { phase in
             let groups = unpinned(model.sessions.groups(phase))
             if !groups.allSatisfy(\.rows.isEmpty) {
@@ -278,6 +279,23 @@ private struct MacSessions: View {
         groups.map { ($0.title, $0.rows.filter { !model.tools.isPinned($0) }) }.filter { !$0.rows.isEmpty || $0.title == nil }
     }
 
+    /// Started a moment ago, here or on the Mac, and not listed by the agent yet: in the list at once, not after it registers.
+    @ViewBuilder private var startingSection: some View {
+        let starting = model.tools.unlisted(in: model.sessions.sessions)
+        if !starting.isEmpty {
+            Section {
+                ForEach(starting, id: \.name) { hosted in
+                    NavigationLink(value: Route.starting(hosted.name, mac: model.macID)) {
+                        StartingRow(hosted: hosted, prompt: model.transcripts.firstPrompts[hosted.name]?.text)
+                    }
+                    .id("starting-\(hosted.name)")
+                }
+            } header: {
+                Text("Starting").foregroundStyle(Color(.secondaryLabel))
+            }
+        }
+    }
+
     @ViewBuilder private var pinnedSection: some View {
         let pinned = pinned
         if !pinned.isEmpty {
@@ -309,6 +327,35 @@ private struct MacSessions: View {
                 .contextMenu { QuitIdleButton(title: "Quit Idle…") }
             }
         }
+    }
+}
+
+/// A hosted session before its agent has a row: the folder, what was asked, and how long ago.
+private struct StartingRow: View {
+    let hosted: HostedSession
+    let prompt: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Space.s) {
+            ProgressView().controlSize(.small).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(prompt ?? hosted.project).font(.body.weight(.semibold)).lineLimit(1)
+                    Spacer(minLength: Space.xs)
+                    Text(Formatting.elapsed(since: Date(timeIntervalSince1970: hosted.createdAt)))
+                        .font(.footnote.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Text([hosted.agent.title, hosted.project, hosted.macAttached ? "Tab on Mac" : nil].compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 6)
+        .frame(minHeight: 52)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Starting, \(prompt ?? hosted.project), \(hosted.agent.title) in \(hosted.project)")
     }
 }
 

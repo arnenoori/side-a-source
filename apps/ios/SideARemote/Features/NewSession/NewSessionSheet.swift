@@ -20,6 +20,8 @@ struct NewSessionSheet: View {
     @State private var effort: Effort?
     @State private var worktree = false
     @State private var accountID: String?
+    /// A terminal tab on the Mac attached to it as well, so it's in the Mac's tabs too. Remembered across sheets.
+    @AppStorage("newSession.openOnMac") private var openOnMac = true
     @State private var error: String?
     @State private var starting = false
     @State private var loading = true
@@ -148,6 +150,7 @@ struct NewSessionSheet: View {
                         if !models.isEmpty { modelChip }
                         if project?.gitRoot != nil { worktreeChip }
                         if accounts.count > 1 { accountChip }
+                        if tools.can(.hostedShow) { macTabChip }
                     }
                     .padding(.horizontal, Space.m)
                 }
@@ -219,6 +222,18 @@ struct NewSessionSheet: View {
         .accessibilityLabel(worktree ? "In a new worktree" : "In the folder, no worktree")
     }
 
+    private var macTabChip: some View {
+        Menu {
+            Picker("Mac Tab", selection: $openOnMac) {
+                Text("Also open a tab on \(model.mac.name)").tag(true)
+                Text("Only on iPhone").tag(false)
+            }
+        } label: {
+            ChipLabel(symbol: openOnMac ? "macwindow" : "iphone", text: openOnMac ? "Tab on \(model.mac.name)" : "iPhone only")
+        }
+        .accessibilityLabel(openOnMac ? "Also opens a tab on \(model.mac.name)" : "Runs without a tab on \(model.mac.name)")
+    }
+
     private var accountChip: some View {
         Menu {
             Picker("Account", selection: $accountID) {
@@ -248,13 +263,16 @@ struct NewSessionSheet: View {
     private func start() {
         guard let project else { return }
         let request = StartHosted(cwd: project.path, agent: agent, model: modelID, effort: effort?.rawValue, worktree: worktree,
-                                  accountID: accountID, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines))
+                                  accountID: accountID, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                                  openOnMac: tools.can(.hostedShow) && openOnMac ? true : nil)
         starting = true
         error = nil
+        let tapped = Date.now
         Task {
             defer { starting = false }
             do {
                 let hosted = try await tools.start(request, key: key)
+                model.transcripts.started(hosted.name, prompt: request.prompt ?? "", at: tapped)
                 started += 1
                 dismiss()
                 onStarted(hosted, model)

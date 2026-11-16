@@ -237,7 +237,12 @@ public actor SyncEngine {
         return feed
     }
 
-    public func message(_ session: SessionKey, seq: Int) async throws -> TranscriptMessage {
+    /// `agent`: a subagent of `session`, whose rows have a generation of their own.
+    public func message(_ session: SessionKey, seq: Int, agent: String? = nil) async throws -> TranscriptMessage {
+        if let agent {
+            let generation = try await client.transcript(session, .latest, limit: 1, agent: agent).generation
+            return try await client.message(session, seq: seq, generation: generation, agent: agent)
+        }
         var generation = await feeds[session]?.window.generation ?? ""
         if generation.isEmpty { generation = try await client.transcript(session, .latest, limit: 1).generation }
         return try await client.message(session, seq: seq, generation: generation)

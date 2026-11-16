@@ -1755,6 +1755,79 @@ def remote_row(seq, data):
     return {"seq": seq, **row}
 
 
+def subagent_ids(path, session_id):
+    """Claude's subagents by the Task/Agent call that started them, from `subagents/agent-<id>.meta.json`. Written as the
+    agent starts, so a running one can be opened before its result names it."""
+    folder = Path(path).parent / session_id / "subagents"
+    ids = {}
+    try:
+        metas = list(folder.glob("agent-*.meta.json"))
+    except OSError:
+        return ids
+    for meta in metas:
+        agent_id = meta.name[len("agent-"):-len(".meta.json")]
+        try:
+            call = json.loads(meta.read_text()).get("toolUseId")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(call, str) and AGENT_ID.fullmatch(agent_id):
+            ids[call] = agent_id
+    return ids
+
+
+def name_subagents(db, key, path, agent, session_id, sub):
+    """Writes the ids `subagent_ids` finds into the stored Task/Agent rows that lack one, under a new rev, so a live tail
+    sends each row again once (as `replaced`) rather than at every page. Under the same lock as `update_view`, which
+    may be rewriting those rows from the transcript meanwhile."""
+    if agent != "claude" or sub:
+        return
+    unnamed = lambda tool: tool.get("subagent") is not None and not tool.get("agent_id")
+
+    def waiting():
+        rows = [(seq, json.loads(data)) for seq, data in db.execute(
+            "SELECT seq, data FROM views WHERE session=? AND instr(data, '\"subagent\": \"') > 0", (key,))]
+        return [(seq, row) for seq, row in rows if any(unnamed(tool) for tool in row["tools"])]
+
+    # Looked at first without a write, so a conversation with nothing to name is served without one.
+    rows = waiting()
+    ids = subagent_ids(path, session_id) if rows else {}
+    if not any(unnamed(tool) and tool.get("id") in ids for _, row in rows for tool in row["tools"]):
+        return
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        rows = waiting()
+        named = []
+        for seq, row in rows:
+            hit = False
+            for tool in row["tools"]:
+                if unnamed(tool) and tool.get("id") in ids:
+                    tool["agent_id"] = ids[tool["id"]]
+                    hit = True
+            if hit:
+                named.append((json.dumps(row), seq))
+        if named:
+            rev = (db.execute("SELECT rev FROM view_state WHERE session=?", (key,)).fetchone()[0] or 0) + 1
+            db.executemany("UPDATE views SET data=?, rev=? WHERE session=? AND seq=?", [(data, rev, key, seq) for data, seq in named])
+            db.execute("UPDATE view_state SET rev=? WHERE session=?", (rev, key))
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def with_subagents(messages, path, agent, session_id, sub):
+    """Fills each Task/Agent row's `agent_id` that its result hasn't named yet."""
+    if agent != "claude" or sub or not any(tool.get("subagent") is not None and not tool.get("agent_id")
+                                           for message in messages for tool in message.get("tools", [])):
+        return messages
+    ids = subagent_ids(path, session_id)
+    for message in messages:
+        for tool in message.get("tools", []):
+            if tool.get("subagent") is not None and not tool.get("agent_id") and tool.get("id") in ids:
+                tool["agent_id"] = ids[tool["id"]]
+    return messages
+
+
 def show(root, session_id, limit=4000, around=None):
     """One session's conversation for the viewer: prompts, replies, tool calls as one line each,
     compactions, and what it was forked from and into. Copied parent history is marked inherited.
@@ -1848,6 +1921,7 @@ def page(root, session_id, limit=None, before=None, after=None, around=None, age
     db = connect(root)
     try:
         count, _ = update_view(db, key, path, agent, sub, (session_id, agent_id))
+        name_subagents(db, key, path, agent, session_id, sub)
         generation, rev = db.execute("SELECT generation, rev FROM view_state WHERE session=?", (key,)).fetchone()
         reset = bool(cursor) and cursor[0] != generation
         start, end, replaced = max(count - limit, 0), count, []
@@ -1964,7 +2038,7 @@ def message(root, session_id, seq, generation, agent_id=None):
         row["tools"] = [whole_tool(tool, agent, path) for tool in row["tools"]]
     except (Changed, OSError):
         return {"error": "changed"}
-    return remote_row(seq, json.dumps(row))
+    return with_subagents([remote_row(seq, json.dumps(row))], path, agent, session_id, sub)[0]
 
 
 STUCK_AFTER = 600

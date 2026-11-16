@@ -128,6 +128,23 @@ extension AppModel {
     /// `auto`, or while a request waits on the session, what it can still take.
     func replyMode(_ session: SessionKey) -> ReplyMode { waiting(session) ? predictedMode(session) : .auto }
 
+    /// Replies that waited for Continue go once their session is listed hosted, whatever page is open; the view
+    /// does the same as it watches.
+    func deliverWaitingReplies() {
+        for name in transcripts.waitingReplies.keys {
+            guard let session = sessions.sessions.first(where: { $0.hosted == name }), let text = transcripts.takeWaitingReply(name) else { continue }
+            reply(text, to: session.id)
+        }
+    }
+
+    /// Idle in a terminal Side A doesn't host, with nothing there to take a reply: the Mac refuses one (`continueOnPhone`),
+    /// so the composer's send moves it into Side A's tmux first, then types it there.
+    func needsContinue(_ id: SessionKey) -> Bool {
+        guard let session = sessions.session(id), session.hosted == nil, session.status == .idle, !session.headless else { return false }
+        if session.abilities.contains(.replyTerminal) || session.abilities.contains(.replyInbox) { return false }
+        return session.abilities.contains(.continueOnPhone) && tools.can(.continueOnPhone)
+    }
+
     /// A Codex session in a terminal Side A reaches through Codex's shared server: a reply shows there as
     /// the user's message, steering a turn or starting one.
     func reachesTerminal(_ id: SessionKey) -> Bool {
