@@ -42,10 +42,31 @@ final class AccountStore {
     private(set) var adopting: Set<AgentProvider> = []
     /// When adding a Mac login on its own last failed, by "provider:email"; it waits ten minutes to try again.
     @ObservationIgnored private var adoptFailedAt: [String: Date] = [:]
-    /// When an unready account holding the Mac's login was last checked, so it's checked at most every ten minutes.
-    @ObservationIgnored private var recheckedAt: [String: Date] = [:]
-    /// Accounts added without a name, which take their email's once sign-in confirms it.
-    @ObservationIgnored private var unnamed: [String: String] = [:]
+    /// What Side A keeps about each account while it runs, apart from what views show. One entry per account, so
+    /// forgetting an account is dropping its entry.
+    struct PerAccount {
+        /// When it was last read, and when it may be read again after a failure.
+        var usageAt: Date?, backoffUntil: Date?
+        /// When its 5-hour window was last started, and when its login was last renewed.
+        var primedAt: Date?, renewedAt: Date?
+        /// When an unready account holding the Mac's login was last checked, so it's checked at most every ten minutes.
+        var recheckedAt: Date?
+        /// Its latest read failed for a reason other than being idle. It keeps its last bars on screen but is left out of
+        /// Autopilot until a read succeeds.
+        var failing = false
+        /// The newest login stamp seen, the sign-in end already warned about, and the paid-usage window reset already warned about.
+        var loginStamp: Double?, endWarned: Double?, paidWarned: Double?
+        /// When a Claude Code session last reported its limits.
+        var liveAt: Double?
+        /// Recent (time, 5-hour percent) samples for the burn-rate forecast.
+        var samples: [(Double, Double)] = []
+        /// The name it was added with when it had none, which takes its email's once sign-in confirms it.
+        var unnamed: String?
+    }
+    @ObservationIgnored private(set) var perAccount: [String: PerAccount] = [:]
+    private var failingIDs: Set<String> { Set(perAccount.filter(\.value.failing).keys) }
+    /// One saved field of every account that has it, for the usage cache.
+    private func saved<T>(_ field: KeyPath<PerAccount, T?>) -> [String: T] { perAccount.compactMapValues { $0[keyPath: field] } }
     /// Tests answer bridge calls here instead of running Python.
     @ObservationIgnored var testBridge: (@MainActor ([String]) async throws -> Data)?
     var report: UsageReport?
@@ -71,8 +92,6 @@ final class AccountStore {
     /// The ~/.zshrc wrappers that start interactive claude and codex in Side A's tmux server.
     var hostTerminal = false
     var liveLimits = false
-    /// When a Claude Code session last reported each account's limits.
-    private var liveAt: [String: Double] = [:]
     private var liveSeen = Date.distantPast
     /// Keychain slots running claude processes read, with the account whose login is in each;
     /// nil when processes can't be listed.
@@ -93,12 +112,6 @@ final class AccountStore {
     /// Why an account's numbers are not current, or its login can't be used. Only accounts with something wrong have an entry.
     var health: [String: LoginHealth] = [:] { didSet { remoteUsageChanged(); writePoolPlan() } }
     var waking: Set<String> = []
-    @ObservationIgnored private var primedAt: [String: Date] = [:]
-    @ObservationIgnored private var usageAt: [String: Date] = [:]
-    @ObservationIgnored private var backoffUntil: [String: Date] = [:]
-    /// Accounts whose latest read failed for a reason other than being idle. They keep their
-    /// last bars on screen but are left out of Autopilot until a read succeeds.
-    @ObservationIgnored private var failing: Set<String> = []
     @ObservationIgnored lazy var rotationRecords = RotationRecords(url: isDemo ? nil : root.appendingPathComponent("runtime/rotation.json"))
     @ObservationIgnored lazy var autopilotLog = AutopilotLog(url: root.appendingPathComponent("runtime/autopilot.log"))
     /// Failed moves already notified, by slot and target, so a retry every tick doesn't notify again.
@@ -109,14 +122,7 @@ final class AccountStore {
     @ObservationIgnored private var kicked = false
     /// Bumped by every switch, so an "active" answer that started earlier cannot overwrite it.
     @ObservationIgnored private var selectionGeneration = 0
-    /// Recent (time, 5-hour percent) samples per account for the burn-rate forecast.
-    @ObservationIgnored private var samples: [String: [(Double, Double)]] = [:]
     @ObservationIgnored private var exhaustedNotified = false
-    /// Per account: the window reset already warned about, so each limit warns once.
-    @ObservationIgnored private var paidWarned: [String: Double] = [:]
-    @ObservationIgnored private var loginStamps: [String: Double] = [:]
-    @ObservationIgnored private var endWarned: [String: Double] = [:]
-    @ObservationIgnored private var renewedAt: [String: Date] = [:]
     /// When each Claude sign-in stops renewing; about a month after signing in.
     var loginEnds: [String: Double] = [:]
     /// When each account was last read successfully, for marking old readings.
@@ -327,8 +333,11 @@ final class AccountStore {
     private func loadUsageCache() {
         guard let cache = try? PrivateFile.read(UsageCache.self, from: usageCacheURL) else { return }
         // Show the last numbers at once and keep each account on its normal polling schedule.
-        usage = cache.usage; usageAt = cache.at
-        backoffUntil = cache.backoff ?? [:]; primedAt = cache.primed ?? [:]; failing = Set(cache.failing ?? []).intersection(config.accounts.map(\.id))
+        usage = cache.usage
+        for (id, at) in cache.at { perAccount[id, default: PerAccount()].usageAt = at }
+        for (id, until) in cache.backoff ?? [:] { perAccount[id, default: PerAccount()].backoffUntil = until }
+        for (id, at) in cache.primed ?? [:] { perAccount[id, default: PerAccount()].primedAt = at }
+        for id in Set(cache.failing ?? []).intersection(config.accounts.map(\.id)) { perAccount[id, default: PerAccount()].failing = true }
         health = (cache.issues ?? [:]).reduce(into: [:]) { kept, entry in
             if config.accounts.contains(where: { $0.id == entry.key }) { kept[entry.key] = LoginHealth(saved: entry.value) }
         }
@@ -379,7 +388,7 @@ final class AccountStore {
     }
 
     private func woke() {
-        for (id, state) in health where state == .offline { backoffUntil[id] = nil }
+        for (id, state) in health where state == .offline { perAccount[id]?.backoffUntil = nil }
         kicked = true
     }
 
@@ -434,7 +443,7 @@ final class AccountStore {
     /// The rest, sounds included, are read each time they're used, so storing them is enough.
     private func applyPreferences(_ keys: Set<String>) async {
         if keys.contains(Island.onKey), let change = PreferencesMirror.islandChange(on: Island.on, claudeInstalled: island.installed[.claude] == true,
-                                                                                     remoteActive: RemoteController.active) {
+                                                                                     remoteActive: remote.active) {
             await setIsland(change.agent, change.state)
         }
         if keys.contains(KeepAwakeController.enabledKey) {
@@ -487,7 +496,7 @@ final class AccountStore {
         checkingDependencies = false
         // Readings that failed only because Python was gone retry now, not after their five-minute back-off.
         if !hadPython, python != nil {
-            for (id, state) in health where state == .offline { backoffUntil[id] = nil }
+            for (id, state) in health where state == .offline { perAccount[id]?.backoffUntil = nil }
         }
     }
     var bridgeURL: URL? { AppResources.bridge("sidea_bridge.py") }
@@ -600,13 +609,15 @@ final class AccountStore {
         config.accounts.append(account)
         if config.selectedID == nil { config.selectedID = account.id }
         guard persist() else { config.accounts.removeAll { $0.id == account.id }; return nil }
-        if name.isEmpty { unnamed[account.id] = account.name }
+        if name.isEmpty { perAccount[account.id, default: PerAccount()].unnamed = account.name }
         return account.id
     }
     /// Names an account added without one after the email sign-in confirmed; a rename in the meantime stands.
     private func takeName(_ index: Int) {
         let account = config.accounts[index]
-        guard let given = unnamed.removeValue(forKey: account.id), account.name == given, let name = Self.name(from: account.email) else { return }
+        let given = perAccount[account.id]?.unnamed
+        perAccount[account.id]?.unnamed = nil
+        guard let given, account.name == given, let name = Self.name(from: account.email) else { return }
         config.accounts[index].name = name
     }
     /// An email's local part, as an account's name.
@@ -625,12 +636,14 @@ final class AccountStore {
         catch { self.error = "Sign-in did not finish. Try again."; return false }
         let ok = await verify(id)
         // The login just changed, so what a read of the old one backed off from no longer applies.
-        if ok { backoffUntil[id] = nil; await refreshUsage(id) }
+        if ok { perAccount[id]?.backoffUntil = nil; await refreshUsage(id) }
         return ok
     }
-    func signOut(_ id: String) {
+    func signOut(_ id: String) async {
         guard !config.accounts.contains(where: { $0.id == id && isActive($0) }) else { error = "Switch to another account before signing out of this one."; return }
-        Task { _ = try? await bridgeOutput(["logout", id]) }
+        let name = config.accounts.first(where: { $0.id == id })?.name ?? "this account"
+        do { _ = try await bridgeOutput(["logout", id]) }
+        catch { self.error = "Couldn't sign out of \(name). Try again."; return }
         if let index = config.accounts.firstIndex(where: { $0.id == id }) {
             config.accounts[index].ready = false; persist()
         }
@@ -642,7 +655,12 @@ final class AccountStore {
         // if credentials should be revoked. Keep conversation files intact.
         if let account = config.accounts.first(where: { $0.id == id }) {
             config.noteRemoved(account)
-            if account.provider == .claude { Task { _ = try? await bridgeOutput(["forget", id]) } }
+            if account.provider == .claude {
+                Task {
+                    do { _ = try await bridgeOutput(["forget", id]) }
+                    catch { self.error = "Removed \(account.name), but its saved sign-in is still in your Keychain." }
+                }
+            }
         }
         config.accounts.removeAll { $0.id == id }
         if config.selectedID == id { config.selectedID = config.accounts.first?.id }
@@ -651,10 +669,8 @@ final class AccountStore {
     }
     /// What Side A kept about a removed account, so none of it lingers in the menu, the pool or the usage cache.
     private func forgetState(_ id: String) {
-        usage[id] = nil; health[id] = nil; readAt[id] = nil; loginEnds[id] = nil
-        usageAt[id] = nil; backoffUntil[id] = nil; primedAt[id] = nil; failing.remove(id)
-        liveAt[id] = nil; limitHits[id] = nil; samples[id] = nil; paidWarned[id] = nil
-        loginStamps[id] = nil; endWarned[id] = nil; renewedAt[id] = nil; recheckedAt[id] = nil; unnamed[id] = nil
+        perAccount[id] = nil
+        usage[id] = nil; health[id] = nil; readAt[id] = nil; loginEnds[id] = nil; limitHits[id] = nil
         poolBlocked[id] = nil; signInWarned.remove(id); signInAsked.remove(id)
         poolTokens.forget(id)
         saveUsageCache()
@@ -821,22 +837,22 @@ final class AccountStore {
         let now = Date()
         for id in activeIDs.values {
             guard let account = config.accounts.first(where: { $0.id == id }), !account.ready, !account.email.isEmpty,
-                  !signingIn.contains(id), now.timeIntervalSince(recheckedAt[id] ?? .distantPast) > 600 else { continue }
-            recheckedAt[id] = now
+                  !signingIn.contains(id), now.timeIntervalSince(perAccount[id]?.recheckedAt ?? .distantPast) > 600 else { continue }
+            perAccount[id, default: PerAccount()].recheckedAt = now
             Task { if await verify(id, reportError: false) { await refreshUsage(id) } }
         }
     }
     /// Reads one account's limits. A failed read keeps the last known numbers; only an
     /// expired login (stale) takes an account out of Autopilot, so a hiccup never causes a switch.
     func refreshUsage(_ id: String) async {
-        guard Date() >= (backoffUntil[id] ?? .distantPast), !reading.contains(id) else { return }
+        guard Date() >= (perAccount[id]?.backoffUntil ?? .distantPast), !reading.contains(id) else { return }
         reading.insert(id); defer { reading.remove(id) }
         let started = Date()
-        usageAt[id] = started
+        perAccount[id, default: PerAccount()].usageAt = started
         do {
             var value = try JSONDecoder().decode(AccountUsage.self, from: try await bridgeOutput(["usage", id]))
             // A session reply that landed while this read was in flight is newer than its answer.
-            if (liveAt[id] ?? 0) > started.timeIntervalSince1970, let current = usage[id] {
+            if (perAccount[id]?.liveAt ?? 0) > started.timeIntervalSince1970, let current = usage[id] {
                 for window in current.windows where ["five_hour", "seven_day"].contains(window.id) {
                     if let index = value.windows.firstIndex(where: { $0.id == window.id }) { value.windows[index] = window }
                 }
@@ -845,7 +861,7 @@ final class AccountStore {
             warnAboutPaidUsage(id, before: usage[id], after: value)
             usage[id] = value
             readAt[id] = max(started, readAt[id] ?? started)
-            failing.remove(id)
+            perAccount[id]?.failing = false
             health[id] = nil
             signInWarned.remove(id)
             signInAsked.remove(id)
@@ -857,10 +873,10 @@ final class AccountStore {
             autopilotLog.note("read \(id)", "\(config.accounts.first { $0.id == id }?.name ?? id): usage read failed: \(message)")
             // Idle: nobody has used the login since it expired, so the last reading still holds.
             if kind == .idle {
-                backoffUntil[id] = Date().addingTimeInterval(1800)
+                perAccount[id, default: PerAccount()].backoffUntil = Date().addingTimeInterval(1800)
                 health[id] = .idle
                 // Free: Claude Code renews the login without running a model, then it is read again.
-                if Date().timeIntervalSince(renewedAt[id] ?? .distantPast) > 600 { Task { await renew(id) } }
+                if Date().timeIntervalSince(perAccount[id]?.renewedAt ?? .distantPast) > 600 { Task { await renew(id) } }
             } else {
                 // The usage endpoint rate-limits frequent reads; back off rather than retry.
                 let signIn = kind == .signIn
@@ -869,13 +885,13 @@ final class AccountStore {
                     // A rate limit is not a fault, and it shows the endpoint is reachable again: the last reading stays,
                     // marked with its time once it ages. Health and `failing` clear together, or Autopilot would skip
                     // an account the menu shows as fine.
-                    if health[id] == .offline || health[id] == .idle { health[id] = nil; failing.remove(id) }
+                    if health[id] == .offline || health[id] == .idle { health[id] = nil; perAccount[id]?.failing = false }
                 } else {
                     if !signIn { health[id] = kind == .unconfirmed ? .verify : .offline }
-                    failing.insert(id)
+                    perAccount[id, default: PerAccount()].failing = true
                 }
-                backoffUntil[id] = Date().addingTimeInterval(signIn ? 1800 : limited ? 600 : 300)
-                if signIn { signedOut(id, message) }
+                perAccount[id, default: PerAccount()].backoffUntil = Date().addingTimeInterval(signIn ? 1800 : limited ? 600 : 300)
+                if signIn { signedOut(id, error) }
             }
         }
         saveUsageCache()
@@ -895,7 +911,7 @@ final class AccountStore {
         usage[id] = merged
         readAt[id] = Date(timeIntervalSince1970: at)
         // A session's own reading is current even when the endpoint wants a sign-in, so the account can still move.
-        failing.remove(id)
+        perAccount[id]?.failing = false
         if health[id] == .offline || health[id] == .idle { health[id] = nil }
         sample(id, windows.first { $0.id == "five_hour" }, at: at)
         return true
@@ -904,9 +920,9 @@ final class AccountStore {
     private func sample(_ id: String, _ five: UsageWindow?, at now: Double) {
         guard let five else { return }
         // A drop means the window reset; the old pace no longer applies.
-        if let last = samples[id]?.last, five.percent < last.1 { samples[id] = [] }
-        samples[id, default: []].append((now, five.percent))
-        samples[id]?.removeAll { now - $0.0 > 1200 }
+        if let last = perAccount[id]?.samples.last, five.percent < last.1 { perAccount[id]?.samples = [] }
+        perAccount[id, default: PerAccount()].samples.append((now, five.percent))
+        perAccount[id]?.samples.removeAll { now - $0.0 > 1200 }
     }
     /// Refreshes what is due (menu open). The refresh button passes `force` but still
     /// respects backoff and never re-reads an account checked in the last minute.
@@ -914,7 +930,7 @@ final class AccountStore {
         await refreshActive()
         Task { await refreshReport() }
         await refresh(config.accounts.filter { $0.ready
-            && (dueForRead($0) || (force && Date().timeIntervalSince(usageAt[$0.id] ?? .distantPast) > 60)) }.map(\.id))
+            && (dueForRead($0) || (force && Date().timeIntervalSince(perAccount[$0.id]?.usageAt ?? .distantPast) > 60)) }.map(\.id))
     }
     /// Paid usage starts silently once a plan limit is hit. Warns when this month's spend grows,
     /// and once per limit when the account in use nears a limit with nowhere to move.
@@ -927,10 +943,10 @@ final class AccountStore {
         guard extra.enabled, activeIDs[.claude] == id else { return }
         let now = Date().timeIntervalSince1970
         guard let near = [after.fiveHour, after.weekly].compactMap({ $0 }).first(where: { $0.percent >= 90 && ($0.resetsAt ?? 0) > now }),
-              paidWarned[id] != near.resetsAt else { return }
+              perAccount[id]?.paidWarned != near.resetsAt else { return }
         let others = config.accounts.filter { $0.provider == .claude && $0.id != id }
         guard Planner.best(others, usage: planning(usage), health: health, active: nil, full: config.moveAt, now: now) == nil else { return }
-        paidWarned[id] = near.resetsAt
+        perAccount[id, default: PerAccount()].paidWarned = near.resetsAt
         notify("\(name) will start charging soon", "It is at \(near.text(at: now)) of its \(near.label.lowercased()) limit and no other account has room. Past the limit, Claude bills paid credits (\(extra.summary)).")
     }
     /// Why an account shows no current numbers, in words; nil when its reading is current.
@@ -941,10 +957,10 @@ final class AccountStore {
             : "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened)) · renewing"
         case nil where (loginEnds[id] ?? .infinity) - Date().timeIntervalSince1970 < Self.signInWarning:
             "Sign-in ends \(UsageBar.format(loginEnds[id]!)) · sign in again"
-        case .verify: "Checking whose login this is · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
+        case .verify: "Checking whose login this is · retrying \(UsageBar.format((perAccount[id]?.backoffUntil ?? Date()).timeIntervalSince1970))"
         case nil where usage[id] != nil && Date().timeIntervalSince(readAt[id] ?? .distantPast) > 900:
             "As of \((readAt[id] ?? Date()).formatted(date: .omitted, time: .shortened))"
-        case .offline: "Couldn't connect · retrying \(UsageBar.format((backoffUntil[id] ?? Date()).timeIntervalSince1970))"
+        case .offline: "Couldn't connect · retrying \(UsageBar.format((perAccount[id]?.backoffUntil ?? Date()).timeIntervalSince1970))"
         case nil: nil
         }
     }
@@ -962,46 +978,48 @@ final class AccountStore {
     func renew(_ id: String) async {
         guard !waking.contains(id) else { return }
         waking.insert(id); defer { waking.remove(id) }
-        renewedAt[id] = Date()
+        perAccount[id, default: PerAccount()].renewedAt = Date()
         do {
             _ = try await bridgeOutput(["renew", id], timeout: 120)
-            backoffUntil[id] = nil
+            perAccount[id]?.backoffUntil = nil
             await refreshUsage(id)
         } catch {
             let message = error.localizedDescription
             autopilotLog.note("renew \(id)", "\(config.accounts.first { $0.id == id }?.name ?? id): renewing its login failed: \(message)")
-            if BridgeErrorKind(error) == .signIn { signedOut(id, message); saveUsageCache() }
+            if BridgeErrorKind(error) == .signIn { signedOut(id, error); saveUsageCache() }
         }
     }
     /// Once per lapse, whichever path finds it: the usage read, a renewal or the pool. A replaced login says so itself.
-    func warnSignIn(_ id: String, _ message: String) {
-        guard !message.contains("login is now"), signInWarned.insert(id).inserted,
+    func warnSignIn(_ id: String, _ message: String, replaced: Bool = false) {
+        guard !replaced, !message.contains("login is now"), signInWarned.insert(id).inserted,
               let name = config.accounts.first(where: { $0.id == id })?.name else { return }
         notify("Sign in to \(name) again", "Its login ended, so Autopilot and the pool use your other accounts until you do.", signIn: id)
     }
     /// A read or renewal found the login refused. Records whose login now sits in the account's slot ("…its saved login
     /// is now someone@example.com's."), and says so once, since the menu row alone is easy to miss.
-    func signedOut(_ id: String, _ message: String) {
-        let other = message.firstMatch(of: /login is now (.+)'s\./).map { match in
-            config.accounts.first { $0.email.caseInsensitiveCompare(String(match.1)) == .orderedSame }?.name ?? String(match.1)
+    func signedOut(_ id: String, _ error: any Error) {
+        let message = error.localizedDescription
+        let owner = BridgeErrorKind.replacement(in: error)
+        let other = owner.map { owner in
+            config.accounts.first { $0.email.caseInsensitiveCompare(owner) == .orderedSame }?.name ?? owner
         }
         if let other, health[id] != .signIn(replacedBy: other), let name = config.accounts.first(where: { $0.id == id })?.name {
             notify("Sign in to \(name) again", "Its saved login was replaced by \(other)'s.", signIn: id)
         }
         health[id] = .signIn(replacedBy: other)
         usage[id]?.stale = true
-        warnSignIn(id, message)
+        warnSignIn(id, message, replaced: owner != nil)
     }
     func wake(_ id: String) async {
-        renewedAt[id] = nil
+        perAccount[id]?.renewedAt = nil
         await renew(id)
         if health[id] == .idle { self.error = "\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be renewed. Sign in to it again." }
     }
     /// What Autopilot may act on: accounts with a trustworthy latest reading.
-    var plannable: [String: AccountUsage] { usage.filter { !failing.contains($0.key) } }
+    var plannable: [String: AccountUsage] { usage.filter { perAccount[$0.key]?.failing != true } }
     /// Read in the last hour and not failing: a pace worked out from anything older would be a guess.
     func isFresh(_ id: String, now: Double) -> Bool {
-        !failing.contains(id) && now - (readAt[id]?.timeIntervalSince1970 ?? 0) < 3600
+        perAccount[id]?.failing != true && now - (readAt[id]?.timeIntervalSince1970 ?? 0) < 3600
     }
     /// True while Claude Code is running Fable and Autopilot follows it.
     var fableMode: Bool { config.followFable != false && claudeModel?.localizedCaseInsensitiveContains("fable") == true }
@@ -1034,9 +1052,9 @@ final class AccountStore {
     private var reportURL: URL { root.appendingPathComponent("runtime/report.json") }
     private var usageCacheURL: URL { root.appendingPathComponent("runtime/usage-cache.json") }
     private func saveUsageCache() {
-        try? PrivateFile.write(UsageCache(usage: usage, at: usageAt, backoff: backoffUntil, primed: primedAt,
+        try? PrivateFile.write(UsageCache(usage: usage, at: saved(\.usageAt), backoff: saved(\.backoffUntil), primed: saved(\.primedAt),
                                           active: Dictionary(uniqueKeysWithValues: activeIDs.map { ($0.key.rawValue, $0.value) }),
-                                          failing: Array(failing), issues: health.mapValues(\.saved), readAt: readAt),
+                                          failing: Array(failingIDs), issues: health.mapValues(\.saved), readAt: readAt),
                                to: usageCacheURL)
     }
     /// Active accounts, and any a running session uses, change fastest. An idle account at a limit
@@ -1047,17 +1065,17 @@ final class AccountStore {
         if !used, let value = usage[account.id], !value.stale,
            let reset = [value.fiveHour, value.weekly].compactMap({ $0 }).filter({ $0.percent >= Planner.limited }).compactMap(\.resetsAt).max(),
            reset > now {
-            return Date().timeIntervalSince(usageAt[account.id] ?? .distantPast) >= 3600
+            return Date().timeIntervalSince(perAccount[account.id]?.usageAt ?? .distantPast) >= 3600
         }
         // The usage endpoint rate-limits a login read every minute or two; three minutes stays clear.
         // While sessions report live limits, the endpoint is only needed for what they can't see
         // (Fable, paid usage, use on other devices).
-        let live = now - (liveAt[account.id] ?? 0) < 600
+        let live = now - (perAccount[account.id]?.liveAt ?? 0) < 600
         let interval: TimeInterval = live ? 900 : used ? (nearLimit(account.id) ? 90 : 180) : 600
-        return Date().timeIntervalSince(usageAt[account.id] ?? .distantPast) >= interval - 1
+        return Date().timeIntervalSince(perAccount[account.id]?.usageAt ?? .distantPast) >= interval - 1
     }
     /// Minutes until the account's 5-hour limit at its recent pace.
-    func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(samples[id] ?? [], full: config.moveAt, now: Date().timeIntervalSince1970) }
+    func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(perAccount[id]?.samples ?? [], full: config.moveAt, now: Date().timeIntervalSince1970) }
     private func nearLimit(_ id: String) -> Bool {
         (usage[id]?.fiveHour?.percent ?? 0) >= 85 || (minutesToLimit(id) ?? .infinity) < 15
     }
@@ -1110,10 +1128,10 @@ final class AccountStore {
         // A login that changed (signed in again, or refreshed by Claude Code) is read now:
         // the back-off and any old reading belonged to the previous login.
         for (id, stamp) in value.logins ?? [:] {
-            if let seen = loginStamps[id], seen != stamp {
-                backoffUntil[id] = nil; usageAt[id] = nil; health[id] = nil; failing.remove(id)
+            if let seen = perAccount[id]?.loginStamp, seen != stamp {
+                perAccount[id]?.backoffUntil = nil; perAccount[id]?.usageAt = nil; health[id] = nil; perAccount[id]?.failing = false
             }
-            loginStamps[id] = stamp
+            perAccount[id, default: PerAccount()].loginStamp = stamp
         }
         let ends = (value.loginEnds ?? [:]).mapValues { $0 / 1000 }
         if ends != loginEnds { loginEnds = ends; remoteUsageChanged() }
@@ -1122,7 +1140,7 @@ final class AccountStore {
         busyLogins = value.busy.map { Dictionary($0.compactMap { busy in busy.account.map { (busy.slot, $0) } }, uniquingKeysWith: { a, _ in a }) }
         // Each reply's limits, as a session saw them: newer than the last endpoint read wins.
         var changed = false
-        for (id, live) in value.live ?? [:] { liveAt[id] = live.at }
+        for (id, live) in value.live ?? [:] { perAccount[id, default: PerAccount()].liveAt = live.at }
         for (id, live) in value.live ?? [:] where takeLive(live.windows, for: id, at: live.at) { changed = true }
         // A running session's own limit error is proof the account is out, even while the usage
         // endpoint answers 429 for it: that limit counts as full until a newer reading.
@@ -1137,12 +1155,12 @@ final class AccountStore {
             }
             usage[id] = (usage[id] ?? AccountUsage(windows: [])).hitting(hit.limit, at: hit.at)
             readAt[id] = Date(timeIntervalSince1970: hit.at)
-            if health[id] == .offline || health[id] == .idle { health[id] = nil; failing.remove(id) }
+            if health[id] == .offline || health[id] == .idle { health[id] = nil; perAccount[id]?.failing = false }
             changed = true
         }
         if changed { saveUsageCache() }
-        for (id, end) in loginEnds where end - Date().timeIntervalSince1970 < Self.signInWarning && endWarned[id] != end {
-            endWarned[id] = end
+        for (id, end) in loginEnds where end - Date().timeIntervalSince1970 < Self.signInWarning && perAccount[id]?.endWarned != end {
+            perAccount[id, default: PerAccount()].endWarned = end
             if let name = config.accounts.first(where: { $0.id == id })?.name {
                 notify("Sign in to \(name) again soon", "Its sign-in ends \(UsageBar.format(end)). Signing in again keeps its limits readable and Autopilot using it.")
             }
@@ -1181,7 +1199,7 @@ final class AccountStore {
         guard let seen = limitMarkerDate, date > seen else { return false }
         // Re-read the active account now instead of waiting for its next poll.
         // Throttled so many sessions hitting a limit cannot hammer the usage endpoint.
-        if let id = activeIDs[.claude], Date().timeIntervalSince(usageAt[id] ?? .distantPast) > 30 { usageAt[id] = nil }
+        if let id = activeIDs[.claude], Date().timeIntervalSince(perAccount[id]?.usageAt ?? .distantPast) > 30 { perAccount[id]?.usageAt = nil }
         return true
     }
     /// One autopilot step: refresh usage, move each provider's Mac-wide login, start idle windows.
@@ -1231,16 +1249,16 @@ final class AccountStore {
         // Until the report has loaded, the schedule is unknown, not absent: wait for it.
         guard let report, WorkSchedule(report.activity)?.allowsPriming(atMinute: minute) ?? true else { return }
         for account in config.accounts where Planner.shouldPrime(account, usage: plannable[account.id], full: config.moveAt, now: now)
-            && Date().timeIntervalSince(primedAt[account.id] ?? .distantPast) > 1800 {
+            && Date().timeIntervalSince(perAccount[account.id]?.primedAt ?? .distantPast) > 1800 {
             guard at("priming \(account.name)") else { return }
-            primedAt[account.id] = Date()
+            perAccount[account.id, default: PerAccount()].primedAt = Date()
             saveUsageCache()
             autopilotLog.write("\(account.name): primed its 5-hour window.")
             let primed = (try? await bridgeOutput(["prime", account.id], timeout: 200)) != nil
-            backoffUntil[account.id] = nil
+            perAccount[account.id]?.backoffUntil = nil
             await refreshUsage(account.id)
             // Listed but not started by a message: a verified Ultra account has no such limit, so ask again tomorrow, not every half hour.
-            if primed, (usage[account.id]?.capacity ?? 1) >= 20, usage[account.id]?.fiveHour?.resetsAt == nil { primedAt[account.id] = Date().addingTimeInterval(86_400); saveUsageCache() }
+            if primed, (usage[account.id]?.capacity ?? 1) >= 20, usage[account.id]?.fiveHour?.resetsAt == nil { perAccount[account.id, default: PerAccount()].primedAt = Date().addingTimeInterval(86_400); saveUsageCache() }
         }
     }
 
@@ -1270,7 +1288,7 @@ final class AccountStore {
             guard config.smartMode, let id = slots[slot], let account = config.accounts.first(where: { $0.id == id }) else { continue }
             let key = "slot \(slot)"
             // A failed read is not evidence of a limit; only a signed-out account moves.
-            if failing.contains(id), usage[id]?.stale != true {
+            if perAccount[id]?.failing == true, usage[id]?.stale != true {
                 autopilotLog.note(key, "\(account.name): its last usage read failed (\(health[id]?.saved ?? "unknown")), so it isn't moved on that reading.")
                 continue
             }
@@ -1284,7 +1302,7 @@ final class AccountStore {
             var target = Planner.best(free, usage: planned(slot), health: health, active: id, full: config.moveAt, now: now)
             var partner: String?
             if target == nil, let share = Planner.fableShare(for: slot, slots: slots, models: slotModels, accounts: accounts, usage: self.plannable, health: health,
-                                                             excluded: Set([current].compactMap { $0 }).union(signingIn).union(failing), full: config.moveAt, now: now) {
+                                                             excluded: Set([current].compactMap { $0 }).union(signingIn).union(failingIDs), full: config.moveAt, now: now) {
                 target = share.account; partner = share.slot
             }
             guard let best = target, best != id else {
@@ -1351,7 +1369,7 @@ final class AccountStore {
         // New commands: if the account they use is still full (no trade, or no sessions on it), point them elsewhere.
         if config.smartMode, shellSwitching, let current = activeIDs[provider], !signingIn.contains(current),
            config.accounts.first(where: { $0.id == current })?.allowAuto != false,
-           !(failing.contains(current) && usage[current]?.stale != true),
+           !(perAccount[current]?.failing == true && usage[current]?.stale != true),
            let best = Planner.best(config.accounts.filter { $0.provider == provider && ($0.id == current || !busy().contains($0.id)) },
                                    usage: plannable, health: health, active: current, full: config.moveAt, now: now), best != current {
             let from = config.accounts.first { $0.id == current }, to = config.accounts.first { $0.id == best }

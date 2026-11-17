@@ -25,16 +25,10 @@ struct SessionsView: View {
     /// Denied in iOS Settings: the way back, until it's turned on or waved away.
     private var showsNotificationsOff: Bool { notificationsDenied && !notificationsOffDone && !model.isDemo }
     @State private var showsMac: MacPick?
-    @State private var showsNewSession = false
-    /// The hosted session New Session just started, pushed until its transcript takes over.
-    @State private var started: Started?
     @State private var idleExpanded = false
-
-    private struct Started: Identifiable, Hashable {
-        let session: HostedSession
-        let mac: String
-        var id: String { session.name }
-    }
+    /// On iPad's split view, the row open beside the list; a row there selects rather than pushes.
+    @Environment(\.sidebarSelection) private var sidebarSelection
+    @Environment(KeyRequests.self) private var keys: KeyRequests?
 
     /// Any Mac that can start one.
     private var canStart: Bool { root.visible.contains { $0.tools.can(.hosted) } }
@@ -84,7 +78,7 @@ struct SessionsView: View {
                     ContentUnavailableView {
                         Label { Text("No sessions running") } icon: { DiscGlyph(size: 44) }
                     } actions: {
-                        if canStart { Button("New Session") { showsNewSession = true }.buttonStyle(.glassProminent) }
+                        if canStart { Button("New Session") { keys?.newSession += 1 }.buttonStyle(.glassProminent) }
                     }
                 }
             } else if case .offline(let reason) = model.mac.state, reason.needsPairing, model.sessions.sessions.isEmpty {
@@ -95,7 +89,7 @@ struct SessionsView: View {
                     Label { Text("No sessions running") } icon: { DiscGlyph(size: 44) }
                 } actions: {
                     if model.tools.can(.hosted) {
-                        Button("New Session") { showsNewSession = true }.buttonStyle(.glassProminent)
+                        Button("New Session") { keys?.newSession += 1 }.buttonStyle(.glassProminent)
                     }
                 }
             }
@@ -108,9 +102,10 @@ struct SessionsView: View {
                     MacChip(mac: model.mac) { showsMac = MacPick(id: model.macID) }
                 }
             }
-            if canStart {
+            // In the iPad sidebar it sits at the column's foot, where the bar can't fold it into an overflow menu.
+            if canStart, sidebarSelection == nil {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("New Session", systemImage: "square.and.pencil") { showsNewSession = true }
+                    Button("New Session", systemImage: "square.and.pencil") { keys?.newSession += 1 }
                         .needsMac()
                 }
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
@@ -140,18 +135,11 @@ struct SessionsView: View {
         .sheet(item: $showsMac) { pick in
             if let mac = root.model(for: pick.id) { MacSheet().environment(mac) }
         }
-        .sheet(isPresented: $showsNewSession) {
-            NewSessionSheet { started = Started(session: $0, mac: $1.macID) }
-                .environment(model)
-        }
-        .navigationDestination(item: $started) { started in
-            StartingSessionView(started: started.session)
-                .environment(root.model(for: started.mac) ?? model)
-        }
         .sessionActions()
         .environment(model)
         .accessibilityRotor("Needs you", entries: root.visible.flatMap { $0.sessions.rows(.needsYou) }, entryID: \.id, entryLabel: \.title)
     }
+
 
     /// Each row's place, by Mac and phase.
     private var layout: [String] {
@@ -244,7 +232,7 @@ private struct MacSessions: View {
         if !starting.isEmpty {
             Section {
                 ForEach(starting, id: \.name) { hosted in
-                    NavigationLink(value: Route.starting(hosted.name, mac: model.macID)) {
+                    SidebarLink(Route.starting(hosted.name, mac: model.macID)) {
                         StartingRow(hosted: hosted, prompt: model.transcripts.firstPrompts[hosted.name]?.text)
                     }
                     .id("starting-\(hosted.name)")
@@ -324,7 +312,7 @@ private struct SessionLink: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        NavigationLink(value: Route.session(session.id, mac: model.macID)) {
+        SidebarLink(Route.session(session.id, mac: model.macID)) {
             SessionRow(session: session)
         }
         .id(session.id)
@@ -420,14 +408,14 @@ extension MacConnection.Offline {
 
     func message(mac: String) -> String {
         switch self {
-        case .tailscaleOff: "Tailscale is off on this iPhone"
+        case .tailscaleOff: "Tailscale is off on this \(ThisDevice.kind)"
         case .macUnreachable: "Can't reach \(mac). It may be asleep or Side A is closed."
         case .macAsleep: "\(mac) is asleep"
         case .relayRefused: RelayRefused().localizedDescription
-        case .revoked: "This iPhone was removed from \(mac)"
-        case .keyChanged: "\(mac) has a new security key, so this iPhone has to pair again."
-        case .incompatible(let installed?): "Update Side A on \(mac) from \(installed) to use it with this iPhone"
-        case .incompatible(nil): "Update Side A on \(mac) to use it with this iPhone"
+        case .revoked: "This \(ThisDevice.kind) was removed from \(mac)"
+        case .keyChanged: "\(mac) has a new security key, so this \(ThisDevice.kind) has to pair again."
+        case .incompatible(let installed?): "Update Side A on \(mac) from \(installed) to use it with this \(ThisDevice.kind)"
+        case .incompatible(nil): "Update Side A on \(mac) to use it with this \(ThisDevice.kind)"
         case .appOutdated: "Update Side A Remote to use it with \(mac)"
         }
     }
@@ -437,6 +425,7 @@ extension MacConnection.Offline {
 struct MacChip: View {
     let mac: MacConnection
     let action: () -> Void
+    @Environment(\.sidebarSelection) private var sidebarSelection
     /// A first connect that's quick shows nothing; after 600 ms the chip says it's working on it.
     @State private var slow = false
 
@@ -452,14 +441,19 @@ struct MacChip: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 ConnectionDot(state: mac.state)
-                Text(mac.name).font(.subheadline.weight(.medium))
+                Text(mac.name).font(.subheadline.weight(.medium)).lineLimit(1)
                 if showsProgress {
                     Image(systemName: "ellipsis").font(.caption).symbolEffect(.variableColor.iterative, options: .repeat(.continuous))
                 }
             }
             .padding(.horizontal, 6)
-            .fixedSize()
+            .fixedSize(horizontal: sidebarSelection == nil, vertical: false)
+            // The iPad sidebar's toolbar shares its column with New Session, which the bar would otherwise fold into
+            // an overflow menu; the name gives way instead.
+            .frame(maxWidth: sidebarSelection == nil ? nil : 150, alignment: .leading)
         }
+        // As the bar's own buttons do, past the largest standard size the chip stays put.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .task(id: mac.state == .connecting) {
             slow = false
             guard mac.state == .connecting else { return }
@@ -477,6 +471,7 @@ struct MacsMenu: View {
     /// Search reads one Mac's history at a time, so it has no All Macs.
     var allowsAll = true
     @Environment(AppRoot.self) private var root
+    @Environment(\.sidebarSelection) private var sidebarSelection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var shown: Binding<String?> {
@@ -498,13 +493,17 @@ struct MacsMenu: View {
                 ConnectionDot(state: state)
                 Text(shown.wrappedValue.flatMap(root.model(for:))?.mac.name ?? "All Macs")
                     .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
                     .contentTransition(.opacity)
                 Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 6)
-            .fixedSize()
+            // As MacChip: in the iPad sidebar the name gives way so New Session keeps its place in the bar.
+            .fixedSize(horizontal: sidebarSelection == nil, vertical: false)
+            .frame(maxWidth: sidebarSelection == nil ? nil : 150, alignment: .leading)
             .animation(Motion.smooth(reduceMotion), value: state)
         }
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .accessibilityLabel(shown.wrappedValue.flatMap(root.model(for:)).map { "\($0.mac.name), \($0.mac.status)" } ?? "All Macs")
         .accessibilityHint("Chooses which Macs to show")
     }

@@ -53,7 +53,7 @@ struct ConnectionBanners: View {
             .pairAgain($pairingAgain, mac: model.mac.name)
         case .live where model.tools.needsKeys:
             Section {
-                BannerRow(symbol: "faceid", text: "Pair this iPhone again with \(model.mac.name) to approve, change settings or open the terminal from it.")
+                BannerRow(symbol: Biometry.current.symbol, text: "Pair this \(ThisDevice.kind) again with \(model.mac.name) to approve, change settings or open the terminal from it.")
                 Button("Pair Again", systemImage: "qrcode.viewfinder") { pairingAgain = true }
             }
             .pairAgain($pairingAgain, mac: model.mac.name)

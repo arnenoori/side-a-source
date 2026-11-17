@@ -207,7 +207,7 @@ struct IncidentBanner: View {
     @State private var opened: Incident?
 
     var body: some View {
-        let open = model.tools.incidents.filter { $0.status != .resolved }
+        let open = model.incidents.filter { $0.status != .resolved }
         if model.tools.can(.incidents), !open.isEmpty {
             Section {
                 ForEach(open) { incident in

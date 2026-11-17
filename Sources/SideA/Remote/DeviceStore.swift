@@ -111,7 +111,7 @@ final class DeviceStore {
 
     func flush() {
         guard seenDirty, unreadable == nil else { return }
-        try? save(devices)
+        do { try save(devices) } catch { RemoteLog.shared("couldn't save the paired devices: \(error.localizedDescription)") }
     }
 
     private func save(_ next: [RemoteDevice]) throws {

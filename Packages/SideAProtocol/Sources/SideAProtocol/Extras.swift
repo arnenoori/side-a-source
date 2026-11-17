@@ -33,6 +33,28 @@ public extension ErrorCode {
     static let worktreeKept = Self(rawValue: "worktree_kept")
     /// 409: Autopilot has no move waiting.
     static let nothingToMove = Self(rawValue: "nothing_to_move")
+    /// 500: the Mac failed in a way it can't say more about.
+    static let internalError = Self(rawValue: "internal")
+    /// 422: a model, effort, agent or mode this Mac doesn't offer.
+    static let invalidOption = Self(rawValue: "invalid_option")
+    /// 422: a settings change the Mac refused.
+    static let invalidSettings = Self(rawValue: "invalid_settings")
+    /// 422: a review of a request the Mac couldn't take.
+    static let invalidReview = Self(rawValue: "invalid_review")
+    /// 413: the phone's uploads fill the room the Mac keeps for it.
+    static let uploadsFull = Self(rawValue: "uploads_full")
+    /// 503: the Mac couldn't reach the notification relay.
+    static let relayUnavailable = Self(rawValue: "relay_unavailable")
+    /// 502: the Mac couldn't reach the dev server being previewed.
+    static let previewUnreachable = Self(rawValue: "preview_unreachable")
+    /// 502: the previewed page is bigger than the Mac passes on.
+    static let previewTooLarge = Self(rawValue: "preview_too_large")
+    /// 502: a continued session didn't resume; `details` has the pane and the command.
+    static let notResumed = Self(rawValue: "not_resumed")
+    /// 404: no turn by that id in the session.
+    static let turnNotFound = Self(rawValue: "turn_not_found")
+    /// 409: this Codex can't do what was asked from Side A.
+    static let unsupported = Self(rawValue: "unsupported")
 }
 
 /// `GET /v1/approvals?cursor=`: the Remote approvals log.

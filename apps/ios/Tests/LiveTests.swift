@@ -396,6 +396,20 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(store.text(other, in: "s"), "Else")
     }
 
+    /// The turn-end row's Copy and Share take a cut reply whole once Show All has fetched it, not the Mac's cut.
+    func testATurnEndCopiesTheWholeReplyOnceFetched() async throws {
+        let cut = TranscriptMessage(seq: 3, uuid: "a", role: .assistant, text: "First part", textTruncated: true)
+        let full = TranscriptMessage(seq: 3, uuid: "a", role: .assistant, text: "First part and the rest")
+        let store = TranscriptStore(["s": [cut]])
+        store.onLoadWhole = { _, _ in full }
+        let items = TranscriptLayout.items(messages: [cut], earlier: 0, answered: [], open: [], working: false, outgoing: [], mail: nil)
+        let end = try XCTUnwrap(items.lazy.compactMap { if case .turnEnd(let end) = $0 { end } else { nil } }.first)
+        XCTAssertEqual(store.text(end, in: "s"), "First part")
+        store.loadWhole(cut, in: "s")
+        for _ in 0..<50 where store.wholeLoad(cut, in: "s") != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(store.text(end, in: "s"), "First part and the rest")
+    }
+
     /// A paired Mac whose outbox couldn't open has no engine: nothing it's asked to change may report that it did.
     func testWithoutAWayToTheMacNothingPretendsToChange() async throws {
         let tools = MacTools()

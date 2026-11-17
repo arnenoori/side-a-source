@@ -9,8 +9,7 @@ if [[ "$mode" != "release" && "$mode" != "debug" ]]; then
 fi
 case "$architecture" in arm64|x86_64) ;; *) echo "Unsupported architecture" >&2; exit 2 ;; esac
 triple="$architecture-apple-macosx14.0"
-rm -f Sources/SideA/Resources/*.py
-cp bridge/*.py Sources/SideA/Resources/
+./scripts/sync-bridge.sh
 swift build -c "$mode" --triple "$triple" --scratch-path ".build/package-$architecture"
 bin_dir="$(swift build -c "$mode" --triple "$triple" --scratch-path ".build/package-$architecture" --show-bin-path)"
 app_path="$PWD/dist/$architecture/Side A.app"

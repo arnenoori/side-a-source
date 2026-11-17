@@ -90,10 +90,11 @@ enum RemoteUploads {
         return Upload(id: id, path: url.path, mime: type.preferredMIMEType ?? "image/jpeg", bytes: bytes.count)
     }
 
-    /// The paths for these ids, in order; nil when any is unknown or gone.
-    static func paths(_ ids: [String], root: URL) -> [String]? {
+    /// The paths for these ids, in order, among what `device` uploaded; nil when any is unknown or gone. Another phone's
+    /// photo is unknown here, even by its right id.
+    static func paths(_ ids: [String], root: URL, device: String) -> [String]? {
         // Built from the root, so a path reads exactly as the upload's answer gave it.
-        let days = dayFolders(root)
+        let days = dayFolders(in: folder(root, device: device))
         var paths: [String] = []
         for id in ids {
             guard id.count == 12, id.allSatisfy({ "0123456789abcdef".contains($0) }) else { return nil }

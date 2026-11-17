@@ -339,16 +339,16 @@ final class RemoteServer: @unchecked Sendable {
                               reply: @escaping @Sendable (HTTPResponse) -> Void) {
         let now = Date().timeIntervalSince1970
         switch RemotePolicy.checkPreview(request.headers, hosts: hosts, port: port) {
-        case .host?: return reply(Self.error(421, "bad_host", "This address isn't one of the Mac's own."))
-        case .browser?: return reply(Self.error(403, "forbidden_origin", "Only the preview's own pages can use it."))
+        case .host?: return reply(Self.error(421, .badHost, "This address isn't one of the Mac's own."))
+        case .browser?: return reply(Self.error(403, .forbiddenOrigin, "Only the preview's own pages can use it."))
         case nil: break
         }
         guard match.preview.expires > Date(), !request.wantsUpgrade, let proxy else {
-            return reply(Self.error(404, "not_found", "This preview has ended. Open it again from the session."))
+            return reply(Self.error(404, .notFound, "This preview has ended. Open it again from the session."))
         }
         if match.byPath, !Self.hasPreviewCookie(request, match.token) {
             guard spentPreviews.insert(match.token).inserted else {
-                return reply(Self.error(404, "not_found", "This preview link was already opened. Open it again from the session."))
+                return reply(Self.error(404, .notFound, "This preview link was already opened. Open it again from the session."))
             }
         }
         let device = match.preview.device
@@ -357,7 +357,7 @@ final class RemoteServer: @unchecked Sendable {
         let preview = match.preview
         Task {
             if let pid = preview.pid, !PortOwner.listens(pid: pid, port: preview.port) {
-                return reply(Self.error(404, "not_found", "The dev server behind this preview has stopped. Open it again from the session."))
+                return reply(Self.error(404, .notFound, "The dev server behind this preview has stopped. Open it again from the session."))
             }
             let response = await proxy(request, preview.port, match.target, cookie)
             // Nothing answered: the link isn't spent, so the phone can try again once the dev server is up.
@@ -460,7 +460,7 @@ final class RemoteServer: @unchecked Sendable {
     }
 
     private static func answering(_ request: HTTPRequest) -> Bool {
-        request.method == "POST" && request.path.first == "v1" && ["answer", "reply", "interrupt"].contains(request.path.last ?? "")
+        [QueuedRoutes.answer, QueuedRoutes.reply, QueuedRoutes.interrupt].contains { $0.matches(method: request.method, components: request.path) }
     }
 
     /// Every request, in order: a preview's own path, then Host and Origin, rate limit, auth, idempotency, the route.
@@ -469,14 +469,14 @@ final class RemoteServer: @unchecked Sendable {
         if let match = preview(request) { return servePreview(request, match, reply: reply) }
         let now = Date().timeIntervalSince1970
         switch RemotePolicy.check(request.headers, hosts: hosts, port: port) {
-        case .host?: return reply(Self.error(421, "bad_host", "This address isn't one of the Mac's own."))
-        case .browser?: return reply(Self.error(403, "forbidden_origin", "Browsers can't use Side A Remote."))
+        case .host?: return reply(Self.error(421, .badHost, "This address isn't one of the Mac's own."))
+        case .browser?: return reply(Self.error(403, .forbiddenOrigin, "Browsers can't use Side A Remote."))
         case nil: break
         }
         let presented = request.headers["Authorization"]?.hasPrefix("Bearer ") == true
         if presented, devices == nil, request.path != ["v1", "pair"], !Self.attempt(request) {
             devicesUnavailable?()
-            return reply(Self.error(503, "not_ready", "Side A can't read its paired devices right now.", retryAfter: 5))
+            return reply(Self.error(503, .notReady, "Side A can't read its paired devices right now.", retryAfter: 5))
         }
         let device = device(request)
         if let device, vouched.insert(device).inserted { authenticated?(device) }
@@ -486,7 +486,7 @@ final class RemoteServer: @unchecked Sendable {
                 if let wait = attempts.take(now: now) { return reply(Self.limited(wait)) }
             } else if let wait = stranger(connection.source, now: now) { return reply(Self.limited(wait)) }
             guard open else {
-                var response = Self.error(401, "unauthorized", "This iPhone isn't paired with Side A. Pair it again.")
+                var response = Self.error(401, .unauthorized, "This device isn't paired with Side A. Pair it again.")
                 response.headers.add("WWW-Authenticate", "Bearer")
                 return reply(response)
             }
@@ -498,11 +498,11 @@ final class RemoteServer: @unchecked Sendable {
         }
         // A phone too old to sign hears why, in the state it already has for this, rather than a refusal per call.
         if device != nil, !open, let build = RemotePolicy.clientBuild(request.headers["X-SideA-Client"]), build < RemotePolicy.minClientBuild {
-            return reply(Self.error(426, "upgrade_client", "Update Side A Remote to use it with this Mac."))
+            return reply(Self.error(426, .upgradeClient, "Update Side A Remote to use it with this Mac."))
         }
         let caller = Caller(device: device, connection: connection.id, source: connection.source, rejected: device == nil && presented)
         if request.path.count >= 2, request.path[0] == "v1", request.path[1] == "ws" {
-            guard let device else { return reply(Self.error(401, "unauthorized", "This iPhone isn't paired with Side A. Pair it again.")) }
+            guard let device else { return reply(Self.error(401, .unauthorized, "This device isn't paired with Side A. Pair it again.")) }
             // A terminal is a shell: opening one takes Face ID on the phone, proven by its Secure Enclave key.
             if request.path.count == 4, request.path[2] == "term",
                let refusal = Self.confirm(request.headers[ConfirmSignature.header], macID: macID, device: device, purpose: .terminal,
@@ -514,7 +514,7 @@ final class RemoteServer: @unchecked Sendable {
         }
         if (request.method == "POST" || request.method == "DELETE"), !open, let device {
             guard let key = request.headers["Idempotency-Key"], !key.isEmpty, key.count <= IdempotencyStore.maxKey else {
-                return reply(Self.error(400, "missing_idempotency_key", "Send an Idempotency-Key."))
+                return reply(Self.error(400, .missingIdempotencyKey, "Send an Idempotency-Key."))
             }
             return idempotent(request, device: device, key: key, caller: caller, reply: reply)
         }
@@ -533,14 +533,14 @@ final class RemoteServer: @unchecked Sendable {
                         keys: ConfirmGate.Keys, replay: ConfirmGate.ReplayCache) -> HTTPResponse? {
         guard needs > .none else { return nil }
         var details = APIError.confirmDetails(level: needs.level ?? .unlock, pairAgain: keys.isEmpty)
-        let what = needs == .biometric ? "Confirm with Face ID on your iPhone." : "Unlock your iPhone to do this."
+        let what = needs == .biometric ? "Confirm with Face ID or Touch ID." : "Unlock this device to do this."
         switch ConfirmGate.verify(header, macID: macID, deviceID: device, purpose: purpose, subject: subject, keys: keys, replay: replay) {
         case .success(let level) where level >= needs: return nil
         case .success, .failure(.missing):
-            return error(401, "confirm_required", keys.isEmpty ? "Pair this iPhone again to do this from it." : what, details: details)
+            return error(401, .confirmRequired, keys.isEmpty ? "Pair this device again to do this from it." : what, details: details)
         case .failure(let failure):
             details["reason"] = failure.rawValue
-            return error(401, "confirm_invalid", what, details: details)
+            return error(401, .confirmInvalid, what, details: details)
         }
     }
 
@@ -559,12 +559,12 @@ final class RemoteServer: @unchecked Sendable {
             response.headers.add("Idempotent-Replay", "true")
             reply(response)
         case .mismatch:
-            reply(Self.error(422, "idempotency_mismatch", "This Idempotency-Key was used with another request."))
+            reply(Self.error(422, .idempotencyMismatch, "This Idempotency-Key was used with another request."))
         case .unknown:
-            reply(Self.error(409, "outcome_unknown", "Side A quit before it could say whether this reached the Mac."))
+            reply(Self.error(409, .outcomeUnknown, "Side A quit before it could say whether this reached the Mac."))
         case .unavailable:
             note("idempotency record couldn't be written")
-            reply(Self.error(503, "not_ready", "Side A couldn't record this request, so it didn't run."))
+            reply(Self.error(503, .notReady, "Side A couldn't record this request, so it didn't run."))
         case .running:
             waitingForFirst[device + "\n" + key, default: []].append { [weak self] in
                 self?.idempotent(request, device: device, key: key, caller: caller, reply: reply)
@@ -585,10 +585,10 @@ final class RemoteServer: @unchecked Sendable {
 
     private func upgrade(_ request: HTTPRequest, device: String, on connection: HTTPConnection, reply: @escaping @Sendable (HTTPResponse) -> Void) {
         switch WebSocketCodec.handshake(request) {
-        case .failure(let error): return reply(Self.error(error.status, "bad_request", error.message))
+        case .failure(let error): return reply(Self.error(error.status, .badRequest, error.message))
         case .success(let response):
             guard sockets.values.filter({ $0.device == device }).count < Self.socketsPerDevice else {
-                return reply(Self.error(429, "rate_limited", "Too many connections from this iPhone.", retryAfter: 10))
+                return reply(Self.error(429, .rateLimited, "Too many connections from this device.", retryAfter: 10))
             }
             let peer = WebSocketPeer(id: connection.id, device: device, path: request.path, connection: connection)
             sockets[connection.id] = peer
@@ -609,8 +609,8 @@ final class RemoteServer: @unchecked Sendable {
     }
 
     /// `{"error": {"code", "message", "retryable"}}`, as protocol's APIError.
-    static func error(_ status: Int, _ code: String, _ message: String, details: [String: String]? = nil, retryAfter: Int? = nil) -> HTTPResponse {
-        var error: [String: Any] = ["code": code, "message": message, "retryable": status == 429 || status == 503 || code == "in_progress"]
+    static func error(_ status: Int, _ code: ErrorCode, _ message: String, details: [String: String]? = nil, retryAfter: Int? = nil) -> HTTPResponse {
+        var error: [String: Any] = ["code": code.rawValue, "message": message, "retryable": status == 429 || status == 503 || code == .inProgress]
         if let details { error["details"] = details }
         let body = (try? JSONSerialization.data(withJSONObject: ["error": error], options: [.sortedKeys])) ?? Data()
         var response = HTTPResponse.json(status, body)
@@ -619,7 +619,7 @@ final class RemoteServer: @unchecked Sendable {
     }
 
     private static func limited(_ wait: TimeInterval) -> HTTPResponse {
-        error(429, "rate_limited", "Too many requests. Try again shortly.", retryAfter: max(1, Int(wait.rounded(.up))))
+        error(429, .rateLimited, "Too many requests. Try again shortly.", retryAfter: max(1, Int(wait.rounded(.up))))
     }
 }
 
@@ -742,7 +742,7 @@ final class HTTPConnection: @unchecked Sendable {
                 queued.removeAll()
                 queuedBytes = 0
                 closing = true
-                write(RemoteServer.error(error.status, "bad_request", error.message), close: true)
+                write(RemoteServer.error(error.status, .badRequest, error.message), close: true)
                 return
             }
         }

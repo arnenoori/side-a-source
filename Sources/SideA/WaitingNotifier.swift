@@ -19,7 +19,7 @@ final class WaitingNotifier {
 
     func update() {
         // Remote needs `sync` too, or a request answered in the terminal would stay open on the phone.
-        guard Self.enabled || Island.on || RemoteController.active, Bundle.main.bundleURL.pathExtension == "app" else {
+        guard Self.enabled || Island.on || store.remote.active, Bundle.main.bundleURL.pathExtension == "app" else {
             watcher = nil
             sweep?.cancel(); sweep = nil
             return

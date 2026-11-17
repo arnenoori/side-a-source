@@ -53,7 +53,10 @@ with tempfile.TemporaryDirectory() as tmp:
     plist = info(app)
     print(f"{app.name} {plist['CFBundleShortVersionString']} ({plist['CFBundleVersion']}), {plist['CFBundleIdentifier']}")
     check(plist.get("ITSAppUsesNonExemptEncryption") is False, "ITSAppUsesNonExemptEncryption = NO")
-    check(plist.get("UIDeviceFamily") == [1], f"iPhone only (UIDeviceFamily {plist.get('UIDeviceFamily')})")
+    # An extension that leaves out a device its app runs on is rejected on upload.
+    for bundle in bundles:
+        family = info(bundle).get("UIDeviceFamily")
+        check(family == [1, 2], f"{bundle.name}: iPhone and iPad (UIDeviceFamily {family})")
     for key in ("NSMicrophoneUsageDescription", "NSSpeechRecognitionUsageDescription"):
         check(key not in plist, f"no {key}")
     check(not plist["CFBundleIdentifier"].endswith(".dev"), "release bundle id")

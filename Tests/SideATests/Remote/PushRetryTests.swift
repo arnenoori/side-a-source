@@ -65,6 +65,14 @@ private let registration = PushRegistration(apnsToken: "aa", bundleID: "b", apns
     #expect(second.count == 1 && off.push.unacknowledged.isEmpty)
 }
 
+@MainActor @Test func theBackoffStartsOverOnceEveryRegistrationHasTaken() async throws {
+    let relay = Relay(failing: 3)
+    let remote = try pairedRemote(relay: relay)
+    _ = await remote.push.register("d1", registration)
+    try await until(remote.push.unacknowledged.isEmpty)
+    #expect(relay.count == 4 && remote.push.attempts == 0)
+}
+
 @MainActor private func until(_ what: @autoclosure () -> Bool) async throws {
     for _ in 0..<250 where !what() { try await Task.sleep(for: .milliseconds(20)) }
     #expect(what())

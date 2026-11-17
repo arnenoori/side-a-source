@@ -44,8 +44,9 @@ private struct Viewer {
 }
 
 @MainActor
+/// `seconds` is what a quiet machine needs; a loaded one gets six times as long, and a condition that holds ends the wait at once.
 private func eventually(_ seconds: Double = 10, _ condition: () async -> Bool) async -> Bool {
-    let end = Date().addingTimeInterval(seconds)
+    let end = Date().addingTimeInterval(seconds * 6)
     while Date() < end {
         if await condition() { return true }
         try? await Task.sleep(for: .milliseconds(50))

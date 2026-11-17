@@ -28,7 +28,6 @@ public struct Capability: OpenEnum {
     public static let continueOnPhone = Self(rawValue: "continueOnPhone")
     public static let push = Self(rawValue: "push")
     public static let liveActivity = Self(rawValue: "liveActivity")
-    public static let codexLive = Self(rawValue: "codex.live")
     public static let search = Self(rawValue: "search")
     /// The Mac requires an `X-SideA-Confirm` signature for destructive and biometric-gated allows, the terminal and keys
     /// sent while a request waits. The phone signs whenever it has a `confirmKey`, whether or not the Mac says this.

@@ -23,12 +23,12 @@ extension RemoteRoutes {
         await MainActor.run { context.controller.store?.config.accounts.contains { $0.id == id } == true }
     }
 
-    private static let noAccount = RemoteServer.error(404, "not_found", "That account isn't on the Mac.")
+    private static let noAccount = RemoteServer.error(404, .notFound, "That account isn't on the Mac.")
 
     @Sendable static func setPriority(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         guard let change = context.body(PriorityChange.self), let priority = AccountPriority(rawValue: change.priority.rawValue) else {
-            return RemoteServer.error(400, "bad_request", "Send priority: first, normal or last.")
+            return RemoteServer.error(400, .badRequest, "Send priority: first, normal or last.")
         }
         guard await account(context, id), let subject = try? ConfirmMessage.subject(account: id, priority: change.priority) else { return noAccount }
         if let refusal = await rotationRefusal(context, subject: subject) { return refusal }
@@ -43,7 +43,7 @@ extension RemoteRoutes {
 
     @Sendable static func setAuto(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
-        guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, "bad_request", "Send enabled, true or false.") }
+        guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, .badRequest, "Send enabled, true or false.") }
         guard await account(context, id), let subject = try? ConfirmMessage.subject(account: id, auto: change.enabled) else { return noAccount }
         if let refusal = await rotationRefusal(context, subject: subject) { return refusal }
         let changed = await MainActor.run { () -> Bool in
@@ -57,7 +57,7 @@ extension RemoteRoutes {
 
     @Sendable static func setSwapAt(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(SwapAtChange.self), SwapAtChange.choices.contains(change.percent) else {
-            return RemoteServer.error(400, "bad_request", "Send percent, one of \(SwapAtChange.choices.map(String.init).joined(separator: ", ")).")
+            return RemoteServer.error(400, .badRequest, "Send percent, one of \(SwapAtChange.choices.map(String.init).joined(separator: ", ")).")
         }
         if let refusal = await rotationRefusal(context, subject: ConfirmMessage.subject(swapAt: change.percent)) { return refusal }
         await MainActor.run {
@@ -68,7 +68,7 @@ extension RemoteRoutes {
     }
 
     @Sendable static func setFollowFable(_ context: Context) async -> HTTPResponse {
-        guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, "bad_request", "Send enabled, true or false.") }
+        guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, .badRequest, "Send enabled, true or false.") }
         if let refusal = await rotationRefusal(context, subject: ConfirmMessage.subject(followFable: change.enabled)) { return refusal }
         await MainActor.run {
             context.controller.store?.setFollowFable(change.enabled)
@@ -79,7 +79,7 @@ extension RemoteRoutes {
 
     /// Pool mode changes where every `claude` command in Terminal sends its token, so it changes only on the Mac, whatever is signed.
     @Sendable static func refusePool(_ context: Context) async -> HTTPResponse {
-        RemoteServer.error(409, "cannot_deliver", "Pool mode only changes on your Mac.", details: ["hint": "poolOnMac"])
+        RemoteServer.error(409, .cannotDeliver, "Pool mode only changes on your Mac.", details: ["hint": "poolOnMac"])
     }
 
     /// Read-only, like the account list it sums up.

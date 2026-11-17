@@ -237,7 +237,7 @@ final class StateMachineTests: XCTestCase {
     func testAFlightInTheOutboxSurvivesAKillAndItsRefusalStillShows() async throws {
         let outbox = try outbox()
         let body = RemoteReply(text: "Before the kill", mode: .note, attachments: ["up1"], submit: .steer)
-        await outbox.enqueue(Outbox.Item(id: "item", macID: "flights", path: "/v1/sessions/s/reply", createdAt: 1, expiresAt: 9_999_999_999))
+        try await outbox.enqueue(Outbox.Item(id: "item", macID: "flights", path: "/v1/sessions/s/reply", createdAt: 1, expiresAt: 9_999_999_999))
         await outbox.setFlight(ReplyFlight(session: "s", turn: "t", body: body, at: 1, phase: .queued(resigned: false)), item: "item", mac: "flights")
 
         let (link, model) = try await link(outbox)
@@ -265,7 +265,7 @@ final class StateMachineTests: XCTestCase {
         let body = RemoteReply(text: "Being signed", attachments: ["up1"])
         await outbox.setFlight(ReplyFlight(session: "a", turn: "t1", body: body, at: Date.now.timeIntervalSince1970), item: "signing", mac: "flights")
         await outbox.setFlight(ReplyFlight(session: "old", turn: "t2", body: body, at: 1, phase: .unsent(reason: "No.")), item: "expired", mac: "flights")
-        await outbox.enqueue(Outbox.Item(id: "going", macID: "flights", path: "/v1/sessions/b/reply", createdAt: 1, expiresAt: 9_999_999_999))
+        try await outbox.enqueue(Outbox.Item(id: "going", macID: "flights", path: "/v1/sessions/b/reply", createdAt: 1, expiresAt: 9_999_999_999))
         await outbox.setFlight(ReplyFlight(session: "b", turn: "t3", body: body, at: Date.now.timeIntervalSince1970, phase: .queued(resigned: false)), item: "going", mac: "flights")
 
         let (link, model) = try await link(outbox)
@@ -567,5 +567,18 @@ final class StateMachineTests: XCTestCase {
         XCTAssertFalse(store.outgoing["s"]?.contains { $0.id == sent.id } ?? false)
         XCTAssertTrue(store.outgoing["s"]?.contains { $0.id == other.id } ?? false)
         XCTAssertEqual(store.drafts["s"], "try again")
+    }
+
+    /// Incidents are the Mac's latest state, read where they are shown: the tools keep no copy of them, and a model with
+    /// no link to a Mac, the demo's or one not paired, has none.
+    func testIncidentsAreReadFromTheLinkNotCopiedIntoTheTools() async throws {
+        XCTAssertTrue(AppModel.demo().incidents.isEmpty)
+        let (link, model) = try await link(try outbox())
+        model.link = link
+        XCTAssertTrue(model.incidents.isEmpty)
+        var state = link.state
+        state.incidents = [Incident(id: "i", title: "Elevated errors", status: .investigating, url: "https://status.claude.com/incidents/i")]
+        link.apply(state)
+        XCTAssertEqual(model.incidents.map(\.id), ["i"])
     }
 }

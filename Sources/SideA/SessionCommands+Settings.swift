@@ -13,7 +13,7 @@ extension SessionCommands {
         guard let target = Target(id, store: store), let live = target.live else { throw .noSession }
         if live.provider == .claude, let name = live.hosted { return try await claudeSettings(target, name: name, change) }
         if live.provider == .codex, store.remote.codex.row(live) != nil { return try await codexSettings(live, change) }
-        throw Failure(status: 409, code: "cannot_deliver", message: Self.settingsRefusal(live))
+        throw Failure(status: 409, code: .cannotDeliver, message: Self.settingsRefusal(live))
     }
 
     /// What a Claude session Side A hosts takes typed into it while idle and asking nothing: model, effort and mode (its
@@ -38,17 +38,17 @@ extension SessionCommands {
     /// Hosted Claude, idle and asking nothing: Shift+Tab would answer an open request, and a pick made mid-turn
     /// would land in the middle of its output.
     private func claudeSettings(_ target: Target, name: String, _ change: SettingsChange) async throws(Failure) -> SettingsResult {
-        if change.fast != nil { throw Failure(status: 422, code: "invalid_settings", message: Self.fastRefusal) }
+        if change.fast != nil { throw Failure(status: 422, code: .invalidSettings, message: Self.fastRefusal) }
         if let effort = change.effort, !Hosting.claudeEfforts.contains(effort.rawValue) {
-            throw Failure(status: 422, code: "invalid_settings", message: "Claude can't set \(effort.rawValue) effort for one session.")
+            throw Failure(status: 422, code: .invalidSettings, message: "Claude can't set \(effort.rawValue) effort for one session.")
         }
         if let mode = change.mode, Hosting.permissionArguments(.claude, mode: mode.rawValue) == nil {
-            throw Failure(status: 422, code: "invalid_settings", message: "Claude has no \(mode.rawValue) mode.")
+            throw Failure(status: 422, code: .invalidSettings, message: "Claude has no \(mode.rawValue) mode.")
         }
         switch target.state(store.island) {
         case .idle, .finishedWaiting: break
-        case .waiting: throw Failure(status: 409, code: "session_waiting", message: "Answer the open request first.")
-        default: throw Failure(status: 409, code: "cannot_deliver", message: "Claude is working. Try when it's idle.")
+        case .waiting: throw Failure(status: 409, code: .sessionWaiting, message: "Answer the open request first.")
+        default: throw Failure(status: 409, code: .cannotDeliver, message: "Claude is working. Try when it's idle.")
         }
         do {
             let done = try await store.hosted.change(name, model: change.model, effort: change.effort?.rawValue, mode: change.mode?.rawValue)
@@ -64,12 +64,12 @@ extension SessionCommands {
     private func codexSettings(_ live: LiveSession, _ change: SettingsChange) async throws(Failure) -> SettingsResult {
         let codex = store.remote.codex
         guard let before = codex.row(live), before.settings != nil else {
-            throw Failure(status: 409, code: "cannot_deliver", message: Self.settingsRefusal(live))
+            throw Failure(status: 409, code: .cannotDeliver, message: Self.settingsRefusal(live))
         }
         guard !before.abilities.isEmpty else {
-            throw Failure(status: 409, code: "cannot_deliver", message: before.reasons.values.first ?? Self.settingsRefusal(live))
+            throw Failure(status: 409, code: .cannotDeliver, message: before.reasons.values.first ?? Self.settingsRefusal(live))
         }
-        if change.fast != nil { throw Failure(status: 422, code: "invalid_settings", message: "Codex has no fast mode.") }
+        if change.fast != nil { throw Failure(status: 422, code: .invalidSettings, message: "Codex has no fast mode.") }
         // The driver owns which modes Codex takes.
         do throws(CodexTerminals.Failure) {
             try await codex.change(live, model: change.model, effort: change.effort?.rawValue, mode: change.mode?.rawValue)

@@ -31,7 +31,7 @@ final class RecoveryTests: XCTestCase {
     func testAGoodbyeForSleepSaysAsleepAtOnceAndGoesWhenLive() {
         let mac = stale()
         mac.state = .live
-        mac.apply(down { $0.macAsleep = true }, name: "Studio")
+        mac.apply(down { $0.connection = .offline(retryAt: 0, reason: "closed", cause: .macAsleep) }, name: "Studio")
         XCTAssertEqual(mac.state, .offline(.macAsleep))
         XCTAssertEqual(MacConnection.Offline.macAsleep.message(mac: "Studio"), "Studio is asleep")
         XCTAssertFalse(MacConnection.Offline.macAsleep.offersPairAgain)
@@ -43,7 +43,7 @@ final class RecoveryTests: XCTestCase {
 
     func testRepeatedRelayRefusalsOfferPairAgainWithoutEndingThePairing() {
         let mac = stale()
-        mac.apply(down { $0.relayRefused = true }, name: "Studio")
+        mac.apply(down { $0.connection = .offline(retryAt: 0, reason: "closed", cause: .relayRefused) }, name: "Studio")
         XCTAssertEqual(mac.state, .offline(.relayRefused))
         XCTAssertTrue(MacConnection.Offline.relayRefused.offersPairAgain)
         XCTAssertFalse(MacConnection.Offline.relayRefused.needsPairing)

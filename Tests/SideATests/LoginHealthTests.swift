@@ -144,3 +144,24 @@ private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.app
         #expect(store.poolTest?[id] == "Ready")
     }
 }
+
+/// A saved login that now belongs to another account says so by the bridge's own field, or by its words from an older bridge.
+@MainActor @Test func aLoginReplacedByAnotherAccountIsFoundByTheBridgesFieldOrItsWords() async {
+    let words = "Side A[signin]: Sign in to A again; its saved login is now b@example.com's."
+    for stderr in [words + "\nSide A[replaced-by]: \"b@example.com\"", words] {
+        let store = store { _ in throw BridgeFailure(stderr: stderr) }
+        store.config.accounts.append(Account(name: "Bee", email: "B@example.com", ready: true, allowAuto: true))
+        let id = store.config.accounts[0].id
+        await store.refreshUsage(id)
+        #expect(store.health[id] == .signIn(replacedBy: "Bee"))
+        // A replaced login says so itself, so there is no second notice for the lapse.
+        #expect(store.signInWarned.isEmpty)
+    }
+}
+
+@MainActor @Test func aReplacedLoginWhoseOwnerIsntInTheLibraryNamesItsEmail() async {
+    let store = store { _ in throw BridgeFailure(stderr: "Side A[signin]: Sign in to A again; its saved login is now o'brien@example.com's.\nSide A[replaced-by]: \"o'brien@example.com\"") }
+    let id = store.config.accounts[0].id
+    await store.refreshUsage(id)
+    #expect(store.health[id] == .signIn(replacedBy: "o'brien@example.com"))
+}

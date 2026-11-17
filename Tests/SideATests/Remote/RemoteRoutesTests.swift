@@ -394,11 +394,14 @@ private func photoWithGPS() throws -> Data {
     #expect(status == 200 && scene.mail(501)?["text"] == "like this\n" + path)
     (status, body) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": "", "mode": "note", "attachments": ["0123456789ab"]])
     #expect(status == 422 && code(body) == "invalid_reply")
+    // Another phone's photo is unknown to this one, even by its right id.
+    (status, body) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": "stolen", "mode": "note", "attachments": [id]], device: "d2")
+    #expect(status == 422 && code(body) == "invalid_reply" && scene.mail(501)?["text"] == "like this\n" + path)
 
     // A week later it's gone.
     try FileManager.default.setAttributes([.creationDate: Date().addingTimeInterval(-8 * 86_400)], ofItemAtPath: path)
     RemoteUploads.sweep(root: scene.store.root)
-    #expect(!FileManager.default.fileExists(atPath: path) && RemoteUploads.paths([id], root: scene.store.root) == nil)
+    #expect(!FileManager.default.fileExists(atPath: path) && RemoteUploads.paths([id], root: scene.store.root, device: "d1") == nil)
 }
 
 @MainActor @Test func projectsComeFromRecentSessionsAndHostedNeedsTmux() async throws {
@@ -505,7 +508,12 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         try #require(hosted.available)
         let start: [String: Any] = ["cwd": fixture.project.path, "agent": "claude", "worktree": false, "attachments": [], "fork": false,
                                     "prompt": "Fix the build; then run the tests"]
-        var (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "K1")])
+        // A photo another phone uploaded isn't this phone's to attach.
+        var (status, body) = try await scene.call("POST", "v1/uploads", try photoWithGPS())
+        let photo = try #require(body["id"] as? String)
+        (status, body) = try await scene.call("POST", "v1/hosted", start.merging(["attachments": [photo]]) { $1 }, device: "d2")
+        #expect(status == 422 && code(body) == "invalid_reply", "\(status) \(body)")
+        (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "K1")])
         #expect(status == 201 && body["agent"] as? String == "claude" && body["cwd"] as? String == fixture.project.path, "\(body)")
         let name = try #require(body["name"] as? String)
         #expect(name.hasPrefix("sa-app-"))
@@ -552,6 +560,48 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         let running = try #require(hosted.sessions.first?.name)
         (status, body) = try await scene.call("POST", "v1/hosted/\(running)/trust", headers: [("Idempotency-Key", "K6")])
         #expect(status == 503 && code(body) == "not_ready", "\(body)")
+    } catch { Issue.record(error) }
+    await fixture.cleanUp()
+}
+
+/// New Session with photos: they are uploaded before the session exists, and the start names them. The first prompt
+/// reaches Claude with the photos' paths under it; a photo the Mac doesn't have starts nothing.
+@MainActor
+@Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
+func aPhoneStartsAHostedSessionWithPhotosItUploadedFirst() async throws {
+    let scene = Scene()
+    let fixture = try HostedFixture()
+    let hosted = HostedSessions(root: fixture.root, environment: fixture.environment, bridge: fixture.bridge)
+    scene.store.hosted = hosted
+    await hosted.install()
+    defer { try? FileManager.default.removeItem(at: fixture.base) }
+    let home = fixture.base.appendingPathComponent("transcripts")
+    try TranscriptFixture.write(TranscriptFixture.lines(session: "p1", cwd: fixture.project.path, day: TranscriptFixture.today), session: "p1", home: home)
+    let index = home.appendingPathComponent("Side A")
+    TranscriptFixture.index(home: home, root: index)
+    scene.store.sessions.transcriptSource = (home: home, bridge: TranscriptFixture.bridge, python: "/usr/bin/python3", root: index)
+    do {
+        try #require(hosted.available)
+        var start: [String: Any] = ["cwd": fixture.project.path, "agent": "claude", "worktree": false, "attachments": ["0123456789ab"], "fork": false,
+                                    "prompt": "What is in this picture?"]
+        // A photo the Mac doesn't have: refused, nothing started.
+        var (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "P1")])
+        #expect(status == 422 && ((body["error"] as? [String: Any])?["details"] as? [String: Any])?["reason"] as? String == "unknown_upload", "\(body)")
+        #expect(hosted.sessions.isEmpty)
+
+        // The upload and the start go back to back: another test's sweep of the shared uploads folder must not land between.
+        (status, body) = try await scene.call("POST", "v1/uploads", try photoWithGPS())
+        #expect(status == 201, "\(body)")
+        let id = try #require(body["id"] as? String)
+        let path = try #require(body["path"] as? String)
+        start["attachments"] = [id]
+        (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "P2")])
+        #expect(status == 201, "\(body)")
+        let name = try #require(body["name"] as? String)
+        #expect(await waitUntil {
+            ((try? String(contentsOf: fixture.submitted.appendingPathExtension("args"), encoding: .utf8)) ?? "").contains(path)
+        })
+        (_, _) = try await scene.call("DELETE", "v1/hosted/\(name)")
     } catch { Issue.record(error) }
     await fixture.cleanUp()
 }
@@ -1126,4 +1176,12 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     #expect(IDs.hashed("abc") == "ba7816bf8f01cfea")
     #expect(RemoteRoutes.worktreeID("abc") == "ba7816bf8f01cfea")
     #expect(IDs.safe("a41f.813_0-x") && !IDs.safe("--root") && !IDs.safe(""))
+}
+
+/// What the phone queues is served at these literal routes; the phone's outbox builds the same method and path.
+@Test func theRoutesThePhoneQueuesAreRegisteredAtTheirLiteralPaths() {
+    let table = RemoteRoutes.appRoutes.map { "\($0.method) \($0.pattern.joined(separator: "/"))" }
+    for route in ["POST v1/requests/{rid}/answer", "POST v1/sessions/{id}/reply", "POST v1/sessions/{id}/interrupt", "DELETE v1/sessions/{id}/mail"] {
+        #expect(table.filter { $0 == route }.count == 1, "\(route)")
+    }
 }

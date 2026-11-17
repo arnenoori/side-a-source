@@ -67,7 +67,8 @@ enum NotificationAnswer {
         }
         guard let mac = PairedMac.load(item.macID),
               let file = SharedStorage.database, let outbox = try? Outbox(file: file) else { return .noMac }
-        await outbox.enqueue(item)
+        // Unsaved, it can still go now; but if that fails too it is in no queue, and saying "queued" would be false.
+        let saved = (try? await outbox.enqueue(item)) != nil
         let client = RemoteClient(endpoint: mac.endpoint, credentials: KeychainCredentials())
         do {
             var request = try await client.request(item.method, item.path, body: item.body, idempotencyKey: item.id)
@@ -79,7 +80,7 @@ enum NotificationAnswer {
             await outbox.remove(item.id)
             return failure.error.code == .alreadyResolved ? .answeredElsewhere : .failed(failure.error.message)
         } catch {
-            return .queued(mac: mac.endpoint.name)
+            return saved ? .queued(mac: mac.endpoint.name) : .failed("Couldn't send it. Open Side A Remote to try again.")
         }
     }
 }

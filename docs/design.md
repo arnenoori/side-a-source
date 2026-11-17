@@ -29,16 +29,21 @@ account.
 
 ## Settings
 
-Five tabs, each with one job:
+Seven tabs, each with one job. ⌘1 to ⌘7 pick one in this order, ⌘F searches every setting, and Sessions is a
+window of its own (⌘⇧S), not a tab.
 
 - **Accounts:** add, use, rename, sign in again or remove accounts, grouped by provider, with an
   In use label. Each account can be left out of Autopilot.
+- **Autopilot:** the live ranking and its rule, Move at, Follow Fable, pool mode, sharing with your
+  other Macs, answering with the recommended choice, and your day.
 - **Usage:** tokens by day, project and model, Claude and Codex separately; weekly pace; paid
-  usage; what the Claude tokens would cost at API list prices.
-- **Sessions:** search and read every conversation; see what is running now.
-- **Autopilot:** the live ranking and its rule, Move at, Follow Fable, your day, Switch in
-  Terminal, live limits, and the limit hook.
-- **General:** Dynamic Island, notifications, sounds, sync, the 3D player, updates, the search
+  usage; what the Claude tokens would cost at API list prices; when you work.
+- **Notifications:** the Dynamic Island (requests, finished sessions, display, shortcuts), banners
+  for a session that needs you and an account's week passing, and sounds.
+- **iPhone:** pair an iPhone and reach this Mac from anywhere.
+- **Setup:** Switch in Terminal, hosted terminal sessions, live limits from Claude Code, the limit
+  hook, old conversations and worktrees, and Claude Code's own setup.
+- **General:** open at login, menu bar only, the 3D player, keep awake, sync, updates, the search
   index and privacy. Remove Side A is a right-click on Quit in the menu.
 
 ## Dynamic Island

@@ -267,7 +267,7 @@ struct AccountSettingsRow: View {
                 }
                 Divider()
                 Button("Sign In Again") { Task { await store.signIn(account.id) } }.disabled(isActive)
-                Button("Sign Out") { store.signOut(account.id) }.disabled(isActive || !account.ready)
+                Button("Sign Out") { Task { await store.signOut(account.id) } }.disabled(isActive || !account.ready)
                 Divider()
                 Button("Remove…", role: .destructive) { removing = account }.disabled(isActive)
             } label: { Image(systemName: "ellipsis.circle") }
@@ -944,7 +944,7 @@ struct IslandSettings: View {
             Toggle(isOn: Binding(get: { on }, set: { value in
                 on = value
                 // Remote keeps the hooks; only the notch goes.
-                if value || !RemoteController.active { Task { await store.setIsland(value ? .claude : nil, value ? "on" : "off") } }
+                if value || !store.remote.active { Task { await store.setIsland(value ? .claude : nil, value ? "on" : "off") } }
                 store.startNotifications()
             })) {
                 Text("Dynamic Island")

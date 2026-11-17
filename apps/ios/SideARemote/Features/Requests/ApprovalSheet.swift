@@ -9,6 +9,7 @@ import SwiftUI
 struct ApprovalSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.windowSize) private var windowSize
     let request: RemoteRequest
     @State private var current: RequestID?
     @State private var allows = 0
@@ -50,6 +51,7 @@ struct ApprovalSheet: View {
         .presentationDetents(detents, selection: $detent)
         .onChange(of: detents) { _, detents in if !detents.contains(detent), let first = detents.first { detent = first } }
         .presentationDragIndicator(.visible)
+        .closesOnEscape()
         .task(id: shown?.id) { await fetchWhole() }
         .sensoryFeedback(.success, trigger: allows)
         .sensoryFeedback(.impact(flexibility: .rigid), trigger: denies)
@@ -119,12 +121,13 @@ struct ApprovalSheet: View {
                 // There's more below: the indicator says so as the sheet opens.
                 .scrollIndicatorsFlash(onAppear: true)
         }
-        .frame(maxHeight: Self.payloadLimit(request))
+        .frame(maxHeight: Self.payloadLimit(request, window: windowSize.height))
     }
 
-    private static func payloadLimit(_ request: RemoteRequest) -> CGFloat {
+    /// Of the window's height, not the screen's: on iPad the window can be a fraction of it.
+    static func payloadLimit(_ request: RemoteRequest, window: CGFloat) -> CGFloat {
         let change = switch request.action { case .edit, .write, .patch: true; default: false }
-        return (UIScreen.main.bounds.height * (change ? 0.45 : 1.0 / 3)).rounded()
+        return (window * (change ? 0.45 : 1.0 / 3)).rounded()
     }
 
     private func payloadText(_ request: RemoteRequest) -> some View {

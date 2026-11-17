@@ -10,9 +10,9 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
 @Test func itemsSurviveANewOutboxOnTheSameFile() async throws {
     let (outbox, file) = try temporaryOutbox()
     let item = Outbox.Item(id: "\(rid):allow", macID: "mac1", path: "/v1/requests/\(rid)/answer", body: Data("{}".utf8), createdAt: 1, expiresAt: 2)
-    await outbox.enqueue(item)
-    await outbox.enqueue(item)
-    await outbox.enqueue(Outbox.Item(id: "b", macID: "mac2", path: "/v1/sessions/s/interrupt", createdAt: 0, expiresAt: 2))
+    try await outbox.enqueue(item)
+    try await outbox.enqueue(item)
+    try await outbox.enqueue(Outbox.Item(id: "b", macID: "mac2", path: "/v1/sessions/s/interrupt", createdAt: 0, expiresAt: 2))
     // Another process opening the same file sees the same queue.
     let again = try Outbox(file: file)
     #expect(await again.items(for: "mac1") == [item])
@@ -100,7 +100,7 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
 @Test func anExpiredItemIsNotDelivered() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
-    await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/interrupt", createdAt: 0, expiresAt: 1))
+    try await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/interrupt", createdAt: 0, expiresAt: 1))
     let (sync, _) = try await live(mac, outbox: outbox)
     try await until("dropped") { await sync.state.outcomes["old"] == .notDelivered }
     #expect(mac.calls.isEmpty)
@@ -109,7 +109,7 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
 
 @Test func anExpiredItemSettlesWhereverTheConnectionStopped() async throws {
     let (outbox, _) = try temporaryOutbox()
-    await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 1))
+    try await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 1))
     // Never paired: the loop returns at once and drains nothing.
     let sync = try engine(FakeMac(), token: nil, outbox: outbox)
     await sync.start()
@@ -123,7 +123,7 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
 
 @Test func anItemThatDoesNotDecodeDoesNotBlockTheOnesBehindIt() async throws {
     let (outbox, file) = try temporaryOutbox()
-    await outbox.enqueue(Outbox.Item(id: "good", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 5, expiresAt: 9))
+    try await outbox.enqueue(Outbox.Item(id: "good", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 5, expiresAt: 9))
     var db: OpaquePointer?
     #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
     let bad = "INSERT INTO outbox(id, mac, target, created, answer, item) VALUES('bad', 'mac1', 'session:s', 1, 0, x'7b7d')"
@@ -148,7 +148,7 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     await withTaskGroup(of: Void.self) { group in
         for index in 0..<40 {
             let outbox = index.isMultiple(of: 2) ? one : two
-            group.addTask { await outbox.enqueue(Outbox.Item(id: "i\(index)", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: Double(index), expiresAt: 99)) }
+            group.addTask { try? await outbox.enqueue(Outbox.Item(id: "i\(index)", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: Double(index), expiresAt: 99)) }
         }
     }
     #expect(await one.items(for: "mac1").count == 40)
@@ -160,7 +160,7 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     #expect(Set(claimedByOne).isDisjoint(with: claimedByTwo) && claimedByOne.count + claimedByTwo.count == 40)
 
     // A claim older than 30 s is free again: its process died mid-send.
-    await one.enqueue(Outbox.Item(id: "stale", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 99))
+    try await one.enqueue(Outbox.Item(id: "stale", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 99))
     #expect(await one.claim(for: "mac1", by: "dead", now: 1000)?.id == "stale")
     #expect(await two.claim(for: "mac1", by: "live", now: 1010) == nil)
     #expect(await two.claim(for: "mac1", by: "live", now: 1031)?.id == "stale")
@@ -177,8 +177,8 @@ private func drainAll(_ outbox: Outbox, owner: String) async -> [String] {
 
 @Test func answersAreClaimedFirst() async throws {
     let (outbox, _) = try temporaryOutbox()
-    await outbox.enqueue(Outbox.Item(id: "reply", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 1, expiresAt: 99))
-    await outbox.enqueue(Outbox.Item(id: "\(rid):allow", macID: "mac1", path: "/v1/requests/\(rid)/answer", createdAt: 2, expiresAt: 99))
+    try await outbox.enqueue(Outbox.Item(id: "reply", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 1, expiresAt: 99))
+    try await outbox.enqueue(Outbox.Item(id: "\(rid):allow", macID: "mac1", path: "/v1/requests/\(rid)/answer", createdAt: 2, expiresAt: 99))
     #expect(await outbox.claim(for: "mac1", by: "app", now: 3)?.id == "\(rid):allow")
 }
 

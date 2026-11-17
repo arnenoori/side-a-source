@@ -1,3 +1,4 @@
+import SideARemoteShared
 import Foundation
 import Observation
 import SideAProtocol
@@ -93,7 +94,9 @@ final class TerminalModel {
             // Typing into a session needs its owner: Face ID or the passcode, held for a few minutes, and
             // asked again on a reconnect after that.
             guard await OwnerAuth.confirm(reason: "Type into \(self?.name ?? "the session") on your Mac") else {
-                self?.phase = .ended("Face ID or your passcode is needed to use the terminal.")
+                let biometry = Biometry.current
+                self?.phase = .ended(biometry == .passcode ? "Your passcode is needed to use the terminal."
+                                                           : "\(biometry.name) or your passcode is needed to use the terminal.")
                 return
             }
             do {
@@ -139,7 +142,7 @@ final class TerminalModel {
         case .closed(let code):
             switch code {
             case 4410, 4404: if case .ended = phase {} else { phase = .ended("The session ended.") }
-            case 4401: phase = .ended("This iPhone isn't paired anymore.")
+            case 4401: phase = .ended("This \(ThisDevice.kind) isn't paired anymore.")
             case 4426: phase = .ended("Update Side A to use the terminal.")
             case 4409: phase = .ended("Open on too many screens. Close one and try again.")
             case 1000 where closed: break

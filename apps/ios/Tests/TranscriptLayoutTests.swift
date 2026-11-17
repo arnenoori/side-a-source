@@ -84,6 +84,16 @@ final class TranscriptLayoutTests: XCTestCase {
         })
     }
 
+    /// The latest reply's own Copy and Share give way to the turn-end row's, so an ended turn shows one row of them.
+    func testAnEndedTurnIsKnownByItsReply() {
+        let messages = [
+            TranscriptMessage(seq: 0, uuid: "u", role: .user, at: 100, text: "a"),
+            TranscriptMessage(seq: 1, uuid: "a", role: .assistant, at: 234, model: "opus", text: "b"),
+        ]
+        XCTAssertEqual(TranscriptLayout.items(messages: messages, earlier: 0).endedTurns, [1])
+        XCTAssertEqual(TranscriptLayout.items(messages: messages, earlier: 0, working: true).endedTurns, [])
+    }
+
     func testThinkingMessageBecomesAStepTimedByTheNextMessage() throws {
         let messages = [
             TranscriptMessage(seq: 0, uuid: "k", role: .thinking, at: 10, text: "Hmm"),
@@ -107,6 +117,28 @@ final class TranscriptLayoutTests: XCTestCase {
         let items = TranscriptLayout.items(messages: [TranscriptMessage(seq: 0, uuid: "u", role: .user, at: 0, text: "a")], earlier: 5, open: [bash, question])
         XCTAssertEqual(items.map(\.id), ["earlier", "m-0", "r-b", "r-q"])
         guard case .question = items.last else { return XCTFail("expected a question card") }
+    }
+
+    /// Each lazy row is a message and the steps after it; the earlier-page button keeps a row to itself.
+    func testEachMessageCarriesItsStepsInOneLazyRow() {
+        let request = RemoteRequest(id: "r", agent: .claude, tool: "Bash", action: .command("swift test"), risk: .normal,
+                                    answers: [.allow, .deny], title: "t", arrivedAt: 0)
+        let messages = [
+            TranscriptMessage(seq: 0, uuid: "u", role: .user, at: 0, text: "Go"),
+            TranscriptMessage(seq: 1, uuid: "t", role: .tools, at: 1, tools: [tool("a", at: 1), tool("b", at: 2)]),
+            TranscriptMessage(seq: 2, uuid: "x", role: .assistant, at: 3, text: "Found it"),
+            TranscriptMessage(seq: 3, uuid: "v", role: .user, at: 4, text: "Run it"),
+            TranscriptMessage(seq: 4, uuid: "k", role: .thinking, at: 5, text: "x", durationMS: 1000),
+            TranscriptMessage(seq: 5, uuid: "w", role: .tools, at: 6, tools: [tool("c", at: 6, status: .running)]),
+        ]
+        let items = TranscriptLayout.items(messages: messages, earlier: 4, open: [request], working: true)
+        let rows = TranscriptLayout.rows(items)
+        XCTAssertEqual(rows.map { $0.items.map(\.id) }, [["earlier"], ["m-0", "t-a", "t-b"], ["m-2", "end-2"], ["m-3", "t-thinking-4", "t-c", "r-r"]])
+        XCTAssertEqual(rows.map(\.id), ["earlier", "m-0", "m-2", "m-3"])
+        // A page that starts partway through a turn: its first steps get a row of their own after the button.
+        let midTurn = TranscriptLayout.rows(TranscriptLayout.items(messages: Array(messages.dropFirst()), earlier: 1))
+        XCTAssertEqual(midTurn.map { $0.items.map(\.id) }, [["earlier"], ["t-a", "t-b"], ["m-2", "end-2"], ["m-3", "t-thinking-4", "t-c"]])
+        XCTAssertEqual(rows.flatMap(\.items), items)
     }
 }
 

@@ -37,10 +37,15 @@ numbers only, nothing destructive is ever an "Always", rows don't move under a f
   value and an assignment in `init`. Declare it without a value and assign it once in `init`.
 - `Packages/SideAProtocol` keeps `iOS 17` / `macOS 14` so the Mac app can use it. Only the app
   targets require 26.
-- **Devices.** iPhone first. iPad runs the same app with `NavigationSplitView` (sessions in the
-  sidebar, transcript in the detail column), and that comes for free from the size-class-aware
-  root described in section 3. Landscape works everywhere and matters most in the terminal. No
-  watchOS app; the Live Activity's `.small` supplemental family covers the Watch Smart Stack.
+- **Devices.** iPhone first. A full-width iPad (`RootLayout`: iPad idiom and regular width) turns the
+  Sessions tab into a `NavigationSplitView`: the list in the sidebar, the session in the detail
+  column, both driven by the tab's one path, so deep links work unchanged. The tab bar stays as
+  iPadOS draws it, at the top. Slide Over, a narrow Split View and every iPhone, a Max held sideways
+  too, keep the phone stack. The transcript, its composer and the other tabs' lists stay
+  `Readable.width` wide. The menu bar and a hardware keyboard get New Session ⌘N, Settings ⌘,,
+  ⌘1/⌘2/⌘F for the tabs and ⌥⌘↑/↓ for the previous and next session; Return sends, Escape closes
+  sheets. Landscape works everywhere and matters most in the terminal. No watchOS app; the Live
+  Activity's `.small` supplemental family covers the Watch Smart Stack.
 
 ### Dependencies
 

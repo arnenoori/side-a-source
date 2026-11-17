@@ -56,7 +56,9 @@ final class RemotePush {
     /// `POST /v1/devices/push`: keep what the phone reported and register it with the relay.
     func register(_ device: String, _ registration: PushRegistration) async -> Bool {
         guard let controller, let record = controller.devices.devices.first(where: { $0.id == device }) else { return false }
-        try? controller.devices.update(device) { $0.push = registration }
+        do { try controller.devices.update(device) { $0.push = registration } } catch {
+            RemoteLog.shared("couldn't save device \(device.prefix(6))'s push registration: \(error.localizedDescription)")
+        }
         let now = Date()
         if Self.warns(from: record.push?.apnsToken, to: registration.apnsToken, warned: tokenWarned[device], now: now) {
             tokenWarned[device] = now
@@ -71,9 +73,12 @@ final class RemotePush {
 
     /// Phones whose stored registration the relay hasn't acknowledged. The phone reports once per connection, so
     /// without a retry here a relay that was down at that moment would leave it without notifications.
-    private(set) var unacknowledged: Set<String> = []
+    private(set) var unacknowledged: Set<String> = [] {
+        // Everything registered: the next failure, whenever it comes, starts the backoff over.
+        didSet { if unacknowledged.isEmpty { attempts = 0 } }
+    }
     @ObservationIgnored private var retrying: Task<Void, Never>?
-    private var attempts = 0
+    private(set) var attempts = 0
     /// The first wait before a retry; it doubles to ten times as long. Tests shorten it.
     var retryAfter: Duration = .seconds(15)
     /// Tests stand in for the relay's `PUT /v1/devices/{id}`.
@@ -506,7 +511,9 @@ final class RemotePush {
 
     private func note(_ device: String, _ result: String) {
         guard let controller, controller.devices.devices.first(where: { $0.id == device })?.pushResult != result else { return }
-        try? controller.devices.update(device) { $0.pushResult = result }
+        do { try controller.devices.update(device) { $0.pushResult = result } } catch {
+            RemoteLog.shared("couldn't save device \(device.prefix(6))'s push result: \(error.localizedDescription)")
+        }
     }
 
     /// Whether the failure is the relay being out of reach, which a later try can mend.

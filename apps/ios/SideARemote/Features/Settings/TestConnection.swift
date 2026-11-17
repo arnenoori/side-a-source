@@ -87,7 +87,7 @@ final class ConnectionTest {
         let outcome: Outcome
         switch hello {
         case .failure(is ServerKeyChanged):
-            outcome = .failed("\(name) has a new security key, so this iPhone has to pair again.", detail: nil)
+            outcome = .failed("\(name) has a new security key, so this \(ThisDevice.kind) has to pair again.", detail: nil)
         case .failure(let failure as RemoteFailure) where failure.retryable:
             outcome = .failed(failure.error.message, detail: nil)
         case .failure(let error as URLError):
@@ -101,10 +101,10 @@ final class ConnectionTest {
                 _ = try await client.sessions()
                 // The Mac just answered, so an engine waiting out a backoff tries now.
                 outcome = await Self.live(engine)
-                    ? .passed("Paired as \(mac?.deviceName ?? "this iPhone"), with live updates · Side A \(hello.app)")
+                    ? .passed("Paired as \(mac?.deviceName ?? "this \(ThisDevice.kind)"), with live updates · Side A \(hello.app)")
                     : .failed("Connected, but live updates are blocked.", detail: "Update Side A on \(name), then try again.")
             } catch let failure as RemoteFailure where failure.status == 401 {
-                outcome = .failed("\(name) doesn't accept this iPhone any more.", detail: nil)
+                outcome = .failed("\(name) doesn't accept this \(ThisDevice.kind) any more.", detail: nil)
             } catch {
                 outcome = .failed(error.localizedDescription, detail: nil)
             }
@@ -130,8 +130,8 @@ final class ConnectionTest {
         try? await Task.sleep(for: .milliseconds(600))
         steps[Self.reaching].outcome = .passed(Self.reached(.direct(URL(string: "https://192.168.1.20:47800")!), mac: name))
         steps[Self.relay].outcome = Self.relayOutcome(.answered, mac: name)
-        steps[Self.paired].outcome = .passed("Paired as iPhone, with live updates · Side A 0.5.47")
-        steps[Self.notifications].outcome = .passed("\(name) can reach this iPhone")
+        steps[Self.paired].outcome = .passed("Paired as \(ThisDevice.kind), with live updates · Side A 0.5.47")
+        steps[Self.notifications].outcome = .passed("\(name) can reach this \(ThisDevice.kind)")
     }
 
     static func reached(_ path: Paths.Path, mac: String) -> String {
@@ -145,13 +145,13 @@ final class ConnectionTest {
     static func unreachable(_ error: Error?, mac: String, tailscaleOff: Bool, hasRelay: Bool) -> Outcome {
         switch error {
         case is ServerKeyChanged:
-            .failed("\(mac) has a new security key, so this iPhone has to pair again.", detail: nil)
+            .failed("\(mac) has a new security key, so this \(ThisDevice.kind) has to pair again.", detail: nil)
         case is LocalNetworkDenied:
             .failed("Side A Remote isn't allowed on the local network.", detail: "Turn it on in Settings › Privacy & Security › Local Network.")
         case is RelayRefused:
             .failed(RelayRefused().localizedDescription, detail: nil)
         default:
-            .failed("Couldn't reach \(mac).", detail: tailscaleOff ? "Tailscale looks off on this iPhone."
+            .failed("Couldn't reach \(mac).", detail: tailscaleOff ? "Tailscale looks off on this \(ThisDevice.kind)."
                 : hasRelay ? "No address answered, nor did the relay. Is the Mac awake, with Side A open?"
                 : "No address answered. Is the Mac awake, with Side A open?")
         }
@@ -200,8 +200,8 @@ final class ConnectionTest {
     static func testNotification(_ relay: DiagnosticPush.Relay, mac: String) -> Outcome {
         switch relay {
         case .ok: .passed("Test notification sent")
-        case .unverified: .failed("This iPhone hasn't confirmed notifications yet.", detail: "Open Side A Remote again in a moment, then try again.")
-        case .gone: .failed("Apple says this iPhone's notification token is gone.", detail: "Open Side A Remote once so it registers again.")
+        case .unverified: .failed("This \(ThisDevice.kind) hasn't confirmed notifications yet.", detail: "Open Side A Remote again in a moment, then try again.")
+        case .gone: .failed("Apple says this \(ThisDevice.kind)'s notification token is gone.", detail: "Open Side A Remote once so it registers again.")
         case .retry, .unreachable: .failed("\(mac) couldn't reach the notification relay.", detail: nil)
         default: .failed("The notification relay refused the test.", detail: nil)
         }
@@ -211,11 +211,11 @@ final class ConnectionTest {
     /// yet, so the Mac's pushes go nowhere until it does.
     static func pushStatus(_ client: RemoteClient, mac: String) async -> Outcome {
         guard let push = try? await client.setup().push else { return .notChecked("Allowed here. \(mac) didn't say how its last one went.") }
-        guard push.registered else { return .notChecked("Allowed here. This iPhone isn't registered with \(mac) yet.") }
+        guard push.registered else { return .notChecked("Allowed here. This \(ThisDevice.kind) isn't registered with \(mac) yet.") }
         return switch DiagnosticPush.Relay(rawValue: push.lastResult ?? "ok") {
-        case .ok: .passed("\(mac) can reach this iPhone")
-        case .unverified: .notChecked("Allowed here. Waiting for this iPhone to confirm notifications.")
-        case .gone: .failed("Apple says this iPhone's notification token is gone.", detail: "Open Side A Remote once so it registers again.")
+        case .ok: .passed("\(mac) can reach this \(ThisDevice.kind)")
+        case .unverified: .notChecked("Allowed here. Waiting for this \(ThisDevice.kind) to confirm notifications.")
+        case .gone: .failed("Apple says this \(ThisDevice.kind)'s notification token is gone.", detail: "Open Side A Remote once so it registers again.")
         case .retry, .unreachable: .failed("\(mac) couldn't reach the notification relay.", detail: "It tries again on the next notification.")
         default: .failed("The notification relay refused \(mac)'s last notification.", detail: nil)
         }

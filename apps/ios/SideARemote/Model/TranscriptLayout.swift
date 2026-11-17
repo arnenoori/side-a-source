@@ -62,11 +62,37 @@ struct StepGroup: Hashable, Identifiable {
     }
 }
 
+/// One row of the transcript's lazy stack: a message and the steps, cards and requests after it.
+struct TranscriptRow: Identifiable, Hashable {
+    var items: [TranscriptItem]
+
+    /// The message's own id, so scrolling to a message finds its row; it stays as steps join.
+    var id: String { items[0].id }
+}
+
+extension TranscriptItem {
+    /// Messages start a lazy row, and so does the earlier-page button, which keeps its row to itself.
+    var startsRow: Bool {
+        switch self {
+        case .earlier, .user, .assistant, .notice, .outgoing: true
+        default: false
+        }
+    }
+}
+
 struct TurnEnd: Hashable {
     let seq: Int
     let model: String?
     let duration: TimeInterval?
-    let markdown: String
+    /// The reply it ends, for Copy and Share: as the Mac sent it, which may be cut (`TranscriptStore.text(_:in:)`).
+    let message: TranscriptMessage
+}
+
+extension [TranscriptItem] {
+    /// The assistant messages a turn-end row follows; that row carries their Copy and Share.
+    var endedTurns: Set<Int> {
+        Set(compactMap { if case .turnEnd(let end) = $0 { end.seq } else { nil } })
+    }
 }
 
 enum TranscriptLayout {
@@ -103,7 +129,7 @@ enum TranscriptLayout {
         func endTurn(_ end: Date?) {
             guard let message = lastAssistant else { return }
             let duration = zip(turnStart, end ?? lastAt).map { $1.timeIntervalSince($0) }
-            items.append(.turnEnd(TurnEnd(seq: message.seq, model: message.model, duration: duration, markdown: message.text ?? "")))
+            items.append(.turnEnd(TurnEnd(seq: message.seq, model: message.model, duration: duration, message: message)))
             lastAssistant = nil
         }
 
@@ -161,6 +187,21 @@ enum TranscriptLayout {
         // A note this phone left already says it waits, on its own bubble.
         if let mail, !(mail.kind == .note && outgoing.contains(where: \.isPendingNote)) { items.append(.mail(mail)) }
         return items
+    }
+
+    /// The lazy stack's rows: each message with the steps, cards and requests that follow it, up to the next message.
+    /// With a lazy row per 44 pt step, the stack's guess at the rows it hadn't built swung with which steps it had just
+    /// prefetched, and each new content height ran the prefetch again: a layout loop at 100% CPU, a page up the transcript.
+    static func rows(_ items: [TranscriptItem]) -> [TranscriptRow] {
+        var rows: [TranscriptRow] = []
+        for item in items {
+            if !item.startsRow, let last = rows.last, last.id != "earlier" {
+                rows[rows.count - 1].items.append(item)
+            } else {
+                rows.append(TranscriptRow(items: [item]))
+            }
+        }
+        return rows
     }
 
     static func item(for tool: TranscriptTool) -> TranscriptItem {

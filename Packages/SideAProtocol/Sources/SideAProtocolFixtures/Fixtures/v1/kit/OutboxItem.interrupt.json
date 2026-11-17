@@ -1,0 +1,10 @@
+{
+  "attempts": 0,
+  "body": "",
+  "createdAt": 1791560012.5,
+  "expiresAt": 1791560612.5,
+  "id": "7afa15f5-720e-46df-93b3-211d3a3d279b",
+  "macID": "3a9f0c1d2e4b5a67",
+  "method": "POST",
+  "path": "/v1/sessions/8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f/interrupt"
+}

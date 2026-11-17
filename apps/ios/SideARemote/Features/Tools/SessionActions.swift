@@ -1,5 +1,6 @@
 import Observation
 import SideAProtocol
+import SideARemoteShared
 import SwiftUI
 
 /// The session actions that open something or ask first, from a row's swipe or context menu, the
@@ -230,6 +231,7 @@ extension View {
 private struct SessionActionsHost: ViewModifier {
     @Environment(AppModel.self) private var hostModel
     @State private var actions = SessionActions()
+    @Environment(\.sidebarSelection) private var sidebarSelection
 
     /// The Mac whose button asked.
     private var model: AppModel { actions.model ?? hostModel }
@@ -243,9 +245,9 @@ private struct SessionActionsHost: ViewModifier {
                 RestartSheet(session: session) { actions.started = $0 }
                     .environment(model)
             }
-            .confirmationDialog("Continue on iPhone?", isPresented: Binding { actions.continuing != nil } set: { if !$0 { actions.continuing = nil } },
+            .confirmationDialog("Continue on \(ThisDevice.kind)?", isPresented: Binding { actions.continuing != nil } set: { if !$0 { actions.continuing = nil } },
                                 titleVisibility: .visible, presenting: actions.continuing) { session in
-                Button("Continue on iPhone") { actions.continueOnPhone(session) }
+                Button("Continue on \(ThisDevice.kind)") { actions.continueOnPhone(session) }
             } message: { _ in
                 Text("It closes on \(model.mac.name) and picks up here, in a terminal Side A keeps.")
             }
@@ -282,7 +284,13 @@ private struct SessionActionsHost: ViewModifier {
                 PreviewSheet(port: port)
                     .environment(model)
             }
-            .navigationDestination(item: $actions.started) { StartingSessionView(started: $0).environment(model) }
+            .navigationDestination(item: sidebarSelection == nil ? $actions.started : .constant(nil)) { StartingSessionView(started: $0).environment(model) }
+            // From a row in the iPad's sidebar, it opens beside the list instead.
+            .onChange(of: actions.started) { _, started in
+                guard let started, let sidebarSelection else { return }
+                sidebarSelection.wrappedValue = .starting(started.name, mac: model.macID)
+                actions.started = nil
+            }
             .sensoryFeedback(.success, trigger: actions.successes)
             .sensoryFeedback(.error, trigger: actions.failures)
             .fullScreenCover(item: $actions.terminal) { terminal in

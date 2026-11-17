@@ -135,7 +135,7 @@ final class ReplyFlights {
 
     /// Once more, signed as the Mac asked; cancelled, nothing goes and the reply waits for Retry at that level.
     private func resign(_ item: String, _ flight: ReplyFlight, level: ConfirmLevel, refused: APIError) {
-        if model?.tools.needsKeys == true { return settleUnsent(item, reason: "Pair this iPhone again to do this from it.") }
+        if model?.tools.needsKeys == true { return settleUnsent(item, reason: "Pair this \(ThisDevice.kind) again to do this from it.") }
         var waiting = flight
         waiting.phase = .resigning
         waiting.needs = level

@@ -131,7 +131,7 @@ final class PairingRun {
         } catch {
             RemoteLog.error(.pairing, "keychain refused the pairing")
             unsaved = paired
-            phase = .failed(PairingFailure(title: "Couldn't save the pairing on this iPhone.", primary: .tryAgain))
+            phase = .failed(PairingFailure(title: "Couldn't save the pairing on this \(ThisDevice.kind).", primary: .tryAgain))
         }
     }
 
@@ -238,7 +238,7 @@ struct PairingFailure: Equatable {
                 return Self(title: "Allow Local Network for Side A Remote to reach \(mac).", primary: .openSettings, secondary: .tryAgain)
             }
             if Tailscale.isTailnet(host), Tailscale.installed, await !Tailscale.vpnUp() {
-                return Self(title: "Turn on Tailscale on this iPhone.", primary: .openTailscale, secondary: .tryAgain)
+                return Self(title: "Turn on Tailscale on this \(ThisDevice.kind).", primary: .openTailscale, secondary: .tryAgain)
             }
             // macOS's firewall drops LAN connections to an app it doesn't know, silently: a timeout, not a refusal.
             if error.code == .timedOut, !Tailscale.isTailnet(host) {

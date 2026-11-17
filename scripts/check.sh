@@ -63,8 +63,11 @@ ios_tests() {
 ran=0
 if touches '^(bridge|Sources|Tests|Packages|Package\.)'; then
   python3 -m unittest discover -s bridge/tests
-  rm -f Sources/SideA/Resources/*.py
-  cp bridge/*.py Sources/SideA/Resources/
+  # The app runs the bridge on macOS's own Python 3.9, which the release also tests on.
+  if [[ "$(/usr/bin/python3 -c 'import sys; print(sys.version_info[:2] == (3, 9))' 2>/dev/null)" == True ]]; then
+    /usr/bin/python3 -m unittest discover -s bridge/tests
+  fi
+  ./scripts/sync-bridge.sh
   swift test
   ran=1
 fi

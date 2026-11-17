@@ -79,7 +79,7 @@ final class NotificationCardModel {
         Task {
             // Expanded from a locked Lock Screen: the owner first, as the Allow button's unlock would ask.
             if DeviceLock.isLocked, !(await OwnerAuth.confirm(reason: "Answer \(payload.title ?? "the question")")) {
-                sending = .failed("Unlock your iPhone to answer.")
+                sending = .failed("Unlock your \(ThisDevice.kind) to answer.")
                 return
             }
             let result = await NotificationAnswer.send(answer, to: request, macID: payload.mac)
@@ -88,7 +88,7 @@ final class NotificationCardModel {
             case .answeredElsewhere: sending = .answeredElsewhere
             case .queued(let mac): sending = .queued(mac)
             case .failed(let message): sending = .failed(message)
-            case .noMac: sending = .failed("This iPhone isn't paired with that Mac any more.")
+            case .noMac: sending = .failed("This \(ThisDevice.kind) isn't paired with that Mac any more.")
             }
             if case .sent = sending { onSent() }
         }

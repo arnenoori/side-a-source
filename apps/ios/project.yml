@@ -12,14 +12,14 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
-    MARKETING_VERSION: "1.0.3"
-    CURRENT_PROJECT_VERSION: "21"
+    MARKETING_VERSION: "1.1"
+    CURRENT_PROJECT_VERSION: "26"
     ENABLE_PREVIEWS: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
 settingGroups:
-  # iPhone only, the app and every extension; set per target, since XcodeGen gives each iOS target "1,2".
-  iphoneOnly:
-    TARGETED_DEVICE_FAMILY: "1"
+  # iPhone and iPad, the app and every extension alike: an extension can't leave out a device its app runs on.
+  devices:
+    TARGETED_DEVICE_FAMILY: "1,2"
 packages:
   SideAProtocol:
     path: ../../Packages/SideAProtocol
@@ -69,8 +69,12 @@ targets:
         CFBundleDisplayName: Side A
         UILaunchScreen: {}
         UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: true
+          # One window: the app lock, the pill and the Face ID prompt each cover a single scene, so a second iPad
+          # window would show sessions while the first one is locked.
+          UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        # Every way up on iPad, which Split View and Slide Over need.
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UIBackgroundModes: [remote-notification]
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
@@ -79,8 +83,10 @@ targets:
         SideAKeychainGroup: $(SHARED_KEYCHAIN_GROUP)
         SideAAppGroup: $(APP_GROUP)
         SideAAPNsEnvironment: $(APNS_ENVIRONMENT)
-        NSFaceIDUsageDescription: To confirm before allowing a destructive request.
+        NSFaceIDUsageDescription: Side A Remote uses Face ID to unlock and to confirm what you allow or change on your Mac.
         NSPhotoLibraryAddUsageDescription: To save images from a session.
+        PHPhotoLibraryPreventAutomaticLimitedAccessAlert: true
+        NSPhotoLibraryUsageDescription: Side A Remote shows your recent photos in the attach drawer so you can pick some for a prompt. Only the photos you pick are sent, to your Mac.
         LSApplicationQueriesSchemes: [tailscale]
         # Apple's encryption only: CryptoKit, the Secure Enclave and Network.framework's TLS.
         ITSAppUsesNonExemptEncryption: false
@@ -88,7 +94,7 @@ targets:
           - CFBundleURLName: $(APP_BUNDLE_ID)
             CFBundleURLSchemes: [sidea-remote]
     settings:
-      groups: [iphoneOnly]
+      groups: [devices]
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID)
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
@@ -107,7 +113,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
-      groups: [iphoneOnly]
+      groups: [devices]
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).shared
         APPLICATION_EXTENSION_API_ONLY: YES
@@ -149,7 +155,7 @@ targets:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
     settings:
-      groups: [iphoneOnly]
+      groups: [devices]
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).NotificationService
 
@@ -188,7 +194,7 @@ targets:
             UNNotificationExtensionUserInteractionEnabled: true
             UNNotificationExtensionDefaultContentHidden: true
     settings:
-      groups: [iphoneOnly]
+      groups: [devices]
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).NotificationContent
         SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
@@ -224,7 +230,7 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
-      groups: [iphoneOnly]
+      groups: [devices]
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(APP_BUNDLE_ID).Widgets
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -241,7 +247,7 @@ targets:
       - package: SideAProtocol
         product: SideARemoteKit
     settings:
-      groups: [iphoneOnly]
+      groups: [devices]
       base:
         GENERATE_INFOPLIST_FILE: YES
 

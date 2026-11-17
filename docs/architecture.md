@@ -7,7 +7,7 @@ anything that touches logins, the CLIs' files or transcripts. A third small scri
 ## Native application
 
 `SideA` is SwiftUI on macOS 14+. One observable `AccountStore` backs the `MenuBarExtra`, the
-Settings window (Accounts, Usage, Sessions, Autopilot, Setup, General), the Dynamic Island and the
+Settings window (Accounts, Autopilot, Usage, Notifications, iPhone, Setup, General), the Sessions window, the Dynamic Island and the
 optional 3D player. It runs the Autopilot loop: read usage, trade logins, start idle windows,
 check status.claude.com every five minutes, and send weekly-limit notifications.
 
@@ -161,7 +161,7 @@ its own isn't running and the host answers within a second (`nc -z -G 1`), else 
 
 ## Dynamic Island
 
-Turning on Settings > General > Dynamic Island runs `island on`, which:
+Turning on Settings > Notifications > Dynamic Island runs `island on`, which:
 
 1. copies `island_hook.py` to `runtime/island_hook.py` and writes two launchers,
    `runtime/island-hook.sh` and `runtime/island-mail.sh`, that run it with the Python Side A

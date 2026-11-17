@@ -124,6 +124,60 @@ private func room(at now: Double) -> [UsageWindow] {
     #expect(store.health[id] == .verify && store.accountIssue(store.config.accounts[0], now: now) == AccountIssue(kind: .verifying))
 }
 
+private func usageCache(_ root: URL) throws -> [String: Any] {
+    try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("runtime/usage-cache.json"))) as? [String: Any])
+}
+
+/// What a failed read, a session's reading and the endpoint answering again each leave behind, in the order they come.
+@MainActor @Test func anEndpointFailureASessionsReadingAndTheEndpointComingBackEachClearWhatTheyDisprove() async throws {
+    let root = temporaryRoot()
+    let store = AccountStore(demo: true, root: root)
+    store.checksLogins = true
+    let now = Date().timeIntervalSince1970
+    store.config.accounts = [Account(name: "A", email: "a@example.com", ready: true, allowAuto: true)]
+    store.activeIDs = [:]
+    let id = store.config.accounts[0].id
+    var up = false, reads = 0
+    let answer = try JSONEncoder().encode(AccountUsage(windows: room(at: now)))
+    store.testBridge = { args in
+        switch args.first {
+        case "usage":
+            reads += 1
+            if !up { throw BridgeFailure(message: "boom") }
+            return answer
+        case "login", "forget": return Data()
+        case "status": return Data(#"{"loggedIn":true,"email":"a@example.com","authMethod":"oauth"}"#.utf8)
+        default: throw BridgeFailure(message: "not in this test")
+        }
+    }
+
+    // The endpoint fails: the account is failing and backed off, so Autopilot leaves it and nothing reads it again.
+    await store.refreshUsage(id)
+    #expect(reads == 1 && store.health[id] == .offline && store.plannable[id] == nil)
+    var cache = try usageCache(root)
+    #expect((cache["failing"] as? [String]) == [id] && (cache["backoff"] as? [String: Any])?[id] != nil && (cache["at"] as? [String: Any])?[id] != nil)
+    await store.refreshUsage(id)
+    #expect(reads == 1)
+
+    // A session's own reading disproves failing and offline, but not the back-off.
+    #expect(store.takeLive(room(at: now), for: id, at: now + 1))
+    #expect(store.health[id] == nil && store.plannable[id] != nil && store.minutesToLimit(id) == nil)
+    await store.refreshUsage(id)
+    #expect(reads == 1)
+
+    // Signing in again drops the back-off, and the endpoint answers: nothing left of the failure.
+    up = true
+    #expect(await store.signIn(id))
+    #expect(reads == 2 && store.health[id] == nil && store.plannable[id] != nil)
+    cache = try usageCache(root)
+    #expect(((cache["failing"] as? [String]) ?? []).isEmpty && (cache["backoff"] as? [String: Any])?[id] == nil)
+
+    store.remove(id)
+    cache = try usageCache(root)
+    #expect((cache["at"] as? [String: Any])?[id] == nil && (cache["usage"] as? [String: Any])?[id] == nil)
+    #expect(store.minutesToLimit(id) == nil && store.plannable[id] == nil)
+}
+
 @Test func healthKeepsItsSavedWordsAndOnlySignInStopsWork() {
     for state in [LoginHealth.idle, .verify, .offline, .signIn()] { #expect(LoginHealth(saved: state.saved) == state) }
     #expect(LoginHealth(saved: "anything else") == nil)

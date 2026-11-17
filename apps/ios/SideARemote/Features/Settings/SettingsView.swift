@@ -16,7 +16,7 @@ struct SettingsView: View {
         Form {
             Section {
                 ForEach(root.macs, id: \.macID) { mac in
-                    NavigationLink { MacDetailView(model: mac) } label: { MacRow(mac: mac.mac, version: mac.link?.state.hello?.app) }
+                    NavigationLink(value: SettingsPage.mac(mac.macID)) { MacRow(mac: mac.mac, version: mac.link?.state.hello?.app) }
                 }
                 Button("Pair Another Mac", systemImage: "plus") { pairing = true }
                 if root.reviewing {
@@ -32,7 +32,7 @@ struct SettingsView: View {
                 }
             }
             Section("Security") {
-                Toggle("Require Face ID", isOn: $requireFaceID)
+                Toggle("Require \(Biometry.current.name)", isOn: $requireFaceID)
             }
             .tint(.green)
             Section("Terminal") {
@@ -41,8 +41,8 @@ struct SettingsView: View {
                 }
             }
             Section {
-                NavigationLink("Privacy") { PrivacyView() }
-                NavigationLink("Acknowledgements") { AcknowledgementsView() }
+                NavigationLink("Privacy", value: SettingsPage.privacy)
+                NavigationLink("Acknowledgements", value: SettingsPage.acknowledgements)
                 Link("Contact Support", destination: Support.mail)
             } header: {
                 Text("About")
@@ -54,6 +54,20 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .navigationDestination(for: SettingsPage.self) { page in
+            switch page {
+            case .privacy: PrivacyView()
+            case .acknowledgements: AcknowledgementsView()
+            case .mac(let id), .name(let id), .test(let id):
+                if let mac = root.model(for: id) {
+                    switch page {
+                    case .name: MacNameView(mac: mac.mac, macID: id)
+                    case .test: if let link = mac.link { TestConnectionView(link: link) } else { TestConnectionView(demo: mac.mac.name) }
+                    default: MacDetailView(model: mac)
+                    }
+                }
+            }
+        }
         // Straight to the scanner, no welcome or Tailscale step.
         .fullScreenCover(isPresented: $pairing) { ScannerScreen(title: "Pair Another Mac") }
     }
@@ -67,6 +81,12 @@ struct SettingsView: View {
     }
 }
 
+/// A page pushed inside Settings, as a value so the tab can hold the path: an iPad window changing width builds the
+/// tab view again, and a page known only to its link would close.
+enum SettingsPage: Hashable {
+    case mac(String), name(String), test(String), privacy, acknowledgements
+}
+
 /// Support and privacy questions both go here; the App Store listing gives the same address.
 enum Support {
     static let address = "support@getsidea.com"
@@ -76,7 +96,7 @@ enum Support {
 private struct PrivacyView: View {
     var body: some View {
         Form {
-            Text("Side A Remote collects nothing. Sessions go only between your iPhone and your Mac. The push relay sees device tokens and encrypted payloads.")
+            Text("Side A Remote collects nothing. Sessions go only between your \(ThisDevice.kind) and your Mac. The push relay sees device tokens and encrypted payloads.")
             Section("Questions") {
                 Link(Support.address, destination: Support.mail)
             }
@@ -132,14 +152,14 @@ struct MacDetailView: View {
     var body: some View {
         Form {
             Section {
-                NavigationLink { MacNameView(mac: model.mac, macID: model.macID) } label: { LabeledContent("Name", value: model.mac.name) }
+                NavigationLink(value: SettingsPage.name(model.macID)) { LabeledContent("Name", value: model.mac.name) }
                 LabeledContent("Connection", value: model.mac.state == .live ? model.mac.route?.title ?? "Connected" : model.mac.state.title)
                 if let link {
                     LabeledContent("Address", value: (link.state.address ?? link.mac.endpoint.baseURL).host() ?? "")
                     if let hello = link.state.hello {
                         LabeledContent("Side A", value: hello.versionLine)
                     }
-                    LabeledContent("This iPhone", value: link.mac.deviceName)
+                    LabeledContent("This \(ThisDevice.kind)", value: link.mac.deviceName)
                     LabeledContent("Security key") {
                         Text(String(link.mac.endpoint.serverKeyHash.prefix(8)) + "…").monospaced()
                     }
@@ -147,11 +167,7 @@ struct MacDetailView: View {
             }
             MacNotificationSections(macID: model.macID)
             Section {
-                if let link {
-                    NavigationLink("Test Connection") { TestConnectionView(link: link) }
-                } else {
-                    NavigationLink("Test Connection") { TestConnectionView(demo: model.mac.name) }
-                }
+                NavigationLink("Test Connection", value: SettingsPage.test(model.macID))
             }
             if link != nil {
                 Section {

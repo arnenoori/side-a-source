@@ -39,7 +39,7 @@ struct TurnDiffPage: View {
         .navigationTitle("Changes")
         .navigationSubtitle(subtitle)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(.hidden, for: .tabBar)
+        .hidesTabBar()
         .refreshable { await load() }
         .task(id: session?.statusAt) { await load() }
     }

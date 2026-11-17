@@ -66,20 +66,25 @@ struct TranscriptView: View {
 
     @ViewBuilder private var transcript: some View {
         let items = layout()
+        let ended = items.endedTurns
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(items) { item in
-                    row(item)
-                        .background {
-                            if flashed == item.id {
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color(.tertiarySystemFill))
-                                    .padding(-Space.xs)
-                            }
+                ForEach(TranscriptLayout.rows(items)) { lazyRow in
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(lazyRow.items) { item in
+                            row(item, ended: ended)
+                                .background {
+                                    if flashed == item.id {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color(.tertiarySystemFill))
+                                            .padding(-Space.xs)
+                                    }
+                                }
+                                .padding(.top, spacing(before: item))
+                                .id(item.id)
+                                .transition(.opacity)
                         }
-                        .padding(.top, spacing(before: item))
-                        .id(item.id)
-                        .transition(.opacity)
+                    }
                 }
                 if let flag = session?.flag, flag.kind != .bloated, flag.kind != .unsent {
                     HealthCard(flag: flag, session: session, canNote: session?.abilities.contains(.note) == true) {
@@ -91,6 +96,7 @@ struct TranscriptView: View {
             .padding(.horizontal, Space.m)
             .padding(.top, Space.s)
             .padding(.bottom, Space.xl)
+            .readableWidth()
             .animation(.easeOut(duration: 0.2), value: items.last?.id)
         }
         .overlay {
@@ -110,6 +116,8 @@ struct TranscriptView: View {
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
         .defaultScrollAnchor(.bottom, for: .alignment)
+        // The bar under the title has its own material; the edge fade would dim the row below it as well.
+        .scrollEdgeEffectHidden(usage != nil, for: .top)
         .scrollDismissesKeyboard(.interactively)
         // A tap anywhere drops a text selection; a tap inside one still moves it, after this clears the rest.
         .simultaneousGesture(TapGesture().onEnded { SelectableText.clearSelection() })
@@ -128,12 +136,15 @@ struct TranscriptView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
-                    .padding(.bottom, Space.xxs)
+                    .padding(.bottom, Space.xs)
                     .contentTransition(.numericText())
                     .animation(Motion.smooth(reduceMotion), value: usage)
+                    // One bar from the top of the window down past this line, so code and tables scrolled under
+                    // the title don't read through it or run into the line.
+                    .background(Rectangle().fill(.bar).ignoresSafeArea(edges: .top))
             }
         }
-        .safeAreaBar(edge: .bottom) { bottomBar(count: items.count) }
+        .safeAreaBar(edge: .bottom) { bottomBar(count: items.count).readableWidth() }
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -149,7 +160,7 @@ struct TranscriptView: View {
             }
         }
         .toolbar { if past == nil, subagent == nil { toolbarContent } }
-        .toolbarVisibility(.hidden, for: .tabBar)
+        .hidesTabBar()
         .sheet(isPresented: $showsInfo) {
             if let session { SessionInfoSheet(session: session) }
         }
@@ -270,7 +281,11 @@ struct TranscriptView: View {
 
     // MARK: Items
 
-    @ViewBuilder private func row(_ item: TranscriptItem) -> some View {
+    private var latestReply: TranscriptMessage? {
+        model.transcripts.messages[sessionID]?.last(where: { $0.role == .assistant })
+    }
+
+    @ViewBuilder private func row(_ item: TranscriptItem, ended: Set<Int>) -> some View {
         switch item {
         case .earlier(let count):
             Button {
@@ -304,7 +319,8 @@ struct TranscriptView: View {
                 VStack(alignment: .leading, spacing: Space.xs) {
                     MarkdownView(model.transcripts.text(message, in: sessionID) ?? "", sourceID: "m\(message.seq)")
                     CutMessageFooter(sessionID: sessionID, message: message)
-                    if model.transcripts.messages[sessionID]?.last(where: { $0.role == .assistant })?.seq == message.seq {
+                    // Once its turn has ended, the turn-end row under it carries these.
+                    if latestReply?.seq == message.seq, !ended.contains(message.seq) {
                         MessageActions(sessionID: sessionID, message: message)
                     }
                 }
@@ -329,7 +345,11 @@ struct TranscriptView: View {
                 .foregroundStyle(message.role == .error ? AnyShapeStyle(Color.destructive) : AnyShapeStyle(.secondary))
                 .frame(maxWidth: .infinity)
         case .turnEnd(let end):
-            TurnEndRow(end: end)
+            TurnEndRow(end: end, text: model.transcripts.text(end, in: sessionID)) {
+                if let reply = latestReply, reply.seq == end.seq {
+                    ForkFromHereButton(sessionID: sessionID, message: reply)
+                }
+            }
         case .answered(let answered):
             AnsweredLine(answered: answered)
         case .request(let request):
@@ -621,7 +641,7 @@ struct SessionInfoSheet: View {
             .navigationTitle("Session Info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() }.keyboardShortcut(.cancelAction) }
             }
         }
         .presentationDetents([.medium, .large])

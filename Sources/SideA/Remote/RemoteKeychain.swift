@@ -22,6 +22,8 @@ struct RemoteKeychain: @unchecked Sendable {
     static func inMemory() -> RemoteKeychain { RemoteKeychain(memory: Memory()) }
     /// An in-memory keychain's reads so far, for tests that check nothing was read.
     var memoryReads: Int { memory?.reads ?? 0 }
+    /// Tests: an in-memory keychain that can't be written.
+    func failWrites(_ on: Bool) { memory?.failsWrites = on }
 
     /// The login keychain; in Side A Dev only, the keychain file `SIDEA_REMOTE_KEYCHAIN` names, unlocked with
     /// `SIDEA_REMOTE_KEYCHAIN_PASSWORD`, so a live check of the real app never writes Remote's items into the login
@@ -41,6 +43,7 @@ struct RemoteKeychain: @unchecked Sendable {
         private let lock = NSLock()
         private var stored: [String: Data] = [:]
         private(set) var reads = 0
+        var failsWrites = false
         subscript(account: String) -> Data? {
             get { lock.withLock { reads += 1; return stored[account] } }
             set { lock.withLock { stored[account] = newValue } }
@@ -121,7 +124,10 @@ struct RemoteKeychain: @unchecked Sendable {
     }
 
     private func write(_ data: Data, _ account: String, label: String, what: String) throws {
-        if let memory { memory[account] = data; return }
+        if let memory {
+            if memory.failsWrites { throw Failure(status: errSecInteractionNotAllowed, what: what + " couldn't be saved") }
+            memory[account] = data; return
+        }
         let item: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]
         let status = SecItemUpdate(scoped(item), [kSecValueData: data] as CFDictionary)
         if status == errSecItemNotFound {

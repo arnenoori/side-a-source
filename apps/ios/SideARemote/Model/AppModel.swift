@@ -23,12 +23,15 @@ final class AppModel {
     let isDemo: Bool
     var paired: Bool
     /// The connection to the paired Mac; nil in the demo and before pairing.
-    private(set) var link: LiveLink?
+    var link: LiveLink?
     /// The demo's Macs are named by these.
     private var demoID = NotificationAnswer.demoMac
 
     /// The pairing this model was built for, kept so a link that failed to open can be built again.
     private(set) var pairing: PairedMac?
+
+    /// Open incidents on the providers' status pages, read from the Mac's latest state; the demo has none.
+    var incidents: [Incident] { link?.state.incidents ?? [] }
 
     /// The Mac's id, as pushes, deep links and the outbox name it.
     var macID: String { link?.mac.endpoint.macID ?? pairing?.endpoint.macID ?? demoID }

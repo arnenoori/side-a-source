@@ -160,6 +160,11 @@ class KeychainBusy(ValueError):
 class SignInAgain(ValueError):
     code = "signin"
 
+    def __init__(self, message, replaced_by=None):
+        super().__init__(message)
+        # Whose login the account's slot holds now, when it holds someone else's.
+        self.replaced_by = replaced_by
+
 
 class LoginIdle(ValueError):
     code = "idle"
@@ -312,7 +317,7 @@ def owned_login(root, account, idle_ok=False):
         return blob
     if not owner:
         raise Unconfirmed("Can't confirm whose login this is yet; retrying later.")
-    raise SignInAgain(f"Sign in to {account['name']} again; its saved login is now {owner}'s.")
+    raise SignInAgain(f"Sign in to {account['name']} again; its saved login is now {owner}'s.", replaced_by=owner)
 
 
 def selection_path(root):
@@ -2730,7 +2735,11 @@ def main():
 def failure_line(error):
     """What the app reads on stderr; a bracketed code is what it acts on, so an account's name never decides."""
     code = getattr(error, "code", None)
-    return f"Side A[{code}]: {error}" if isinstance(code, str) else f"Side A: {error}"
+    line = f"Side A[{code}]: {error}" if isinstance(code, str) else f"Side A: {error}"
+    # Who replaced the login travels apart from the words, as a JSON string on a line of its own.
+    # Not getattr: on Python 3.9 an HTTPError without a body raises KeyError for any attribute it lacks.
+    owner = vars(error).get("replaced_by")
+    return f"{line}\nSide A[replaced-by]: {json.dumps(owner)}" if isinstance(owner, str) and owner else line
 
 
 if __name__ == "__main__":

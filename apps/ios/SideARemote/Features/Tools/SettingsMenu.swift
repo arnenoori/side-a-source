@@ -48,7 +48,7 @@ struct SettingsMenu: View {
                         change(session, SettingsChange(mode: mode), title: mode.title)
                     })) {
                         ForEach(PermissionMode.offered(session.agent, current: mode), id: \.self) { mode in
-                            Text(mode.title).accessibilityHint(mode.raises ? "Asks for Face ID" : "")
+                            Text(mode.title).accessibilityHint(mode.raises ? "Asks for \(Biometry.current.phrase)" : "")
                         }
                     } label: {
                         Label("Mode", systemImage: "shield.lefthalf.filled")

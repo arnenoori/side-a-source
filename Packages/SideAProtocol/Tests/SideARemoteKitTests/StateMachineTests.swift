@@ -195,7 +195,7 @@ private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"
     let once = Once()
     await sync.setAfterEmptyClaim { [weak sync] in
         guard once.take() else { return }
-        await outbox.enqueue(late)
+        try? await outbox.enqueue(late)
         await sync?.drain()
     }
     await sync.answer(rid, .deny(message: nil))

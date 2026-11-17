@@ -60,7 +60,6 @@ final class RelayClient: @unchecked Sendable {
         let result: String
         var after: Double?
         var reason: String?
-        var apnsId: String?
     }
 
     let base: URL

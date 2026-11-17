@@ -11,6 +11,7 @@ struct SideARemoteApp: App {
     @UIApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var root: AppRoot
     @State private var lock = AppLock()
+    @State private var keys = KeyRequests()
     @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
     @Environment(\.scenePhase) private var scenePhase
 
@@ -22,6 +23,8 @@ struct SideARemoteApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .measuresWindow()
+                .environment(keys)
                 .environment(root)
                 .environment(root.model)
                 #if DEBUG
@@ -42,9 +45,11 @@ struct SideARemoteApp: App {
                 .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                 .tint(accent.color)
         }
+        .commands { RemoteCommands(keys: keys, lock: lock) }
         .onChange(of: scenePhase, initial: true) { _, phase in
             root.setForeground(phase == .active)
             lock.phase(phase)
+            if phase == .active { DeviceBiometry.shared.refresh() }
         }
     }
 }
@@ -60,6 +65,8 @@ final class AppRoot {
     private(set) var macs: [AppModel] { didSet { publishWidgets() } }
     /// Sessions, Accounts and Search show this Mac only; nil shows every Mac. Only matters with more than one.
     var shown: String?
+    /// New Session's draft, kept between openings of the sheet.
+    var newSession = NewSessionForm()
     /// Bumped when the app's whole state changes (paired the first Mac, left the demo, forgot the last Mac),
     /// so nothing carries over.
     private(set) var epoch = 0
@@ -122,6 +129,13 @@ final class AppRoot {
             if let index = arguments.firstIndex(of: "--pill"), index + 1 < arguments.count {
                 let text = arguments[index + 1]
                 Launch.afterFirstFrame { Pill.show(text) {} }
+            }
+            // `--clipboard-image`: a picture on the clipboard, to try pasting into the composer.
+            if arguments.contains("--clipboard-image") {
+                UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 400)).image { context in
+                    UIColor.systemOrange.setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 600, height: 400))
+                }
             }
             // `--mac-state stale|offline|tailscale|revoked|key`: the demo in a connection state, for screenshots.
             if let index = arguments.firstIndex(of: "--mac-state"), index + 1 < arguments.count {

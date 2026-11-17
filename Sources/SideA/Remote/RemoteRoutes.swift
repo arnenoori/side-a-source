@@ -60,7 +60,7 @@ enum RemoteRoutes {
 
     static func handler(_ controller: RemoteController) -> RemoteServer.Handler {
         { [weak controller] request, caller in
-            guard let controller else { return RemoteServer.error(503, "remote_off", "Remote is off.", retryAfter: 5) }
+            guard let controller else { return RemoteServer.error(503, .remoteOff, "Remote is off.", retryAfter: 5) }
             return await route(request, caller, controller)
         }
     }
@@ -73,11 +73,11 @@ enum RemoteRoutes {
             return tagged(await route.handle(Context(request: request, caller: caller, params: params, controller: controller)), request)
         }
         guard methods.isEmpty else {
-            var response = RemoteServer.error(405, "bad_request", "\(request.method) isn't served here.")
+            var response = RemoteServer.error(405, .badRequest, "\(request.method) isn't served here.")
             response.headers.add("Allow", methods.joined(separator: ", "))
             return response
         }
-        return RemoteServer.error(404, "not_found", "There's nothing at \(request.path.joined(separator: "/")).")
+        return RemoteServer.error(404, .notFound, "There's nothing at \(request.path.joined(separator: "/")).")
     }
 
     /// A JSON GET carries its body's hash as an ETag; a phone that already has that body gets a 304 and no bytes.
@@ -108,11 +108,11 @@ enum RemoteRoutes {
     }()
 
     static func json<T: Encodable>(_ status: Int, _ value: T) -> HTTPResponse {
-        guard let data = try? encoder.encode(value) else { return RemoteServer.error(500, "internal", "Side A couldn't encode the answer.") }
+        guard let data = try? encoder.encode(value) else { return RemoteServer.error(500, .internalError, "Side A couldn't encode the answer.") }
         return .json(status, data)
     }
 
-    static let badJSON = RemoteServer.error(400, "bad_json", "The request body isn't what this route takes.")
+    static let badJSON = RemoteServer.error(400, .badJSON, "The request body isn't what this route takes.")
 
     // MARK: Table
 
@@ -136,16 +136,16 @@ enum RemoteRoutes {
         guard let request = context.body(PairRequest.self) else { return badJSON }
         return await MainActor.run {
             guard let session = context.controller.pairing, let spki = context.controller.spki else {
-                return RemoteServer.error(404, "no_pairing", "Open Settings > iPhone on the Mac and click Pair iPhone.")
+                return RemoteServer.error(404, .noPairing, "Open Settings > iPhone on the Mac and click Pair iPhone.")
             }
             let source = RemotePolicy.budget(context.caller.source)
             switch session.submit(request, spki: spki, source: source) {
             case .success(let pending): return json(202, pending)
             case .failure(.wrong):
-                return RemoteServer.error(401, "bad_code", "That code isn't right. Check it on the Mac.",
+                return RemoteServer.error(401, .badCode, "That code isn't right. Check it on the Mac.",
                                           details: ["triesLeft": String(session.code.triesLeft(source))])
-            case .failure(.expired): return RemoteServer.error(410, "code_expired", "That code has expired. Start again on the Mac.")
-            case .failure(.busy): return RemoteServer.error(409, "code_busy", "Two devices used this code. Start again on the Mac.")
+            case .failure(.expired): return RemoteServer.error(410, .codeExpired, "That code has expired. Start again on the Mac.")
+            case .failure(.busy): return RemoteServer.error(409, .codeBusy, "Two devices used this code. Start again on the Mac.")
             }
         }
     }
@@ -153,17 +153,17 @@ enum RemoteRoutes {
     @Sendable static func wait(_ context: Context) async -> HTTPResponse {
         let id = context.params["attempt"] ?? ""
         guard let session = await MainActor.run(body: { context.controller.pairing }), await session.knows(id) else {
-            return RemoteServer.error(404, "no_pairing", "This pairing attempt isn't open on the Mac.")
+            return RemoteServer.error(404, .noPairing, "This pairing attempt isn't open on the Mac.")
         }
         switch await session.wait(id, connection: context.caller.connection) {
         case .pair:
             guard let response = await MainActor.run(body: { context.controller.completePairing(id) }) else {
-                return RemoteServer.error(410, "code_expired", "This pairing attempt was already used. Start again on the Mac.")
+                return RemoteServer.error(410, .codeExpired, "This pairing attempt was already used. Start again on the Mac.")
             }
             return json(201, response)
-        case .cancel: return RemoteServer.error(403, "declined", "Pairing was cancelled on the Mac.")
-        case .mismatch: return RemoteServer.error(403, "sas_mismatch", "The codes didn't match, so pairing stopped.")
-        case .timeout: return RemoteServer.error(408, "confirm_timeout", "Nobody clicked Pair on the Mac in time.")
+        case .cancel: return RemoteServer.error(403, .declined, "Pairing was cancelled on the Mac.")
+        case .mismatch: return RemoteServer.error(403, .sasMismatch, "The codes didn't match, so pairing stopped.")
+        case .timeout: return RemoteServer.error(408, .confirmTimeout, "Nobody clicked Pair on the Mac in time.")
         }
     }
 

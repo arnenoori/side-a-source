@@ -10,7 +10,7 @@ extension SessionCommands {
         do {
             return try RemoteTranscript.turnDiff(try await store.sessions.remoteReply(["turn-diff", "--turn", turn, "--", id]), key: key)
         } catch let failure as RemoteTranscript.Failure where failure.message.contains("isn't in this conversation") {
-            throw Failure(status: 404, code: "turn_not_found", message: "Side A has no changes for that turn.")
+            throw Failure(status: 404, code: .turnNotFound, message: "Side A has no changes for that turn.")
         } catch {
             throw Self.readFailure(error)
         }
@@ -22,7 +22,7 @@ extension SessionCommands {
         guard let name = live.hosted else { throw Self.cannot(Self.compactRefusal) }
         switch Target(WireBuilders.key(live), store: store)?.state(store.island) {
         case .idle?, .finishedWaiting?: break
-        case .waiting?: throw Failure(status: 409, code: "session_waiting", message: "Answer the open request first.")
+        case .waiting?: throw Failure(status: 409, code: .sessionWaiting, message: "Answer the open request first.")
         default: throw Self.cannot("Claude is working. Try when it's idle.")
         }
         let before = live.compactedAt ?? 0

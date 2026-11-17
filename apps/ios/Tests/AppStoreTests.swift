@@ -43,7 +43,14 @@ final class AppStoreTests: XCTestCase {
     func testInfoForReview() throws {
         let info = try XCTUnwrap(Bundle.main.infoDictionary)
         XCTAssertEqual(info["ITSAppUsesNonExemptEncryption"] as? Bool, false)
-        XCTAssertEqual(info["UIDeviceFamily"] as? [Int], [1])
+        XCTAssertEqual(info["UIDeviceFamily"] as? [Int], [1, 2])
+        // Every way up, or iPad leaves the app out of Split View and Slide Over.
+        // Read from the file: on an iPhone, `infoDictionary` leaves out what's keyed for iPad.
+        let file = try XCTUnwrap(NSDictionary(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Info.plist")))
+        XCTAssertEqual((file["UISupportedInterfaceOrientations~ipad"] as? [String])?.count, 4)
+        for bundle in try bundles.dropFirst() {
+            XCTAssertEqual(Bundle(url: bundle)?.infoDictionary?["UIDeviceFamily"] as? [Int], [1, 2], bundle.lastPathComponent)
+        }
         // Dictation is the keyboard's own; the app never opens the microphone.
         XCTAssertNil(info["NSMicrophoneUsageDescription"])
         XCTAssertNil(info["NSSpeechRecognitionUsageDescription"])

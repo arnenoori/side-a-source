@@ -92,17 +92,25 @@ private struct ZoomDestination: ViewModifier {
     }
 }
 
-/// Pushes shared by every tab. Each page gets the model of the Mac it's about.
+/// Pushes shared by every tab.
 struct RouteDestinations: ViewModifier {
     /// The tab's stack, so a page inside a session's transcript stays on that session's Mac.
+    var path: [Route] = []
+
+    func body(content: Content) -> some View {
+        content.navigationDestination(for: Route.self) { RoutePage(route: $0, path: path) }
+    }
+}
+
+/// One route's page with the model of the Mac it's about: pushed, or the root of the iPad's detail column.
+struct RoutePage: View {
+    let route: Route
     var path: [Route] = []
     @Environment(AppRoot.self) private var root
     @Environment(AppModel.self) private var model
 
-    func body(content: Content) -> some View {
-        content.navigationDestination(for: Route.self) { route in
-            page(route).environment(owner(route))
-        }
+    var body: some View {
+        page(route).environment(owner(route))
     }
 
     private func owner(_ route: Route) -> AppModel {

@@ -6,9 +6,10 @@ import SideACore
 struct BridgeFailure: LocalizedError, BridgeError, Sendable {
     let message: String
     var kind: BridgeErrorKind = .other
+    var replacedBy: String?
     var errorDescription: String? { message }
     init(message: String, kind: BridgeErrorKind = .other) { self.message = message; self.kind = kind }
-    init(stderr: String) { (kind, message) = BridgeErrorKind.parse(stderr) }
+    init(stderr: String) { (kind, message, replacedBy) = BridgeErrorKind.details(stderr) }
 }
 
 extension AccountStore {

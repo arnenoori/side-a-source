@@ -817,7 +817,7 @@ and `PairingTranscript.*.json` (known keys with the expected comparison code) fr
 public struct Capability: OpenEnum { public let rawValue: String }
 // Mac: "events", "transcript.stream", "images", "diffs", "answers.questions", "answers.plans",
 //      "reply.note", "reply.followUp", "interrupt", "interrupt.nextStep", "uploads", "hosted",
-//      "terminal", "continueOnPhone", "push", "liveActivity", "codex.live", "search", "options",
+//      "terminal", "continueOnPhone", "push", "liveActivity", "search", "options",
 //      "history", "restart", "ports", "quit", "mac", "cleanup", "autopilot", "worth", "incidents",
 //      "autopilot.toggle", "autopilot.answers", "accounts.use", "rotation", "update.check", "lan", "setup", "reply.terminal",
 //      "reply.inbox"
@@ -1213,8 +1213,8 @@ Notes per endpoint:
 - **`/setup`** tells the phone the Mac's setup state for its one-time rows and Test Connection
   (setup, After pairing and Diagnostics). `push` describes the calling device only.
 - **`/diagnostics/push`** sends one push of category `TEST` (no actions, collapsed by its id) to
-  the calling device through the relay and returns the relay's result; the phone confirms receipt
-  with `…/received` from the Service Extension or `willPresent`. The Mac's per-phone Send Test
+  the calling device through the relay and returns the relay's result. `…/received` records a phone's
+  receipt, but the phone doesn't call it. The Mac's per-phone Send Test
   Notification uses the same path internally.
 - **Transcript paging.** No cursor: the newest `limit` messages. `before=c`: messages with seq
   below `c`, newest first then returned ascending. `after=c`: messages above `c`, ascending, plus
@@ -1818,8 +1818,9 @@ public protocol CredentialStore: Sendable {   // keychain group shared with the 
 }
 
 public enum Connection: Sendable, Equatable {
-    case idle, connecting, live(since: Timestamp), offline(retryAt: Timestamp, reason: String)
-    case unpaired, needsUpdate(mac: Bool)
+    case idle, connecting, live(since: Timestamp)
+    case offline(retryAt: Timestamp, reason: String, cause: Cause)   // cause: .unknown, .macAsleep, .relayRefused
+    case unpaired, needsUpdate(mac: Bool), keyChanged
 }
 
 /// Everything the UI shows for one Mac, value-typed so it crosses actors freely.
@@ -1839,7 +1840,7 @@ public struct RemoteState: Sendable, Equatable {
     public var pending: [Outbox.Item]        // optimistic: answers and replies not yet confirmed
 }
 
-public enum Slice: String, Sendable, Codable { case sessions, requests, hosted, accounts }
+public enum Slice: String, Sendable, Codable { case requests, accounts }
 
 public actor SyncEngine {
     public init(endpoint: Endpoint, credentials: CredentialStore, outbox: Outbox,
@@ -1890,6 +1891,9 @@ public protocol Transport: Sendable {
 ```
 
 ### State rules
+
+Every transition the engine and the outbox make today, and the test that pins it, is in
+[sync-state-machine.md](sync-state-machine.md).
 
 - `start()` calls `GET /v1/hello`, then opens `/v1/ws/events` with the stored `epoch` and `seq`.
   A `snapshot` (or `GET /v1/state`) replaces `sessions`, `finished`, `requests`, `hosted` and

@@ -122,9 +122,9 @@ import Testing
         do { try await commands.compact(id); return nil } catch { return error }
     }
     var refused = await failure("s-plain", SettingsChange(model: "sonnet"))
-    #expect(refused?.status == 409 && refused?.code == "cannot_deliver" && refused?.message == "Changing settings needs a session Side A hosts.")
+    #expect(refused?.status == 409 && refused?.code == .cannotDeliver && refused?.message == "Changing settings needs a session Side A hosts.")
     refused = await failure("c-plain", SettingsChange(mode: .plan))
-    #expect(refused?.code == "cannot_deliver")
+    #expect(refused?.code == .cannotDeliver)
     refused = await failure("s-host", SettingsChange(fast: true))
     #expect(refused?.status == 422 && refused?.message == SessionCommands.fastRefusal)
     refused = await failure("s-host", SettingsChange(effort: .auto))
@@ -182,11 +182,13 @@ import Testing
     #expect(try RemoteUploads.store(png(0.1), root: root, device: "d1", cap: cap).id == first.id)
     #expect(try RemoteUploads.store(png(0.9), root: root, device: "d2", cap: cap).bytes > 0)
     let mac = try RemoteUploads.store(png(0.5), root: root)
-    #expect(RemoteUploads.paths([first.id, mac.id], root: root)?.count == 2)
+    #expect(RemoteUploads.paths([first.id], root: root, device: "d1")?.count == 1)
+    // Each phone finds only its own: not another phone's, and not the Mac's.
+    #expect(RemoteUploads.paths([first.id], root: root, device: "d2") == nil && RemoteUploads.paths([mac.id], root: root, device: "d1") == nil)
     #expect(first.path.hasPrefix(RemoteUploads.folder(root, device: "d1").path))
     // A week on, a phone's photos go and its room comes back.
     RemoteUploads.sweep(root: root, now: Date().addingTimeInterval(RemoteUploads.keepFor + 60))
-    #expect(RemoteUploads.paths([first.id], root: root) == nil)
+    #expect(RemoteUploads.paths([first.id], root: root, device: "d1") == nil)
     #expect(try RemoteUploads.store(png(0.9), root: root, device: "d1", cap: cap).bytes > 0)
 }
 

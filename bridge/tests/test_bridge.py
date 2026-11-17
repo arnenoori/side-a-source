@@ -51,7 +51,21 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge.failure_line(bridge.Unconfirmed("Can't confirm whose login this is yet; retrying later.")),
                          "Side A[unconfirmed]: Can't confirm whose login this is yet; retrying later.")
         self.assertEqual(bridge.failure_line(ValueError("idle 429")), "Side A: idle 429")
+        replaced = bridge.SignInAgain("Sign in to Work again; its saved login is now o'brien@example.com's.", replaced_by="o'brien@example.com")
+        self.assertEqual(bridge.failure_line(replaced), "Side A[signin]: Sign in to Work again; its saved login is now o'brien@example.com's.\n"
+                                                      "Side A[replaced-by]: \"o'brien@example.com\"")
+        self.assertEqual(bridge.failure_line(bridge.SignInAgain("Sign in to Work again.")), "Side A[signin]: Sign in to Work again.")
         self.assertEqual(bridge.failure_line(bridge.urllib.error.HTTPError("u", 500, "x", {}, None)), "Side A: HTTP Error 500: x")
+
+    def test_a_login_that_belongs_to_someone_else_names_its_owner_apart_from_the_words(self):
+        account = {"id": "a", "name": "Work", "email": "work@example.com"}
+        blob = {"claudeAiOauth": {"accessToken": "t"}}
+        with patch.object(bridge, "home_service", return_value="svc"), patch.object(bridge, "read_secret", return_value=blob), \
+                patch.object(bridge, "token_email", return_value="o'brien@example.com"):
+            with self.assertRaises(bridge.SignInAgain) as caught:
+                bridge.owned_login(self.root, account)
+        self.assertEqual(caught.exception.replaced_by, "o'brien@example.com")
+        self.assertIn("its saved login is now o'brien@example.com's.", str(caught.exception))
 
     def test_only_a_429_from_the_usage_endpoint_is_a_rate_limit(self):
         blob = {"claudeAiOauth": {"accessToken": "t", "expiresAt": (time.time() + 3600) * 1000}}

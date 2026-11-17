@@ -35,7 +35,7 @@ struct ProjectPicker: View {
             .navigationTitle("Folder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() }.keyboardShortcut(.cancelAction) }
             }
         }
         .presentationDetents([.large])

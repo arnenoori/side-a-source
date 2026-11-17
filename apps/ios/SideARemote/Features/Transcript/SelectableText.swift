@@ -72,8 +72,14 @@ struct SelectableText: UIViewRepresentable {
         }
         let width = proposal.width ?? UIView.layoutFittingExpandedSize.width
         let fitted = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: proposal.width == nil ? fitted.width : min(width, fitted.width), height: fitted.height)
+        return CGSize(width: proposal.width == nil ? fitted.width : min(width, fitted.width), height: Self.withSlack(fitted.height))
     }
+
+    /// A text view's height with a hundredth of a point to spare. The height SwiftUI hands back can come out a
+    /// floating-point hair under the one asked for, and snapped to the pixel grid that hair costs a whole pixel at some
+    /// positions; TextKit then leaves out the last line rather than draw it partly, so a two-line message showed one
+    /// line at some scroll offsets. The spare is far below a pixel, so nothing moves.
+    static func withSlack(_ height: CGFloat) -> CGFloat { height + 0.01 }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 

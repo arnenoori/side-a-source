@@ -259,13 +259,13 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     mac.relayRefuses(true)
     let sync = try engine(mac)
     await sync.start()
-    try await until("offered") { await sync.state.relayRefused }
+    try await until("offered") { await sync.state.connection.cause == .relayRefused }
     // It's an offer: the phone stays paired and keeps asking.
     #expect(await sync.state.connection != .unpaired)
 
     mac.relayRefuses(false)
     try await live(sync, try await mac.socket(0))
-    #expect(await !sync.state.relayRefused)
+    #expect(await sync.state.connection.cause != .relayRefused)
     await sync.stop()
 }
 
@@ -276,7 +276,7 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     let sync = try engine(mac)
     await sync.start()
     try await until("several rounds") { mac.requests.count > 8 }
-    #expect(await !sync.state.relayRefused)
+    #expect(await sync.state.connection.cause != .relayRefused)
     await sync.stop()
 }
 
@@ -292,12 +292,12 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     mac.hello(.init(status: 0))
     first.push(nil, .bye(reason: ServerEvent.byeSleep))
     first.serverClose(1001, ServerEvent.byeSleep)
-    try await until("asleep") { await sync.state.macAsleep }
+    try await until("asleep") { await sync.state.connection.cause == .macAsleep }
     try await until("down") { await !sync.state.connection.isLive }
 
     mac.hello(.init(body: try Fixtures.data("Hello.paired")))
     try await live(sync, try await mac.socket(1))
-    #expect(await !sync.state.macAsleep)
+    #expect(await sync.state.connection.cause != .macAsleep)
     await sync.stop()
 }
 
@@ -311,7 +311,7 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     first.push(nil, .bye(reason: "update"))
     first.serverClose(1001, "update")
     try await until("down") { await !sync.state.connection.isLive }
-    #expect(await !sync.state.macAsleep)
+    #expect(await sync.state.connection.cause != .macAsleep)
     await sync.stop()
 }
 

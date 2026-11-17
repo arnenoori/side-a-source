@@ -264,7 +264,7 @@ extension AccountStore: PoolDecisions {
         if BridgeErrorKind(error) == .signIn {
             poolBlocked[account] = Date().timeIntervalSince1970 + 600
             if health[account]?.takesWork != false { health[account] = .signIn() }
-            warnSignIn(account, message)
+            warnSignIn(account, message, replaced: BridgeErrorKind.replacement(in: error) != nil)
         } else {
             // Busy or unreachable for a moment (Claude Code renewing it, the Keychain slow): not a dead login.
             poolBlocked[account] = Date().timeIntervalSince1970 + 120

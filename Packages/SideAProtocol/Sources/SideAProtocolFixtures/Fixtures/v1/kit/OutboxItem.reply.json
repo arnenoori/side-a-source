@@ -1,0 +1,10 @@
+{
+  "attempts": 0,
+  "body": "eyJhdHRhY2htZW50cyI6W10sIm1vZGUiOiJhdXRvIiwidGV4dCI6ImFuZCB0aGUgdGVzdHMiLCJ0dXJuSUQiOiIzYzJiMWEwOS04ZjdlLTRkNmMtOWI1YS00OTM4MjcxNjA1MTQifQ==",
+  "createdAt": 1791560012.5,
+  "expiresAt": 1791560612.5,
+  "id": "b6a1c0de-1f2e-4a3b-9c4d-5e6f7a8b9c0d",
+  "macID": "3a9f0c1d2e4b5a67",
+  "method": "POST",
+  "path": "/v1/sessions/8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f/reply"
+}

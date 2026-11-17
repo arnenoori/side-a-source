@@ -15,7 +15,7 @@ extension RemoteRoutes {
         Route("POST", "v1/sessions/{id}/continue", continueOnPhone),
     ]
 
-    static let tmuxMissing = RemoteServer.error(503, "tmux_missing", "Hosted sessions need tmux, which comes with Side A. Reinstall Side A on the Mac.", retryAfter: 60)
+    static let tmuxMissing = RemoteServer.error(503, .tmuxMissing, "Hosted sessions need tmux, which comes with Side A. Reinstall Side A on the Mac.", retryAfter: 60)
 
     // MARK: Projects
 
@@ -36,24 +36,24 @@ extension RemoteRoutes {
         if let refused = Hosting.promptRefusal(body.prompt) { return invalidReply(refused, "leading_dash") }
         guard await MainActor.run(body: { context.controller.store?.hosted.available }) == true else { return tmuxMissing }
         guard await RemoteProjects.list(context.controller).contains(where: { $0.path == body.cwd }) else {
-            return RemoteServer.error(404, "not_found", "That folder isn't one of the Mac's projects.")
+            return RemoteServer.error(404, .notFound, "That folder isn't one of the Mac's projects.")
         }
-        if let resume = body.resume, !IDs.safe(resume) { return RemoteServer.error(404, "session_not_found", "That conversation isn't on the Mac.") }
+        if let resume = body.resume, !IDs.safe(resume) { return RemoteServer.error(404, .sessionNotFound, "That conversation isn't on the Mac.") }
         guard (body.prompt ?? "").count <= SessionCommands.maxReply else { return invalidReply("That prompt is too long.", "too_long") }
         if body.effort != nil, let options = await RemoteOptions.agents(context.controller),
            let refusal = RemoteOptions.refusal(effort: body.effort, model: body.model, agent: body.agent, options: options) {
-            return RemoteServer.error(422, "invalid_option", refusal)
+            return RemoteServer.error(422, .invalidOption, refusal)
         }
         if let mode = body.permissionMode {
             guard Hosting.permissionArguments(body.agent == .codex ? .codex : .claude, mode: mode.rawValue) != nil else {
-                return RemoteServer.error(422, "invalid_option", "\(body.agent == .codex ? "Codex" : "Claude") can't start in that mode.")
+                return RemoteServer.error(422, .invalidOption, "\(body.agent == .codex ? "Codex" : "Claude") can't start in that mode.")
             }
         }
         // Signed over the whole start: an unlocked phone, or Face ID for a permissive mode or a shell prompt.
         guard let subject = try? ConfirmMessage.subject(start: body) else { return badJSON }
         if let refused = await refusal(context, .settings, subject: subject, needs: ConfirmProof(ConfirmPolicy.start(body))) { return refused }
         guard let root = await MainActor.run(body: { context.controller.store?.root }),
-              let images = RemoteUploads.paths(body.attachments, root: root) else {
+              let images = RemoteUploads.paths(body.attachments, root: root, device: context.device) else {
             return invalidReply("A photo for this session is no longer on the Mac. Attach it again.", "unknown_upload")
         }
         let key = context.request.headers["Idempotency-Key"].map { "phone-\(context.device)-\($0)" }
@@ -80,7 +80,7 @@ extension RemoteRoutes {
             guard let store = context.controller.store else { return nil }
             return Task { @MainActor in
                 guard store.hosted.sessions.contains(where: { $0.name == name && $0.agent != nil }) else {
-                    return RemoteServer.error(404, "not_found", "That hosted session isn't running.")
+                    return RemoteServer.error(404, .notFound, "That hosted session isn't running.")
                 }
                 await store.sessions.showOnMac(name)
                 await store.hosted.refresh()
@@ -93,7 +93,7 @@ extension RemoteRoutes {
     @MainActor static func hosted(_ name: String, store: AccountStore, status: Int = 201) -> HTTPResponse {
         guard let session = store.hosted.sessions.first(where: { $0.name == name }),
               let wire = WireBuilders.hosted(session, hosted: store.hosted, store: store, viewers: 0) else {
-            return RemoteServer.error(500, "internal", "The session started but Side A lost track of it.")
+            return RemoteServer.error(500, .internalError, "The session started but Side A lost track of it.")
         }
         return json(status, wire)
     }
@@ -106,11 +106,11 @@ extension RemoteRoutes {
                 try await store.hosted.end(name)
                 return HTTPResponse(status: 204)
             } catch HostedError.notHosted {
-                return RemoteServer.error(404, "not_found", "That hosted session isn't running.")
+                return RemoteServer.error(404, .notFound, "That hosted session isn't running.")
             } catch let error as HostedError {
                 return hostedError(error)
             } catch {
-                return RemoteServer.error(500, "internal", "Side A couldn't end that session.")
+                return RemoteServer.error(500, .internalError, "Side A couldn't end that session.")
             }
         }
     }
@@ -121,7 +121,7 @@ extension RemoteRoutes {
         let name = context.params["name"] ?? ""
         let cwd = await MainActor.run { context.controller.store?.hosted.sessions.first(where: { $0.name == name && $0.agent != nil })?.cwd }
         guard let cwd, let subject = try? ConfirmMessage.subject(trust: name, cwd: cwd) else {
-            return RemoteServer.error(404, "not_found", "That hosted session isn't running.")
+            return RemoteServer.error(404, .notFound, "That hosted session isn't running.")
         }
         if let refusal = await refusal(context, .trust, subject: subject, needs: .biometric) { return refusal }
         return await onMainAsync(context) { store in
@@ -130,11 +130,11 @@ extension RemoteRoutes {
                 await store.hosted.refresh()
                 return hosted(name, store: store, status: 200)
             } catch HostedError.notHosted {
-                return RemoteServer.error(404, "not_found", "That hosted session isn't running.")
+                return RemoteServer.error(404, .notFound, "That hosted session isn't running.")
             } catch let error as HostedError {
                 return hostedError(error)
             } catch {
-                return RemoteServer.error(500, "internal", "Side A couldn't answer that session's question.")
+                return RemoteServer.error(500, .internalError, "Side A couldn't answer that session's question.")
             }
         }
     }
@@ -151,11 +151,11 @@ extension RemoteRoutes {
         return await onMainAsync(context) { store in
             guard store.hosted.available else { return tmuxMissing }
             guard let target = Target(id, store: store), let live = target.live else {
-                return RemoteServer.error(404, "session_not_found", "That session isn't running on the Mac.")
+                return RemoteServer.error(404, .sessionNotFound, "That session isn't running on the Mac.")
             }
             if let name = live.hosted, let session = store.hosted.sessions.first(where: { $0.name == name }),
                let wire = WireBuilders.hosted(session, hosted: store.hosted, store: store, viewers: 0) { return json(200, wire) }
-            if let refusal = HostedSessions.continueRefusal(live) { return RemoteServer.error(409, "cannot_deliver", refusal) }
+            if let refusal = HostedSessions.continueRefusal(live) { return RemoteServer.error(409, .cannotDeliver, refusal) }
             let home = store.sessions.transcriptSource?.home ?? FileManager.default.homeDirectoryForCurrentUser
             let transcript = live.provider == .claude ? live.sessionID.flatMap { RemoteRoutes.claudeTranscript($0, home: home) } : nil
             do {
@@ -164,13 +164,13 @@ extension RemoteRoutes {
                 }
                 guard let session = store.hosted.sessions.first(where: { $0.name == name }),
                       let wire = WireBuilders.hosted(session, hosted: store.hosted, store: store, viewers: 0) else {
-                    return RemoteServer.error(500, "internal", "The session moved but Side A lost track of it.")
+                    return RemoteServer.error(500, .internalError, "The session moved but Side A lost track of it.")
                 }
                 return json(200, wire)
             } catch let error as HostedError {
                 return hostedError(error)
             } catch {
-                return RemoteServer.error(500, "internal", "Side A couldn't continue that session.")
+                return RemoteServer.error(500, .internalError, "Side A couldn't continue that session.")
             }
         }
     }

@@ -146,7 +146,8 @@ final class Island {
     @ObservationIgnored private var queuedGoneSince: [String: Date] = [:]
     @ObservationIgnored lazy var queuedFile: URL? = store.flatMap { $0.isDemo ? nil : $0.root.appendingPathComponent("runtime/queued-followups.json") }
     /// Tests hold waiters without touching Remote's global state.
-    @ObservationIgnored var keepsFinished: () -> Bool = { Island.keepsWaiters }
+    /// Tests decide for themselves whether finished sessions are held.
+    @ObservationIgnored var keepsFinished: (() -> Bool)?
     /// How long a session must stay off the live list before what's queued for it counts as lost.
     static let queuedGrace: TimeInterval = 60
     /// How long a phone has to come back and learn what became of a reply it was told is Queued.
@@ -169,7 +170,7 @@ final class Island {
     var visible: Bool { Self.on && (!pending.isEmpty || event != nil || !ready.isEmpty) }
     /// The notch. Remote keeps the hooks and the Stop waiters without it.
     static var on: Bool { UserDefaults.standard.bool(forKey: onKey) }
-    static var keepsWaiters: Bool { on && setting(finishedKey) || RemoteController.active }
+    var keepsWaiters: Bool { Self.on && Self.setting(Self.finishedKey) || store?.remote.active == true }
 
     @ObservationIgnored private weak var store: AccountStore?
     @ObservationIgnored private var server: IslandServer?
@@ -513,7 +514,7 @@ final class Island {
 
     /// The turn's row in Ready, in place of any before it, and its notice.
     private func finishedRow(_ finish: IslandFinish, title: String, earlier: [Ready], waiter: UInt64?) {
-        guard keepsFinished() else {
+        guard (keepsFinished ?? { self.keepsWaiters })() else {
             if let waiter { server?.reply(waiter, IslandFollowUp.line(nil)) }
             drop(earlier, .released)
             return

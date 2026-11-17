@@ -40,14 +40,18 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Side A Remote uses the camera to scan the pairing code on your Mac and to take photos for a prompt.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>To confirm before allowing a destructive request.</string>
+	<string>Side A Remote uses Face ID to unlock and to confirm what you allow or change on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Side A Remote connects to Side A on your Mac over this Wi-Fi when Tailscale isn't on.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>To save images from a session.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Side A Remote shows your recent photos in the attach drawer so you can pick some for a prompt. Only the photos you pick are sent, to your Mac.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
+	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
 	<key>SideAAPNsEnvironment</key>
 	<string>$(APNS_ENVIRONMENT)</string>
@@ -58,7 +62,7 @@
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
-		<true/>
+		<false/>
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
@@ -69,6 +73,13 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>

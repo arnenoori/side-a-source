@@ -26,7 +26,7 @@ struct PreviewSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
+                    Button("Done", systemImage: "checkmark") { dismiss() }.keyboardShortcut(.cancelAction)
                 }
                 if let page { bottomBar(page) }
             }

@@ -451,9 +451,11 @@ extension MacConnection {
         case .live:
             next = .live
             lastSeen = now
+        case .offline(_, _, .macAsleep):
+            next = .offline(.macAsleep)
+        case .offline(_, _, .relayRefused):
+            next = .offline(.relayRefused)
         case .idle, .connecting, .offline:
-            if remote.macAsleep { next = .offline(.macAsleep); break }
-            if remote.relayRefused { next = .offline(.relayRefused); break }
             switch state {
             case .live: next = .reconnecting(since: now)
             case .reconnecting(let since) where now.timeIntervalSince(since) < 60: next = state

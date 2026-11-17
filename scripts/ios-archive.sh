@@ -1,5 +1,5 @@
 #!/bin/bash
-# Archives Side A Remote (Release: production push, getsidea.com links, iPhone only) and exports an .ipa for
+# Archives Side A Remote (Release: production push, getsidea.com links, iPhone and iPad) and exports an .ipa for
 # App Store Connect, then checks what's inside it. Nothing is uploaded; that's `xcrun altool --upload-app` or
 # Transporter, by hand.
 # Each archive takes the next build number (BUILD=<n> picks one, NO_BUMP=1 reuses the current one); project.yml

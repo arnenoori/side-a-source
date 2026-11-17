@@ -132,17 +132,17 @@ extension AccountStore {
 
     /// A login moved; the phone says where to and why.
     func pushMoved(to: String, reason: String) {
-        guard RemoteController.active else { return }
+        guard remote.active else { return }
         remote.push.rotation(title: "Now on \(to)", body: reason.isEmpty ? nil : reason, account: nil, resetsAt: nil, blocks: false)
     }
 
     func pushAllOut(fable: Bool, back: String, at: Double) {
-        guard RemoteController.active else { return }
+        guard remote.active else { return }
         remote.push.rotation(title: fable ? "Fable out" : "All out", body: nil, account: back, resetsAt: at, blocks: true)
     }
 
     func pushStuck(_ account: Account, reset: Double?) {
-        guard RemoteController.active else { return }
+        guard remote.active else { return }
         remote.push.rotation(title: "\(account.name) is full", body: reset == nil ? "No account free" : nil, account: reset == nil ? nil : account.name, resetsAt: reset, blocks: true)
     }
 }

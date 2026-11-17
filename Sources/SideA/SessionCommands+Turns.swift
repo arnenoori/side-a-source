@@ -10,7 +10,7 @@ extension SessionCommands {
         case .claude: return try await claudeTurnDiff(live, key: target.key, turn: turn)
         case .codex:
             guard let diff = store.remote.codex.diff(live, turn: turn) else {
-                throw Failure(status: 404, code: "turn_not_found", message: "Side A has no changes for that turn.")
+                throw Failure(status: 404, code: .turnNotFound, message: "Side A has no changes for that turn.")
             }
             return TurnDiff(sessionID: target.key, turnID: turn, files: diff.files, running: diff.running)
         }
@@ -27,7 +27,7 @@ extension SessionCommands {
 
     func review(_ id: String, _ request: ReviewRequest) async throws(Failure) {
         guard request.target == .uncommittedChanges else {
-            throw Failure(status: 422, code: "invalid_review", message: "Side A reviews uncommitted changes only.")
+            throw Failure(status: 422, code: .invalidReview, message: "Side A reviews uncommitted changes only.")
         }
         guard let live = Target(id, store: store)?.live else { throw .noSession }
         switch live.provider {
@@ -39,6 +39,6 @@ extension SessionCommands {
 
     /// A 409 that says why, for what an agent can't do.
     static func cannot(_ message: String) -> Failure {
-        Failure(status: 409, code: "cannot_deliver", message: message, details: ["hint": "unsupported"])
+        Failure(status: 409, code: .cannotDeliver, message: message, details: ["hint": "unsupported"])
     }
 }

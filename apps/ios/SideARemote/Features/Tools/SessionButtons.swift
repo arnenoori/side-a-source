@@ -1,4 +1,5 @@
 import SideAProtocol
+import SideARemoteShared
 import SwiftUI
 
 /// Open Terminal, for a session the Mac hosts and serves a terminal for; nothing otherwise.
@@ -39,7 +40,7 @@ struct ContinueButton: View {
 
     var body: some View {
         if let session, session.hosted == nil, session.abilities.contains(.continueOnPhone), model.tools.can(.continueOnPhone) {
-            Button("Continue on iPhone", systemImage: "iphone") { actions.on(model).continuing = session }
+            Button("Continue on \(ThisDevice.kind)", systemImage: ThisDevice.symbol) { actions.on(model).continuing = session }
                 .disabled(actions.isBusy(session.id))
         }
     }

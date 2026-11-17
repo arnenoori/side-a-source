@@ -55,7 +55,7 @@ struct MacSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
+                    Button("Done", systemImage: "checkmark") { dismiss() }.keyboardShortcut(.cancelAction)
                 }
             }
         }

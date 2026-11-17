@@ -42,7 +42,7 @@ struct RestartSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") { edited ? (discarding = true) : dismiss() }
+                    Button("Cancel", systemImage: "xmark") { edited ? (discarding = true) : dismiss() }.keyboardShortcut(.cancelAction)
                         .confirmationDialog("Discard your changes?", isPresented: $discarding) {
                             Button("Discard Changes", role: .destructive) { dismiss() }
                         }

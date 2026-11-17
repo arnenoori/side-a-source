@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+## 0.5.56 — 2026-11-16
+
+With Side A Remote 1.1 (26).
+
+
+Side A Remote's + opens a drawer that grows out of the button: Camera, Photos, Files, Paste when a picture is on the clipboard, and Model & Commands. Photos turns the drawer into a grid of your newest pictures with a camera tile first; tap to number them, then Add N Photos sends copies flying from the grid into the tray as the drawer closes back into the +. Drag the grid up for more rows or down to close it. All Photos opens the full system picker, and it, the camera and Files work without allowing library access. With limited access the grid shows what you shared and a ⋯ lets you share more.
+
+Paste works for pictures. With only a picture on the clipboard, Paste in the message field (and ⌘V on a hardware keyboard) attaches it; text, or text with a picture, pastes as text.
+
+New Session in Side A Remote takes photos too: a + beside the folder and model chips opens the same drawer, and the photos go to the Mac with your first prompt. If a photo hasn't uploaded, Start waits for it or asks you to retry or remove it. Cancel asks before discarding photos you've added.
+
+Side A Remote runs on iPad. Full width, Sessions is a split view: the list on the left and the session you picked beside it, with whatever is waiting on you at the foot of the list. Transcripts and settings keep a comfortable reading width instead of stretching across the screen. In a narrow window, in Split View or Slide Over, it's the iPhone layout. With a keyboard, ⌘N starts a session, ⌘1 and ⌘2 switch tabs, ⌘F searches, ⌘, opens Settings, ⌥⌘↑ and ⌥⌘↓ move between sessions, Return sends and Escape closes the + drawer. Drag a photo in from another app to attach it, in a session or in New Session. Settings says Touch ID on an iPad that has it.
+
+Fixes:
+- Scrolling a page or so up a transcript could freeze Side A Remote: taps did nothing and the phone ran hot until you quit the app. It now keeps scrolling and responding.
+- In a session, code and tables scrolled under the title showed through it and ran into the context line. The title and the context line now sit on one bar.
+- A finished reply showed Copy and Share twice, once under the message and again beside the model and time. It shows them once.
+- After several failed tries to give the push relay a phone's notification token, a later, unrelated relay failure waited minutes for its first retry instead of seconds. The wait now starts over once the relay has every phone's token.
+- A paired phone could attach a photo another paired phone had uploaded to the Mac, if it knew the photo's id. A phone now finds only its own uploads.
+- Sign Out marked an account signed out even when Claude or Codex didn't sign out, leaving its login in the Keychain. It now waits for the sign-out and says when it didn't happen. Removing an account says when its saved sign-in couldn't be cleared.
+- A large photo you had just picked or pasted could be left out when you tapped Start or Send before it finished getting ready. Its tile now shows at once and Start and Send wait for it.
+- A reply, an answer or a Stop that Side A Remote couldn't save to send later (the phone's storage was full, or a notification action was writing at that moment) showed "Sending…" and never went. It says "Not sent" with Retry.
+- A reply or answer that a notification action was sending when its time ran out could stay on "Sending…" for good, if Side A Remote wasn't connected to the Mac at the time. It now says "Not sent" with Retry once the notification's attempt has lapsed.
+- When the Mac restarted while Side A Remote was refreshing a list (sessions, requests, hosted sessions or accounts), the old Mac's answer could replace what the restarted Mac had just sent. The old answer is now left out.
+- A reply or answer waiting behind one a notification action was sending stayed on "Sending…" after that action gave up, was cut off or finished, until Side A Remote reconnected or sent something else. It now looks again every few seconds and goes, or clears, as soon as the notification's hold on it ends.
+- Switching to another Mac in New Session while a photo was still getting ready, or still loading from your library, dropped that photo. It now goes to the other Mac once it is ready, and Start waits for it.
+- Switching to another Mac in New Session while a photo was uploading to the first one sent it to both Macs. It now goes to the second only.
+- On macOS's own Python 3.9, a failed request to Claude's or Codex's servers could end the bridge with an unrelated error instead of its message. Found before release; it reports the failure as before.
+- Messages the Mac sends to Side A Remote said "iPhone" on an iPad ("This iPhone isn't paired with Side A", "Unlock your iPhone to do this"). They say "this device" now.
+
 ## 0.5.55 — 2026-11-16
 
 Settings search finds what you meant. It reads a word as you type it, forgives a letter or two out of place ("updtaes" finds Updates) and words run together ("menubar"), and puts the closest match first with what you typed in bold. ↑ and ↓ move through the results and Return opens one. When nothing has every word, the nearest matches show; when nothing matches at all, No Results reads at the top of the list instead of the middle of the window.

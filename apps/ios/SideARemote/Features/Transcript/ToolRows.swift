@@ -275,27 +275,38 @@ struct StepGroupRow: View {
     }
 }
 
-/// Grok's turn end: small icon actions, then the model and duration in tertiary.
-struct TurnEndRow: View {
+/// Grok's turn end: small icon actions, then the model and duration in tertiary. `more` follows Share: Fork, under
+/// the latest reply.
+struct TurnEndRow<More: View>: View {
     let end: TurnEnd
+    /// The reply's text, whole once fetched.
+    let text: String
+    @ViewBuilder var more: More
     @State private var copies = 0
     @State private var showsCheck = false
 
+    init(end: TurnEnd, text: String, @ViewBuilder more: () -> More = { EmptyView() }) {
+        self.end = end
+        self.text = text
+        self.more = more()
+    }
+
     var body: some View {
-        HStack(spacing: Space.l) {
+        HStack(spacing: Space.xxs) {
             Button("Copy", systemImage: showsCheck ? "checkmark" : "doc.on.doc") {
-                UIPasteboard.general.string = end.markdown
+                UIPasteboard.general.string = text
                 copies += 1
             }
             .contentTransition(.symbolEffect(.replace))
             .sensoryFeedback(.success, trigger: copies)
-            ShareLink(item: end.markdown) { Label("Share", systemImage: "square.and.arrow.up") }
-            Spacer()
+            ShareLink(item: text) { Label("Share", systemImage: "square.and.arrow.up") }
+            more
+            Spacer(minLength: Space.l)
             Text([end.model, end.duration.flatMap { Formatting.duration($0) }].compactMap { $0 }.joined(separator: " · "))
                 .font(.caption.monospaced())
                 .foregroundStyle(.tertiary)
         }
-        .labelStyle(.iconOnly)
+        .labelStyle(IconTarget(size: CGSize(width: 32, height: 32), horizontal: 2, vertical: 6))
         .font(.subheadline)
         .foregroundStyle(.tertiary)
         .buttonStyle(.plain)

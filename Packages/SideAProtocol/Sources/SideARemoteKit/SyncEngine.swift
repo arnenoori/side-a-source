@@ -2,12 +2,26 @@ import Foundation
 import SideAProtocol
 
 public enum Connection: Sendable, Equatable {
-    case idle, connecting, live(since: Timestamp), offline(retryAt: Timestamp, reason: String)
+    case idle, connecting, live(since: Timestamp)
+    /// Waiting to try again. `cause` says what is known about why, until the Mac next answers.
+    case offline(retryAt: Timestamp, reason: String, cause: Cause = .unknown)
     case unpaired, needsUpdate(mac: Bool)
     /// Every address answered with a TLS key other than the pinned one: pair again. Nothing more is sent.
     case keyChanged
 
+    /// What is known about why the Mac can't be reached; one at a time, and only while the connection is down.
+    public enum Cause: Sendable, Equatable {
+        case unknown
+        /// The Mac said goodbye because it is going to sleep.
+        case macAsleep
+        /// Round after round no direct path answered and the relay turned this phone away.
+        case relayRefused
+    }
+
     public var isLive: Bool { if case .live = self { true } else { false } }
+
+    /// Why it is down, when the Mac or the relay said so; `unknown` in every other state.
+    public var cause: Cause { if case .offline(_, _, let cause) = self { cause } else { .unknown } }
 
     /// What only the Mac's next answer can change: shown until that answer comes, through any retry on the way to it.
     var isTerminal: Bool {
@@ -28,12 +42,12 @@ public enum OutboxOutcome: Sendable, Equatable {
     case unknown
     /// The Mac refused it; shown on the row it came from.
     case failed(APIError)
-    /// The Mac couldn't be reached before the item expired.
+    /// The Mac couldn't be reached before the item expired, or the item never made it into the queue.
     case notDelivered
 }
 
 /// A part of the state that a REST list can refresh on its own.
-public enum Slice: String, Sendable, Codable { case sessions, requests, hosted, accounts }
+public enum Slice: String, Sendable, Codable { case requests, accounts }
 
 /// Everything the UI shows for one Mac, value-typed so it crosses actors freely.
 public struct RemoteState: Sendable, Equatable {
@@ -71,10 +85,6 @@ public struct RemoteState: Sendable, Equatable {
     /// Where the engine's rotation through the endpoint's addresses stood at the last hello. The routed transport picks
     /// the path each request takes, so the one that answered may be another address or the relay.
     public var address: URL?
-    /// The Mac said goodbye because it is going to sleep; true until it next answers.
-    public var macAsleep = false
-    /// Round after round no direct path answered and the relay turned this phone away; false once the Mac answers.
-    public var relayRefused = false
     public init() {}
 
     /// What a row shows for an item: the outcome of its latest retry, or its own; nil while one is in flight.
@@ -92,9 +102,12 @@ public struct SyncTiming: Sendable {
     public var ping: Double = 15
     public var presence: Double = 30
     public var coalesce: Double = 0.016
-    public var tooManyConnections: Double = 10
     /// How often to ask a Mac that was too old whether it has updated. Nothing tells the phone when it does.
     public var updateCheck: Double = 15
+    /// The least wait before an item past its `expiresAt` is looked at again, so one another process still holds isn't asked about in a spin.
+    public var expiryRecheck: Double = 1
+    /// How often to look again at a queue whose items another process holds, once a drain has nothing it may take.
+    public var claimRecheck: Double = 5
     public init() {}
     public static let standard = SyncTiming()
 
@@ -119,9 +132,12 @@ public actor SyncEngine {
     private let owner = UUID().uuidString.lowercased()
     private let continuation: AsyncStream<RemoteState>.Continuation
 
-    private var stored = RemoteState()
-    private var open: [RequestID: RemoteRequest] = [:]
-    private var resolvedOrder: [RequestID] = []
+    /// What the Mac has said, merged; `stored` is its state, with the connection and the outbox's items kept beside it.
+    private var recon = Reconciler()
+    private var stored: RemoteState {
+        get { recon.state }
+        _modify { yield &recon.state }
+    }
     private var outcomeOrder: [String] = []
     /// The items behind `outcomes`, so a tapped Retry can send one again.
     private var settled: [String: Outbox.Item] = [:]
@@ -135,15 +151,18 @@ public actor SyncEngine {
     private var socket: (any SocketConnection)?
     private var waiting: Task<Void, Never>?
     private var addressIndex = 0
-    private var awaitingSnapshot = false
     private var bye: String?
     private var draining = false
     /// Something asked for a drain while one ran, so the empty claim that ends it may have missed that item.
     private var drainAgain = false
     /// Runs between a claim that found nothing and what the drain does about it.
     private var afterEmptyClaim: (@Sendable () async -> Void)?
+    /// Runs after the drain read the queue following an empty claim, before it decides it is done.
+    private var afterQueueRead: (@Sendable () async -> Void)?
     private var drainAttempt = 0
     private var drainRetry: Task<Void, Never>?
+    /// Counts reads of the queue into `pending`; only the latest one started may apply its result.
+    private var pendingReads = 0
     private var expiry: Task<Void, Never>?
     private var flushing = false
     /// Started and not stopped by its owner: a loop that ended on its own comes back with the foreground.
@@ -151,6 +170,9 @@ public actor SyncEngine {
     /// Which connection `socket` is; a late pong failure from an earlier one changes nothing.
     private var socketGeneration = 0
     private var relayRefusals = 0
+    /// What the Mac or the relay last said about why it can't be reached, until the Mac next answers. It is shown by the
+    /// `offline` connection, which keeps it through the attempts in between instead of reading `connecting`.
+    private var cause: Connection.Cause = .unknown
 
     /// Without a transport, one that pins `endpoint.serverKeyHash` on every connection.
     public init(endpoint: Endpoint, credentials: any CredentialStore, outbox: Outbox, transport: (any Transport)? = nil,
@@ -181,6 +203,9 @@ public actor SyncEngine {
         socketGeneration += 1
         socket?.close(code: 1000, reason: nil)
         socket = nil
+        drainRetry?.cancel()
+        drainRetry = nil
+        cause = .unknown
         set(.idle)
     }
 
@@ -295,16 +320,16 @@ public actor SyncEngine {
     /// `.nextStep` is Stop Before Next Step: stop mail, hosted or not.
     @discardableResult public func interrupt(_ session: SessionKey, when: InterruptRequest.When = .now) async -> Outbox.Item {
         let body = when == .now ? Data() : (try? RemoteClient.encoder.encode(InterruptRequest(when: when))) ?? Data()
-        return await enqueue(Outbox.Item(macID: endpoint.macID, path: "/v1/sessions/\(session)/interrupt", body: body, createdAt: now(),
-                                         expiresAt: now() + 600))
+        return await enqueue(Outbox.Item(macID: endpoint.macID, method: QueuedRoutes.interrupt.method, path: QueuedRoutes.interrupt.path(session),
+                                         body: body, createdAt: now(), expiresAt: now() + 600))
     }
 
     /// Take Back: `DELETE /v1/sessions/{id}/mail`, withdrawing what the composer queued. Queued behind that
     /// session's earlier items, so a Take Back right after a Note reaches the Mac after it. The key is
     /// `<session>:takeback:<n>`, `n` from the clock so it is never reused across launches.
     @discardableResult public func takeBack(sessionID session: SessionKey) async -> Outbox.Item {
-        await enqueue(Outbox.Item(id: "\(session):takeback:\(clockKey())", macID: endpoint.macID, method: "DELETE", path: "/v1/sessions/\(session)/mail",
-                                         createdAt: now(), expiresAt: now() + 600))
+        await enqueue(Outbox.Item(id: "\(session):takeback:\(clockKey())", macID: endpoint.macID, method: QueuedRoutes.takeBack.method,
+                                  path: QueuedRoutes.takeBack.path(session), createdAt: now(), expiresAt: now() + 600))
     }
 
     /// From the clock, so a key made with it is never reused across launches.
@@ -342,65 +367,59 @@ public actor SyncEngine {
     /// unless the stream is already further along in the same epoch.
     public func refresh() async throws {
         let snapshot: StateSnapshot = try await client.get("/v1/state")
-        guard snapshot.epoch != stored.epoch || snapshot.seq >= stored.seq else { return }
-        apply(snapshot)
+        guard recon.refreshed(snapshot) else { return }
         publish()
     }
 
     // REST slices: each refreshes its part of the state and never moves `seq`.
 
-    public func refreshSessions() async throws {
-        let list = try await client.sessions()
-        guard fresher(list.seq, .sessions) else { return }
-        stored.sessions = Self.keyed(list.sessions, \.id)
-        stored.finished = Self.keyed(list.finished, \.sessionID)
-        publish()
-    }
-
     public func refreshRequests() async throws {
+        let asked = stored.epoch
         let list = try await client.requests()
-        guard fresher(list.seq, .requests) else { return }
-        open = Self.keyed(list.requests, \.id)
+        guard recon.replace(list, asked: asked) else { return }
         publish()
     }
 
-    public func refreshHosted() async throws {
-        let list = try await client.hosted()
-        guard fresher(list.seq, .hosted) else { return }
-        stored.hosted = Self.keyed(list.hosted, \.name)
-        publish()
+    public func refreshAccounts() async throws {
+        let asked = stored.epoch
+        apply(try await client.accounts(), asked: asked)
     }
-
-    public func refreshAccounts() async throws { apply(try await client.accounts()) }
 
     /// Switches the active account and applies the list the Mac answers with.
-    public func useAccount(_ id: String, confirm: String) async throws { apply(try await client.useAccount(id, confirm: confirm)) }
+    public func useAccount(_ id: String, confirm: String) async throws {
+        let asked = stored.epoch
+        apply(try await client.useAccount(id, confirm: confirm), asked: asked)
+    }
 
     /// Changes an account's priority and applies the list the Mac answers with.
-    public func setPriority(_ id: String, _ priority: PriorityLevel, confirm: String) async throws { apply(try await client.setPriority(id, priority, confirm: confirm)) }
+    public func setPriority(_ id: String, _ priority: PriorityLevel, confirm: String) async throws {
+        let asked = stored.epoch
+        apply(try await client.setPriority(id, priority, confirm: confirm), asked: asked)
+    }
 
     /// Changes an account's Auto and applies the list the Mac answers with.
-    public func setAuto(_ id: String, _ enabled: Bool, confirm: String) async throws { apply(try await client.setAuto(id, enabled, confirm: confirm)) }
+    public func setAuto(_ id: String, _ enabled: Bool, confirm: String) async throws {
+        let asked = stored.epoch
+        apply(try await client.setAuto(id, enabled, confirm: confirm), asked: asked)
+    }
 
-    private func apply(_ list: AccountList) {
-        guard fresher(list.seq, .accounts) else { return }
-        stored.accounts = Self.keyed(list.accounts, \.id)
+    private func apply(_ list: AccountList, asked: String?) {
+        guard recon.replace(list, asked: asked) else { return }
         publish()
-    }
-
-    /// A list replaces its slice only when newer than both `seq` and the slice's last refresh.
-    private func fresher(_ seq: Int, _ slice: Slice) -> Bool {
-        guard seq > stored.seq, seq > stored.sliceSeq[slice] ?? -1 else { return false }
-        stored.sliceSeq[slice] = seq
-        return true
-    }
-
-    private static func keyed<T, K: Hashable>(_ values: [T], _ key: KeyPath<T, K>) -> [K: T] {
-        Dictionary(values.map { ($0[keyPath: key], $0) }, uniquingKeysWith: { $1 })
     }
 
     private func enqueue(_ item: Outbox.Item) async -> Outbox.Item {
-        await outbox.enqueue(item)
+        do {
+            try await outbox.enqueue(item)
+        } catch {
+            // In no queue: it can't be sent or expire, so it settles now, the way an expired one does, and the screen that
+            // showed it as sending shows "Not sent" with Retry.
+            KitLog.log(.sync, "outbox enqueue failed: \(error)")
+            settled[item.id] = item
+            record(item.id, .notDelivered)
+            await reloadPending()
+            return item
+        }
         await reloadPending()
         Task { await self.drain() }
         return item
@@ -423,7 +442,7 @@ public actor SyncEngine {
             do { token = try await client.credentials.token(for: endpoint.macID) } catch { token = nil }
             if Task.isCancelled { return }
             guard token != nil else { run = nil; return set(.unpaired) }
-            if !stored.connection.isLive, !stored.connection.isTerminal { set(.connecting) }
+            if !stored.connection.isLive, !stored.connection.isTerminal, stored.connection.cause == .unknown { set(.connecting) }
             let opened = now()
             var next = await greet()
             if next == nil {
@@ -442,7 +461,11 @@ public actor SyncEngine {
             case .stop(.needsUpdate(mac: true)):
                 set(.needsUpdate(mac: true))
                 delay = timing.updateCheck
-            case .stop(let connection): run = nil; return set(connection)
+            case .stop(let connection):
+                run = nil
+                // A normal close after a goodbye for sleep: the loop ends, and the Mac is still asleep.
+                if connection == .idle, cause != .unknown { return set(.offline(retryAt: now(), reason: "Side A on the Mac closed", cause: cause)) }
+                return set(connection)
             case .now:
                 // A Mac that replays what drops the socket again would otherwise be called back without end.
                 immediate += 1
@@ -462,7 +485,7 @@ public actor SyncEngine {
                 keyChanged = 0
                 relayRefusals = refused ? relayRefusals + 1 : 0
                 refused = false
-                if relayRefusals >= Self.refusalsToOfferPairing, !stored.relayRefused { stored.relayRefused = true }
+                if relayRefusals >= Self.refusalsToOfferPairing, cause == .unknown { cause = .relayRefused }
                 delay = timing.backoff(attempt)
                 attempt += 1
                 offline(retryAt: now() + delay, reason: reason)
@@ -484,8 +507,14 @@ public actor SyncEngine {
 
     static let immediateReconnects = 3
 
+    /// The Mac answered: whatever was said about why it couldn't be reached no longer holds.
+    private func answered() {
+        cause = .unknown
+        if case .offline(let retryAt, let reason, _) = stored.connection { set(.offline(retryAt: retryAt, reason: reason)) }
+    }
+
     private func offline(retryAt: Timestamp, reason: String) {
-        if !stored.connection.isTerminal { set(.offline(retryAt: retryAt, reason: reason)) }
+        if !stored.connection.isTerminal { set(.offline(retryAt: retryAt, reason: reason, cause: cause)) }
     }
 
     /// `GET /v1/hello` first: is the Mac there, can we talk, are we still paired.
@@ -504,8 +533,7 @@ public actor SyncEngine {
         guard !Task.isCancelled else { return .stop(.idle) }
         stored.hello = hello
         stored.address = client.address
-        stored.macAsleep = false
-        stored.relayRefused = false
+        answered()
         relayRefusals = 0
         // A trusted hello's addresses (a LAN one learned after pairing) join the rotation now, not at next launch. Only
         // one that knows this phone carries any.
@@ -568,9 +596,7 @@ public actor SyncEngine {
     /// and the Mac replays this one again. Its change is lost, so the state is read afresh over REST.
     private func skipped(_ data: Data) async {
         struct Sequence: Decodable { var seq: Int? }
-        guard let seq = (try? JSONDecoder().decode(Sequence.self, from: data))?.seq,
-              !awaitingSnapshot, seq == stored.seq + 1 else { return }
-        stored.seq = seq
+        guard let seq = (try? JSONDecoder().decode(Sequence.self, from: data))?.seq, recon.undecodable(seq: seq) else { return }
         KitLog.log(.sync, "event \(seq) did not decode; refreshing state")
         try? await refresh()
     }
@@ -613,7 +639,8 @@ public actor SyncEngine {
     /// No pong: a half-open socket never ends by itself, so it's closed here and the loop connects again.
     private func lost(_ socket: any SocketConnection, _ generation: Int) {
         guard generation == socketGeneration else { return }
-        set(.connecting)
+        // A goodbye for sleep came before the pong failed: it is still why the Mac can't be reached.
+        set(cause == .unknown ? .connecting : .offline(retryAt: now(), reason: "No answer from the Mac", cause: cause))
         socket.close(code: 4008, reason: "no pong")
     }
 
@@ -622,17 +649,14 @@ public actor SyncEngine {
         let event = envelope.event
         switch event {
         case .welcome(let welcome):
-            stored.hello = welcome.hello
-            // The epoch changes only with the snapshot, so a drop before it reconnects as the old client.
-            awaitingSnapshot = !welcome.replay || welcome.epoch != stored.epoch
-            stored.macAsleep = false
-            stored.relayRefused = false
+            recon.welcomed(welcome)
+            cause = .unknown
             set(.live(since: now()))
             if welcome.snapshotOverREST {
                 do {
                     let snapshot = try await client.get("/v1/state", as: StateSnapshot.self)
                     guard !Task.isCancelled else { return .stop(.idle) }
-                    apply(snapshot)
+                    recon.apply(snapshot)
                 } catch { return .backoff(error.localizedDescription) }
                 publish()
             }
@@ -648,12 +672,12 @@ public actor SyncEngine {
             Task { await self.drain() }
             return nil
         case .snapshot(let snapshot):
-            apply(snapshot)
+            recon.apply(snapshot)
             publish()
             return nil
         case .bye(let reason):
             bye = reason
-            if reason == ServerEvent.byeSleep { stored.macAsleep = true }
+            if reason == ServerEvent.byeSleep { cause = .macAsleep }
             return nil
         case .transcriptAppend(let delta), .transcriptReplace(let delta):
             await feeds[delta.sessionID]?.receive(event)
@@ -664,78 +688,26 @@ public actor SyncEngine {
         default:
             break
         }
-        guard let seq = envelope.seq else { return nil }
-        guard !awaitingSnapshot, seq > stored.seq else { return nil }
+        switch recon.receive(seq: envelope.seq, event) {
+        case .ignored, .reflected: return nil
         // A skipped event: reconnect with lastSeq and let the server repair from its ring or a snapshot.
-        guard seq == stored.seq + 1 else { return .now }
-        stored.seq = seq
-        // A slice refreshed over REST already reflects events up to its seq.
-        if let slice = Self.slice(of: event), seq <= stored.sliceSeq[slice] ?? -1 { return nil }
-        apply(event)
-        publish()
-        return nil
-    }
-
-    static func slice(of event: ServerEvent) -> Slice? {
-        switch event {
-        case .sessionUpsert, .sessionRemove, .finishedAdd, .finishedResolve: .sessions
-        case .requestAdd, .requestResolve: .requests
-        case .hostedUpsert, .hostedRemove, .hostedAttention: .hosted
-        case .usageUpdate, .accountRemove: .accounts
-        default: nil
+        case .gap: return .now
+        case .applied(let effects):
+            settle(effects)
+            publish()
+            return nil
         }
     }
 
-    private func apply(_ snapshot: StateSnapshot) {
-        awaitingSnapshot = false
-        stored.seq = snapshot.seq
-        stored.epoch = snapshot.epoch
-        stored.sliceSeq = [:]
-        stored.sessions = Self.keyed(snapshot.sessions, \.id)
-        stored.finished = Self.keyed(snapshot.finished, \.sessionID)
-        open = Self.keyed(snapshot.requests, \.id)
-        stored.hosted = Self.keyed(snapshot.hosted, \.name)
-        stored.accounts = Self.keyed(snapshot.accounts, \.id)
-        stored.mac = snapshot.mac
-        stored.incidents = snapshot.incidents ?? []
-        stored.autopilot = snapshot.autopilot
-        stored.droppedReplies = snapshot.droppedReplies ?? []
-    }
-
-    private func apply(_ event: ServerEvent) {
-        switch event {
-        case .sessionUpsert(let session): stored.sessions[session.id] = session
-        case .sessionRemove(let id, _): stored.sessions[id] = nil
-        case .requestAdd(let request): open[request.id] = request
-        case .requestResolve(let resolution): resolve(resolution)
-        case .finishedAdd(let finished): stored.finished[finished.sessionID] = finished
-        case .finishedResolve(let session, let reason):
-            stored.finished[session] = nil
-            if reason == ServerEvent.finishedQueueDropped { stored.queueDrops[session, default: 0] += 1 }
-        case .usageUpdate(let accounts): for account in accounts { stored.accounts[account.id] = account }
-        case .accountRemove(let id): stored.accounts[id] = nil
-        case .hostedUpsert(let hosted): stored.hosted[hosted.name] = hosted; stored.attention[hosted.name] = nil
-        case .hostedRemove(let name): stored.hosted[name] = nil; stored.attention[name] = nil
-        case .hostedAttention(let attention): stored.attention[attention.name] = attention
-        case .macUpdate(let mac): stored.mac = mac
-        case .incidentUpdate(let incidents): stored.incidents = incidents
-        case .autopilotUpdate(let autopilot): stored.autopilot = autopilot
-        default: break
-        }
-    }
-
-    private func resolve(_ resolution: RequestResolution) {
-        open[resolution.requestID] = nil
-        stored.resolved[resolution.requestID] = resolution
-        resolvedOrder.append(resolution.requestID)
-        while resolvedOrder.count > 50 { stored.resolved[resolvedOrder.removeFirst()] = nil }
-        // An answer still queued here lost the race; one from a device may be ours, which its response settles.
-        guard resolution.by != .device else { return }
-        for item in stored.pending where item.answering == resolution.requestID {
-            stored.pending.removeAll { $0.id == item.id }
-            record(item.id, .answeredElsewhere(resolution))
-            let outbox = outbox
-            Task { await outbox.remove(item.id) }
+    /// What `Reconciler` asked of the engine after an event.
+    private func settle(_ effects: [Reconciler.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .settle(let item, let resolution):
+                record(item.id, .answeredElsewhere(resolution))
+                let outbox = outbox
+                Task { await outbox.remove(item.id) }
+            }
         }
     }
 
@@ -753,6 +725,8 @@ public actor SyncEngine {
         // Targets whose oldest item is waiting to be retried: only their later items wait with it.
         var held: Set<String> = []
         var retryIn: Double?
+        // The last claim found nothing and the queue was read again, with nothing asking for another drain since.
+        var emptied = false
         defer {
             if let retryIn {
                 drainRetry?.cancel()
@@ -766,7 +740,12 @@ public actor SyncEngine {
             // Claimed in one transaction, so another process (a notification action, an intent) never posts it too.
             guard var item = await outbox.claim(for: endpoint.macID, by: owner, now: now(), skipping: held) else {
                 await afterEmptyClaim?()
-                guard drainAgain else { break }
+                if !drainAgain { await syncPending() }
+                await afterQueueRead?()
+                guard drainAgain else {
+                    emptied = true
+                    break
+                }
                 drainAgain = false
                 continue
             }
@@ -807,14 +786,18 @@ public actor SyncEngine {
                 }
             }
         }
+        // Nothing left it may take. What is still queued is another process's, or waits behind it, and nothing tells this
+        // drain when that process lets go: its claim lapses, it gives the item back, or it finishes it.
+        if emptied, stored.connection.isLive, retryIn == nil, !stored.pending.isEmpty { retryIn = timing.claimRecheck }
     }
 
     func setAfterEmptyClaim(_ hook: (@Sendable () async -> Void)?) { afterEmptyClaim = hook }
+    func setAfterQueueRead(_ hook: (@Sendable () async -> Void)?) { afterQueueRead = hook }
 
     private func finish(_ item: Outbox.Item, _ outcome: OutboxOutcome) async {
         // Taken, or already settled: the Mac no longer has it open, whichever of the response and its event comes first.
         switch outcome {
-        case .delivered, .answeredElsewhere: if let request = item.answering { open[request] = nil }
+        case .delivered, .answeredElsewhere: if let request = item.answering { recon.closed(request) }
         default: break
         }
         await outbox.remove(item.id)
@@ -834,7 +817,25 @@ public actor SyncEngine {
     }
 
     private func reloadPending() async {
-        stored.pending = await outbox.items(for: endpoint.macID)
+        await loadPending()
+        publish()
+        watchExpiry()
+    }
+
+    /// Reads the queue into `pending`. A read that failed leaves the last good list, and one that a later read overtook
+    /// is dropped, so an older answer never replaces a newer one.
+    private func loadPending() async {
+        pendingReads += 1
+        let read = pendingReads
+        guard let rows = await outbox.read(for: endpoint.macID), read == pendingReads else { return }
+        stored.pending = rows
+    }
+
+    /// `loadPending`, publishing only when the list changed: what another process finished leaves it.
+    private func syncPending() async {
+        let before = stored.pending
+        await loadPending()
+        guard stored.pending != before else { return }
         publish()
         watchExpiry()
     }
@@ -844,8 +845,7 @@ public actor SyncEngine {
     private func watchExpiry() {
         expiry?.cancel()
         guard let soonest = stored.pending.map(\.expiresAt).min() else { return expiry = nil }
-        // At least a second, so an expired item another process holds is not asked about in a spin.
-        let wait = max(1, soonest - now())
+        let wait = max(timing.expiryRecheck, soonest - now())
         expiry = Task {
             try? await Task.sleep(for: .seconds(wait))
             if !Task.isCancelled { await self.settleExpired() }
@@ -853,7 +853,14 @@ public actor SyncEngine {
     }
 
     private func settleExpired() async {
-        for item in await outbox.claimExpired(for: endpoint.macID, by: owner, now: now()) { await finish(item, .notDelivered) }
+        let expired = await outbox.claimExpired(for: endpoint.macID, by: owner, now: now())
+        for item in expired { await finish(item, .notDelivered) }
+        guard expired.isEmpty else { return }
+        // Past its time but held: another process claimed it (its claim is younger than `Outbox.claimLifetime`), or it
+        // finished it. Nothing else may touch the queue from here (a stopped engine never drains), so look again, and drop
+        // from `pending` what the queue no longer holds.
+        await syncPending()
+        watchExpiry()
     }
 
     // MARK: Plumbing
@@ -879,8 +886,7 @@ public actor SyncEngine {
 
     /// Sends the state at most every `coalesce` seconds.
     private func publish() {
-        let answering = Set(stored.pending.compactMap(\.answering))
-        stored.requests = open.filter { !answering.contains($0.key) }
+        recon.project()
         guard !flushing else { return }
         flushing = true
         Task {

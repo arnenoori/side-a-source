@@ -63,8 +63,9 @@ class CheckRoutingTests(unittest.TestCase):
         self.tools.mkdir()
         self.log.touch()
         (self.repo / "scripts").mkdir(parents=True)
-        for script in ("check.sh", "scan-public-source.py"):
+        for script in ("check.sh", "sync-bridge.sh", "scan-public-source.py"):
             (self.repo / "scripts" / script).write_text((ROOT / "scripts" / script).read_text())
+            (self.repo / "scripts" / script).chmod(0o755)
         (self.repo / "bridge/tests").mkdir(parents=True)
         (self.repo / "bridge/a.py").write_text("")
         (self.repo / "bridge/tests/test_a.py").write_text("import unittest\nclass T(unittest.TestCase):\n    def test(self): pass\n")

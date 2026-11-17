@@ -87,7 +87,7 @@ struct StartingSessionView: View {
         }
         .navigationTitle(hosted?.project ?? "New Session")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarVisibility(.hidden, for: .tabBar)
+        .hidesTabBar()
         .sessionActions()
     }
 }

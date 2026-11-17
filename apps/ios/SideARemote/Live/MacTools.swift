@@ -1,3 +1,4 @@
+import SideARemoteShared
 import Foundation
 import Observation
 import SideAProtocol
@@ -22,8 +23,6 @@ final class MacTools {
     private(set) var attention: [String: HostedAttention] = [:]
     private(set) var options: OptionsList?
     private(set) var projects: [RemoteProject] = []
-    /// Open incidents on the providers' status pages.
-    private(set) var incidents: [Incident] = []
     /// From `GET /v1/autopilot`, and each Move Now.
     private(set) var autopilot: AutopilotState?
     /// From `GET /v1/usage/outlook`, whenever a reading arrives.
@@ -88,6 +87,10 @@ final class MacTools {
         switch mode {
         case .demo(let demo):
             capabilities = Self.everything
+            #if DEBUG
+            // `--no-uploads`: a Mac that can't take photos, for trying the composer without them.
+            if ProcessInfo.processInfo.arguments.contains("--no-uploads") { capabilities.remove(.uploads) }
+            #endif
             options = demo.options; projects = demo.projects; autopilot = demo.autopilot; outlook = demo.outlook
         case .live(let live):
             let macID = live.paired.endpoint.macID
@@ -190,7 +193,6 @@ final class MacTools {
         if !dropped.isDisjoint(with: listed) { dropped.subtract(listed) }
         if hosted != state.hosted { hosted = state.hosted }
         if attention != state.attention { attention = state.attention }
-        if incidents != state.incidents { incidents = state.incidents }
         if let latest = state.autopilot, autopilot != latest { autopilot = latest }
         for (id, settings) in changed {
             guard let row = state.sessions[id] else { continue }
@@ -260,6 +262,16 @@ final class MacTools {
 
     /// The key is the caller's, made once per sheet, so a second tap on Start is a replay, not a second session.
     func start(_ start: StartHosted, key: String) async throws -> HostedSession {
+        #if DEBUG
+        // `--demo-start`: the demo answers a start with a hosted session, to see what follows Start.
+        if isDemo, ProcessInfo.processInfo.arguments.contains("--demo-start") {
+            let name = "sa-demo-\(key.prefix(4))"
+            let session = HostedSession(name: name, agent: start.agent, cwd: start.cwd, project: URL(fileURLWithPath: start.cwd).lastPathComponent,
+                                        createdAt: Date.now.timeIntervalSince1970)
+            hosted[name] = session
+            return session
+        }
+        #endif
         let session: HostedSession = try await guarded(.settings, subject: ConfirmMessage.subject(start: start), level: ConfirmPolicy.start(start), reason: "Start this session") { confirm in
             try await client().post("/v1/hosted", json: start, idempotencyKey: key, confirm: confirm)
         }
@@ -276,7 +288,7 @@ final class MacTools {
     }
 
     func continueOnPhone(_ session: SessionKey) async throws -> HostedSession {
-        let hosted = try await guarded(subject: ConfirmMessage.subject(action: .continue, target: session), reason: "Continue this session on iPhone") { confirm in
+        let hosted = try await guarded(subject: ConfirmMessage.subject(action: .continue, target: session), reason: "Continue this session on \(ThisDevice.kind)") { confirm in
             try await client().continueOnPhone(session, confirm: confirm)
         }
         self.hosted[hosted.name] = hosted
@@ -611,12 +623,12 @@ final class MacTools {
         switch error {
         case let failure as RemoteFailure: failure.error.message
         case ToolError.demo: "The demo doesn't change anything."
-        case ToolError.unavailable: "Side A can't open its storage on this iPhone. Reinstall it to make changes."
+        case ToolError.unavailable: "Side A can't open its storage on this \(ThisDevice.kind). Reinstall it to make changes."
         case ToolError.badURL: "The Mac sent an address the phone can't open."
         case ToolError.gone: "The Mac no longer lists this session."
         case ToolError.cancelled: "Cancelled."
-        case ToolError.locked: "Unlock your iPhone to do this."
-        case ToolError.pairAgain: "Pair this iPhone again to do this from it."
+        case ToolError.locked: "Unlock your \(ThisDevice.kind) to do this."
+        case ToolError.pairAgain: "Pair this \(ThisDevice.kind) again to do this from it."
         default: (error as NSError).localizedDescription
         }
     }

@@ -280,6 +280,9 @@ final class TranscriptStore {
         return full.text
     }
 
+    /// What a turn end's Copy and Share take: its reply whole once fetched, not the Mac's cut.
+    func text(_ end: TurnEnd, in session: SessionKey) -> String { text(end.message, in: session) ?? "" }
+
     /// The loaded messages, each cut one whole where it's been fetched.
     func wholeMessages(_ session: SessionKey) -> [TranscriptMessage] {
         (messages[session] ?? []).map { message in

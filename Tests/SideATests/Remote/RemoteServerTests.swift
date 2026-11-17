@@ -284,7 +284,9 @@ private func ready(_ server: RemoteServer) async {
     let token = DeviceToken.make()
     let (server, port, pin) = try makeServer(keychain, token: token)
     defer { server.stop() }
-    server.timeouts = .init(head: 0.6, body: 1, idle: 30)
+    // Roomy enough that a loaded machine's late sleeps and slow handshake don't trip them: the head's clock still ends
+    // well inside the body's drip, and the body's clock is still several times its gap.
+    server.timeouts = .init(head: 1.5, body: 3, idle: 30)
     let closed = OSAllocatedUnfairLock(initialState: 0)
     server.connectionClosed = { _ in closed.withLock { $0 += 1 } }
     await ready(server)
@@ -293,9 +295,9 @@ private func ready(_ server: RemoteServer) async {
     let slow = PinnedClient(port: port, pin: pin)
     defer { slow.close() }
     slow.send(head + "Content-Length: 8\r\n\r\n")
-    // Two seconds of body, a byte every quarter second: well past the head's time, never past the body's.
+    // Four seconds of body, a byte every half second: well past the head's time, never past the body's.
     for _ in 0..<8 {
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: .milliseconds(500))
         slow.send("x")
     }
     #expect(await slow.text(until: "\r\n", within: 10).hasPrefix("HTTP/1.1 200"))
@@ -304,17 +306,17 @@ private func ready(_ server: RemoteServer) async {
     let stalled = PinnedClient(port: port, pin: pin)
     defer { stalled.close() }
     stalled.send(head + "Content-Length: 8\r\n\r\nxx")
-    #expect(await stalled.text(until: "HTTP/1.1", within: 5).isEmpty)
+    #expect(await stalled.text(until: "HTTP/1.1", within: 8).isEmpty)
     #expect(closed.withLock { $0 } == 1)
 
     let loris = PinnedClient(port: port, pin: pin)
     defer { loris.close() }
     loris.send("GET /v1/sessions HTTP/1.1\r\n")
-    for _ in 0..<4 {
+    for _ in 0..<8 {
         try await Task.sleep(for: .milliseconds(250))
         loris.send("X-Slow: 1\r\n")
     }
-    #expect(await loris.text(until: "HTTP/1.1", within: 5).isEmpty)
+    #expect(await loris.text(until: "HTTP/1.1", within: 8).isEmpty)
     #expect(closed.withLock { $0 } == 2)
 }
 

@@ -30,6 +30,13 @@ final class FakeMac: Transport, @unchecked Sendable {
     /// What the engine passed on from each trusted hello.
     var learned: [Endpoints] { lock.withLock { _learned } }
     func learned(_ endpoints: Endpoints) async { lock.withLock { _learned.append(endpoints) } }
+    /// Requests to these paths wait, once they reach the Mac, until their `Gate` opens: a slow answer.
+    private var gates: [String: Gate] = [:]
+    func hold(_ path: String) -> Gate {
+        let gate = Gate()
+        lock.withLock { gates[path] = gate }
+        return gate
+    }
     /// Everything but hello.
     var calls: [URLRequest] { requests.filter { $0.url?.path != "/v1/hello" } }
 
@@ -40,6 +47,7 @@ final class FakeMac: Transport, @unchecked Sendable {
             lock.withLock { _requests.append(request) }
             throw URLError(.cannotConnectToHost)
         }
+        if let gate = lock.withLock({ gates[request.url?.path ?? ""] }) { await gate.wait() }
         let reply = lock.withLock { () -> Reply? in
             _requests.append(request)
             return request.url?.path == "/v1/hello" ? helloReply : nil
@@ -58,6 +66,36 @@ final class FakeMac: Transport, @unchecked Sendable {
     func socket(_ index: Int) async throws -> FakeSocket {
         try await until("socket \(index)") { self.sockets.count > index && !self.sockets[index].raw.isEmpty }
         return sockets[index]
+    }
+}
+
+/// A request held on the Mac's side until the test opens it.
+final class Gate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var _arrived = 0
+    /// How many requests are waiting here now or got through.
+    var arrived: Int { lock.withLock { _arrived } }
+
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let pass = lock.withLock {
+                _arrived += 1
+                if !opened { waiting.append(continuation) }
+                return opened
+            }
+            if pass { continuation.resume() }
+        }
+    }
+
+    func open() {
+        let held = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            opened = true
+            defer { waiting = [] }
+            return waiting
+        }
+        for continuation in held { continuation.resume() }
     }
 }
 
@@ -187,6 +225,8 @@ let fastTiming: SyncTiming = {
     timing.ping = 100
     timing.coalesce = 0
     timing.updateCheck = 0.02
+    timing.expiryRecheck = 0.02
+    timing.claimRecheck = 0.02
     return timing
 }()
 
@@ -204,9 +244,10 @@ func welcome(_ epoch: String, seq: Int, replay: Bool, overREST: Bool = false) ->
     .welcome(Welcome(epoch: epoch, seq: seq, replay: replay, snapshotOverREST: overREST, hello: hello))
 }
 
-func engine(_ mac: FakeMac, token: String? = "sa1_token", outbox: Outbox? = nil, timing: SyncTiming = fastTiming) throws -> SyncEngine {
+func engine(_ mac: FakeMac, token: String? = "sa1_token", outbox: Outbox? = nil, timing: SyncTiming = fastTiming,
+            now: @escaping @Sendable () -> Timestamp = { Date().timeIntervalSince1970 }) throws -> SyncEngine {
     SyncEngine(endpoint: endpoint, credentials: Keys(token: token), outbox: try outbox ?? temporaryOutbox().0, transport: mac,
-               info: ClientInfo(version: "1.0", build: 41, system: "iOS 27.0", capabilities: [.events, .transcriptStream]), timing: timing)
+               info: ClientInfo(version: "1.0", build: 41, system: "iOS 27.0", capabilities: [.events, .transcriptStream]), timing: timing, now: now)
 }
 
 func json(_ value: some Encodable) -> Data { try! JSONEncoder().encode(value) }

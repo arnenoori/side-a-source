@@ -1,5 +1,6 @@
 import AVFoundation
 import SideARemoteKit
+import SideARemoteShared
 import SwiftUI
 import VisionKit
 
@@ -179,7 +180,7 @@ struct OtherTailnet: Identifiable {
     let invitation: PairingClient.Invitation
     let title: String
     var id: String { title }
-    static let message = "Your iPhone reaches one tailnet at a time, so only one of them will connect."
+    static let message = "Your \(ThisDevice.kind) reaches one tailnet at a time, so only one of them will connect."
 }
 
 /// The back camera's light, for a code on a dim screen.

@@ -4,7 +4,7 @@ import SideAProtocol
 
 /// Quitting, stopping a server, starting a hosted session and Restart Fresh, for the phone and the Sessions window.
 extension SessionCommands {
-    nonisolated static func internalFailure(_ message: String) -> Failure { Failure(status: 500, code: "internal", message: message) }
+    nonisolated static func internalFailure(_ message: String) -> Failure { Failure(status: 500, code: .internalError, message: message) }
 
     // MARK: Quit
 
@@ -12,10 +12,10 @@ extension SessionCommands {
     func quit(_ id: String) async throws(Failure) {
         guard let live = Target(id, store: store)?.live else { throw .noSession }
         if let kind = live.kind, kind != "interactive" {
-            throw Failure(status: 409, code: "cannot_deliver", message: "That's an automated run, so Side A doesn't quit it.")
+            throw Failure(status: 409, code: .cannotDeliver, message: "That's an automated run, so Side A doesn't quit it.")
         }
         guard let fresh = await store.sessions.freshLive() else {
-            throw Failure(status: 503, code: "not_ready", message: "Side A couldn't check whether that session is still running.", retryAfter: 2)
+            throw Failure(status: 503, code: .notReady, message: "Side A couldn't check whether that session is still running.", retryAfter: 2)
         }
         guard let now = SessionStore.current([live], in: fresh, still: { $0.kind.map { $0 == "interactive" } ?? true }).first else { throw .noSession }
         if let name = now.hosted, store.hosted.sessions.contains(where: { $0.name == name }) {
@@ -33,7 +33,7 @@ extension SessionCommands {
             session.status == "idle" && (session.since ?? .infinity) <= cutoff && (session.kind.map { $0 == "interactive" } ?? true)
         }
         guard let fresh = await store.sessions.freshLive() else {
-            throw Failure(status: 503, code: "not_ready", message: "Side A couldn't check which sessions are still running.", retryAfter: 2)
+            throw Failure(status: 503, code: .notReady, message: "Side A couldn't check which sessions are still running.", retryAfter: 2)
         }
         let candidates = SessionStore.current(store.sessions.live.filter(quiet), in: fresh, still: quiet)
         var quit: [SessionKey] = []
@@ -50,7 +50,7 @@ extension SessionCommands {
     func stopServer(_ id: String, port number: Int?) async throws(Failure) {
         guard let live = Target(id, store: store)?.live else { throw .noSession }
         guard let port = live.ports?.first(where: { $0.port == number }), await store.sessions.endServer(port) else {
-            throw Failure(status: 404, code: "port_not_found", message: "That server isn't running any more.")
+            throw Failure(status: 404, code: .portNotFound, message: "That server isn't running any more.")
         }
         refreshSoon()
     }
@@ -67,7 +67,7 @@ extension SessionCommands {
         let agent: Hosting.Agent = start.agent == .codex ? .codex : .claude
         let mode: Hosting.Mode = start.resume.map { start.fork ? .fork($0) : .resume($0) } ?? .new(model: start.model)
         let account = start.accountID.flatMap { id in store.config.accounts.first { $0.id == id && $0.provider == start.agent } }
-        if start.accountID != nil, account == nil { throw Failure(status: 404, code: "not_found", message: "That account isn't on the Mac.") }
+        if start.accountID != nil, account == nil { throw Failure(status: 404, code: .notFound, message: "That account isn't on the Mac.") }
         guard Hosting.safeOption(start.model), Hosting.safeOption(start.effort) else { throw .invalid("That model or effort isn't one Side A can start.", "invalid_option") }
         var request = HostedSessions.Start(agent: agent, cwd: start.cwd, mode: mode)
         request.origin = origin
@@ -85,7 +85,7 @@ extension SessionCommands {
         } catch HostedError.alreadyLive(let running) {
             var details = ["hint": "alreadyLive", "sessionID": WireBuilders.key(running)]
             if let hosted = running.hosted { details["hosted"] = hosted }
-            throw Failure(status: 409, code: "cannot_deliver", message: "That session is already running.", details: details)
+            throw Failure(status: 409, code: .cannotDeliver, message: "That session is already running.", details: details)
         } catch let error as HostedError {
             throw .hosted(error)
         } catch {
@@ -130,9 +130,9 @@ extension SessionCommands {
         guard store.hosted.available else { throw .hosted(.unavailable) }
         guard let live = Target(id, store: store)?.live, let cwd = live.cwd else { throw .noSession }
         if let kind = live.kind, kind != "interactive" {
-            throw Failure(status: 409, code: "cannot_deliver", message: "That's an automated run, so it can't be restarted.")
+            throw Failure(status: 409, code: .cannotDeliver, message: "That's an automated run, so it can't be restarted.")
         }
-        guard body.handoff.cwd == cwd else { throw Failure(status: 409, code: "cannot_deliver", message: "That handoff is for another folder.") }
+        guard body.handoff.cwd == cwd else { throw Failure(status: 409, code: .cannotDeliver, message: "That handoff is for another folder.") }
         let name = try await start(StartHosted(cwd: cwd, agent: live.provider, model: body.model ?? body.handoff.model,
                                                accountID: body.accountID ?? body.handoff.accountID, prompt: prompt), key: key, origin: origin)
         if let old = live.hosted, store.hosted.sessions.contains(where: { $0.name == old }) {
@@ -168,8 +168,8 @@ extension SessionCommands {
         switch error {
         case let failure as RemoteTranscript.Failure where failure.missing: .noSession
         case let failure as RemoteTranscript.Failure where failure.badCursor:
-            Failure(status: 400, code: "bad_request", message: "That cursor isn't one this Mac gave out.")
-        case is BridgeFailure: Failure(status: 503, code: "not_ready", message: "Side A is still starting its session reader.", retryAfter: 2)
+            Failure(status: 400, code: .badRequest, message: "That cursor isn't one this Mac gave out.")
+        case is BridgeFailure: Failure(status: 503, code: .notReady, message: "Side A is still starting its session reader.", retryAfter: 2)
         default: internalFailure("Side A couldn't read that session.")
         }
     }

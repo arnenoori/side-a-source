@@ -35,8 +35,10 @@ private let shots = ProcessInfo.processInfo.environment["SIDEA_PAIR_SHOTS"].map 
     }
 }
 
+/// Up to a minute by the clock, not 500 sleeps that a loaded machine stretches without bound or cuts short.
 @MainActor private func until(_ what: @autoclosure () -> Bool) async throws {
-    for _ in 0..<500 where !what() { try await Task.sleep(for: .milliseconds(10)) }
+    let end = Date().addingTimeInterval(60)
+    while !what(), Date() < end { try await Task.sleep(for: .milliseconds(10)) }
     try #require(what())
 }
 

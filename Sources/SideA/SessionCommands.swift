@@ -13,53 +13,46 @@ import SideAProtocol
 
     struct Failure: Error, Equatable {
         let status: Int
-        let code: String
+        let code: ErrorCode
         let message: String
         var details: [String: String]?
         var retryAfter: Int?
 
-        static let noSession = Failure(status: 404, code: "session_not_found", message: "That session isn't running on the Mac any more.")
-        static let notReady = Failure(status: 503, code: "not_ready", message: "Side A is still starting Remote.", retryAfter: 2)
+        static let noSession = Failure(status: 404, code: .sessionNotFound, message: "That session isn't running on the Mac any more.")
+        static let notReady = Failure(status: 503, code: .notReady, message: "Side A is still starting Remote.", retryAfter: 2)
 
         static func invalid(_ message: String, _ reason: String) -> Failure {
-            Failure(status: 422, code: "invalid_reply", message: message, details: ["reason": reason])
+            Failure(status: 422, code: .invalidReply, message: message, details: ["reason": reason])
         }
 
         static func cannotDeliver(_ refusal: RemoteDelivery.Refusal) -> Failure {
             let message = switch (refusal.code, refusal.hint) {
             case ("session_waiting", _): "This session is waiting for an answer. Answer its request first."
             case ("not_hosted", _): "Keys only go to sessions Side A hosts."
-            case (_, "continueOnPhone"?): "This session isn't running. Continue it on your iPhone to reply."
+            case (_, "continueOnPhone"?): "This session isn't running. Continue it in Side A Remote to reply."
             case (_, "queueFull"?): "Five replies are already waiting for this session."
             case (_, "setup"?): "Turn on the agent's hooks in Side A's Remote settings to reach this session."
             default: "Side A can't get this to the session right now."
             }
-            return Failure(status: 409, code: refusal.code, message: message, details: refusal.hint.map { ["hint": $0] })
+            return Failure(status: 409, code: ErrorCode(rawValue: refusal.code), message: message, details: refusal.hint.map { ["hint": $0] })
         }
 
         static func hosted(_ error: HostedError) -> Failure {
             let message = error.errorDescription ?? "Side A couldn't type into that session."
-            switch error {
-            case .unavailable: return Failure(status: 503, code: "tmux_missing", message: message, retryAfter: 60)
-            case .sessionWaiting: return Failure(status: 409, code: "session_waiting", message: message)
-            case .notHosted: return Failure(status: 409, code: "not_hosted", message: message)
-            case .composerBusy: return Failure(status: 409, code: "cannot_deliver", message: message, details: ["hint": "composerBusy"])
-            case .alreadyLive: return Failure(status: 409, code: "cannot_deliver", message: message, details: ["hint": "alreadyLive"])
-            case .refused: return Failure(status: 409, code: "cannot_deliver", message: message)
-            case .failed: return Failure(status: 500, code: "internal", message: message)
-            case .notResumed(let name, let command):
-                return Failure(status: 502, code: "not_resumed", message: message, details: ["hosted": name, "command": command, "hint": "tryAgain"])
-            }
+            let answer = error.answer
+            var details = answer.hint.map { ["hint": $0.rawValue] }
+            if case .notResumed(let name, let command) = error { details?["hosted"] = name; details?["command"] = command }
+            return Failure(status: answer.status, code: answer.code, message: message, details: details, retryAfter: answer.retryAfter)
         }
 
         static func codex(_ error: CodexTerminals.Failure) -> Failure {
             switch error {
             case .notAttached, .closed:
-                Failure(status: 409, code: "cannot_deliver", message: "Side A lost its connection to Codex. Try again in a moment.", details: ["hint": "tryAgain"])
-            case .rpc(let message): Failure(status: 409, code: "cannot_deliver", message: "Codex didn't take it: \(message)")
-            case .unsupported: Failure(status: 409, code: "unsupported", message: "This version of Codex can't change settings from Side A.")
-            case .invalid(let message): Failure(status: 422, code: "invalid_settings", message: message)
-            case .busy: Failure(status: 409, code: "cannot_deliver", message: "Codex is working. Try when it's idle.", details: ["hint": "notIdle"])
+                Failure(status: 409, code: .cannotDeliver, message: "Side A lost its connection to Codex. Try again in a moment.", details: ["hint": "tryAgain"])
+            case .rpc(let message): Failure(status: 409, code: .cannotDeliver, message: "Codex didn't take it: \(message)")
+            case .unsupported: Failure(status: 409, code: .unsupported, message: "This version of Codex can't change settings from Side A.")
+            case .invalid(let message): Failure(status: 422, code: .invalidSettings, message: message)
+            case .busy: Failure(status: 409, code: .cannotDeliver, message: "Codex is working. Try when it's idle.", details: ["hint": "notIdle"])
             }
         }
 
@@ -219,7 +212,7 @@ import SideAProtocol
     func reply(_ id: String, _ message: Message) async throws(Failure) -> ReplyResult {
         let plan = prepare(id, message)
         if case .keys(_, _, true) = plan {
-            throw Failure(status: 409, code: "request_pending", message: "Answer the open request first.")
+            throw Failure(status: 409, code: .requestPending, message: "Answer the open request first.")
         }
         return try await send(plan, message)
     }
@@ -304,7 +297,7 @@ import SideAProtocol
             switch island.remoteFollowUp(session: conversation, turnID: turnID, text: text) {
             case .sent: return .done(ReplyResult(delivery: .followUp, sessionID: target.key))
             case .turnChanged:
-                return .failed(Failure(status: 409, code: "turn_changed", message: "The session moved on since you read it. Look again before replying."))
+                return .failed(Failure(status: 409, code: .turnChanged, message: "The session moved on since you read it. Look again before replying."))
             case .noWaiter: return inbox(text, target: target) ?? .failed(.cannotDeliver(.cannot))
             }
         case .typed:
@@ -314,7 +307,7 @@ import SideAProtocol
             guard let hosted else { return .failed(.cannotDeliver(.notHosted)) }
             let open = island.remoteKeysGuard(conversation: target.conversation, pid: target.live?.pid)
             if open.destructive {
-                return .failed(Failure(status: 409, code: "request_pending", message: "Answer the open request first; keys can't stand in for its Face ID."))
+                return .failed(Failure(status: 409, code: .requestPending, message: "Answer the open request first; keys can't stand in for its Face ID."))
             }
             return .keys(name: hosted, key: target.key, guarded: open.pending)
         case .refused(let refusal):
@@ -359,7 +352,7 @@ import SideAProtocol
     func takeBack(_ id: String) throws(Failure) {
         guard let live = Target(id, store: store)?.live else { throw .noSession }
         guard store.sessions.cancelMail(live) else {
-            throw Failure(status: 404, code: "not_found", message: "The session already read it, so there's nothing to take back.")
+            throw Failure(status: 404, code: .notFound, message: "The session already read it, so there's nothing to take back.")
         }
     }
 
@@ -372,6 +365,34 @@ import SideAProtocol
             case .notClaude: throw .cannotDeliver(.cannot)
             case .failed: throw Self.internalFailure("Side A couldn't leave the note for this session.")
             }
+        }
+    }
+}
+
+extension HostedError {
+    /// What the phone acts on besides the code: a hosted failure it can try again, or one that names what is in the way.
+    enum Hint: String, Equatable, Sendable {
+        case composerBusy, alreadyLive, tryAgain
+    }
+
+    /// How a hosted failure answers the phone. The words are `errorDescription`, here and in the Sessions window.
+    struct Answer: Equatable, Sendable {
+        let status: Int
+        let code: ErrorCode
+        var hint: Hint?
+        var retryAfter: Int?
+    }
+
+    var answer: Answer {
+        switch self {
+        case .unavailable: Answer(status: 503, code: .tmuxMissing, retryAfter: 60)
+        case .sessionWaiting: Answer(status: 409, code: .sessionWaiting)
+        case .notHosted: Answer(status: 409, code: .notHosted)
+        case .composerBusy: Answer(status: 409, code: .cannotDeliver, hint: .composerBusy)
+        case .alreadyLive: Answer(status: 409, code: .cannotDeliver, hint: .alreadyLive)
+        case .refused: Answer(status: 409, code: .cannotDeliver)
+        case .failed: Answer(status: 500, code: .internalError)
+        case .notResumed: Answer(status: 502, code: .notResumed, hint: .tryAgain)
         }
     }
 }

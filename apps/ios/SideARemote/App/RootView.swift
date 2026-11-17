@@ -23,6 +23,30 @@ struct RootView: View {
 
 enum AppTab: Hashable { case sessions, accounts, settings, search }
 
+/// Where a link lands: its tab, and the path it gives Sessions or Accounts (nil leaves that path as it was). Both the
+/// phone stack and the iPad's split read the same Sessions path.
+struct LinkLanding: Equatable {
+    var tab: AppTab
+    var sessions: [Route]?
+    var accounts: [Route]?
+}
+
+extension DeepLink {
+    /// `current` is the Mac an account link means, the one on screen.
+    func landing(mac current: String) -> LinkLanding {
+        switch self {
+        case .session(let id, let mac): LinkLanding(tab: .sessions, sessions: [.session(id, mac: mac)])
+        // The request's session, if it has one, opens once the request is known.
+        case .request: LinkLanding(tab: .sessions)
+        case .mac: LinkLanding(tab: .sessions, sessions: [])
+        case .accounts: LinkLanding(tab: .accounts)
+        case .account(let id): LinkLanding(tab: .accounts, accounts: [.account(id, mac: current)])
+        case .search: LinkLanding(tab: .search)
+        case .settings: LinkLanding(tab: .settings)
+        }
+    }
+}
+
 enum DeepLink: Equatable {
     case session(SessionKey, mac: String), request(RequestID, mac: String), mac(String), accounts, account(String), search, settings
 
@@ -87,12 +111,18 @@ struct MainTabs: View {
     @State private var tab: AppTab = .sessions
     @State private var sessionsPath: [Route] = []
     @State private var accountsPath: [Route] = []
+    @State private var settingsPath: [SettingsPage] = []
+    /// New Session is presented here, over every tab, so ⌘N works with the sidebar hidden and a link or a window
+    /// changing width can't take the sheet away.
+    @State private var showsNewSession = false
     @State private var approvals = ApprovalPresenter()
     /// A pairing link opened while paired: Pair Again, or another Mac.
     @State private var linked: PairingTarget?
     @State private var awaited: DeepLink?
     @State private var askingDemo = false
     @State private var historyQuery = ""
+    @Environment(KeyRequests.self) private var keys
+    @Environment(\.horizontalSizeClass) private var width
     @Namespace private var sessionsZoom
     @Namespace private var accountsZoom
     @Namespace private var searchZoom
@@ -100,9 +130,11 @@ struct MainTabs: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab("Sessions", systemImage: "rectangle.stack", value: .sessions) {
-                NavigationStack(path: $sessionsPath) {
-                    SessionsView()
-                        .routeDestinations(path: sessionsPath)
+                AdaptiveSessions(path: $sessionsPath, openWaiting: { show($0) }) {
+                    NavigationStack(path: $sessionsPath) {
+                        SessionsView()
+                            .routeDestinations(path: sessionsPath)
+                    }
                 }
                 .environment(\.zoomNamespace, sessionsZoom)
             }
@@ -114,13 +146,15 @@ struct MainTabs: View {
                         .routeDestinations(path: accountsPath)
                 }
                 .environment(\.zoomNamespace, accountsZoom)
+                .readableColumn()
             }
 
             Tab("Settings", systemImage: "gear", value: .settings) {
-                NavigationStack {
+                NavigationStack(path: $settingsPath) {
                     SettingsView()
                 }
                 .environment(root.current)
+                .readableColumn()
             }
 
             Tab(value: .search, role: .search) {
@@ -137,8 +171,19 @@ struct MainTabs: View {
                 // The Search tab is for searching, so the field never hides under the title.
                 .searchable(text: $historyQuery, placement: .navigationBarDrawer(displayMode: .always), prompt: "Asks, replies, commands")
                 .environment(\.zoomNamespace, searchZoom)
+                .readableColumn()
             }
         }
+        // An iPad window widened past compact keeps the tab bar it had: in the navigation row, over the session's
+        // title. Leaving the tab and coming straight back lays the bar out in its own row, as at launch, and unlike
+        // building the tab view again it keeps every tab's pages, sheets, terminal and drafts.
+        .onChange(of: width) {
+            guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+            let current = tab
+            tab = current == .settings ? .accounts : .settings
+            Task { @MainActor in tab = current }
+        }
+        .environment(\.windowIsRegular, width == .regular)
         // Minimized, the bar split into the current tab and a separate search button; it stays whole.
         .tabBarMinimizeBehavior(.never)
         .waitingAccessory(showsAccessory) { show($0) }
@@ -156,10 +201,56 @@ struct MainTabs: View {
             MessageSheet(sessionID: target.session)
                 .environment(root.model(owning: target.session) ?? model)
         }
+        .sheet(isPresented: $showsNewSession) {
+            NewSessionSheet { hosted, mac in
+                tab = .sessions
+                // Pushed until its transcript takes over; beside the list on iPad.
+                sessionsPath = [.starting(hosted.name, mac: mac.macID)]
+            }
+            .environment(model)
+            .environment(\.windowIsRegular, width == .regular)
+        }
+        .onChange(of: keys.newSession) { if root.visible.contains(where: { $0.tools.can(.hosted) }) { showsNewSession = true } }
         .onOpenURL(perform: open)
+        #if DEBUG
+        .task {
+            // `--open-session lan|cache`: opens that demo session on launch, so the composer is one launch away.
+            let arguments = ProcessInfo.processInfo.arguments
+            guard let index = arguments.firstIndex(of: "--open-session"), index + 1 < arguments.count else { return }
+            let id = arguments[index + 1] == "cache" ? DemoData.ID.cache : DemoData.ID.lan
+            try? await Task.sleep(for: .milliseconds(400))
+            sessionsPath = [.session(id, mac: root.model.macID)]
+        }
+        #endif
         .task(id: awaited) { await awaitRequest() }
         .fullScreenCover(item: $linked) { PairingScreen(invitation: $0.invitation) }
         .demoConfirmation(isPresented: $askingDemo) { root.openDemo() }
+        .onAppear { keys.actions = commands }
+        .onDisappear { keys.actions = nil }
+        #if DEBUG
+        .task {
+            if let url = LaunchLinks.url { open(url) }
+            if LaunchLinks.newSession { keys.newSession += 1 }
+        }
+        #endif
+    }
+
+    /// The keyboard's ways around: each opens what its button or tab does.
+    private var commands: RemoteCommandActions {
+        RemoteCommandActions(
+            canStart: { root.visible.contains { $0.tools.can(.hosted) } },
+            newSession: { tab = .sessions; keys.newSession += 1 },
+            show: { tab = $0 },
+            previousSession: { openNeighbor(step: -1) },
+            nextSession: { openNeighbor(step: 1) })
+    }
+
+    /// Read when the key is pressed, so this view doesn't redraw with every session's change.
+    private func openNeighbor(step: Int) {
+        let current = SplitPath.selection(sessionsPath, session: root.session(hosted:mac:))
+        guard let route = SplitPath.neighbor(of: current, in: root.sidebarOrder, step: step) else { return }
+        tab = .sessions
+        sessionsPath = [route]
     }
 
     /// `sidea-remote://session/<mac>/<id>`, `request/<mac>/<rid>`, `mac/<mac>`, `accounts`, `accounts/<id>`, `search`, `settings`. Notifications,
@@ -173,27 +264,17 @@ struct MainTabs: View {
         case .deep(let deep): link = deep
         case .none: return
         }
+        let landing = link.landing(mac: model.macID)
+        tab = landing.tab
+        if let path = landing.sessions { sessionsPath = path }
+        if let path = landing.accounts { accountsPath = path }
         switch link {
-        case .session(let id, let mac):
-            tab = .sessions
-            sessionsPath = [.session(id, mac: mac)]
         case .request(let id, let mac):
-            tab = .sessions
             // Requests aren't kept between launches, so one tapped from a notification is usually still on its way.
             if let request = (root.model(for: mac) ?? model).requests.request(id) { show(request, mac: mac) } else { awaited = link }
         case .mac(let id):
-            tab = .sessions
-            sessionsPath = []
             if root.macs.count > 1, root.model(for: id) != nil { root.shown = id }
-        case .accounts:
-            tab = .accounts
-        case .account(let id):
-            tab = .accounts
-            accountsPath = [.account(id, mac: model.macID)]
-        case .search:
-            tab = .search
-        case .settings:
-            tab = .settings
+        default: break
         }
     }
 
@@ -231,6 +312,8 @@ struct MainTabs: View {
     /// it points to, where the request is already the last item. Never on Accounts, Search or Settings.
     private var showsAccessory: Bool {
         guard let first = root.waiting.first, tab == .sessions else { return false }
+        // The iPad's split view keeps it under the sidebar instead.
+        if RootLayout.of(idiom: UIDevice.current.userInterfaceIdiom, width: width) == .split { return false }
         switch sessionsPath.last {
         case nil: return true
         case .session(let id, _)?: return first.sessionID != id

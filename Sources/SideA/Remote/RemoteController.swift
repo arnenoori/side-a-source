@@ -17,13 +17,13 @@ final class RemoteController {
     /// The Host the phone sends over the relay: it can't resolve, so no browser can send it (docs/remote/tunnel.md).
     nonisolated static let relayHost = "sidea-relay.invalid"
     static var enabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
-    /// Kept by the controller from its device list, so the island can ask without reading the Keychain.
-    static var hasDevices = false
-    /// Remote is on and has a phone to serve: hooks and Stop waiters stay, and events are recorded.
-    static var active: Bool { enabled && hasDevices }
     static var basePort: UInt16 { AppCopies.isRelease ? 47800 : 47900 }
 
     var on = RemoteController.enabled
+    /// Kept from the device list, so what asks whether Remote is active never reads the Keychain.
+    @ObservationIgnored private(set) var hasDevices = false
+    /// Remote is on and has a phone to serve: hooks and Stop waiters stay, and events are recorded.
+    var active: Bool { on && hasDevices }
     private(set) var tailscale: TailscaleStatus?
     /// Nil until checked, or when `socketfilterfw` couldn't be read.
     private(set) var firewall: FirewallStatus?
@@ -155,7 +155,7 @@ final class RemoteController {
         let info = Bundle.main.infoDictionary
         RemoteLog.shared("Side A \(info?["CFBundleShortVersionString"] as? String ?? "?") (\(info?["CFBundleVersion"] as? String ?? "?")) "
                          + "\(Bundle.main.bundleIdentifier ?? "") at \(Bundle.main.bundlePath); port \(port), \(devices.devices.count) paired")
-        Self.hasDevices = !devices.devices.isEmpty
+        hasDevices = !devices.devices.isEmpty
         if devices.unreadable != nil { error = devices.unreadable }
     }
 
@@ -447,7 +447,7 @@ final class RemoteController {
 
     /// Recording, and the live loop behind it, run exactly while Remote is active.
     private func recordIfActive() {
-        if Self.active { events?.start(); codex.start(); Task { await inbox.refresh() } } else { events?.stop(); codex.stop(); push.stopScheduling() }
+        if active { events?.start(); codex.start(); Task { await inbox.refresh() } } else { events?.stop(); codex.stop(); push.stopScheduling() }
     }
 
     func socketsChanged(_ counts: [String: Int]) {
@@ -632,7 +632,7 @@ final class RemoteController {
         identity = nil
         key.reset()
         for device in devices.devices {
-            try? devices.remove(device.id)
+            do { try devices.remove(device.id) } catch { RemoteLog.shared("couldn't remove device \(device.id.prefix(6)): \(error.localizedDescription)") }
             invalidate(device.id)
         }
         devicesChanged()
@@ -640,11 +640,11 @@ final class RemoteController {
     }
 
     private func devicesChanged() {
-        let had = Self.hasDevices
-        Self.hasDevices = !devices.devices.isEmpty
+        let had = hasDevices
+        hasDevices = !devices.devices.isEmpty
         server?.setDevices(devices.hashes, keys: devices.confirmKeys)
         tunnel?.setDevices(tunnelDevices)
-        if had && !Self.hasDevices, !Island.on { Task { await store?.setIsland(nil, "off") } }
+        if had && !hasDevices, !Island.on { Task { await store?.setIsland(nil, "off") } }
         recordIfActive()
         store?.startNotifications()
     }
@@ -678,10 +678,12 @@ final class RemoteController {
         let rotation = capabilities.contains(.rotation), groups = capabilities.contains(.readyGroups)
         guard let known = devices.devices.first(where: { $0.id == device }),
               known.rotationPushes ?? false != rotation || known.readyGroups ?? false != groups else { return }
-        try? devices.update(device) {
-            $0.rotationPushes = rotation
-            $0.readyGroups = groups
-        }
+        do {
+            try devices.update(device) {
+                $0.rotationPushes = rotation
+                $0.readyGroups = groups
+            }
+        } catch { RemoteLog.shared("couldn't save device \(device.prefix(6))'s capabilities: \(error.localizedDescription)") }
     }
 
     /// Hosting only while tmux is there to host.

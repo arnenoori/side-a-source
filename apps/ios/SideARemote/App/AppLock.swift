@@ -2,6 +2,71 @@ import LocalAuthentication
 import SideARemoteShared
 import SwiftUI
 
+/// What this device unlocks with, for copy that names it: an iPad may have Touch ID, and a device with none enrolled
+/// falls back to its passcode.
+enum Biometry: Equatable {
+    case faceID, touchID, opticID, passcode
+
+    /// As of the app's last activation (`DeviceBiometry`), so a view body never waits on LocalAuthentication.
+    static var current: Biometry { DeviceBiometry.shared.current }
+
+    /// Asks LocalAuthentication. A biometry locked out for a while after failed tries is still the one the device has,
+    /// so it keeps its name; one not enrolled, or none, is the passcode.
+    static func read() -> Biometry {
+        let context = LAContext()
+        var error: NSError?
+        let usable = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+        guard usable || error?.code == LAError.biometryLockout.rawValue else { return .passcode }
+        return of(context.biometryType)
+    }
+
+    static func of(_ type: LABiometryType) -> Biometry {
+        switch type {
+        case .faceID: .faceID
+        case .touchID: .touchID
+        case .opticID: .opticID
+        default: .passcode
+        }
+    }
+
+    /// "Face ID", or "Passcode" for a title.
+    var name: String {
+        switch self {
+        case .faceID: "Face ID"
+        case .touchID: "Touch ID"
+        case .opticID: "Optic ID"
+        case .passcode: "Passcode"
+        }
+    }
+
+    /// "Face ID", or "your passcode" inside a sentence.
+    var phrase: String { self == .passcode ? "your passcode" : name }
+
+    var symbol: String {
+        switch self {
+        case .faceID: "faceid"
+        case .touchID: "touchid"
+        case .opticID: "opticid"
+        case .passcode: "lock"
+        }
+    }
+}
+
+/// The device's biometry, read once at launch and again each time the app becomes active (Settings can enroll or
+/// remove it meanwhile), and watched by the views that name it.
+@Observable
+final class DeviceBiometry {
+    nonisolated deinit {}
+
+    static let shared = DeviceBiometry()
+    private(set) var current = Biometry.read()
+
+    func refresh() {
+        let now = Biometry.read()
+        if now != current { current = now }
+    }
+}
+
 /// Face ID or the passcode on opening Side A Remote, and on coming back after `after` away (on by default,
 /// Settings › Security). A phone left unlocked shouldn't hand over sessions, the terminal and Allow.
 @Observable

@@ -112,5 +112,55 @@ private final class Calls: @unchecked Sendable {
     #expect(store.island.codexMail == nil)
     #expect(calls.all.isEmpty, "\(calls.all)")
     #expect(!store.hostingWanted && !store.hosted.available && keychain.memoryReads == 0 && !remote.opened)
-    #expect(!RemoteController.active && !remote.codex.running)
+    #expect(!remote.active && !remote.codex.running)
+}
+
+private func phone(_ id: String) -> RemoteDevice {
+    RemoteDevice(id: id, name: "iPhone", model: "", system: "", app: "1", build: 1, hash: Data(), secretHash: "", created: 0)
+}
+
+/// Whether Remote is active is each controller's own: its switch and its phones, read by the island through its store.
+@MainActor @Test func eachControllerIsActiveOnItsOwnSwitchAndItsOwnPhones() async throws {
+    func controller(on: Bool, phones: [String]) throws -> (AccountStore, RemoteController) {
+        let store = AccountStore(demo: true)
+        store.testBridge = { _ in Data("{}".utf8) }
+        let remote = RemoteController(store: store, keychain: .inMemory(), addresses: ["127.0.0.1"])
+        store.remote = remote
+        remote.on = on
+        for id in phones { try remote.devices.add(phone(id), replacing: nil) }
+        // Looks at the device list without changing it, as a revoke of someone who isn't paired does.
+        remote.revoke("nobody")
+        return (store, remote)
+    }
+    let (storeA, a) = try controller(on: true, phones: ["d1", "d2"])
+    let (storeB, b) = try controller(on: true, phones: [])
+    let (storeC, c) = try controller(on: false, phones: ["d1"])
+    #expect(a.active && !b.active && !c.active)
+    #expect(storeA.island.keepsWaiters && !storeB.island.keepsWaiters && !storeC.island.keepsWaiters)
+
+    // One controller's phones and switch don't reach another.
+    c.on = true
+    #expect(c.active && !b.active)
+    b.on = false
+    a.revoke("d2")
+    #expect(a.active && c.active)
+}
+
+/// Removing the last phone ends what only a phone needed, though the switch stays on.
+@MainActor @Test func removingTheLastPhoneWhileRemoteStaysOnMakesItInactive() async throws {
+    let store = AccountStore(demo: true)
+    store.testBridge = { _ in Data("{}".utf8) }
+    let remote = RemoteController(store: store, keychain: .inMemory(), addresses: ["127.0.0.1"])
+    store.remote = remote
+    remote.on = true
+    try remote.devices.add(phone("d1"), replacing: nil)
+    remote.revoke("nobody")
+    #expect(remote.active && store.island.keepsWaiters && remote.on)
+
+    remote.revoke("d1")
+    #expect(remote.on && !remote.active && !store.island.keepsWaiters)
+    // A phone paired again makes it active without touching the switch.
+    try remote.devices.add(phone("d3"), replacing: nil)
+    remote.revoke("nobody")
+    #expect(remote.active)
 }

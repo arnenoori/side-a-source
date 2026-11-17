@@ -94,7 +94,7 @@ extension RemoteRoutes {
         Route("DELETE", "v1/sessions/{id}/ports/{port}/preview", closePreview),
     ]
 
-    static let portNotFound = RemoteServer.error(404, "port_not_found", "That session isn't listening on that port any more.")
+    static let portNotFound = RemoteServer.error(404, .portNotFound, "That session isn't listening on that port any more.")
 
     @Sendable static func openPreview(_ context: Context) async -> HTTPResponse {
         guard let port = context.params["port"].flatMap(Int.init), let host = context.request.headers["Host"] else { return portNotFound }
@@ -246,7 +246,7 @@ enum PreviewProxy {
                                            "strict-transport-security", "alt-svc"]
 
     static func forward(_ request: HTTPRequest, port: UInt16, target: String, cookie: String?) async -> HTTPResponse {
-        guard let url = URL(string: "http://127.0.0.1:\(port)\(target)") else { return RemoteServer.error(400, "bad_request", "That address can't be previewed.") }
+        guard let url = URL(string: "http://127.0.0.1:\(port)\(target)") else { return RemoteServer.error(400, .badRequest, "That address can't be previewed.") }
         var outgoing = URLRequest(url: url)
         outgoing.httpMethod = request.method
         outgoing.httpBody = request.method == "GET" ? nil : request.body
@@ -263,9 +263,9 @@ enum PreviewProxy {
         do {
             (data, http) = try await fetch(outgoing)
         } catch is TooLarge {
-            return RemoteServer.error(502, "preview_too_large", "That response is too large to preview.")
+            return RemoteServer.error(502, .previewTooLarge, "That response is too large to preview.")
         } catch {
-            return RemoteServer.error(502, "preview_unreachable", "Nothing answered on port \(port). Is the dev server still running?")
+            return RemoteServer.error(502, .previewUnreachable, "Nothing answered on port \(port). Is the dev server still running?")
         }
         var response = HTTPResponse(status: http.statusCode, body: data)
         for (key, value) in http.allHeaderFields {

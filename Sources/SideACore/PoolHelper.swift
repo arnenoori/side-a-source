@@ -66,9 +66,10 @@ public enum PoolBridge {
     public struct Failure: LocalizedError, BridgeError, Sendable {
         public let message: String
         public var kind: BridgeErrorKind = .other
+        public var replacedBy: String?
         public var errorDescription: String? { message }
         public init(message: String, kind: BridgeErrorKind = .other) { self.message = message; self.kind = kind }
-        public init(stderr: String) { (kind, message) = BridgeErrorKind.parse(stderr) }
+        public init(stderr: String) { (kind, message, replacedBy) = BridgeErrorKind.details(stderr) }
     }
 
     public static func run(python: String, bridge: String, root: URL, _ args: [String], timeout: TimeInterval = 60) async throws -> Data {

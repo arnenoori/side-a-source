@@ -1,6 +1,7 @@
 import PhotosUI
 import SideAProtocol
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What the follow-mode button says when it buds off the composer.
 enum FollowBadge: Equatable {
@@ -76,6 +77,7 @@ struct Composer: View {
 
     @Namespace private var glass
     @State private var showsAdd = false
+    @State private var surface = AttachSurface()
     @State private var sends = 0
     @State private var interrupts = 0
     /// Where the caret is, for the "/" or "$" word it's in.
@@ -117,7 +119,7 @@ struct Composer: View {
                         .glassEffectTransition(.matchedGeometry)
                 }
                 if let session {
-                    AttachmentTray(session: session.id)
+                    AttachmentTray(session: session.id, landing: surface.drawer.landing) { id, frame in surface.drawer.trayFrames[id] = frame }
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let suggestion {
@@ -125,17 +127,20 @@ struct Composer: View {
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                 }
                 HStack(alignment: .bottom, spacing: Space.s) {
-                    Button {
-                        showsAdd = true
-                    } label: {
+                    Button(action: openDrawer) {
                         Image(systemName: "plus")
                             .font(.system(size: 19, weight: .medium))
                             .frame(width: 48, height: 48)
                             .contentShape(.circle)
+                            .hoverEffect(.highlight)
                     }
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
                     .glassEffectID("plus", in: glass)
+                    // The drawer opens as this circle, so it stands aside while the drawer is up.
+                    .opacity(surface.drawer.hidesPlus ? 0 : 1)
+                    .animation(nil, value: surface.drawer.hidesPlus)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { surface.drawer.plusFrame = $0 }
                     .accessibilityLabel("Add")
                     .accessibilityHint("Attachments, model and commands")
 
@@ -143,6 +148,7 @@ struct Composer: View {
                         .glassEffectID("field", in: glass)
                 }
                 .disabled(disabledReason != nil)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { surface.drawer.composerFrame = $0 }
                 if unsent != nil || notice != nil || disabledReason != nil || dropped != nil || blocked != nil {
                     statusLine
                         .padding(.horizontal, Space.xs)
@@ -169,6 +175,48 @@ struct Composer: View {
                 text = command + " "
                 focused.wrappedValue = true
             }
+        }
+        #if DEBUG
+        .task { await debugLaunch() }
+        #endif
+        .attachments(surface, key: session?.id, tools: model.tools, focused: focused)
+    }
+
+    #if DEBUG
+    /// `--focus-composer`, `--tray-full`, `--drawer menu|photos`: states for screenshots and checks, reached without taps.
+    private func debugLaunch() async {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard arguments.contains("--focus-composer") || arguments.contains("--tray-full") || arguments.contains("--drawer") || arguments.contains("--show-picker") else { return }
+        try? await Task.sleep(for: .milliseconds(1200))
+        // `--show-picker` / `--show-files`: the system pickers without the drawer, to tell the drawer from the simulator.
+        if arguments.contains("--show-picker") { surface.showsPicker = true }
+        if arguments.contains("--tray-full"), let session {
+            for n in 0..<model.tools.attachments.room(session.id) {
+                let picture = UIGraphicsImageRenderer(size: CGSize(width: 200, height: 200)).image { context in
+                    UIColor(hue: CGFloat(n) / 10, saturation: 0.7, brightness: 0.9, alpha: 1).setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+                    ("\(n + 1)" as NSString).draw(at: CGPoint(x: 70, y: 50), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 90), .foregroundColor: UIColor.white])
+                }
+                model.tools.attachments.add(picture.jpegData(compressionQuality: 0.8)!, to: session.id)
+            }
+        }
+        if arguments.contains("--focus-composer") { focused.wrappedValue = true; try? await Task.sleep(for: .milliseconds(900)) }
+        if let index = arguments.firstIndex(of: "--drawer"), index + 1 < arguments.count {
+            openDrawer()
+            if arguments[index + 1] == "photos" { try? await Task.sleep(for: .milliseconds(700)); surface.drawer.showPhotos() }
+            // `--blur-after-drawer`: the keyboard goes away while the drawer is open.
+            if arguments.contains("--blur-after-drawer") { try? await Task.sleep(for: .milliseconds(1800)); focused.wrappedValue = false }
+        }
+    }
+    #endif
+
+    /// Photos left in the tray, 0 when the Mac can't take uploads.
+    private var room: Int { surface.room(session?.id, tools: model.tools) }
+
+    /// The + opens the drawer when there is something to attach to; otherwise the options sheet, as before.
+    private func openDrawer() {
+        if !surface.open(key: session?.id, tools: model.tools, reduceMotion: reduceMotion, options: { showsAdd = true }), session != nil {
+            showsAdd = true
         }
     }
 
@@ -231,6 +279,7 @@ struct Composer: View {
                 // Glass renders what's on it vibrant; the send circle stays solid label colour.
                 .compositingGroup()
                 .hitArea(horizontal: 4, vertical: 4)
+                .hoverEffect(.highlight)
         }
         .buttonStyle(.plain)
         .disabled(idle)
@@ -346,8 +395,7 @@ struct Composer: View {
     }
 }
 
-/// v0's Add to Chat: Camera / Photos / Files / Paste tiles, then Model, Effort and Commands from the
-/// Mac's `/v1/options`.
+/// Model, Effort and Commands from the Mac's `/v1/options`. Photos, Camera and Files are the drawer's.
 struct AddSheet: View {
     let session: RemoteSession?
     /// A command picked from the list goes into the field.
@@ -355,9 +403,6 @@ struct AddSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
     @Environment(\.dismiss) private var dismiss
-    @State private var photos: [PhotosPickerItem] = []
-    @State private var importsFiles = false
-    @State private var takesPhoto = false
 
     private var settings: SessionSettings? { session.map(model.tools.settings(of:)) }
     private var models: [ModelOption] { session.map(model.tools.models(for:)) ?? [] }
@@ -365,32 +410,10 @@ struct AddSheet: View {
     private func can(_ ability: SessionAbility) -> Bool { session?.abilities.contains(ability) == true }
     private var effortTitle: String { (settings?.effort ?? current?.defaultEffort)?.title ?? "Default" }
     private var commands: [AgentOptions.Option] { session.flatMap { model.tools.agent($0.agent)?.commands } ?? [] }
-    private var room: Int { session.map { model.tools.attachments.room($0.id) } ?? 0 }
 
     var body: some View {
         NavigationStack {
             List {
-                if let session, model.tools.can(.uploads), room > 0 {
-                    Section {
-                        HStack(spacing: Space.s) {
-                            if CameraPicker.isAvailable {
-                                AddTile(title: "Camera", symbol: "camera") { takesPhoto = true }
-                            }
-                            PhotosPicker(selection: $photos, maxSelectionCount: min(5, room), matching: .images) {
-                                AddTileLabel(title: "Photos", symbol: "photo.on.rectangle")
-                            }
-                            .buttonStyle(.plain)
-                            AddTile(title: "Files", symbol: "folder") { importsFiles = true }
-                            if UIPasteboard.general.hasImages {
-                                AddTile(title: "Paste", symbol: "doc.on.clipboard") {
-                                    if let data = UIPasteboard.general.image?.jpegData(compressionQuality: 0.95) { add([data], to: session) }
-                                }
-                            }
-                        }
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                    }
-                }
                 Section {
                     if can(.settingsModel), !models.isEmpty {
                         NavigationLink {
@@ -432,37 +455,11 @@ struct AddSheet: View {
             .navigationTitle("Add")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() } }
-            }
-            .fileImporter(isPresented: $importsFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
-                guard let session, case .success(let urls) = result else { return }
-                add(urls.prefix(room).compactMap { url in
-                    let scoped = url.startAccessingSecurityScopedResource()
-                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    return try? Data(contentsOf: url)
-                }, to: session)
-            }
-            .onChange(of: photos) { _, picked in
-                guard let session, !picked.isEmpty else { return }
-                photos = []
-                Task {
-                    var loaded: [Data] = []
-                    for item in picked { if let data = try? await item.loadTransferable(type: Data.self) { loaded.append(data) } }
-                    add(loaded, to: session)
-                }
-            }
-            .fullScreenCover(isPresented: $takesPhoto) {
-                CameraPicker { data in if let session { add([data], to: session) } }
-                    .ignoresSafeArea()
+                ToolbarItem(placement: .confirmationAction) { Button("Done", systemImage: "checkmark") { dismiss() }.keyboardShortcut(.cancelAction) }
             }
             .task { await model.tools.loadOptions() }
         }
         .presentationDetents([.medium, .large])
-    }
-
-    private func add(_ images: [Data], to session: RemoteSession) {
-        for data in images { model.tools.attachments.add(data, to: session.id) }
-        if !images.isEmpty { dismiss() }
     }
 
     /// Model and effort change as in the session's menu, signed through the Mac's settings.
@@ -470,31 +467,6 @@ struct AddSheet: View {
         guard let session else { return }
         actions.on(model).change(session, change, title: title)
         dismiss()
-    }
-}
-
-private struct AddTile: View {
-    let title: String
-    let symbol: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) { AddTileLabel(title: title, symbol: symbol) }.buttonStyle(.plain)
-    }
-}
-
-private struct AddTileLabel: View {
-    let title: String
-    let symbol: String
-
-    var body: some View {
-        VStack(spacing: Space.xs) {
-            Image(systemName: symbol).font(.title3)
-            Text(title).font(.footnote.weight(.medium))
-        }
-        .frame(maxWidth: .infinity, minHeight: 76)
-        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: Radius.inlineCard, style: .continuous))
-        .contentShape(.rect)
     }
 }
 

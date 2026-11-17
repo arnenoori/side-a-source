@@ -9,24 +9,24 @@ extension RemoteRoutes {
         Route("GET", "v1/state", state),
         Route("GET", "v1/sessions", sessions),
         Route("GET", "v1/sessions/{id}", session),
-        Route("POST", "v1/sessions/{id}/reply", reply),
-        Route("POST", "v1/sessions/{id}/interrupt", interrupt),
+        Route(QueuedRoutes.reply.method, QueuedRoutes.reply.pattern, reply),
+        Route(QueuedRoutes.interrupt.method, QueuedRoutes.interrupt.pattern, interrupt),
         Route("POST", "v1/sessions/{id}/settings", changeSettings),
         Route("GET", "v1/models", models),
         Route("GET", "v1/sessions/{id}/turns/{turnID}/diff", turnDiff),
         Route("POST", "v1/sessions/{id}/compact", compact),
         Route("POST", "v1/sessions/{id}/review", review),
-        Route("DELETE", "v1/sessions/{id}/mail", cancelMail),
+        Route(QueuedRoutes.takeBack.method, QueuedRoutes.takeBack.pattern, cancelMail),
         Route("GET", "v1/requests", requests),
         Route("GET", "v1/requests/{rid}", request),
-        Route("POST", "v1/requests/{rid}/answer", answer),
+        Route(QueuedRoutes.answer.method, QueuedRoutes.answer.pattern, answer),
         Route("GET", "v1/accounts", accounts),
         Route("POST", "v1/uploads", upload),
     ] + transcriptRoutes + hostedRoutes + setupRoutes + pushRoutes + previewRoutes + extraRoutes
 
     static let notReady = response(.notReady)
     static let noSession = response(.noSession)
-    static let noRequest = RemoteServer.error(404, "request_not_found", "That request isn't open on the Mac any more.")
+    static let noRequest = RemoteServer.error(404, .requestNotFound, "That request isn't open on the Mac any more.")
 
     /// Builds a list on the main actor and reads `seq` on the server's queue right after. Events recorded before the
     /// build are already queued ahead of the read, so the list reflects every event up to `seq` and none after it.
@@ -118,7 +118,7 @@ extension RemoteRoutes {
                 guard let server else { return notReady }
                 if let refusal = server.confirm(context.request, device: context.device, purpose: .allow, subject: subject, needs: needs) {
                     if let shown = ShownGates.shared[UUID(uuidString: rid) ?? UUID()], ConfirmProof(shown) < needs {
-                        return RemoteServer.error(409, "gate_changed", "This request needs more now than when you saw it. Look again.",
+                        return RemoteServer.error(409, .gateChanged, "This request needs more now than when you saw it. Look again.",
                                                   details: ["gate": gate.rawValue])
                     }
                     return refusal
@@ -135,16 +135,16 @@ extension RemoteRoutes {
                 var details = ["by": resolution.by.rawValue]
                 if let answer = resolution.answer { details["answer"] = answer.rawValue }
                 if let name = resolution.deviceName { details["deviceName"] = name }
-                return RemoteServer.error(409, "already_resolved", alreadyResolved(resolution), details: details)
+                return RemoteServer.error(409, .alreadyResolved, alreadyResolved(resolution), details: details)
             case .refused(let reason):
-                return RemoteServer.error(422, "invalid_answer", refusal(reason), details: ["reason": reason])
+                return RemoteServer.error(422, .invalidAnswer, refusal(reason), details: ["reason": reason])
             }
         }
     }
 
     static func alreadyResolved(_ resolution: RequestResolution) -> String {
         switch resolution.by {
-        case .device: "This was already answered on \(resolution.deviceName ?? "another iPhone")."
+        case .device: "This was already answered on \(resolution.deviceName ?? "another device")."
         case .mac: "This was already answered on the Mac."
         case .terminal: "This was already answered in the terminal."
         case .handedBack: "This was handed back to the terminal."
@@ -196,7 +196,7 @@ extension RemoteRoutes {
         guard let reply = context.body(RemoteReply.self) else { return badJSON }
         let id = context.params["id"] ?? ""
         guard let root = await MainActor.run(body: { context.controller.store?.root }) else { return notReady }
-        guard let images = RemoteUploads.paths(reply.attachments, root: root) else {
+        guard let images = RemoteUploads.paths(reply.attachments, root: root, device: context.device) else {
             return invalidReply("A photo in this reply is no longer on the Mac. Attach it again.", "unknown_upload")
         }
         // Before the plan, which already delivers a note or a follow-up. A session that appears after this look is refused, never unsigned.
@@ -218,7 +218,7 @@ extension RemoteRoutes {
             let commands = SessionCommands(store: store)
             // What was just proven was judged a moment ago; a session that asks more now doesn't take it.
             if let now = commands.permissionMode(id), ConfirmProof(ConfirmPolicy.reply(reply, sessionMode: now)) > needs {
-                return .failed(SessionCommands.Failure(status: 409, code: "gate_changed", message: "This session needs more now than when you sent this. Send it again."))
+                return .failed(SessionCommands.Failure(status: 409, code: .gateChanged, message: "This session needs more now than when you sent this. Send it again."))
             }
             return commands.prepare(id, message)
         }
@@ -234,9 +234,9 @@ extension RemoteRoutes {
         }.value
         switch result {
         case .success(let upload): return json(201, upload)
-        case .failure(.unsupported): return RemoteServer.error(415, "unsupported_media", "Send a HEIC, JPEG, PNG, GIF or WebP photo.")
-        case .failure(.unreadable): return RemoteServer.error(415, "unsupported_media", "That photo couldn't be read.")
-        case .failure(.full): return RemoteServer.error(413, "uploads_full", "This iPhone's photos have filled their space on the Mac. Try again once the oldest clear, 7 days after they were sent.")
+        case .failure(.unsupported): return RemoteServer.error(415, .unsupportedMedia, "Send a HEIC, JPEG, PNG, GIF or WebP photo.")
+        case .failure(.unreadable): return RemoteServer.error(415, .unsupportedMedia, "That photo couldn't be read.")
+        case .failure(.full): return RemoteServer.error(413, .uploadsFull, "This device's photos have filled their space on the Mac. Try again once the oldest clear, 7 days after they were sent.")
         }
     }
 
@@ -280,7 +280,7 @@ extension RemoteRoutes {
     /// otherwise what `/v1/options` offers.
     @Sendable static func models(_ context: Context) async -> HTTPResponse {
         guard let agent = AgentProvider(rawValue: context.request.query["kind"] ?? "claude") else {
-            return RemoteServer.error(400, "bad_request", "kind is claude or codex.")
+            return RemoteServer.error(400, .badRequest, "kind is claude or codex.")
         }
         let session = context.request.query["session"]
         let live = await command(context) { commands throws(SessionCommands.Failure) in try await commands.models(agent, session: session) }

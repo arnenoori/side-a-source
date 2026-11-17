@@ -58,7 +58,7 @@ import Testing
     #expect(diff.turnID == "u1" && !diff.running && diff.files.map(\.path) == ["/tmp/work/a.js"])
     #expect(diff.files.first?.hunks.first?.lines == ["-x = 1", "+x = 2"])
     #expect(diff.note == "Edits made with Claude's file tools; shell changes aren't shown.")
-    await #expect(throws: SessionCommands.Failure(status: 404, code: "turn_not_found", message: "Side A has no changes for that turn.")) {
+    await #expect(throws: SessionCommands.Failure(status: 404, code: .turnNotFound, message: "Side A has no changes for that turn.")) {
         _ = try await commands.turnDiff(id, turn: "a1")
     }
     let row = WireBuilders.session(store.sessions.live[0], store: store, finished: [])

@@ -12,7 +12,7 @@ extension RemoteRoutes {
         Route("POST", "v1/diagnostics/push/{id}/received", diagnosticReceived),
     ]
 
-    static let noRelay = RemoteServer.error(503, "relay_unavailable", "This Mac has no notification relay set up.", retryAfter: 60)
+    static let noRelay = RemoteServer.error(503, .relayUnavailable, "This Mac has no notification relay set up.", retryAfter: 60)
 
     /// Stored at once; the relay registration follows, and its outcome shows in setup.
     @Sendable static func registerPush(_ context: Context) async -> HTTPResponse {
@@ -39,7 +39,7 @@ extension RemoteRoutes {
             guard let key = try? PushKey.derive(mine, peer: phone, macPublicKey: mine.publicKey.rawRepresentation, devicePublicKey: raw,
                                                 installID: installID, deviceID: device),
                   (try? controller.devices.update(device, { $0.pushKey = key.data; $0.pushKeyID = key.keyID })) == true else {
-                return RemoteServer.error(500, "internal", "Side A couldn't save the new notification key.")
+                return RemoteServer.error(500, .internalError, "Side A couldn't save the new notification key.")
             }
             return json(200, RekeyResponse(macPublicKey: mine.publicKey.rawRepresentation.base64URL, keyID: key.keyID.base64URL))
         }
@@ -55,6 +55,6 @@ extension RemoteRoutes {
     @Sendable static func diagnosticReceived(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? "", device = context.device
         let known = await MainActor.run { context.controller.push.received(id, from: device) }
-        return known ? HTTPResponse(status: 204) : RemoteServer.error(404, "not_found", "Side A didn't send that test.")
+        return known ? HTTPResponse(status: 204) : RemoteServer.error(404, .notFound, "Side A didn't send that test.")
     }
 }
