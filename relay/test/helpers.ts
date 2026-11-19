@@ -5,6 +5,13 @@ import { installIdFor, signedString } from '../src/auth';
 import { b64url, sha256, utf8 } from '../src/bytes';
 
 // The relay never reads its own hostname; any will do.
+/** The item at `index`, or a failed test when there isn't one. */
+export function nth<T>(items: ArrayLike<T>, index: number): T {
+  const item = items[index];
+  if (item === undefined) throw new Error(`expected an item at index ${index} of ${items.length}`);
+  return item;
+}
+
 export const BASE = 'https://relay.test';
 
 // Tests send from one address far faster than any Mac; the per-network request limit has its own tests.
@@ -14,7 +21,7 @@ export const testEnv = { ...env, REQUEST_LIMIT: open } as unknown as Env;
 // Every request's waitUntil work (a verification push, a cleanup) is done before the test looks: no guessing how long.
 export async function call(request: Request): Promise<Response> {
   const ctx = createExecutionContext();
-  const response = await worker.fetch!(incoming(request), testEnv, ctx);
+  const response = await worker.fetch(incoming(request), testEnv, ctx);
   await waitOnExecutionContext(ctx);
   return response;
 }
@@ -118,7 +125,7 @@ export class FakeApns {
       const match = url.pathname.match(/^\/3\/device\/([0-9a-f]+)$/);
       if (!url.host.endsWith('push.apple.com') || !match) throw new Error(`unexpected fetch ${request.url}`);
       const push: Pushed = {
-        host: url.host, token: match[1], headers: Object.fromEntries(request.headers), body: JSON.parse(await request.text()),
+        host: url.host, token: match[1] ?? '', headers: Object.fromEntries(request.headers), body: JSON.parse(await request.text()),
       };
       this.pushes.push(push);
       const queued = this.answers.get(push.token);
@@ -147,6 +154,11 @@ export class FakeApns {
 }
 
 // Registers, adds a phone, and answers the verification push the way the app would.
+/** Installs the pretend APNs for a test that never looks at what it was sent. */
+export function stubApns(): FakeApns {
+  return new FakeApns();
+}
+
 export async function paired(apns: FakeApns, mac?: Mac, device: Record<string, unknown> = {}) {
   mac ??= await newMac();
   await register(mac);

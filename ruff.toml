@@ -1,0 +1,30 @@
+# Python lint for bridge/ and scripts/. Run `scripts/lint-python.sh`; scripts/check.sh runs it when Python changes.
+# No formatter: this file only lints.
+#
+# bridge/ is copied into the app bundle and has to run on macOS's own Python 3.9, so the target is py39
+# and the UP rules never rewrite to newer syntax.
+target-version = "py39"
+line-length = 200
+
+[lint]
+select = ["E", "F", "B", "UP", "SIM", "PL", "S", "RUF"]
+ignore = [
+  # The code is dense on purpose: one-line statements, lambdas bound to names, long lines.
+  "E501", "E701", "E702", "E731",
+  # The bridge and the release scripts exist to run other programs, by name, from a known PATH.
+  "S603", "S607",
+  # Every SQL string built here interpolates only column constants and `?` placeholder lists; values are bound.
+  "S608",
+  # Complexity and size thresholds, magic numbers and lazy imports: design opinions, not bad practice.
+  "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PLC0415",
+  # Style only. SIM117 has no fix on 3.9, PLW0108 lambdas are often there to look a patched name up late,
+  # and RUF005 is unsafe where the operands are tuples.
+  "SIM117", "PLW0108", "RUF005",
+]
+
+[lint.per-file-ignores]
+# Tests assert, write fixture paths under /tmp, hold fake secrets, run shell fixtures and hash with sha1 like the code under test.
+# UP031: shell and JSON templates full of braces read better with % than as f-strings.
+"**/tests/**" = ["S101", "S105", "S106", "S108", "S314", "S324", "S602", "S606", "UP031"]
+# The release feed check is a script of asserts: the asserts are the checks, run as a plain `python3 file`.
+"scripts/verify-appcast.py" = ["S101"]

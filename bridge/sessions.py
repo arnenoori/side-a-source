@@ -20,6 +20,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import sys
 import time
 
 SCHEMA = """
@@ -360,7 +361,7 @@ def image_size(data):
 def describe(data, mime=None):
     """id, mime, bytes, width, height of decoded image bytes."""
     width, height = image_size(data)
-    return {"id": hashlib.sha1(data).hexdigest(), "mime": sniff(data) or mime or "application/octet-stream",
+    return {"id": hashlib.sha1(data).hexdigest(), "mime": sniff(data) or mime or "application/octet-stream",  # noqa: S324 -- an image id, not a security boundary
             "bytes": len(data), "width": width, "height": height}
 
 
@@ -383,7 +384,7 @@ def file_image(path):
     except OSError:
         pass
     mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
-    return {"id": hashlib.sha1(f"missing:{path}".encode()).hexdigest(), "mime": mime.get(Path(path).suffix.lower(), "image/png"),
+    return {"id": hashlib.sha1(f"missing:{path}".encode()).hexdigest(), "mime": mime.get(Path(path).suffix.lower(), "image/png"),  # noqa: S324 -- an image id, not a security boundary
             "bytes": None, "width": None, "height": None}
 
 
@@ -438,7 +439,7 @@ def claude_images(line, at, entry, name_of):
         except ValueError:
             return []
     found = []
-    for block, (source, call, name, part) in enumerate(blocks):
+    for block, (source, call, name, _part) in enumerate(blocks):
         if whole is None:
             start, end, mime = spans[block]
             data, offset, length = decode(line[start:end]), at + start, end - start
@@ -766,10 +767,10 @@ def index_codex(db, path, offset, state, threads):
 def index(root, seconds=20.0, paths=None):
     """Indexes what changed, newest files first, for up to `seconds`. Returns how many files remain.
     One indexer at a time: two would both append the same new lines."""
-    lock = open(Path(root) / "runtime" / "sessions.lock", "a") if (Path(root) / "runtime").is_dir() else None
+    lock = open(Path(root) / "runtime" / "sessions.lock", "a") if (Path(root) / "runtime").is_dir() else None  # noqa: SIM115 -- closed by the `with lock` below
     if lock is None:
         connect(root).close()
-        lock = open(Path(root) / "runtime" / "sessions.lock", "a")
+        lock = open(Path(root) / "runtime" / "sessions.lock", "a")  # noqa: SIM115 -- closed by the `with lock` below
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -834,7 +835,7 @@ def _index(root, seconds, paths=None):
         if row and offset == 0 and row[1]:
             delete_rows(db, row[1])
             db.execute("DELETE FROM sessions WHERE id=?", (row[1],))
-        start, saved = offset, json.dumps(state)
+        _start, saved = offset, json.dumps(state)
         try:
             if agent == "claude":
                 session, offset, state = index_claude(db, path, offset, state)
@@ -858,8 +859,9 @@ def _index(root, seconds, paths=None):
             break
         try:
             update_view(db, session_id, Path(path), agent)
-        except Exception:
-            continue
+        except Exception as error:
+            # Skipped, and tried again on the next pass; stderr is where the app's log picks it up.
+            print(f"sessions: couldn't rebuild the view of {session_id}: {error}", file=sys.stderr)
     result = {"remaining": len(found) - done, "indexed": done}
     # The upkeep reads whole tables, so it runs on the passes over everything, not after each file that changed.
     if paths is None:
@@ -893,11 +895,11 @@ def backfill(db, deadline, rows):
     many files still have lines to scan."""
     pending = []
     for path, (_, session, offset, state) in sorted(rows.items(), key=lambda item: item[1][0] or 0, reverse=True):
-        state = state or "{}"
+        state = state or "{}"  # noqa: PLW2901 -- normalizes the loop value in place
         # Nearly every file is done; its state says so in plain text, so only the rest are parsed.
         if f'"img": {offset},' in state or f'"img": {offset}}}' in state:
             continue
-        state = json.loads(state)
+        state = json.loads(state)  # noqa: PLW2901 -- normalizes the loop value in place
         if state.get("img", 0) < offset or "img" not in state:
             pending.append((path, session, offset, state))
     left = len(pending)
@@ -1017,7 +1019,7 @@ def search(root, text, agent=None, project=None, days=None, automated=False, lim
         source, column = sources(db)
         sessions_with = None
         for word in words:
-            word = '"' + word.strip('"') + '"'
+            word = '"' + word.strip('"') + '"'  # noqa: PLW2901 -- normalizes the loop value in place
             # CROSS JOIN keeps the match as the outer loop, so it runs once.
             found = {row[0] for row in db.execute(
                 f"SELECT DISTINCT {column} FROM {source} WHERE msgs MATCH ?", [word])} & allowed
@@ -1219,7 +1221,7 @@ def unified(text):
             if line.startswith("\\"):
                 current["lines"].append(line)
                 continue
-            line = line if line[:1] in ("+", "-", " ") else " " + line
+            line = line if line[:1] in ("+", "-", " ") else " " + line  # noqa: PLW2901 -- normalizes the loop value in place
             current["lines"].append(line)
             old_left -= line[0] in (" ", "-")
             new_left -= line[0] in (" ", "+")
@@ -1229,7 +1231,7 @@ def unified(text):
 def codex_diffs(changes, cap=DIFF_LINES):
     diffs = []
     for path, change in (changes or {}).items() if isinstance(changes, dict) else ():
-        change = change if isinstance(change, dict) else {}
+        change = change if isinstance(change, dict) else {}  # noqa: PLW2901 -- normalizes the loop value in place
         if change.get("type") == "add":
             diffs.append(added(path, change.get("content") or "", cap))
         elif change.get("type") == "delete":
@@ -1418,7 +1420,7 @@ def message_row(role, uuid, ts, text=None, inherited=False, model=None, images=(
 
 def thinking_time(start, end):
     """Milliseconds between two timestamps in seconds, or None when either is missing or they're out of order."""
-    return int(round((end - start) * 1000)) if start and end and end >= start else None
+    return round((end - start) * 1000) if start and end and end >= start else None
 
 
 class Rows:
@@ -2167,7 +2169,7 @@ def process_tree():
     import subprocess
     try:
         listing = subprocess.run(["ps", "-axo", "pid=,ppid=,rss=,lstart=,args="], capture_output=True, text=True, timeout=10,
-                                 env={**os.environ, "LC_ALL": "C"}).stdout
+                                 env={**os.environ, "LC_ALL": "C"}, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         return {}, {}, {}, {}
     memory, children, started, args = {}, {}, {}, {}
@@ -2259,7 +2261,7 @@ def listening():
         return PORTS["found"]
     try:
         output = subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcn"],
-                                capture_output=True, text=True, timeout=5).stdout
+                                capture_output=True, text=True, timeout=5, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         # A slow lsof isn't asked again on every poll.
         PORTS.update(at=time.monotonic(), found={})
@@ -2303,7 +2305,7 @@ def lsof_open(pids):
     if not pids:
         return {}
     try:
-        output = subprocess.run(["lsof", "-nP", "-p", ",".join(map(str, pids)), "-Fpfn"], capture_output=True, text=True, timeout=5).stdout
+        output = subprocess.run(["lsof", "-nP", "-p", ",".join(map(str, pids)), "-Fpfn"], capture_output=True, text=True, timeout=5, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         return {}
     found, pid, fd = {}, None, None
@@ -2852,7 +2854,7 @@ def rescan(db, located, image_id):
     path = located["path"]
     rows = db.execute("SELECT line_offset, line_length, session, agent_id FROM images WHERE id=? AND path=?", (image_id, path)).fetchall()
     found = False
-    for offset, length, session, agent_id in rows:
+    for offset, _length, session, agent_id in rows:
         db.execute("DELETE FROM images WHERE path=? AND line_offset=?", (path, offset))
         try:
             with open(path, "rb") as stream:

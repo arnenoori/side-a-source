@@ -44,9 +44,9 @@ describe('canary', () => {
     const writes = await runInDurableObject(object, async (instance: Health, state) => {
       const put = vi.spyOn(state.storage, 'put');
       const counted: unknown[][] = [];
-      for (const run of [probes(true, true), probes(true, false), probes(true, false), probes(true, true), probes(true, true)]) {
+      for (const batch of [probes(true, true), probes(true, false), probes(true, false), probes(true, true), probes(true, true)]) {
         put.mockClear();
-        await instance.record(run);
+        await instance.record(batch);
         counted.push(put.mock.calls.map(([key, value]) => [key, value]));
       }
       return counted;

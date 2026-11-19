@@ -247,10 +247,6 @@ final class ComposerAttachments {
 struct AttachmentTray: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: SessionKey
-    /// Tiles the drawer's flying copies are about to land on: blank until they have.
-    var landing: Set<UUID> = []
-    /// Where each tile is in the window, for the copies to land on.
-    var report: (UUID, CGRect) -> Void = { _, _ in }
     @Environment(AppModel.self) private var model
 
     var body: some View {
@@ -261,8 +257,7 @@ struct AttachmentTray: View {
                     HStack(spacing: Space.xs) {
                         ForEach(items) { item in
                             tile(item)
-                                .opacity(landing.contains(item.id) ? 0 : 1)
-                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { report(item.id, $0) }
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
                                 .id(item.id)
                         }
                     }
@@ -332,38 +327,5 @@ struct AttachmentTray: View {
         case .ready: "Photo"
         case .failed(let reason): "Photo, not uploaded. \(reason)"
         }
-    }
-}
-
-/// The camera, where the device has one.
-struct CameraPicker: UIViewControllerRepresentable {
-    let onPhoto: (Data) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ picker: UIImagePickerController, context: Context) {}
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        nonisolated deinit {}
-
-        let parent: CameraPicker
-        init(_ parent: CameraPicker) { self.parent = parent }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.95) { parent.onPhoto(data) }
-            parent.dismiss()
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
     }
 }

@@ -463,6 +463,7 @@ final class RemoteController {
     @ObservationIgnored private(set) lazy var codex = CodexTerminals(store: store)
     /// Claude sessions started in a terminal, reached through their inbox hook (opt-in).
     @ObservationIgnored private(set) lazy var inbox = ClaudeInbox(store: store)
+    @ObservationIgnored let typer = TerminalTyper()
 
     /// SIDEA_RELAY_URL for a local relay; release builds use production, every other build staging. The demo (and the
     /// harness) only ever uses SIDEA_RELAY_URL, so it never reaches a real relay unasked.
@@ -670,7 +671,7 @@ final class RemoteController {
 
     static let capabilities: Set<Capability> = [.confirmSigned, .confirmActions, .events, .answersQuestions, .answersPlans, .answersMode, .replyFollowUp, .replyNote, .interrupt, .images, .diffs,
                                                 .uploads, .setup, .options, .push, .transcriptStream, .ports, .interruptNextStep,
-                                                .quit, .mac, .history, .search, .cleanup, .incidents, .autopilot, .autopilotToggle, .autopilotAnswers,
+                                                .quit, .mac, .history, .search, .cleanup, .incidents, .autopilot, .autopilotToggle, .autopilotAnswers, .autopilotContinues,
                                                 .accountsUse, .worth, .rotation, .repliesDropped]
 
     /// Remembers what a phone's `hello` said it can show; the keychain is written only when that changes.

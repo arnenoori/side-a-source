@@ -76,9 +76,9 @@ export function frame(type: number, stream: number, payload: Uint8Array = new Ui
 export function parseFrame(data: ArrayBuffer | Uint8Array): { type: number; stream: number; payload: Uint8Array } | null {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   if (bytes.length < HEADER || bytes.length > HEADER + TUNNEL.maxPayload) return null;
-  const type = bytes[0];
+  const [type = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0] = bytes;
   if (type < FRAME.open || type > FRAME.credit) return null;
-  return { type, stream: (bytes[1] << 24 | bytes[2] << 16 | bytes[3] << 8 | bytes[4]) >>> 0, payload: bytes.subarray(HEADER) };
+  return { type, stream: (b1 << 24 | b2 << 16 | b3 << 8 | b4) >>> 0, payload: bytes.subarray(HEADER) };
 }
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -169,7 +169,7 @@ export class Tunnel {
 
     // The newest Mac socket wins. Its phones' streams were with the old one, so they start over.
     for (const old of this.open('mac')) old.close(CLOSE.replaced, 'replaced');
-    const [client, server] = Object.values(new WebSocketPair());
+    const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, ['mac']);
     server.serializeAttachment({ kind: 'mac' } satisfies MacAttachment);
     for (const phone of this.open('phone')) {
@@ -201,13 +201,15 @@ export class Tunnel {
 
   private async acceptPairing(authorization: string, now: number): Promise<Response | Refusal> {
     const match = authorization.match(/^SideA-Pair ([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})$/);
-    const ticket = match && fromB64url(match[2]);
-    if (!match || ticket?.length !== 16) return { status: 401, code: 'unauthorized', message: 'Malformed pairing ticket' };
+    const encoded = match?.[2];
+    const ticket = encoded ? fromB64url(encoded) : null;
+    if (ticket?.length !== 16) return { status: 401, code: 'unauthorized', message: 'Malformed pairing ticket' };
     const hash = await sha256(ticket);
     const row = this.row();
-    const open = row.ticket_hash !== null && (row.ticket_expires ?? 0) > now;
+    const storedHash = row.ticket_hash;
+    const open = storedHash !== null && (row.ticket_expires ?? 0) > now;
     // No lockout: 128 random bits can't be guessed, and a lockout would let anyone who knows the install id stop its pairing.
-    if (!open || !equalBytes(new Uint8Array(row.ticket_hash!), hash)) {
+    if (!open || !equalBytes(new Uint8Array(storedHash), hash)) {
       return { status: 403, code: 'no_pairing', message: 'This Mac isn\'t pairing right now' };
     }
     if (this.overBudget(now)) return this.spentForToday(now);
@@ -231,7 +233,7 @@ export class Tunnel {
     let slot = 1;
     while (used.has(slot)) slot++;
     if (slot > 0xffff) return { status: 429, code: 'rate_limited', message: 'Too many connections', retryAfter: 10 };
-    const [client, server] = Object.values(new WebSocketPair());
+    const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, device ? ['phone', `device:${device}`] : ['phone', 'pair']);
     server.serializeAttachment({ kind: 'phone', device, secret, ticket, slot, opened: now, streams: 0, live: device ? undefined : [] } satisfies PhoneAttachment);
     server.send(json({ type: 'mac', online: this.mac() !== undefined }));
@@ -289,6 +291,7 @@ export class Tunnel {
   }
 
   private async control(text: string, now: number) {
+    // oxlint-disable-next-line typescript/no-explicit-any -- the Mac's JSON, checked field by field below.
     let value: any;
     try { value = JSON.parse(text); } catch { return; }
     if (value?.type === 'devices' && Array.isArray(value.devices)) {
@@ -304,9 +307,10 @@ export class Tunnel {
       for (const phone of this.open('phone')) {
         const { device, secret } = this.attachment(phone) as PhoneAttachment;
         if (!device) continue;
-        if (!known.has(device)) phone.close(CLOSE.revoked, 'revoked');
+        const expected = known.get(device);
+        if (!expected) phone.close(CLOSE.revoked, 'revoked');
         // Paired again under the same id: the socket opened with the old secret goes, as on the Mac.
-        else if (secret !== undefined && b64url(known.get(device)!) !== secret) phone.close(CLOSE.replaced, 'replaced');
+        else if (secret !== undefined && b64url(expected) !== secret) phone.close(CLOSE.replaced, 'replaced');
       }
     } else if (value?.type === 'pairing') {
       const hash = typeof value.ticketHash === 'string' ? fromB64url(value.ticketHash) : null;
@@ -378,9 +382,11 @@ export class Tunnel {
     if (!attachment.live) return;
     const index = attachment.live.findIndex(([id]) => id === stream);
     if (index < 0) return;
-    const fins = attachment.live[index][1] | side;
+    const entry = attachment.live[index];
+    if (!entry) return;
+    const fins = entry[1] | side;
     if (type === FRAME.reset || fins === 3) attachment.live.splice(index, 1);
-    else attachment.live[index][1] = fins;
+    else entry[1] = fins;
     attachment.streams = attachment.live.length;
     ws.serializeAttachment(attachment);
   }
@@ -419,7 +425,9 @@ export class Tunnel {
     if (parsed.type === FRAME.open) {
       if (pairing && attachment.streams >= TUNNEL.pairStreams) return ws.send(frame(FRAME.reset, parsed.stream, utf8('too_many_streams')));
       if (pairing) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- pairing sockets are accepted with `live: []`.
         attachment.live!.push([parsed.stream, 0]);
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- as above.
         attachment.streams = attachment.live!.length;
         ws.serializeAttachment(attachment);
       }

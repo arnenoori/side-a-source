@@ -8,8 +8,9 @@ const server = await createServer({
   server: { host: '127.0.0.1', port: 4180, strictPort: true },
   plugins: [{
     name: 'save-environment',
-    configureServer(server) {
-      server.middlewares.use('/save-environment', async (req, res) => {
+    configureServer(devServer) {
+      // oxlint-disable-next-line typescript/no-misused-promises, oxc/no-async-endpoint-handlers -- a local dev tool: the handler answers its own failures in the try below.
+      devServer.middlewares.use('/save-environment', async (req, res) => {
         if (req.method !== 'POST' || req.headers.origin !== 'http://127.0.0.1:4180') { res.statusCode = 403; res.end(); return; }
         try {
           const chunks = [];

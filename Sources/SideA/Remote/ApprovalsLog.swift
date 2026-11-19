@@ -20,7 +20,9 @@ final class ApprovalsLog {
         rows = Array(rows.filter { now.timeIntervalSince1970 - $0.resolution.at <= Self.maxAge }.suffix(Self.maxCount))
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        try? PrivateFile.write(rows, to: url)
+        do { try PrivateFile.write(rows, to: url) } catch {
+            RemoteLog.shared("couldn't save the approvals log: \(error.localizedDescription)")
+        }
     }
 
     func page(after cursor: Cursor?, now: Date = Date()) -> ApprovalsPage {

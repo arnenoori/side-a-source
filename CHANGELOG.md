@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.5.57 — 2026-11-18
+
+With Side A Remote 1.1 (27). The Autopilot switch for continuing sessions, the Continued rows and replies typed straight into a terminal tab reach Side A Remote with its next build.
+
+Side A now sends "Please continue" to a session that stopped on something it can get past, once it can: after Autopilot moves its login, after its limit resets, after the pool refused it with every account out and one has room again, and a minute after a response was cut off by sleep or a dropped connection. Only idle sessions are asked, at most three times and 15 minutes apart, and each ask is written to autopilot.log and shown in Side A Remote's Autopilot list. Sessions stopped while Side A was closed or before a relaunch are still asked. "Continue sessions once a limit lifts" in Autopilot's settings, on the Mac and in Side A Remote, turns it off.
+
+Side A can now type into a session's own terminal tab when there is no other way to reach it: a Claude Code or Codex session idle in a Ghostty tab (Ghostty 1.4 or later) or in a pane of your own tmux. Continuing a stopped session uses it, and so do replies from the Sessions window and from Side A Remote, which no longer has to move such a session into Side A first. What is typed arrives as your own message. In tmux, nothing is sent over a dialog or a draft already in the message field. Ghostty's screen can't be read, so there Side A types only when the session is what the tab shows in front, and presses Enter a second time only while the session's transcript shows the message wasn't taken. Terminal, iTerm, Warp, kitty and WezTerm tabs are not typed into.
+
+Side A Remote's camera tile now opens in place. Tapping it grows the live preview to fill the attachment panel, with a shutter, a flash button (auto, on, off, shown only when the camera has a flash), a button to switch cameras, pinch to zoom, and a close that shrinks it back into the tile. A photo goes straight into the tray and the panel returns with the tile still live, so you can take several in a row. If a call or another app takes the camera away, the tile shows a camera glyph instead of a frozen frame. The full-screen camera is gone. The panel also fills the keyboard's height at every size, with a taller photo strip and the actions laid out two to a row, and the last one taking its row whole.
+
+Side A Remote tints commands in the message field as you type, and in the message once it is sent, the way T3 Code and the Codex app do: a `/command` at the start of a message when it is one of the agent's commands, and a `$skill` anywhere in a Codex message when it is one of its skills. Anything else with a slash or a dollar sign, like a path or an amount, stays plain.
+
+Side A Remote's + now swaps the keyboard for the attachment panel instead of opening something over it. The panel takes the keyboard's exact place and height, so the message field stays where it was, and tapping the field or the + (now an ×) brings the keyboard back in the same spot. With the keyboard down, the panel rises like the keyboard and the field rides up with it. It opens on a row of your newest photos led by a live camera tile, with All Photos, Files, Paste and Model & Commands below. Tap the camera to take a photo, tap photos to pick them, and pull the panel up for the whole library as a grid. On an iPad with a keyboard attached it opens as a popover from the +. The New Session sheet works the same way.
+
+Fixes:
+- Claude Code's newer wording for a spent 5-hour window, "You've hit your 5-hour limit", wasn't recognized, so a session stopped on it didn't mark its account as full until the next usage reading.
+- With many models in a month, the legend under Tokens per day ran past the edge of its card and several models shared a color. The chart now draws the five most used models and folds the rest into Other, each with its own color, and the legend wraps.
+- Each bar of Tokens per day sat on the day before its own in time zones west of Greenwich.
+- A long account name could wrap its row under This week in Usage; it is now cut short.
+- When Side A couldn't save its usage cache, the dropped replies or queued follow-ups, the approvals log or a finished hosted session's last screen, add itself to the login items, register the keep-awake helper, remove a handed-off session or delete its install from the relay, nothing said so. Each now writes the reason to the log. A conversation view that couldn't be rebuilt is reported the same way.
+- Side A Remote didn't record a message it failed to send to the Mac, a state refresh that failed after an event it couldn't read, or a push payload or saved state it couldn't write. The reasons now go to its log, so Share Logs shows them.
+
 ## 0.5.56 — 2026-11-16
 
 With Side A Remote 1.1 (26).

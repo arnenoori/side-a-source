@@ -10,7 +10,7 @@ import Testing
     var limits: [String: [UsageWindow]] = [:]
     func poolAccount(_ provider: AgentProvider, session: String?, excluding: Set<String>) -> String? { accounts.first { !excluding.contains($0) } }
     func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential { PoolCredential(token: "tok-\(account)", accountID: "workspace-\(account)") }
-    func poolRefused(_ provider: AgentProvider?, status: Int, message: String) {}
+    func poolRefused(_ provider: AgentProvider?, session: String?, status: Int, message: String) {}
     func poolHealthReport() -> [String: Int] { ["claude": accounts.count] }
     func poolTokenFailed(_ account: String, _ error: any Error) {}
     func poolAnswered(_ account: String, status: Int, headers: HTTPHeaders) {
@@ -312,7 +312,7 @@ private actor Admitted {
         while !open { try await Task.sleep(for: .milliseconds(10)) }
         return PoolCredential(token: "tok-ok", accountID: nil)
     }
-    func poolRefused(_ provider: AgentProvider?, status: Int, message: String) {}
+    func poolRefused(_ provider: AgentProvider?, session: String?, status: Int, message: String) {}
     func poolHealthReport() -> [String: Int] { [:] }
     func poolTokenFailed(_ account: String, _ error: any Error) {}
     func poolAnswered(_ account: String, status: Int, headers: HTTPHeaders) {}

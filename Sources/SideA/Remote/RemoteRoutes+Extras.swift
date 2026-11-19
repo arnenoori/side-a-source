@@ -24,6 +24,7 @@ extension RemoteRoutes {
         Route("POST", "v1/autopilot/move", moveNow),
         Route("POST", "v1/autopilot", setAutopilot),
         Route("POST", "v1/autopilot/answers", setAutopilotAnswers),
+        Route("POST", "v1/autopilot/continues", setAutopilotContinues),
         Route("POST", "v1/accounts/{id}/use", useAccount),
         Route("GET", "v1/approvals", approvals),
         Route("POST", "v1/update/check", checkForUpdates),
@@ -350,6 +351,14 @@ extension RemoteRoutes {
         return await autopilot(context)
     }
 
+    /// Asking sessions a limit stopped to carry on, on or off, signed the same way: it types into sessions by itself.
+    @Sendable static func setAutopilotContinues(_ context: Context) async -> HTTPResponse {
+        guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, .badRequest, "Send enabled, true or false.") }
+        if let refusal = await refusal(context, .autopilot, subject: ConfirmMessage.subject(autopilotContinues: change), needs: .biometric) { return refusal }
+        await MainActor.run { context.controller.store?.setContinueStopped(change.enabled) }
+        return await autopilot(context)
+    }
+
     /// Makes an account its provider's Mac-wide login, as PLAY does, signed by the confirm key after Face ID; answers
     /// with the account list. 409 `account_not_ready` for one that's signed out or whose login expired.
     @Sendable static func useAccount(_ context: Context) async -> HTTPResponse {
@@ -443,6 +452,7 @@ enum Autopilot {
                               answersRecommended: store.config.answerRecommended == true, held: held, next: store.nextMoves(now: now),
                               waiting: store.waitingSummary(limits: store.sessionLimits(now: now), now: now), swapAt: Int(store.config.moveAt.rounded()),
                               followFable: store.config.followFable != false, fableMode: store.fableMode)
+            .continuing(store.config.continueStopped != false)
     }
 
     /// A record's sessions as the phone lists them: each one's title now if it's still running, else its folder.
@@ -475,6 +485,9 @@ enum Autopilot {
 
     /// Starts the line `AccountStore.autoAnswered` writes: `Auto-answered in <session>: <answer>`.
     static let answeredPrefix = "Auto-answered in "
+    /// Start the lines `AccountStore.continueStopped` writes, each followed by the session's folder.
+    static let continuedPrefix = "Continued "
+    static let notContinuedPrefix = "Couldn't continue "
 
     /// Moves, waits, failures, primed windows and answers given by itself, newest first, at most 50. Other lines (reads, settings) are left out.
     static func decisions(_ log: String) -> [AutopilotDecision] {
@@ -506,6 +519,13 @@ enum Autopilot {
         if text.hasPrefix(answeredPrefix), let colon = text.range(of: ": ") {
             let session = text[text.index(text.startIndex, offsetBy: answeredPrefix.count)..<colon.lowerBound]
             return AutopilotDecision(id: id, at: at, kind: .answered, title: "Answered for you in \(session)", reason: String(text[colon.upperBound...]))
+        }
+        if text.hasPrefix(notContinuedPrefix), let colon = text.range(of: ": ") {
+            let session = text[text.index(text.startIndex, offsetBy: notContinuedPrefix.count)..<colon.lowerBound]
+            return AutopilotDecision(id: id, at: at, kind: .failed, title: "Couldn't continue \(session)", reason: String(text[colon.upperBound...]))
+        }
+        if text.hasPrefix(continuedPrefix), !text.contains(" → ") {
+            return AutopilotDecision(id: id, at: at, kind: .continued, title: "Continued \(text.dropFirst(continuedPrefix.count))", reason: "")
         }
         if text.hasSuffix(": primed its 5-hour window.") {
             let account = String(text.dropLast(": primed its 5-hour window.".count))

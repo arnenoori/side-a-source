@@ -3,7 +3,7 @@ import { CLOCK_SKEW, ID, parseDeviceBearer, parseSignature, signedString } from 
 import { b64url, fromB64url, sha256, utf8 } from './bytes';
 import { deliver, type Outcome } from './apns';
 import { PAGE_AFTER, probe } from './health';
-import { type Ledger } from './ledger';
+import type { Ledger } from './ledger';
 import type { ApnsRoute, Answer, DeviceInput, DeviceResult, Install, MacOp, PhoneOp, Plan, Reply, Report, Target } from './install';
 import { DEFAULT_BUNDLE, DEFAULT_BUNDLES, Invalid, MAX_APNS_PAYLOAD, parseSend } from './send';
 
@@ -106,12 +106,12 @@ function apnsRoute(body: Json, env: Env): Partial<ApnsRoute> {
 
 function deviceInput(body: Json, env: Env): DeviceInput {
   const { appVersion, pushToStartToken } = body;
-  const route = apnsRoute(body, env);
+  const apns = apnsRoute(body, env);
   if (typeof appVersion !== 'string' || !VERSION.test(appVersion)) throw new Invalid('appVersion: a short version string');
   return {
     apnsToken: token(body.apnsToken, 'apnsToken'),
-    bundle: route.bundle ?? DEFAULT_BUNDLE,
-    environment: route.environment ?? 'production',
+    bundle: apns.bundle ?? DEFAULT_BUNDLE,
+    environment: apns.environment ?? 'production',
     secretHash: key32(body.secretHash, 'secretHash'),
     pushToStartToken: pushToStartToken == null ? undefined : token(pushToStartToken, 'pushToStartToken'),
     appVersion,
@@ -179,9 +179,10 @@ function macOp(method: string, path: string, body: Json, env: Env): MacOp | null
   if (path === '/v1/installs' && method === 'DELETE') return { op: 'delete' };
   if (path === '/v1/send' && method === 'POST') return { op: 'send', send: parseSend(body) };
   const device = path.match(/^\/v1\/devices\/([^/]+)$/);
-  if (device && ID.test(device[1])) {
-    if (method === 'PUT') return { op: 'putDevice', deviceId: device[1], device: deviceInput(body, env) };
-    if (method === 'DELETE') return { op: 'deleteDevice', deviceId: device[1] };
+  const deviceId = device?.[1];
+  if (deviceId && ID.test(deviceId)) {
+    if (method === 'PUT') return { op: 'putDevice', deviceId, device: deviceInput(body, env) };
+    if (method === 'DELETE') return { op: 'deleteDevice', deviceId };
   }
   return null;
 }
@@ -194,17 +195,18 @@ function phoneOp(method: string, path: string, body: Json, env: Env): PhoneOp | 
     return { op: 'tokens', apnsToken, pushToStartToken, route: apnsRoute(body, env) };
   }
   if (path === '/v1/device/verify' && method === 'POST') {
-    const challenge = typeof body.challenge === 'string' ? fromB64url(body.challenge) : null;
-    if (challenge?.length !== 16) throw new Invalid('challenge: 16 bytes, base64url');
-    return { op: 'verify', challenge };
+    const proof = typeof body.challenge === 'string' ? fromB64url(body.challenge) : null;
+    if (proof?.length !== 16) throw new Invalid('challenge: 16 bytes, base64url');
+    return { op: 'verify', challenge: proof };
   }
   if (path === '/v1/device' && method === 'DELETE') return { op: 'unpair' };
   const activity = path.match(/^\/v1\/device\/activities\/([^/]+)$/);
-  if (activity && OPAQUE.test(activity[1])) {
+  const activityId = activity?.[1];
+  if (activityId && OPAQUE.test(activityId)) {
     if (method === 'PUT') {
-      return { op: 'putActivity', activityId: activity[1], updateToken: token(body.updateToken, 'updateToken'), route: apnsRoute(body, env) };
+      return { op: 'putActivity', activityId, updateToken: token(body.updateToken, 'updateToken'), route: apnsRoute(body, env) };
     }
-    if (method === 'DELETE') return { op: 'deleteActivity', activityId: activity[1] };
+    if (method === 'DELETE') return { op: 'deleteActivity', activityId };
   }
   return null;
 }
@@ -225,9 +227,9 @@ function count(env: Env, event: string, reason = '', value = 1) {
 const log = (event: string, fields: Record<string, unknown>) => console.error(JSON.stringify({ event, ...fields }));
 
 // Whether this Live Activity token belongs to the proven device that wants to use it.
-async function ownsToken(env: Env, target: Target, now: number): Promise<boolean> {
+async function ownsToken(env: Env, target: Target, ownerToken: string, now: number): Promise<boolean> {
   const name = b64url(await sha256(utf8(target.delivery.token)));
-  const owner = b64url(await sha256(utf8(target.owner!)));
+  const owner = b64url(await sha256(utf8(ownerToken)));
   return env.LEDGER.get(env.LEDGER.idFromName(`token:${name}`)).claim(owner, now);
 }
 
@@ -235,7 +237,7 @@ async function push(env: Env, target: Target, now: number): Promise<Report> {
   if (target.owner) {
     let owns: boolean;
     try {
-      owns = await ownsToken(env, target, now);
+      owns = await ownsToken(env, target, target.owner, now);
     } catch {
       return { target, outcome: { result: 'retry', after: 5, reason: 'LedgerUnavailable' } };
     }
@@ -263,10 +265,11 @@ async function send(env: Env, stub: DurableObjectStub<Install>, devices: string[
 async function challenge(env: Env, stub: DurableObjectStub<Install>, result: Answer, now: number, ctx: ExecutionContext): Promise<Reply> {
   if (result.challenge && configured(env)) {
     const target = result.challenge;
-    ctx.waitUntil(push(env, target, now).then(async report => {
+    ctx.waitUntil((async () => {
+      const report = await push(env, target, now);
       count(env, `challenge.${report.outcome.result}`);
       if (report.outcome.result === 'gone' || (report.outcome.result === 'ok' && report.outcome.environment)) await stub.settle([report]);
-    }));
+    })());
   }
   return result.reply;
 }
@@ -291,6 +294,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
     const limited = await requestGate(request, env, now);
     if (limited) return { reply: limited, install: credential.install };
     const stub = env.INSTALLS.get(env.INSTALLS.idFromName(credential.install));
+    // oxlint-disable-next-line typescript/await-thenable -- a Durable Object RPC call; the stub's Rpc.Result type isn't seen as thenable.
     const result = await stub.phone(credential.device, credential.secretHash, op, now);
     return { reply: await challenge(env, stub, result, now, ctx), install: credential.install };
   }
@@ -307,11 +311,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
   if (limited) return { reply: limited, install: signature.install };
   const gate = op.op === 'register' ? await registrationGate(request, env, now) : undefined;
   if (gate?.limited) return { reply: gate.limited, install: signature.install };
-  if (op.op === 'register') op.fullFor = gate!.fullFor;
+  if (op.op === 'register' && gate) op.fullFor = gate.fullFor;
   const stub = env.INSTALLS.get(env.INSTALLS.idFromName(signature.install));
   const message = await signedString(method, path, signature.ts, signature.nonce, body);
   const result = await stub.mac(signature.install, { message, sig: signature.sig, nonce: signature.nonce, ts: signature.ts }, op, now);
-  if (gate && 'reply' in result && (result.reply as Reply).status === 201) await gate.ledger!.registered(gate.dayEnds);
+  if (gate && 'reply' in result && (result.reply as Reply).status === 201) await gate.ledger?.registered(gate.dayEnds);
   if (!isPlan(result)) return { reply: await challenge(env, stub, result, now, ctx), install: signature.install };
   return { reply: await send(env, stub, op.op === 'send' ? op.send.devices : [], result, now), install: signature.install };
 }
@@ -373,7 +377,7 @@ export default {
       if (result.ok) continue;
       const fields = { environment: result.environment, status: result.status, reason: result.reason, streak: streaks[result.environment] };
       // Observability alerts on `canary.page`.
-      console.error(JSON.stringify({ event: streaks[result.environment] >= PAGE_AFTER ? 'canary.page' : 'canary.fail', ...fields }));
+      console.error(JSON.stringify({ event: (streaks[result.environment] ?? 0) >= PAGE_AFTER ? 'canary.page' : 'canary.fail', ...fields }));
     }
   },
 } satisfies ExportedHandler<Env>;

@@ -119,7 +119,7 @@ final class MacTools {
     static let everything: Set<Capability> = [.hosted, .terminal, .continueOnPhone, .uploads, .options, .history, .search, .restart, .ports,
                                               .quit, .mac, .cleanup, .autopilot, .incidents, .interrupt, .interruptNextStep, .replyNote,
                                               .replyTerminal, .replyInbox, .hostedTrust, .hostedShow, .accountsUse,
-                                              .autopilotToggle, .autopilotAnswers, .rotation]
+                                              .autopilotToggle, .autopilotAnswers, .autopilotContinues, .rotation]
 
     func can(_ capability: Capability) -> Bool { capabilities.contains(capability) }
 
@@ -528,6 +528,18 @@ final class MacTools {
         autopilot = try await signed { try await client().setAutopilotAnswers(change, confirm: confirm) }
     }
 
+    /// Asking stopped sessions to carry on, on or off, after Face ID like Autopilot. The demo just flips it.
+    func setContinuesStopped(_ enabled: Bool) async throws {
+        let change = AutopilotChange(enabled: enabled)
+        if isDemo {
+            autopilot = (autopilot ?? AutopilotState(enabled: true)).continuing(enabled)
+            return
+        }
+        let confirm = try await faceID(.autopilot, subject: ConfirmMessage.subject(autopilotContinues: change),
+                                       reason: enabled ? "Continue sessions once a limit lifts" : "Stop continuing sessions")
+        autopilot = try await signed { try await client().setAutopilotContinues(change, confirm: confirm) }
+    }
+
     // MARK: Rotation
 
     func loadOutlook() async {
@@ -637,9 +649,11 @@ final class MacTools {
 extension AutopilotState {
     /// The same state with those fields changed.
     func changing(enabled: Bool? = nil, answersRecommended: Bool? = nil, swapAt: Int? = nil, followFable: Bool? = nil) -> AutopilotState {
-        AutopilotState(enabled: enabled ?? self.enabled, pending: pending, decisions: decisions,
+        var changed = AutopilotState(enabled: enabled ?? self.enabled, pending: pending, decisions: decisions,
                        answersRecommended: answersRecommended ?? self.answersRecommended, held: held, next: next, waiting: waiting,
                        swapAt: swapAt ?? self.swapAt, followFable: followFable ?? self.followFable, fableMode: fableMode)
+        changed.continuesStopped = continuesStopped
+        return changed
     }
 }
 

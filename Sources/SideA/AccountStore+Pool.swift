@@ -247,11 +247,22 @@ extension AccountStore: PoolDecisions {
                 ?? (provider == .codex ? members.first?.id : nil)
         }
         poolConversations = poolRouter.conversations
+        if chosen != nil, let session { stopped { $0.served(session) } }
         return chosen
+    }
+
+    /// Whether a request to the pool would find an account now.
+    func poolHasRoom(_ provider: AgentProvider, now: Double) -> Bool {
+        let planned = provider == .claude ? planning(usage) : usage
+        return poolMembers(provider).contains { account in
+            (poolBlocked[account.id] ?? 0) <= now && health[account.id]?.takesWork != false
+                && (provider == .codex || planned[account.id].map { Planner.hasHeadroom($0, full: config.moveAt, now: now) } ?? true)
+        }
     }
 
     func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential {
         let codex = config.accounts.first { $0.id == account }?.provider == .codex
+        // swiftlint:disable:next unowned_variable_capture -- the store lives as long as the app, and the pool token runs only while it does.
         return try await poolTokens.token(account, refused: refused, codex: codex, now: Date().timeIntervalSince1970) { [unowned self] in
             try await self.bridgeOutput($0)
         }
@@ -303,7 +314,8 @@ extension AccountStore: PoolDecisions {
         }
     }
 
-    func poolRefused(_ provider: AgentProvider?, status: Int, message: String) {
+    func poolRefused(_ provider: AgentProvider?, session: String?, status: Int, message: String) {
+        if let provider, let session { stopped { $0.refuse(session, provider, at: Date().timeIntervalSince1970) } }
         var activity = poolHealth[provider ?? .claude] ?? PoolActivity()
         activity.failedAt = Date().timeIntervalSince1970
         activity.failure = message

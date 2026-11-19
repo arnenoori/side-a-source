@@ -197,6 +197,7 @@ nonisolated enum DeviceKeys {
         if let context { query[kSecUseAuthenticationContext as String] = context }
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let item else { return nil }
+        // swiftlint:disable:next force_cast -- SecItemCopyMatching with kSecReturnRef returns a SecKey; a conditional cast to a CF type always succeeds and only warns.
         return (item as! SecKey)
     }
 }

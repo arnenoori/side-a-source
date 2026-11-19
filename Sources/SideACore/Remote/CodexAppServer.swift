@@ -466,6 +466,7 @@ public enum CodexAppServer {
         guard parts.count >= 3, parts[1].hasPrefix("-"), parts[2].hasPrefix("+") else { return nil }
         func range(_ part: Substring) -> (Int, Int)? {
             let numbers = part.dropFirst().split(separator: ",").map { Int($0) }
+            // swiftlint:disable:next redundant_nil_coalescing -- `first` of [Int?] is a double optional; `?? nil` flattens it.
             guard let start = numbers.first ?? nil else { return nil }
             return (start, numbers.count > 1 ? numbers[1] ?? 1 : 1)
         }

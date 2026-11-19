@@ -1,9 +1,7 @@
 import importlib.util
-import json
 import os
 from pathlib import Path
 import pty
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -50,7 +48,7 @@ class HostingTests(unittest.TestCase):
         launcher = self.root / 'runtime/sidea-tmux'
         self.assertEqual(launcher.stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.root / 'runtime/tmux.conf').stat().st_mode & 0o777, 0o600)
-        failed = subprocess.run([str(launcher), 'ls'], capture_output=True, text=True)
+        failed = subprocess.run([str(launcher), 'ls'], capture_output=True, text=True, check=False)
         self.assertEqual((failed.returncode, failed.stderr.strip()), (69, 'Side A found no tmux 3.4 or later.'))
 
     def test_versions_below_3_4_are_refused(self):
@@ -119,13 +117,13 @@ class LauncherTests(unittest.TestCase):
         self.temp.cleanup()
 
     def tmux(self, *args):
-        return subprocess.run([TMUX, '-S', self.socket, *args], capture_output=True, text=True).stdout
+        return subprocess.run([TMUX, '-S', self.socket, *args], capture_output=True, text=True, check=False).stdout
 
     def run_launcher(self, *args, cwd=None, env=None):
         environment = {'HOME': str(self.home), 'PATH': '/usr/bin:/bin', 'USER': os.environ.get('USER', 'u'),
                        'SIDE_A_TMUX_SOCKET': self.socket, 'WARP_FOCUS_URL': 'warp://x', **(env or {})}
         return subprocess.run([str(self.root / 'runtime/sidea-tmux'), *args], capture_output=True, text=True,
-                              cwd=cwd or self.project, env=environment, timeout=30)
+                              cwd=cwd or self.project, env=environment, timeout=30, check=False)
 
     def wait_for(self, path, timeout=10):
         end = time.time() + timeout
@@ -201,7 +199,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(git('status', '--porcelain'), '')
         # Checked out in the session's worktree ('+'), with no upstream (--no-track).
         self.assertEqual(git('branch', '--list', f'sidea/{name}').strip(), f'+ sidea/{name}')
-        self.assertNotEqual(subprocess.run(['git', '-C', str(repo), 'config', '--get', f'branch.sidea/{name}.remote']).returncode, 0)
+        self.assertNotEqual(subprocess.run(['git', '-C', str(repo), 'config', '--get', f'branch.sidea/{name}.remote'], check=False).returncode, 0)
         meta = self.tmux('list-sessions', '-F', '#{@sidea_repo}|#{@sidea_worktree}|#{@sidea_branch}|#{@sidea_cwd}').strip()
         self.assertEqual(meta, f'{repo.resolve()}|{tree}|sidea/{name}|{tree}/apps/web')
         # Outside a repository there is nothing to branch from; nothing is started.
@@ -223,7 +221,7 @@ class LauncherTests(unittest.TestCase):
         self.wait_for(self.out / f'{name}.txt')
         found = hosting.panes(self.root)
         self.assertEqual(list(found.values()), [name])
-        agent = int(subprocess.run(['pgrep', '-P', str(next(iter(found)))], capture_output=True, text=True).stdout.split()[0])
+        agent = int(subprocess.run(['pgrep', '-P', str(next(iter(found)))], capture_output=True, text=True, check=False).stdout.split()[0])
         self.assertEqual(hosting.match([{'pid': agent}], {agent: next(iter(found))}, found)[0]['hosted'], name)
         # Every launch reloads the config into the running server; a second load replaces instead of piling up.
         settings = lambda: (self.tmux('show', '-s', 'terminal-features'), self.tmux('show-hooks', '-g', 'pane-died'))
@@ -283,7 +281,7 @@ class HostTerminalTests(unittest.TestCase):
         command = ['zsh', '-dic', script]
         env = {'HOME': str(self.home), 'ZDOTDIR': str(self.home), 'PATH': f'{self.bin}:/usr/bin:/bin', 'TERM': 'dumb'}
         if not terminal:
-            return subprocess.run(command, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL).stdout
+            return subprocess.run(command, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, check=False).stdout
         pid, fd = pty.fork()
         if pid == 0:
             os.execve('/bin/zsh', command, env)

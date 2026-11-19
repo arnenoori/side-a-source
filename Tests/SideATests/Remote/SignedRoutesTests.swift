@@ -118,6 +118,22 @@ private func level(_ response: HTTPResponse) -> String? {
     #expect(elsewhere.status == 401)
 }
 
+/// Continuing stopped sessions types into them unasked, so the phone turns it on or off only with Face ID, and a
+/// signature for Autopilot itself doesn't count.
+@MainActor @Test func continuingStoppedSessionsChangesOnlyWithItsOwnSignature() async throws {
+    let scene = Signed()
+    let off = AutopilotChange(enabled: false)
+    #expect(RemoteController.capabilities.contains(.autopilotContinues))
+    #expect(try await scene.call("POST", "v1/autopilot/continues", off).status == 401)
+    let other = try scene.header(.confirm, purpose: .autopilot, ConfirmMessage.subject(autopilot: off))
+    #expect(try await scene.call("POST", "v1/autopilot/continues", off, confirm: other).status == 401)
+    #expect(scene.store.config.continueStopped == nil)
+    let signed = try scene.header(.confirm, purpose: .autopilot, ConfirmMessage.subject(autopilotContinues: off))
+    let answer = try await scene.call("POST", "v1/autopilot/continues", off, confirm: signed)
+    #expect(answer.status == 200 && scene.store.config.continueStopped == false)
+    #expect(try JSONDecoder().decode(AutopilotState.self, from: answer.body).continuesStopped == false)
+}
+
 /// A note is delivered while the reply is planned, so a refused one must leave nothing behind.
 @MainActor @Test func aRefusedReplyLeavesNoMail() async throws {
     let scene = Signed()

@@ -41,7 +41,7 @@ private actor Counter {
     for n in 0..<10 {
         let folder = base.appendingPathComponent("p\(n)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        if n % 2 == 0 {
+        if n.isMultiple(of: 2) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
             process.arguments = ["-C", folder.path, "init", "-q", "-b", "b\(n)"]
@@ -51,8 +51,8 @@ private actor Counter {
     }
     let cache = RemoteCache()
     let first = await RemoteProjects.gits(paths, cache: cache)
-    #expect(first.map(\.branch) == paths.indices.map { $0 % 2 == 0 ? "b\($0)" : nil })
-    #expect(first.enumerated().allSatisfy { n, git in (git.root != nil) == (n % 2 == 0) })
+    #expect(first.map(\.branch) == paths.indices.map { $0.isMultiple(of: 2) ? "b\($0)" : nil })
+    #expect(first.enumerated().allSatisfy { n, git in (git.root != nil) == n.isMultiple(of: 2) })
     // Kept: a branch made now shows only once the half minute is up.
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")

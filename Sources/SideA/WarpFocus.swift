@@ -124,8 +124,10 @@ enum WarpFocus {
     private static func matches(_ window: AXUIElement, _ frame: Window) -> Bool {
         var position = CGPoint.zero, size = CGSize.zero
         guard let p = attribute(window, kAXPositionAttribute), let s = attribute(window, kAXSizeAttribute) else { return false }
+        // swiftlint:disable force_cast -- AX attribute values are AXValue; a conditional cast to a CF type always succeeds and only warns.
         AXValueGetValue(p as! AXValue, .cgPoint, &position)
         AXValueGetValue(s as! AXValue, .cgSize, &size)
+        // swiftlint:enable force_cast
         let mainHeight = NSScreen.screens.first?.frame.height ?? 0
         return abs(position.x - frame.x) < 2 && abs(size.width - frame.width) < 2 && abs(size.height - frame.height) < 2
             && abs(position.y - mainHeight - frame.y) < 2

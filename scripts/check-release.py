@@ -31,7 +31,7 @@ if not re.fullmatch(r"[0-9]+", build):
 
 
 def git(*arguments):
-    return subprocess.run(["git", "-C", str(root), *arguments], capture_output=True, text=True)
+    return subprocess.run(["git", "-C", str(root), *arguments], capture_output=True, text=True, check=False)
 
 
 def release(name):

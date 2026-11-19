@@ -32,7 +32,7 @@ files = {"docs/" + path.relative_to(distribution).as_posix(): path.read_bytes() 
 files["docs/.nojekyll"] = b""
 changes = []
 for path, data in files.items():
-    sha = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+    sha = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()  # noqa: S324 -- Git names blobs by SHA-1
     if old_files.get(path) == sha:
         continue
     blob = api("git/blobs", {"content": base64.b64encode(data).decode(), "encoding": "base64"})

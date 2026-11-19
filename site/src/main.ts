@@ -4,6 +4,7 @@ import { initLoveEggs } from './love-egg';
 import { latestDownloadableRelease, releaseAPI, releasesURL } from './release.mjs';
 
 analytics.capture('$pageview');
+// oxlint-disable-next-line no-console -- the console greeting is the point.
 console.log('%cSide A%c  Read the source: https://github.com/arnenoori/side-a-source  (and try the Konami code)', 'font-weight:600', 'color:#657069');
 const analyticsToggle = document.querySelector<HTMLInputElement>('#analytics-enabled')!;
 analyticsToggle.checked = analytics.isEnabled();
@@ -105,6 +106,7 @@ if (how) {
   const loadHow = () => {
     if (started) return;
     started = true;
+    // oxlint-disable-next-line promise/always-return -- the callback ends the chain; the catch below is the handler.
     import('./how').then(({ mountHow }) => {
       mountHow(how);
       // The styled layout moves anchors inside #how, so a deep link (or the old /how/) lands again.

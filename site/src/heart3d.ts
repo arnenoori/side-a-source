@@ -111,7 +111,7 @@ export function createHeartStage(canvas: HTMLCanvasElement) {
     },
     pose(q: ArrayLike<number>, pitch: number, yaw: number, roll: number) {
       base.setFromEuler(euler.set(pitch, yaw, roll));
-      turned.set(q[0], q[1], q[2], q[3]);
+      turned.set(q[0] ?? 0, q[1] ?? 0, q[2] ?? 0, q[3] ?? 0);
       heart.quaternion.multiplyQuaternions(turned, base);
     },
     cutBelow(y: number) { cut = y; },
@@ -318,8 +318,8 @@ export async function playHeart(source: HTMLElement) {
         stage.pose(spin.q, l.pitch, l.yaw, l.roll);
         stage.render();
         if (!held && pointerX >= 0 && ++frameCount % 6 === 0) {
-          const now = onHeart(pointerX, pointerY);
-          if (now !== hover) { hover = now; cursor(); }
+          const over = onHeart(pointerX, pointerY);
+          if (over !== hover) { hover = over; cursor(); }
         }
         if (story.story < LOVE_DURATION) requestAnimationFrame(frame);
         else resolve();

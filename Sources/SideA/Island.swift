@@ -635,6 +635,7 @@ final class Island {
     /// What the session's mode asks of a reply right now.
     private func queuedNeeds(_ session: String) -> ConfirmProof {
         guard let store else { return .biometric }
+        // swiftlint:disable:next redundant_nil_coalescing -- permissionMode returns a double optional; `?? nil` flattens it.
         return ConfirmProof(ConfirmPolicy.session(mode: SessionCommands(store: store).permissionMode(session) ?? nil))
     }
 
@@ -737,7 +738,9 @@ final class Island {
         dropped = Array(dropped.filter { Date().timeIntervalSince1970 - $0.at < Self.droppedKept }.suffix(Self.droppedLimit))
         guard let droppedFile else { return }
         if dropped.isEmpty { try? FileManager.default.removeItem(at: droppedFile); return }
-        try? PrivateFile.write(dropped, to: droppedFile)
+        do { try PrivateFile.write(dropped, to: droppedFile) } catch {
+            RemoteLog.shared("couldn't save the dropped replies: \(error.localizedDescription)")
+        }
     }
 
     /// For `StateSnapshot.droppedReplies`, before `scoped(to:)` narrows them to each device.
@@ -767,7 +770,9 @@ final class Island {
             guard case .waiting(let text, let origin) = item else { return nil }
             return SavedFollowUp(text: text, device: origin?.device, proven: origin?.proven.rawValue)
         } }
-        try? PrivateFile.write(items, to: queuedFile)
+        do { try PrivateFile.write(items, to: queuedFile) } catch {
+            RemoteLog.shared("couldn't save the queued follow-ups: \(error.localizedDescription)")
+        }
     }
 
     /// Nothing else may be reading the live list, and losing a session is only noticed from it.

@@ -37,7 +37,7 @@ class AppcastTests(unittest.TestCase):
     def verify(self):
         self.feed.write_bytes(ET.tostring(self.xml))
         return subprocess.run(["python3", str(ROOT / "scripts/verify-appcast.py"), str(self.feed), str(self.installer)],
-                              capture_output=True).returncode
+                              capture_output=True, check=False).returncode
 
     def test_matching_metadata_passes(self):
         # Cryptographic verification is separately performed by Sparkle's sign_update.

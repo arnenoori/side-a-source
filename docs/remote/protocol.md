@@ -270,6 +270,8 @@ public struct SessionAbility: OpenEnum { public let rawValue: String }
 // through Codex's shared app server: a reply shows in its terminal as the user's message),
 // .replyInbox (a Claude session outside Side A's panes, idle or finished, whose inbox hook is
 // waiting: a reply wakes it and Claude Code shows the model the text as a note, not as user input),
+// .replyTyped (idle in a terminal the Mac can type into, its own tmux pane or a Ghostty tab, with no hook
+// waiting and no app server: a reply is typed there as the user's own message and submitted),
 // .settingsModel "settings.model", .settingsEffort "settings.effort", .settingsMode "settings.mode",
 // .settingsFast "settings.fast" (POST …/settings takes that field now), .turnDiff (GET …/turns/{turnID}/diff),
 // .compact and .review (idle only; Codex thread/compact/start and review/start)
@@ -579,6 +581,7 @@ differ. Every cell is a `ReplyResult.delivery` or an error.
 | finished, Stop hook waiting | either | `.followUp` | `.followUp` | 409 `cannot_deliver` | hosted: sent; unhosted: 409 `not_hosted` |
 | idle (or finished with no waiter), Claude with `replyInbox` | no | `.inbox` | `.inbox` | `.inbox` | 409 `not_hosted` |
 | idle (or finished with no waiter) | yes | `.typed` | `.typed` | 409 `cannot_deliver` | sent |
+| idle (or finished with no waiter), with `replyTyped` | no | `.typed` (typed into its own terminal tab), or 409 `cannot_deliver` when the tab shows a dialog, a draft or another program | same | 409 `cannot_deliver`, `details.hint = "continueOnPhone"` | 409 `not_hosted` |
 | idle (or finished with no waiter) | no | 409 `cannot_deliver`, `details.hint = "continueOnPhone"` | same | same | 409 `not_hosted` |
 
 - `.queued` is the island's `queue`: delivered through the Stop waiter when the turn ends, at most
@@ -1005,6 +1008,7 @@ field may hold a newline, and request and session ids may not hold `:`.
 | `account` | `POST /v1/accounts/{id}/use`, always, and only by the confirm key (the Mac-wide login moves every new session) | `<accountID>:use` |
 | `autopilot` | `POST /v1/autopilot`, always, and only by the confirm key, on or off | `enabled:true` or `enabled:false`, from the `AutopilotChange` the Mac decoded |
 | `autopilot` (answers) | `POST /v1/autopilot/answers`, always, and only by the confirm key, on or off | `answers:enabled:true` or `answers:enabled:false`, so a signature for Autopilot itself never turns this on |
+| `autopilot` (continues) | `POST /v1/autopilot/continues`, always, and only by the confirm key, on or off | `continues:enabled:true` or `continues:enabled:false` |
 | `rotation` | `POST /v1/accounts/{id}/priority`, `POST /v1/accounts/{id}/auto`, `POST /v1/rotation/swap-at`, `POST /v1/rotation/follow-fable`, always, and only by the confirm key | `<accountID>:priority:<level>`, `<accountID>:auto:true` or `:auto:false`, `swapAt:<percent>`, `followFable:true` or `:false`, each from what the Mac decoded |
 | `keys` | a `.keys` reply, always, and only by the confirm key | `<sessionID>:<base64url SHA-256 of the keys' raw values joined by "\n">` |
 | `settings` (start) | `POST /v1/hosted`, always | `start:<base64url SHA-256 of the StartHosted as sorted-key JSON>` |
@@ -1335,6 +1339,7 @@ answer).
 | Autopilot decisions | M4 | `autopilot` | `GET /v1/autopilot` | | 200 `AutopilotState` | |
 | Move Now | M4 | `autopilot` | `POST /v1/autopilot/move` | | 200 `AutopilotState` | 409 `nothing_to_move` |
 | Answer with recommended after 1 minute | M5 | `autopilot.answers` | `POST /v1/autopilot/answers` | `AutopilotChange {enabled: Bool}` + `X-SideA-Confirm` (`autopilot`, confirm key) | 200 `AutopilotState` | 400 `bad_request`; 401 `confirm_required` / `confirm_invalid` (`details.level = biometric`) |
+| Continue sessions once a limit lifts | | `autopilot.continues` | `POST /v1/autopilot/continues` | `AutopilotChange {enabled: Bool}` + `X-SideA-Confirm` (`autopilot`, confirm key) | 200 `AutopilotState`, with `continuesStopped` | 400 `bad_request`; 401 `confirm_required` / `confirm_invalid` (`details.level = biometric`) |
 | Autopilot on or off | M5 | `autopilot.toggle` | `POST /v1/autopilot` | `AutopilotChange {enabled: Bool}` + `X-SideA-Confirm` (`autopilot`, confirm key) | 200 `AutopilotState` | 400 `bad_request`; turning it on: 409 `cannot_deliver` `details.hint = shellSwitching` (shell switching is off on the Mac), checked before the confirm; then 401 `confirm_required` / `confirm_invalid` (`details.level = biometric`) |
 | Use an account | M5 | `accounts.use` | `POST /v1/accounts/{id}/use` | `{}` + `X-SideA-Confirm` (`account`, confirm key) | 200 `{accounts: [RemoteAccount], seq}`, the account `active` for its provider | Checked before the confirm: 404 `not_found`, 409 `account_not_ready`, and for a Claude account 409 `cannot_deliver` `details.hint = shellSwitching`; then 401 `confirm_required` / `confirm_invalid` (`details.level = biometric`); 502 `cannot_deliver` when the switch itself fails |
 | Combined room | M6 | `rotation` | `GET /v1/usage/outlook` | | 200 `UsageOutlook` | |

@@ -44,7 +44,7 @@ def main():
     daemon = contents / "Library/LaunchDaemons/com.sidea.keepawake.plist"
     require(plistlib.loads(daemon.read_bytes()) == plistlib.loads((root / "scripts/com.sidea.keepawake.plist").read_bytes()),
             "Packaged keep-awake daemon differs from release metadata")
-    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(helper)], capture_output=True, text=True).stderr
+    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(helper)], capture_output=True, text=True, check=False).stderr
     require("Identifier=com.sidea.keepawake" in signature, "Keep-awake helper has the wrong signing identifier")
     pool = contents / "MacOS/SideAPool"
     pool_architectures = subprocess.check_output(["lipo", "-archs", str(pool)], text=True).split()
@@ -52,7 +52,7 @@ def main():
     agent = contents / "Library/LaunchAgents/com.sidea.pool.plist"
     require(plistlib.loads(agent.read_bytes()) == plistlib.loads((root / "scripts/com.sidea.pool.plist").read_bytes()),
             "Packaged pool agent differs from release metadata")
-    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(pool)], capture_output=True, text=True).stderr
+    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(pool)], capture_output=True, text=True, check=False).stderr
     require("Identifier=com.sidea.pool" in signature, "Pool helper has the wrong signing identifier")
     # tmux is built universal (scripts/build-tmux.sh) and goes into both single-architecture apps whole.
     tmux = contents / "Helpers/tmux"
@@ -60,7 +60,7 @@ def main():
     require({"arm64", "x86_64"} == set(tmux_architectures), f"Unexpected tmux architectures: {tmux_architectures}")
     tmux_version = re.search(r"^TMUX_VERSION=(\S+)$", (root / "scripts/build-tmux.sh").read_text(), re.M)[1]
     require(subprocess.check_output([str(tmux), "-V"], text=True).strip() == f"tmux {tmux_version}", "Bundled tmux does not run")
-    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(tmux)], capture_output=True, text=True).stderr
+    signature = subprocess.run(["codesign", "--display", "--verbose=2", str(tmux)], capture_output=True, text=True, check=False).stderr
     require("Identifier=com.sidea.tmux" in signature, "tmux helper has the wrong signing identifier")
     allowed = {"Info.plist", "MacOS/SideA", "MacOS/SideAKeepAwake", "Library/LaunchDaemons/com.sidea.keepawake.plist",
                "MacOS/SideAPool", "Library/LaunchAgents/com.sidea.pool.plist",
@@ -101,8 +101,7 @@ def main():
         if path.is_file():
             relative = path.relative_to(contents).as_posix()
             # Signing/notarization may add these Apple-managed files.
-            require(relative in allowed or relative == "_CodeSignature/CodeResources"
-                    or relative == "CodeResources", f"Unexpected bundle file: {relative}")
+            require(relative in allowed or relative in {"_CodeSignature/CodeResources", "CodeResources"}, f"Unexpected bundle file: {relative}")
     require(digest(contents / "Resources/SideA.icns") == digest(root / "design/SideA.icns"), "Icon differs")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(args.app)], check=True)
     print(f"Verified Side A {actual['CFBundleShortVersionString']} ({', '.join(architectures)})")

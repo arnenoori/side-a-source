@@ -17,7 +17,7 @@ export function parseSignature(header: string | null): Signature | null {
   const match = header?.match(/^SideA-Sig (.+)$/);
   if (!match) return null;
   const fields = new Map<string, string>();
-  for (const part of match[1].split(',')) {
+  for (const part of (match[1] ?? '').split(',')) {
     const [key, value, extra] = part.trim().split('=');
     if (!key || value === undefined || extra !== undefined || fields.has(key)) return null;
     fields.set(key, value);
@@ -54,8 +54,8 @@ export interface DeviceCredential {
 
 // Authorization: Bearer d1.<installId>.<deviceId>.<deviceSecret>, the secret 32 raw bytes in base64url.
 export async function parseDeviceBearer(header: string | null): Promise<DeviceCredential | null> {
-  const match = header?.match(/^Bearer d1\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/);
-  const secret = match && fromB64url(match[3]);
-  if (!match || secret?.length !== 32) return null;
-  return { install: match[1], device: match[2], secretHash: await sha256(secret) };
+  const [, install, device, encoded] = header?.match(/^Bearer d1\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{22})\.([A-Za-z0-9_-]{43})$/) ?? [];
+  const secret = encoded ? fromB64url(encoded) : null;
+  if (!install || !device || secret?.length !== 32) return null;
+  return { install, device, secretHash: await sha256(secret) };
 }

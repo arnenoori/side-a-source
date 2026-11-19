@@ -54,6 +54,9 @@ public struct SessionAbility: OpenEnum {
     /// A Claude session outside Side A's panes, idle or finished, whose inbox hook is waiting: a reply wakes it and
     /// Claude Code shows the model the text as a note, not as user input. Delivery `.inbox`.
     public static let replyInbox = Self(rawValue: "replyInbox")
+    /// A session idle in a terminal the Mac can type into (its own tmux pane, a Ghostty tab), with no hook waiting and
+    /// no app server: a reply is typed there as the user's own message and submitted. Delivery `.typed`. Idle only.
+    public static let replyTyped = Self(rawValue: "replyTyped")
     /// `POST /v1/sessions/{id}/settings` takes `model`.
     public static let settingsModel = Self(rawValue: "settings.model")
     /// … takes `effort`.

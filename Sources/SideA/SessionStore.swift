@@ -880,7 +880,7 @@ final class SessionStore {
         page.parent = page.parent.map(localized)
         // Pages are search-only and short-lived; the newest messages stay the conversation's cached view.
         pages[key] = page
-        if pages.count > 8 { pages.removeValue(forKey: pages.keys.first { $0 != key }!) }
+        if pages.count > 8, let other = pages.keys.first(where: { $0 != key }) { pages.removeValue(forKey: other) }
         return page
     }
 

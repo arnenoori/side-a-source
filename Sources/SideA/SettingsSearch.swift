@@ -122,6 +122,7 @@ struct SettingsEntry: Hashable {
         .init(title: "Test Pool", tab: .autopilot, words: "pool health check logins reachable combined limits room"),
         .init(title: "Share with my other Macs", tab: .autopilot, words: "pool tailscale hub join remote mac"),
         .init(title: "Answer with recommended after 1 minute", tab: .autopilot, words: "auto answer question"),
+        .init(title: "Continue sessions once a limit lifts", tab: .autopilot, words: "resume please continue stopped rate limit 429"),
         .init(title: "Up next", tab: .autopilot, words: "schedule order queue"),
         .init(title: "Your day", tab: .autopilot, words: "timeline hours warm up"),
         .init(title: "This week", tab: .usage, words: "limits percent tokens"),

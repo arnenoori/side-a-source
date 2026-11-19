@@ -47,7 +47,7 @@ class CheckEnvironmentTests(unittest.TestCase):
             tools.mkdir()
             stub(tools, "git", "exit 0")
             env = clean_env(GIT_DIR=str(repo / ".git"), PATH=f"{tools}:{os.environ['PATH']}")
-            result = subprocess.run(["bash", str(probe)], env=env, capture_output=True, text=True)
+            result = subprocess.run(["bash", str(probe)], env=env, capture_output=True, text=True, check=False)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("GIT_DIR is still set", result.stderr)
             self.assertNotIn("INDEX=", result.stdout)
@@ -63,7 +63,7 @@ class CheckRoutingTests(unittest.TestCase):
         self.tools.mkdir()
         self.log.touch()
         (self.repo / "scripts").mkdir(parents=True)
-        for script in ("check.sh", "sync-bridge.sh", "scan-public-source.py"):
+        for script in ("check.sh", "lint-python.sh", "lint-swift.sh", "sync-bridge.sh", "scan-public-source.py"):
             (self.repo / "scripts" / script).write_text((ROOT / "scripts" / script).read_text())
             (self.repo / "scripts" / script).chmod(0o755)
         (self.repo / "bridge/tests").mkdir(parents=True)
@@ -79,6 +79,10 @@ class CheckRoutingTests(unittest.TestCase):
             subprocess.run(["git", *arguments], cwd=self.repo, env=self.env, check=True)
         for name in ("swift", "xcodegen", "xcodebuild"):
             stub(self.tools, name, f'echo "{name} $*" >> "{self.log}"')
+        self.lint = Path(folder.name) / "lint"
+        self.lint.touch()
+        stub(self.tools, "ruff", f'echo "ruff $*" >> "{self.lint}"')
+        stub(self.tools, "swiftlint", f'echo "swiftlint $*" >> "{self.lint}"')
 
     def simulators(self, devices):
         listing = json.dumps({"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-0": devices}})
@@ -90,7 +94,7 @@ class CheckRoutingTests(unittest.TestCase):
         target.write_text(text)
         for arguments in (["add", "-A"], ["commit", "-qm", "change"]):
             subprocess.run(["git", *arguments], cwd=self.repo, env=self.env, check=True)
-        return subprocess.run(["bash", "scripts/check.sh", "HEAD~1"], cwd=self.repo, env=self.env, capture_output=True, text=True)
+        return subprocess.run(["bash", "scripts/check.sh", "HEAD~1"], cwd=self.repo, env=self.env, capture_output=True, text=True, check=False)
 
     def test_apps_run_the_ios_tests_on_a_simulator(self):
         self.simulators([{"name": "iPhone 17", "udid": "OFF", "state": "Shutdown"}, {"name": "iPhone 16", "udid": "UP", "state": "Booted"}])
@@ -144,6 +148,35 @@ class CheckRoutingTests(unittest.TestCase):
         result = self.change("apps/ios/View.swift")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no iPhone simulator", result.stderr)
+
+    def test_a_python_change_is_linted_and_a_docs_change_is_not(self):
+        self.assertEqual(self.change("docs/clean.md").returncode, 0)
+        self.assertEqual(self.lint.read_text(), "")
+        self.assertEqual(self.change("bridge/b.py").returncode, 0)
+        self.assertIn("ruff check", self.lint.read_text())
+
+    def test_a_missing_ruff_fails_the_gate_with_the_install_command(self):
+        (self.tools / "ruff").unlink()
+        self.env["PATH"] = f"{self.tools}:/usr/bin:/bin"
+        result = self.change("bridge/b.py")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("brew install ruff", result.stderr)
+
+    def test_a_swift_change_is_linted_and_a_docs_change_is_not(self):
+        self.assertEqual(self.change("docs/clean.md").returncode, 0)
+        self.assertEqual(self.lint.read_text(), "")
+        self.env["SIDEA_IOS_SIMULATOR"] = "NAMED"
+        self.assertEqual(self.change("apps/ios/View.swift").returncode, 0)
+        self.assertIn("swiftlint lint", self.lint.read_text())
+        self.assertIn("--baseline .swiftlint-baseline.json", self.lint.read_text())
+
+    def test_a_missing_swiftlint_fails_the_gate_with_the_install_command(self):
+        (self.tools / "swiftlint").unlink()
+        self.env["PATH"] = f"{self.tools}:/usr/bin:/bin"
+        self.env["SIDEA_IOS_SIMULATOR"] = "NAMED"
+        result = self.change("apps/ios/View.swift")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("brew install swiftlint", result.stderr)
 
     def test_any_change_runs_the_public_source_scan(self):
         self.assertEqual(self.change("docs/clean.md").returncode, 0)

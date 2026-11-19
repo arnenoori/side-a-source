@@ -222,7 +222,7 @@ def runtime(root):
 def version(binary):
     """(major, minor) from `tmux -V` ("tmux 3.7c", "tmux next-3.8"), or None."""
     try:
-        output = subprocess.run([binary, "-V"], capture_output=True, text=True, timeout=5).stdout
+        output = subprocess.run([binary, "-V"], capture_output=True, text=True, timeout=5, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
     found = re.search(r"(\d+)\.(\d+)", output)
@@ -284,7 +284,7 @@ def install(root, bundled=None):
     command, env = server(binary)
     try:
         running = subprocess.run(command + ["source-file", str(folder / "tmux.conf")],
-                                 capture_output=True, timeout=5, env=env).returncode == 0
+                                 capture_output=True, timeout=5, env=env, check=False).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         running = False
     return {"tmux": binary, "version": ".".join(map(str, version(binary) or ())), "running": running}
@@ -305,7 +305,7 @@ def panes(root):
     command, env = server(binary)
     try:
         output = subprocess.run(command + ["list-panes", "-a", "-F", "#{pane_pid}\t#{pane_dead}\t#{session_name}"],
-                                capture_output=True, text=True, timeout=1, env=env).stdout
+                                capture_output=True, text=True, timeout=1, env=env, check=False).stdout
     except (OSError, subprocess.TimeoutExpired):
         return {}
     found = {}

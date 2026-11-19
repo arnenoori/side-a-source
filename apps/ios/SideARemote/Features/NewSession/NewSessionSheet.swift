@@ -42,7 +42,8 @@ struct NewSessionSheet: View {
     /// The prompt and recents' height, so a fitted iPad sheet is as tall as they are.
     @State private var contentHeight: CGFloat = 0
     @State private var barHeight: CGFloat = 0
-    @FocusState private var focused: Bool
+    @State private var focused = false
+    @State private var promptSelection = NSRange(location: 0, length: 0)
     @State private var attach = AttachSurface()
     /// The tray the photos are in, so a different Mac can have them sent to it.
     @State private var held: ComposerAttachments?
@@ -73,11 +74,8 @@ struct NewSessionSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.l) {
-                    TextField("What should it do?", text: Bindable(form).prompt, axis: .vertical)
-                        .font(.body)
-                        .lineLimit(6...)
-                        .focused($focused)
-                        .accessibilityLabel("Prompt")
+                    ComposerField(text: Bindable(form).prompt, selection: $promptSelection, isFocused: $focused, placeholder: "What should it do?",
+                                  label: "Prompt", minLines: 6, maxLines: nil, insets: .zero, drawer: attach.drawer, paste: attach.target)
                     if prompt.isEmpty, project == nil, !recent.isEmpty, macPicked {
                         suggestions
                     }
@@ -144,7 +142,7 @@ struct NewSessionSheet: View {
         .interactiveDismissDisabled(hasDraft || starting)
         // On iPad a compose sheet as tall as what it holds; a phone's, and a narrow window's, fill the screen anyway.
         .presentationSizing(.form.fitted(horizontal: false, vertical: true))
-        .attachments(attach, key: draft, tools: tools, focused: $focused)
+        .attachments(attach, key: draft, tools: tools)
         .onChange(of: ObjectIdentifier(tools.attachments), initial: true) {
             if let held, held !== tools.attachments { held.rehome(draft, to: tools.attachments) }
             held = tools.attachments
@@ -165,7 +163,7 @@ struct NewSessionSheet: View {
 
     #if DEBUG
     /// `--attach N` puts N generated photos in the tray, `--attach-failed` one that didn't upload, `--prompt-text` a
-    /// prompt, `--drawer menu|photos` opens the drawer: states for screenshots, reached without taps.
+    /// prompt, `--drawer panel|large` opens the drawer: states for screenshots, reached without taps.
     private func debugLaunch() async {
         let arguments = ProcessInfo.processInfo.arguments
         func value(_ flag: String) -> String? { arguments.firstIndex(of: flag).flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil } }
@@ -187,7 +185,7 @@ struct NewSessionSheet: View {
         if let mode = value("--drawer") {
             try? await Task.sleep(for: .milliseconds(900))
             attach.open(key: draft, tools: tools, reduceMotion: reduceMotion, options: nil)
-            if mode == "photos" { try? await Task.sleep(for: .milliseconds(700)); attach.drawer.showPhotos() }
+            if mode == "large" { try? await Task.sleep(for: .milliseconds(900)); attach.drawer.toggleDetent() }
         }
     }
 
@@ -220,7 +218,7 @@ struct NewSessionSheet: View {
 
     private var chipBar: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
-            AttachmentTray(session: draft, landing: attach.drawer.landing) { id, frame in attach.drawer.trayFrames[id] = frame }
+            AttachmentTray(session: draft)
                 .environment(model)
                 .padding(.horizontal, Space.m)
             if let error {
@@ -248,7 +246,6 @@ struct NewSessionSheet: View {
                     }
                 }
             }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { attach.drawer.composerFrame = $0.insetBy(dx: Space.m, dy: 0) }
         }
         .padding(.vertical, Space.xs)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
@@ -256,22 +253,21 @@ struct NewSessionSheet: View {
         .animation(Motion.smooth(reduceMotion), value: attachments.items(draft).map(\.id))
     }
 
-    /// The same + as the composer's: the drawer grows out of it.
+    /// The same + as the composer's: the panel takes the keyboard's place, and the + turns to an ×.
     private var attachButton: some View {
         Button {
             attach.open(key: draft, tools: tools, reduceMotion: reduceMotion, options: nil)
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 17, weight: .medium))
+                .rotationEffect(.degrees(attach.drawer.isOpen ? 45 : 0))
+                .animation(Motion.snappy(reduceMotion), value: attach.drawer.isOpen)
                 .frame(width: 44, height: 44)
                 .contentShape(.circle)
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .circle)
-        // The drawer opens as this circle, so it stands aside while the drawer is up.
-        .opacity(attach.drawer.hidesPlus ? 0 : 1)
-        .animation(nil, value: attach.drawer.hidesPlus)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { attach.drawer.plusFrame = $0 }
+        .attachPopover(attach)
         .disabled(room == 0)
         .needsMac()
         .environment(model)

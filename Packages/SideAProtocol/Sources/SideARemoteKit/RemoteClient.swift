@@ -302,6 +302,11 @@ public struct RemoteClient: Sendable {
     public func setAutopilotAnswers(_ change: AutopilotChange, confirm: String, idempotencyKey: String = UUID().uuidString.lowercased()) async throws -> AutopilotState {
         try await post("/v1/autopilot/answers", json: change, idempotencyKey: idempotencyKey, confirm: confirm)
     }
+    /// Asking stopped sessions to carry on, on or off. `confirm` signs `ConfirmMessage.subject(autopilotContinues:)` with
+    /// the confirm key after Face ID.
+    public func setAutopilotContinues(_ change: AutopilotChange, confirm: String, idempotencyKey: String = UUID().uuidString.lowercased()) async throws -> AutopilotState {
+        try await post("/v1/autopilot/continues", json: change, idempotencyKey: idempotencyKey, confirm: confirm)
+    }
     /// Makes `id` its provider's active account. `confirm` signs `ConfirmMessage.subject(useAccount:)` with the confirm key
     /// after Face ID. 404, 409 `account_not_ready`.
     public func useAccount(_ id: String, confirm: String, idempotencyKey: String = UUID().uuidString.lowercased()) async throws -> AccountList {

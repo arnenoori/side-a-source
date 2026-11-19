@@ -8,7 +8,6 @@ import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-import sidea_bridge as bridge
 import codex_bridge as codex
 
 

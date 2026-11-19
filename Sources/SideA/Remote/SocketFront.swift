@@ -171,7 +171,7 @@ private final class Splice: @unchecked Sendable {
             if count > 0 {
                 if !buffer.withUnsafeBytes({ Self.write(to, $0.baseAddress!, count) }) { finish() }
             } else if count == 0 || (errno != EAGAIN && errno != EINTR) {
-                count == 0 ? ended() : finish()
+                if count == 0 { ended() } else { finish() }
             }
         }
         source.setCancelHandler { [self] in

@@ -38,7 +38,7 @@ struct TranscriptView: View {
     @State private var scrolled = false
     /// A reply that starts after this is written out from its first word; one already there just shows.
     @State private var openedAt = Date.now
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocused = false
 
     private var session: RemoteSession? { model.sessions.session(sessionID) }
     private var openRequests: [RemoteRequest] { session?.openRequests.compactMap(model.requests.request) ?? [] }

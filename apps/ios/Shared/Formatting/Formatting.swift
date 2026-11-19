@@ -21,7 +21,7 @@ public enum Formatting {
         if seconds < 1 { return exact ? String(format: "%.1fs", seconds) : nil }
         if seconds < 60 { return "\(Int(seconds.rounded()))s" }
         let whole = Int(seconds.rounded())
-        if whole < 3600 { return whole % 60 == 0 ? "\(whole / 60)m" : "\(whole / 60)m \(whole % 60)s" }
+        if whole < 3600 { return whole.isMultiple(of: 60) ? "\(whole / 60)m" : "\(whole / 60)m \(whole % 60)s" }
         return "\(whole / 3600)h \((whole % 3600) / 60)m"
     }
 

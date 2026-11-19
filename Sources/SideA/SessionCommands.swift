@@ -148,6 +148,10 @@ import SideAProtocol
             if notes, status == .working || status == .waiting { abilities.insert(.note) }
         }
         if let id = live.sessionID, island.hasWaiter(id) { abilities.insert(.followUp) }
+        // Idle in a terminal Side A can type into, with nothing better waiting: a reply is typed there.
+        if status == .idle || status == .finished, abilities.isDisjoint(with: [.type, .replyInbox, .replyTerminal, .followUp]), store.remote.typer.reach(live) != nil {
+            abilities.insert(.replyTyped)
+        }
         if store.hosted.available, HostedSessions.continueRefusal(live) == nil { abilities.insert(.continueOnPhone) }
         // Codex's app server: the settings it can change for the next turns.
         abilities.formUnion(codex.row(live)?.abilities ?? [])
@@ -206,6 +210,8 @@ import SideAProtocol
         case keys(name: String, key: SessionKey, guarded: Bool)
         /// A Codex session started in a terminal, through Codex's app server.
         case codex(LiveSession, key: SessionKey, text: String, queue: Bool)
+        /// Typed into the session's own terminal tab, as the user's message.
+        case terminal(LiveSession, key: SessionKey, text: String)
     }
 
     /// Sends a reply. Keys that could answer an open request are refused here; only the phone, with Face ID, sends them.
@@ -248,6 +254,13 @@ import SideAProtocol
                 return ReplyResult(delivery: waits ? .queued : .typed, sessionID: key)
             case .keys(let name, let key, _):
                 try await hosted.keys(name, (message.keys ?? []).map(\.rawValue))
+                return ReplyResult(delivery: .typed, sessionID: key)
+            case .terminal(let live, let key, let text):
+                let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
+                let transcript = live.provider == .claude ? live.sessionID.flatMap { AgentActivity.transcript(projects: projects, cwd: live.cwd, id: $0) } : nil
+                do throws(TerminalTyping.Failure) { try await store.remote.typer.type(text, into: live, transcript: transcript) } catch {
+                    throw Failure(status: 409, code: .cannotDeliver, message: error.message)
+                }
                 return ReplyResult(delivery: .typed, sessionID: key)
             }
         } catch let failure as Failure {
@@ -313,6 +326,10 @@ import SideAProtocol
         case .refused(let refusal):
             // Idle with no Stop hook waiting: a Claude session started in a terminal still has its inbox.
             if state == .idle, message.mode != .keys, let inboxed = inbox(text, target: target) { return inboxed }
+            // With no hook waiting either, its own terminal tab still takes typing.
+            if state == .idle, message.mode == .auto || message.mode == .followUp, let live = target.live, store.remote.typer.reach(live) != nil {
+                return .terminal(live, key: target.key, text: text)
+            }
             return .failed(.cannotDeliver(refusal))
         }
     }

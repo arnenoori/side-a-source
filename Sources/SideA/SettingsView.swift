@@ -1,4 +1,3 @@
-import Charts
 import ServiceManagement
 import SideACore
 import SideAProtocol
@@ -298,7 +297,10 @@ struct UsageSettings: View {
             if !weekly.isEmpty {
                 let rhythm = store.report.flatMap { WeekRhythm($0.activity) }
                 Section {
-                    ForEach(weekly) { PaceRow(account: $0, usage: store.usage[$0.id]!, rhythm: rhythm) }
+                    ForEach(weekly) { account in
+                        // The rows are built after the filter above ran, so an account's usage may have changed since.
+                        if let usage = store.usage[account.id], usage.weekly != nil { PaceRow(account: account, usage: usage, rhythm: rhythm) }
+                    }
                 } header: {
                     Text("This week")
                 } footer: {
@@ -309,9 +311,10 @@ struct UsageSettings: View {
             if !paying.isEmpty {
                 Section {
                     ForEach(paying) { account in
-                        let extra = store.usage[account.id]!.extra!
-                        LabeledContent(account.name) {
-                            Text(extra.enabled ? extra.summary : "Off · \(extra.summary)").monospacedDigit()
+                        if let extra = store.usage[account.id]?.extra {
+                            LabeledContent(account.name) {
+                                Text(extra.enabled ? extra.summary : "Off · \(extra.summary)").monospacedDigit()
+                            }
                         }
                     }
                 } header: {
@@ -331,14 +334,7 @@ struct UsageSettings: View {
                     }
                 }
                 Section("Tokens per day") {
-                    Chart(report.dayModels ?? report.days, id: \.self) { row in
-                        BarMark(x: .value("Day", Self.day(row.date), unit: .day), y: .value("Tokens", row.total))
-                            .foregroundStyle(by: .value("Model", ModelName.short(row.model)))
-                    }
-                    .chartYAxis { AxisMarks { value in AxisGridLine(); AxisValueLabel { Text(TokenCount.short(value.as(Int.self) ?? 0)) } } }
-                    .chartXAxis { AxisMarks(values: .stride(by: .day, count: 7)) { _ in AxisValueLabel(format: .dateTime.month(.abbreviated).day()) } }
-                    .chartLegend(position: .bottom, alignment: .leading)
-                    .frame(height: 170)
+                    TokensChart(rows: report.dayModels ?? report.days)
                 }
                 Section("When you work") { HourStrip(activity: report.activity) }
                 if let machines = report.machines, machines.count > 1 {
@@ -418,7 +414,8 @@ struct UsageSettings: View {
         return max(done / total, 0.02)
     }
     static func day(_ text: String?) -> Date {
-        (try? Date(text ?? "", strategy: .iso8601.year().month().day())) ?? .distantPast
+        // The report's days are local ones: read as UTC, each bar would land on the day before west of Greenwich.
+        (try? Date(text ?? "", strategy: Date.ISO8601FormatStyle(timeZone: .current).year().month().day())) ?? .distantPast
     }
     private func shares(_ items: [(String, Int)]) -> some View {
         let all = Double(max(items.map(\.1).reduce(0, +), 1))
@@ -444,10 +441,10 @@ struct PaceRow: View {
         let forecast = WeekForecast(window, rhythm: rhythm, now: Date().timeIntervalSince1970)
         VStack(alignment: .leading, spacing: 5) {
             HStack {
-                Text(account.name).font(.body.weight(.medium))
-                Text(account.provider.title).font(.caption).foregroundStyle(.secondary)
+                Text(account.name).font(.body.weight(.medium)).lineLimit(1)
+                Text(account.provider.title).font(.caption).foregroundStyle(.secondary).fixedSize()
                 Spacer()
-                Text(verdict(used: used, forecast: forecast)).font(.caption).foregroundStyle(.secondary)
+                Text(verdict(used: used, forecast: forecast)).font(.caption).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
             }
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
@@ -607,6 +604,15 @@ struct AutopilotSettings: View {
             Section {
                 Toggle("Answer with recommended after 1 minute",
                        isOn: Binding(get: { store.config.answerRecommended == true }, set: { store.setAnswerRecommended($0) }))
+                Toggle("Continue sessions once a limit lifts",
+                       isOn: Binding(get: { store.config.continueStopped != false }, set: { store.setContinueStopped($0) }))
+                    .task { await store.remote.inbox.refresh() }
+                // Without its hook, a Claude session in a plain terminal tab can't be sent anything.
+                if store.config.continueStopped != false, store.island.installed[.claude] == true, !store.remote.inbox.installed {
+                    LabeledContent("Messages to Claude in a terminal") {
+                        Button("Turn On") { Task { await store.remote.inbox.set(true) } }
+                    }
+                }
             }
             Section {
                 UpNext(store: store)

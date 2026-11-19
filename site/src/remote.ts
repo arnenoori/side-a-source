@@ -26,8 +26,10 @@ export function mountRemote(section: HTMLElement) {
       const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
       if (!step) return;
       e.preventDefault();
-      select(tabs[(i + step + tabs.length) % tabs.length], true);
+      const next = tabs[(i + step + tabs.length) % tabs.length];
+      if (next) select(next, true);
     });
   });
-  select(tabs.find(t => t.getAttribute('aria-selected') === 'true') ?? tabs[0]);
+  const first = tabs.find(t => t.getAttribute('aria-selected') === 'true') ?? tabs[0];
+  if (first) select(first);
 }

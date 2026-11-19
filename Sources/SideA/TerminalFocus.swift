@@ -206,6 +206,18 @@ enum TerminalFocus {
         return withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
     }
 
+    /// The session runs in a pane of the user's own tmux server.
+    static func inTmux(_ pid: Int) -> Bool { tmuxServer(above: pid_t(pid)) != nil }
+
+    /// The process has a terminal, and its group is the one that terminal reads keys for.
+    static func inFront(_ pid: Int) -> Bool {
+        var process = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid_t(pid)]
+        guard sysctl(&mib, 4, &process, &size, nil, 0) == 0, size > 0, process.kp_eproc.e_tdev != -1 else { return false }
+        return process.kp_eproc.e_tpgid > 0 && process.kp_eproc.e_tpgid == process.kp_eproc.e_pgid
+    }
+
     private static func tmuxServer(above pid: pid_t) -> pid_t? {
         var current = pid
         for _ in 0..<32 {

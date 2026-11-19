@@ -16,6 +16,8 @@ public extension Capability {
     static let autopilotToggle = Self(rawValue: "autopilot.toggle")
     /// `POST /v1/autopilot/answers` turns answering with the recommended choice on or off; `AutopilotState.answersRecommended`.
     static let autopilotAnswers = Self(rawValue: "autopilot.answers")
+    /// `POST /v1/autopilot/continues` turns asking stopped sessions to carry on on or off; `AutopilotState.continuesStopped`.
+    static let autopilotContinues = Self(rawValue: "autopilot.continues")
     static let worth = Self(rawValue: "worth")
     static let incidents = Self(rawValue: "incidents")
     /// `StateSnapshot.droppedReplies`.
@@ -291,6 +293,8 @@ public struct AutopilotDecision: Codable, Hashable, Sendable, Identifiable {
         public static let stuck = Self(rawValue: "stuck")
         /// A move only for priority, held back because the login moved recently.
         public static let priorityWait = Self(rawValue: "priorityWait")
+        /// A session a limit or a cut-off response stopped, sent "Please continue" by the Mac; `title` names it.
+        public static let continued = Self(rawValue: "continued")
     }
     public let id: String
     public let at: Timestamp
@@ -332,15 +336,26 @@ public struct AutopilotState: Codable, Hashable, Sendable {
     public let followFable: Bool?
     /// Claude Code is running Fable and Autopilot is following it, so Fable's room is what counts.
     public let fableMode: Bool?
+    /// Whether the Mac sends "Please continue" to a session a limit or a cut-off response stopped, once it can go on.
+    /// Nil from a Mac without `autopilot.continues`.
+    // swiftlint:disable:next discouraged_optional_boolean -- absent from a Mac that doesn't have the setting
+    public var continuesStopped: Bool?
     public init(enabled: Bool, pending: AutopilotDecision? = nil, decisions: [AutopilotDecision] = [], answersRecommended: Bool? = nil,
                 held: [AutopilotDecision]? = nil, next: [NextMove]? = nil, waiting: WaitingSummary? = nil, swapAt: Int? = nil,
                 followFable: Bool? = nil, fableMode: Bool? = nil) {
         self.enabled = enabled; self.pending = pending; self.decisions = decisions; self.answersRecommended = answersRecommended
         self.held = held; self.next = next; self.waiting = waiting; self.swapAt = swapAt; self.followFable = followFable; self.fableMode = fableMode
     }
+
+    /// The same state with `continuesStopped` set.
+    public func continuing(_ continues: Bool) -> AutopilotState {
+        var copy = self
+        copy.continuesStopped = continues
+        return copy
+    }
 }
 
-/// The body of `POST /v1/autopilot` and `POST /v1/autopilot/answers`, which answer with the `AutopilotState`. Signed with
+/// The body of `POST /v1/autopilot`, `POST /v1/autopilot/answers` and `POST /v1/autopilot/continues`, which answer with the `AutopilotState`. Signed with
 /// `ConfirmPurpose.autopilot` by the confirm key, either way.
 public struct AutopilotChange: Codable, Hashable, Sendable {
     public let enabled: Bool

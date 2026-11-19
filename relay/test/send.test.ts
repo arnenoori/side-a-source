@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fromB64url, utf8 } from '../src/bytes';
 import worker from '../src/index';
 import { LIMITS, type Install } from '../src/install';
-import { FakeApns, alert, call, context, incoming, hexToken, newPhone, paired, phoneCall, putDevice, randomId, sealed, signed, stub, type Mac, type Phone } from './helpers';
+import { FakeApns, alert, nth, call, context, incoming, hexToken, newPhone, paired, phoneCall, putDevice, randomId, sealed, signed, stub, type Mac, type Phone } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -37,7 +37,8 @@ describe('alerts', () => {
     const apns = new FakeApns();
     const { mac, phone } = await paired(apns);
     await send(mac, alert(phone));
-    const [header, claims, signature] = apns.last(phone.apnsToken)!.headers.authorization.replace(/^bearer /, '').split('.');
+    const parts = apns.last(phone.apnsToken)!.headers.authorization?.replace(/^bearer /, '').split('.') ?? [];
+    const [header, claims, signature] = [nth(parts, 0), nth(parts, 1), nth(parts, 2)];
     expect(JSON.parse(new TextDecoder().decode(fromB64url(header)!))).toEqual({ alg: 'ES256', kid: 'TESTKEY123' });
     const { iss, iat } = JSON.parse(new TextDecoder().decode(fromB64url(claims)!));
     expect(iss).toBe('NV46KL65S9');
@@ -189,7 +190,8 @@ describe('Live Activities', () => {
     const update = { devices: [phone.deviceId], kind: 'liveactivity', event: 'update', activityId, contentState: content, priority: 10, staleDate: 1792201800 };
     await send(mac, update);
     await send(mac, update);
-    const [first, second] = apns.to(updateToken);
+    const first = nth(apns.to(updateToken), 0);
+    const second = nth(apns.to(updateToken), 1);
     expect(first.headers['apns-priority']).toBe('10');
     expect(second.headers['apns-priority']).toBe('5');
     expect(first.body.aps['stale-date']).toBe(1792201800);

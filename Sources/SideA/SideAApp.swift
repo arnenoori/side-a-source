@@ -10,6 +10,7 @@ struct SideAApp: App {
         _store = State(initialValue: store)
         let updates = Updates()
         updates.willRelaunch = { store.keepAwake.handOff(); store.remote.handOff() }
+        // swiftlint:disable:next unowned_variable_capture -- the store lives as long as the app.
         updates.activity = { [unowned store] in store.relaunchActivity }
         store.remote.checkForUpdates = { [weak updates] in updates?.checkQuietly() ?? false }
         _updates = StateObject(wrappedValue: updates)

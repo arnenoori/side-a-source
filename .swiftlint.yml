@@ -1,0 +1,142 @@
+# One config for every Swift file: the Mac app, its tests, the shared package and the iOS app.
+# Run `scripts/lint-swift.sh`; scripts/check.sh runs it when Swift changes. See docs/validation.md.
+#
+# Aimed at bad practice, not formatting: the codebase uses long lines and dense code on purpose,
+# so every pure-formatting rule stays off. Each opt-in rule below catches a real hazard.
+
+included:
+  - Sources
+  - Tests
+  - Packages/SideAProtocol/Sources
+  - Packages/SideAProtocol/Tests
+  - apps/ios
+
+excluded:
+  - "**/.build"
+  - apps/ios/build
+  - apps/ios/DerivedData
+
+# Start from nothing so a SwiftLint upgrade can't turn on new rules under us.
+only_rules:
+  # Crashes and swallowed errors.
+  - force_unwrapping
+  - force_try
+  - force_cast
+  - implicitly_unwrapped_optional
+  - fatal_error_message
+  - unowned_variable_capture
+  - weak_delegate
+  - discouraged_optional_boolean
+  # Needless work and wrong-shaped code.
+  - empty_count
+  - first_where
+  - contains_over_filter_count
+  - contains_over_filter_is_empty
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - redundant_nil_coalescing
+  - reduce_boolean
+  - last_where
+  - sorted_first_last
+  - empty_collection_literal
+  - toggle_bool
+  - unneeded_synthesized_initializer
+  - unused_optional_binding
+  - unused_closure_parameter
+  - unused_enumerated
+  - unused_control_flow_label
+  - unused_setter_value
+  - redundant_discardable_let
+  - void_function_in_ternary
+  - legacy_multiple
+  - private_over_fileprivate
+  - todo
+  # Outliers in size and shape.
+  - cyclomatic_complexity
+  - function_body_length
+  - file_length
+  - type_body_length
+  - function_parameter_count
+  - large_tuple
+  - nesting
+  - custom_rules
+
+todo:
+  severity: error
+
+cyclomatic_complexity:
+  warning: 25
+  error: 40
+  ignores_case_statements: true
+
+function_body_length:
+  warning: 120
+  error: 250
+
+type_body_length:
+  warning: 600
+  error: 1200
+
+file_length:
+  warning: 900
+  error: 1800
+  ignore_comment_only_lines: true
+
+function_parameter_count:
+  warning: 9
+  error: 14
+
+large_tuple:
+  warning: 4
+  error: 6
+
+nesting:
+  type_level: 3
+  function_level: 3
+
+private_over_fileprivate:
+  validate_extensions: false
+
+# `count == 0` on a plain Int is not a collection check.
+empty_count:
+  only_after_dot: true
+
+custom_rules:
+  # A try? whose result is thrown away: the error vanishes and so does the failure. Handle it, log it,
+  # or say why it can't matter: `// swiftlint:disable:next swallowed_try -- reason`.
+  # Exempt: `try? await Task.sleep` (the only error is the cancellation that ends the wait early) and
+  # `removeItem` (a best-effort cleanup of a file that may already be gone).
+  swallowed_try:
+    name: "Swallowed error"
+    regex: '^\s*(?:await\s+)?try\?\s(?!await\s+Task\.sleep)(?![^\n]*\.removeItem\()'
+    match_kinds: [keyword, identifier]
+    message: "A bare `try?` discards the error. Handle it, log it, or disable this rule on the line with a reason."
+    severity: error
+
+  print_in_app:
+    name: "print in app sources"
+    regex: '(?<![\w.])print\('
+    included: ["Sources/.*\\.swift", "Packages/SideAProtocol/Sources/.*\\.swift", "apps/ios/(?!Tests/).*\\.swift"]
+    message: "Don't print from app code; use the logger."
+    severity: error
+
+  sleep_literal_in_tests:
+    name: "Fixed Task.sleep in tests"
+    regex: 'Task\.sleep\((?:nanoseconds:\s*[0-9_]{6,}|for:\s*\.(?:seconds\(|milliseconds\([0-9]{3,}\)))'
+    included: ["Tests/.*\\.swift", "Packages/SideAProtocol/Tests/.*\\.swift", "apps/ios/Tests/.*\\.swift"]
+    message: "A fixed wait of 100 ms or more is flaky under load. Poll for the condition instead."
+    severity: error
+
+  user_defaults_standard:
+    name: "UserDefaults.standard"
+    regex: 'UserDefaults\.standard'
+    included: ["Sources/.*\\.swift", "Packages/SideAProtocol/Sources/.*\\.swift", "apps/ios/(?!Tests/).*\\.swift"]
+    message: "Go through the type that owns the setting, or disable this rule on the line with a reason."
+    severity: error
+
+  dispatch_main_async_in_ui:
+    name: "DispatchQueue.main.async"
+    regex: 'DispatchQueue\.main\.async'
+    included: ["Sources/.*\\.swift", "Packages/SideAProtocol/Sources/.*\\.swift", "apps/ios/(?!Tests/).*\\.swift"]
+    message: "Use a @MainActor Task or MainActor.run; DispatchQueue.main.async escapes actor isolation."
+    severity: error

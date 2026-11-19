@@ -28,7 +28,7 @@ private func codex(_ composer: String, above: [String] = []) -> String {
     #expect(Hosting.permissionArguments(.claude, mode: "default") == ["--permission-mode", "default"])
     #expect(Hosting.permissionArguments(.claude, mode: "bypassPermissions") == ["--permission-mode", "bypassPermissions"])
     #expect(Hosting.permissionArguments(.claude, mode: "never") == nil)
-    #expect(Hosting.permissionArguments(.codex, mode: "default") == [])
+    #expect(Hosting.permissionArguments(.codex, mode: "default")?.isEmpty == true)
     #expect(Hosting.permissionArguments(.codex, mode: "never") == ["-a", "never"])
     #expect(Hosting.permissionArguments(.codex, mode: "dangerFullAccess") == ["-s", "danger-full-access"])
     #expect(Hosting.permissionArguments(.codex, mode: "plan") == nil)

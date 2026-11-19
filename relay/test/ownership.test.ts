@@ -2,9 +2,10 @@ import { env, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { b64url, sha256 } from '../src/bytes';
 import { network } from '../src/index';
-import { type Install } from '../src/install';
-import { CLAIM_LIFETIME, Ledger } from '../src/ledger';
-import { FakeApns, alert, call, hexToken, newMac, newPhone, paired, phoneCall, putDevice, register, signed, stub } from './helpers';
+import type { Install } from '../src/install';
+import type { Ledger } from '../src/ledger';
+import { CLAIM_LIFETIME } from '../src/ledger';
+import { FakeApns, alert, call, hexToken, newMac, newPhone, paired, phoneCall, putDevice, register, signed, stub, stubApns } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -104,7 +105,7 @@ describe('tokens follow the proof', () => {
     state.storage.sql.exec('SELECT id FROM activities').toArray().length);
 
   it('takes no update token from a device that has not proved its own', async () => {
-    new FakeApns();
+    stubApns();
     const mac = await newMac();
     await register(mac);
     const phone = newPhone(mac);

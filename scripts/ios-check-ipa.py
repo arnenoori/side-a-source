@@ -16,7 +16,7 @@ failures = 0
 
 
 def check(ok, what):
-    global failures
+    global failures  # noqa: PLW0603 -- the script tallies failures in one counter
     print(("  ok    " if ok else "  FAIL  ") + what)
     failures += not ok
 
@@ -28,7 +28,7 @@ def entitlements(bundle):
 
 
 def authority(bundle):
-    out = subprocess.run(["codesign", "-dvv", str(bundle)], capture_output=True, text=True).stderr
+    out = subprocess.run(["codesign", "-dvv", str(bundle)], capture_output=True, text=True, check=False).stderr
     return next((line.split("=", 1)[1] for line in out.splitlines() if line.startswith("Authority=")), "")
 
 
@@ -41,7 +41,7 @@ def info(bundle):
 def profile(bundle):
     der = (bundle / "embedded.mobileprovision").read_bytes()
     xml = subprocess.run(["openssl", "smime", "-inform", "der", "-verify", "-noverify"],
-                         input=der, capture_output=True).stdout
+                         input=der, capture_output=True, check=False).stdout
     return plistlib.loads(xml)
 
 

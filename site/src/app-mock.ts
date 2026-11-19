@@ -11,7 +11,7 @@ export function mountAppMock(desk: HTMLElement) {
     win.inert = how !== 'open';
   };
   mountEasterEggs(desk, showWindow);
-  const $ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = desk) => root.querySelector<T & Element>(sel) as T | null;
+  const $ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = desk) => root.querySelector<T & Element>(sel);
   const $$ = <T extends Element = HTMLElement>(sel: string, root: ParentNode = desk) => [...root.querySelectorAll(sel)] as T[];
   const later = (ms: number, run: () => void) => window.setTimeout(run, ms);
 
@@ -74,7 +74,8 @@ export function mountAppMock(desk: HTMLElement) {
       const to = step ? (i + step + tabs.length) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
       if (to < 0) return;
       e.preventDefault();
-      selectTab(tabs[to].dataset.tab!, true);
+      const target = tabs[to];
+      if (target) selectTab(target.dataset.tab!, true);
     });
   });
   $$<HTMLButtonElement>('[data-open]').forEach(b => b.addEventListener('click', () => { showWindow('open'); selectTab(b.dataset.open!, true); }));
@@ -246,9 +247,9 @@ export function mountAppMock(desk: HTMLElement) {
     window.setInterval(() => {
       if (!shown || document.hidden) return;
       n = (n + 1) % all.length;
-      if (reducedMotion.matches) { steps.textContent = all[n]; return; }
+      if (reducedMotion.matches) { steps.textContent = all[n] ?? null; return; }
       steps.classList.add('out');
-      later(220, () => { steps.textContent = all[n]; steps.classList.remove('out'); });
+      later(220, () => { steps.textContent = all[n] ?? null; steps.classList.remove('out'); });
     }, 2600);
   }
 

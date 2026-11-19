@@ -34,7 +34,7 @@ private let signedCalls: [SignedCall] = [
 ]
 
 @Test(arguments: signedCalls)
-fileprivate func aChangeIsKeyedAndSignedAsItsRouteAsks(_ row: SignedCall) async throws {
+private func aChangeIsKeyedAndSignedAsItsRouteAsks(_ row: SignedCall) async throws {
     let mac = FakeMac()
     let reply = try row.reply.map { try Fixtures.data($0) }
     mac.respond { _ in reply.map { .init(body: $0) } ?? .init(status: 204) }

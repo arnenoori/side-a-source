@@ -142,7 +142,7 @@ test('the heart is plump like the iOS Love heart: wide, deep, a shallow cleft an
 });
 
 test('the heart is one smooth, symmetric, closed shape', () => {
-  const { positions, normals, index, height } = heartMesh(32);
+  const { positions, normals, index } = heartMesh(32);
   let minX = Infinity, maxX = -Infinity, minY = Infinity, cy = 0;
   const n = positions.length / 3;
   for (let i = 0; i < positions.length; i += 3) {

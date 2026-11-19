@@ -105,6 +105,9 @@ public enum ConfirmMessage {
     /// signature for Autopilot itself never turns this on.
     public static func subject(autopilotAnswers change: AutopilotChange) -> String { "answers:enabled:\(change.enabled)" }
 
+    /// The `.autopilot` subject of `POST /v1/autopilot/continues`, `continues:enabled:true` or `continues:enabled:false`.
+    public static func subject(autopilotContinues change: AutopilotChange) -> String { "continues:enabled:\(change.enabled)" }
+
     /// The `.rotation` subject of a priority, `<accountID>:priority:<level>`: the account and the level the user chose.
     public static func subject(account id: String, priority: PriorityLevel) throws -> String {
         guard !id.contains(":") else { throw Invalid.separator("accountID") }

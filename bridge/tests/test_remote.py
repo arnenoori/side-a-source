@@ -549,9 +549,9 @@ class RemoteTests(unittest.TestCase):
         db.close()
         self.assertNotIn('/tmp/gone/paste.png', [v[2] for v in views])
         self.assertIn((sha1(viewed), len(viewed), str(view)), views)
-        self.assertIn((sha1('missing:/nowhere/missing.png'.encode()), None, '/nowhere/missing.png'), views)
+        self.assertIn((sha1(b'missing:/nowhere/missing.png'), None, '/nowhere/missing.png'), views)
         self.assertEqual(sessions.image(self.root, sha1(viewed))['kind'], 'file')
-        self.assertEqual(sessions.image(self.root, sha1('missing:/nowhere/missing.png'.encode())), {'error': 'gone'})
+        self.assertEqual(sessions.image(self.root, sha1(b'missing:/nowhere/missing.png')), {'error': 'gone'})
         refused = [row for row in views if row[2] == str(notes)]
         self.assertEqual(sessions.image(self.root, refused[0][0]), {'error': 'gone'})
         messages = self.page('thread-1')['messages']
@@ -567,7 +567,7 @@ class RemoteTests(unittest.TestCase):
                          'CREATE TABLE views(session TEXT, seq INTEGER, uuids TEXT, data TEXT, PRIMARY KEY(session, seq)) WITHOUT ROWID;'
                          'CREATE TABLE view_state(session TEXT PRIMARY KEY, path TEXT, offset INTEGER, head TEXT, count INTEGER, used REAL);')
         for path, state in db.execute('SELECT path, state FROM files').fetchall():
-            state = json.loads(state); state.pop('img', None)
+            state = json.loads(state); state.pop('img', None)  # noqa: PLW2901 -- normalizes the loop value in place
             db.execute('UPDATE files SET state=? WHERE path=?', (json.dumps(state), path))
         db.execute('PRAGMA user_version=4'); db.commit(); db.close()
         with patch.object(sessions, 'index_claude', side_effect=AssertionError('reindexed')):

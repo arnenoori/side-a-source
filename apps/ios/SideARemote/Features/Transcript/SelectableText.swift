@@ -15,6 +15,8 @@ struct SelectableText: UIViewRepresentable {
         var lineSpacing: CGFloat = 3
         /// False for code: lines keep their length and the view grows sideways, inside a horizontal scroll.
         var wraps = true
+        /// UTF-16 ranges tinted with the accent: the commands in a message the user sent.
+        var highlights: [NSRange] = []
     }
 
     struct Action {
@@ -56,7 +58,7 @@ struct SelectableText: UIViewRepresentable {
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
         view.tintColor = accent.uiColor
-        let rendered = Self.render(text, style: style, size: typeSize)
+        let rendered = Self.render(text, style: style, size: typeSize, accent: accent.uiColor)
         // Reassigning the same text drops a selection the user is making.
         if view.attributedText != rendered { view.attributedText = rendered }
         view.textContainer.widthTracksTextView = style.wraps
@@ -89,7 +91,7 @@ struct SelectableText: UIViewRepresentable {
     }
 
     /// SwiftUI's Markdown attributes (inline code, emphasis, links) as UIKit's, at the environment's type size.
-    static func render(_ text: AttributedString, style: Style, size: DynamicTypeSize) -> NSAttributedString {
+    static func render(_ text: AttributedString, style: Style, size: DynamicTypeSize, accent: UIColor = .tintColor) -> NSAttributedString {
         let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(size))
         let base = UIFont.preferredFont(forTextStyle: style.textStyle, compatibleWith: traits)
         let body = style.monospaced ? UIFont.monospacedSystemFont(ofSize: base.pointSize, weight: style.weight)
@@ -122,6 +124,9 @@ struct SelectableText: UIViewRepresentable {
             }
             attributes[.font] = font
             result.append(NSAttributedString(string: piece, attributes: attributes))
+        }
+        for range in style.highlights where NSMaxRange(range) <= result.length {
+            result.addAttribute(.foregroundColor, value: accent, range: range)
         }
         return result
     }

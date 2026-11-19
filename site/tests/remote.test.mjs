@@ -26,7 +26,7 @@ test('only a real App Store app link turns the badge on', () => {
   }
   assert.equal(appStoreURL({}), null);
   for (const bad of ['', 'https://testflight.apple.com/', 'http://testflight.apple.com/join/ABC', 'https://example.com/join/ABC', 'https://testflight.apple.com/join/A"><b>']) {
-    assert.throws(() => testFlightURL({ testFlightURL: bad }), /testflight\.apple\.com/, String(bad));
+    assert.throws(() => testFlightURL({ testFlightURL: bad }), /testflight\.apple\.com/, bad);
   }
   assert.equal(testFlightURL({}), null);
 });

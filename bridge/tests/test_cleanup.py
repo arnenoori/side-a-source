@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-import cleanup  # noqa: E402
-import sessions  # noqa: E402
+import cleanup
+import sessions
 
 OLD = time.time() - 200 * 86400
 

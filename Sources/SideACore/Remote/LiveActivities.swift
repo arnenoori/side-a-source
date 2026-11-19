@@ -66,14 +66,14 @@ public struct LiveActivities: Sendable {
         case .running(let id, let started, let state):
             if listed.contains(id) { kept = id } else {
                 cards[device] = .dismissed
-                kept = open.sorted().first
+                kept = open.min()
                 if let kept { cards[device] = .running(id: kept, started: started, state: state) }
             }
         case .starting(let since, _, let state):
-            kept = open.sorted().first
+            kept = open.min()
             if let kept { cards[device] = .running(id: kept, started: since, state: state) }
         case .dismissed, .gaveUp, nil:
-            kept = open.sorted().first
+            kept = open.min()
             if let kept { cards[device] = .running(id: kept, started: now, state: nil) }
         }
         let extras = open.subtracting([kept].compactMap { $0 }).sorted()

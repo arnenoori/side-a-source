@@ -25,7 +25,7 @@ def api(path, data=None):
 
 def builds(data):
     namespace = {"s": "http://www.andymatuschak.org/xml-namespaces/sparkle"}
-    return [int(item.findtext("s:version", namespaces=namespace)) for item in ET.fromstring(data).findall("./channel/item")]
+    return [int(item.findtext("s:version", namespaces=namespace)) for item in ET.fromstring(data).findall("./channel/item")]  # noqa: S314 -- the feed Side A published itself
 
 
 def require_newer_feed(previous, current):
@@ -35,7 +35,7 @@ def require_newer_feed(previous, current):
 
 def find(path):
     """Like api, but None for a 404."""
-    result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{path}"], capture_output=True, text=True)
+    result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/{path}"], capture_output=True, text=True, check=False)
     if result.returncode == 0:
         return json.loads(result.stdout)
     if "HTTP 404" in result.stderr:

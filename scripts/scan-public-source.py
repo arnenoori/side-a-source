@@ -3,7 +3,6 @@
 
 Prints where and what kind, never the value. Exit 1 when anything is found.
 """
-import os
 import re
 import subprocess
 import sys
@@ -38,7 +37,7 @@ SECRET_FILES = re.compile(r"(^|/)(\.env|\.env\.local|\.env\.production|\.dev\.va
 
 def own_email():
     try:
-        email = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True).stdout.strip()
+        email = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True, check=False).stdout.strip()
     except OSError:
         return ""
     return "" if email.endswith("@users.noreply.github.com") else email

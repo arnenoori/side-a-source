@@ -119,8 +119,8 @@ export function heartMesh(segments = 96, shape = SHAPE) {
   for (let i = 0; i < positions.length; i += 3) {
     positions[i] *= s; positions[i + 1] = (positions[i + 1] - minY) * s; positions[i + 2] *= s;
   }
-  const outline = (count = 720) => Array.from({ length: count }, (_, i) => {
-    const a = (i / count) * 2 * Math.PI, dx = Math.cos(a), dy = Math.sin(a);
+  const outline = (samples = 720) => Array.from({ length: samples }, (_, i) => {
+    const a = (i / samples) * 2 * Math.PI, dx = Math.cos(a), dy = Math.sin(a);
     const r = surfaceAlong(sample, dx, dy, 0, 1);
     return [(CENTER[0] + dx * r) * s, (CENTER[1] + dy * r - minY) * s];
   });

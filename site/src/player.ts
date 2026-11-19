@@ -50,11 +50,14 @@ export async function startPlayer() {
   for (const item of metadata) {
     const geometry = new THREE.BufferGeometry();
     const quantized = new Uint16Array(data, item.offset, item.count * 3);
-    const positions = Float32Array.from(quantized, (value, i) => item.min[i % 3] + value / 65535 * (item.max[i % 3] - item.min[i % 3]));
+    const positions = Float32Array.from(quantized, (value, i) => {
+      const low = item.min[i % 3] ?? 0;
+      return low + value / 65535 * ((item.max[i % 3] ?? 0) - low);
+    });
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(new Int16Array(data, item.normalOffset, item.count * 3), 3, true));
     geometry.setIndex(new THREE.BufferAttribute(item.wide ? new Uint32Array(data, item.indexOffset, item.indexCount) : new Uint16Array(data, item.indexOffset, item.indexCount), 1));
-    const material = new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(item.color[0], item.color[1], item.color[2], THREE.SRGBColorSpace), metalness: item.metallic, roughness: item.roughness });
+    const material = new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(item.color[0] ?? 0, item.color[1] ?? 0, item.color[2] ?? 0, THREE.SRGBColorSpace), metalness: item.metallic, roughness: item.roughness });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = item.name;
     mesh.userData.action = item.action;
@@ -78,6 +81,7 @@ export async function startPlayer() {
   controls.push(lcd);
   const fitPlayer = createPlayerFraming(camera, player);
   const accounts = [{ name: 'PERSONAL', provider: 'CLAUDE' }, { name: 'STUDIO', provider: 'CLAUDE' }, { name: 'SIDE PROJECT', provider: 'CODEX' }];
+  const account = () => accounts[track] ?? { name: '', provider: '' };
   let track = 0, open = false, playing = false, auto = false, held = false, sideB = false, repeatOne = false;
   let holdTimer = 0, heldLong = false;
   let targetRotation = -0.12, frame = 0, previousTime = 0;
@@ -88,11 +92,11 @@ export async function startPlayer() {
     ctx.fillStyle = '#a6b887'; ctx.fillRect(0, 0, 820, 295);
     ctx.fillStyle = '#2c412b';
     ctx.font = '24px monospace';
-    ctx.fillText(`${sideB ? 'BONUS' : accounts[track].provider}    ${sideB ? 'SIDE B' : auto ? 'AUTO' : 'SIDE A'}`, 40, 49);
-    ctx.font = 'bold 60px monospace'; ctx.fillText(sideB ? 'HIDDEN TRACK' : accounts[track].name, 40, 143);
+    ctx.fillText(`${sideB ? 'BONUS' : account().provider}    ${sideB ? 'SIDE B' : auto ? 'AUTO' : 'SIDE A'}`, 40, 49);
+    ctx.font = 'bold 60px monospace'; ctx.fillText(sideB ? 'HIDDEN TRACK' : account().name, 40, 143);
     ctx.font = '23px monospace'; ctx.fillText(`${held ? 'HOLD' : playing ? 'PLAY' : 'READY'}${repeatOne ? '  REPEAT 1' : '         '}              0${track + 1} / 03`, 40, 241);
     lcdTexture.needsUpdate = true;
-    liveStatus.textContent = `Preview account: ${accounts[track].name}, ${accounts[track].provider}. ${playing ? 'Playing' : 'Ready'}. ${open ? 'Lid open.' : ''}`;
+    liveStatus.textContent = `Preview account: ${account().name}, ${account().provider}. ${playing ? 'Playing' : 'Ready'}. ${open ? 'Lid open.' : ''}`;
   }
   function schedule() { if (!frame && !document.hidden) frame = requestAnimationFrame(render); }
   function resize() {
@@ -159,9 +163,9 @@ export async function startPlayer() {
   const code = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
   let progress = 0;
   addEventListener('keydown', event => {
-    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    const pressed = event.key.length === 1 ? event.key.toLowerCase() : event.key;
     // Extra ups keep the first two; any other miss restarts.
-    progress = key === code[progress] ? progress + 1 : key === 'ArrowUp' ? (progress === 2 ? 2 : 1) : 0;
+    progress = pressed === code[progress] ? progress + 1 : pressed === 'ArrowUp' ? (progress === 2 ? 2 : 1) : 0;
     if (progress < code.length) return;
     progress = 0; sideB = !sideB; open = sideB; playing = sideB; held = false;
     lcdUpdate(); schedule();

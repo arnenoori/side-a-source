@@ -391,6 +391,12 @@ struct UserBubble: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
+    /// The commands in what was sent, tinted as they were in the composer.
+    private func highlights(in text: String) -> [NSRange] {
+        guard let agent = model.sessions.session(sessionID)?.agent else { return [] }
+        return CommandHighlight.ranges(in: text, agent: agent, commands: model.tools.agent(agent)?.commands ?? [])
+    }
+
     private var bubble: some View {
         VStack(alignment: .trailing, spacing: Space.xs) {
             if !message.images.isEmpty {
@@ -398,7 +404,7 @@ struct UserBubble: View {
             }
             if let text = model.transcripts.text(message, in: sessionID), !text.isEmpty {
                 MaxWidthFraction(fraction: 0.8) {
-                    SelectableText(text: AttributedString(text), style: SelectableText.Style(lineSpacing: 0), menu: [
+                    SelectableText(text: AttributedString(text), style: SelectableText.Style(lineSpacing: 0, highlights: highlights(in: text)), menu: [
                         .init(title: "Copy", image: "doc.on.doc") { UIPasteboard.general.string = text },
                         .init(title: "Edit & Resend", image: "pencil") { model.transcripts.drafts[sessionID] = text },
                     ])

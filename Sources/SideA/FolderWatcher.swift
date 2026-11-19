@@ -11,7 +11,7 @@ final class FolderWatcher {
         let paths = folders.map(\.path).filter { FileManager.default.fileExists(atPath: $0) }
         guard !paths.isEmpty else { return }
         var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(), retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
             guard let info else { return }
             let changed = (unsafeBitCast(paths, to: NSArray.self) as? [String]) ?? []
             let watcher = Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue()

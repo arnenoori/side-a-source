@@ -190,6 +190,7 @@ struct RemoteKeychain: @unchecked Sendable {
         guard found == errSecSuccess, let result, CFGetTypeID(result) == SecCertificateGetTypeID() else {
             throw Failure(status: found, what: "Side A's security key has no certificate")
         }
+        // swiftlint:disable:next force_cast -- the CFGetTypeID check above proves it is a SecCertificate; a conditional cast to a CF type always succeeds and only warns.
         return (result as! SecCertificate)
     }
 
@@ -202,6 +203,7 @@ struct RemoteKeychain: @unchecked Sendable {
         guard SecItemCopyMatching(scoped([kSecClass: kSecClassKey, kSecAttrApplicationTag: tag, kSecAttrKeyClass: kSecAttrKeyClassPrivate,
                                           kSecReturnRef: true, kSecMatchLimit: kSecMatchLimitOne]), &result) == errSecSuccess, let result else { return "no key" }
         var access: SecAccess?
+        // swiftlint:disable:next force_cast -- a SecKeychainItem is a CFTypeRef; a conditional cast to a CF type always succeeds and only warns.
         guard SecKeychainItemCopyAccess(result as! SecKeychainItem, &access) == errSecSuccess, let access else { return "unreadable" }
         var list: CFArray?
         SecAccessCopyACLList(access, &list)

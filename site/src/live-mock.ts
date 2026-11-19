@@ -16,7 +16,7 @@ export function mountLiveMock(desk: HTMLElement) {
       t.tabIndex = on ? 0 : -1;
       document.getElementById(t.getAttribute('aria-controls')!)!.hidden = !on;
     }
-    title.textContent = tab.textContent!.trim();
+    title.textContent = tab.textContent.trim();
     if (focus) tab.focus();
   };
   tabs.forEach((tab, i) => {
@@ -25,7 +25,8 @@ export function mountLiveMock(desk: HTMLElement) {
       const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
       if (!step) return;
       e.preventDefault();
-      select(tabs[(i + step + tabs.length) % tabs.length], true);
+      const next = tabs[(i + step + tabs.length) % tabs.length];
+      if (next) select(next, true);
     });
   });
 
@@ -97,7 +98,7 @@ export function mountLiveMock(desk: HTMLElement) {
     port.addEventListener('click', () => {
       const row = port.closest<HTMLElement>('li')!;
       const sub = $('.lv-sub', row);
-      const prior = sub.textContent!;
+      const prior = sub.textContent;
       const confirm = document.createElement('span');
       confirm.className = 'lv-confirm';
       confirm.innerHTML = `<span>Stop ${port.dataset.cmd} on :${port.dataset.port}?</span><button type="button" class="link-btn" data-no>Cancel</button><button type="button" class="link-btn danger" data-yes>Stop Server</button>`;

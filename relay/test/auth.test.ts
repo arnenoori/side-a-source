@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseDeviceBearer, parseSignature } from '../src/auth';
 import { b64url, sha256 } from '../src/bytes';
-import { BASE, FakeApns, alert, call, hexToken, newMac, newPhone, paired, phoneCall, putDevice, randomId, register, signed } from './helpers';
+import { BASE, FakeApns, alert, call, newMac, newPhone, paired, phoneCall, putDevice, randomId, register, signed, stubApns } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -19,7 +19,7 @@ describe('signature header', () => {
     ['short signature', `SideA-Sig v=1, install=${id}, ts=1, nonce=${id}, sig=${sig.slice(0, 40)}`],
     ['bad install id', `SideA-Sig v=1, install=abc, ts=1, nonce=${id}, sig=${sig}`],
     ['non-numeric ts', `SideA-Sig v=1, install=${id}, ts=1e9, nonce=${id}, sig=${sig}`],
-    ]) expect(parseSignature(header), what).toBeNull();
+    ] as [string, string][]) expect(parseSignature(header), what).toBeNull();
   });
 
   it('hashes the device secret and refuses malformed bearers', async () => {
@@ -162,7 +162,7 @@ describe('devices', () => {
   it('caps an install at 10 devices', async () => {
     const mac = await newMac();
     await register(mac);
-    new FakeApns();
+    stubApns();
     for (let i = 0; i < 10; i++) expect((await putDevice(mac, newPhone(mac))).status).toBe(201);
     const response = await putDevice(mac, newPhone(mac));
     expect(response.status).toBe(409);
@@ -181,11 +181,12 @@ describe('devices', () => {
     ['the dev build bundle id', { bundleID: 'com.arnenoori.sidea.remote.dev' }, 201],
     ];
     for (const [what, fields, status] of rows) {
-      new FakeApns();
+      stubApns();
       const mac = await newMac();
       await register(mac);
       const response = await putDevice(mac, newPhone(mac), fields);
       expect(response.status, what).toBe(status);
+      // oxlint-disable-next-line vitest/no-conditional-expect -- only an error response carries a code.
       if (status === 400) expect((await response.json() as any).error.code, what).toBe('bad_request');
     }
   });

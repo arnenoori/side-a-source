@@ -41,6 +41,26 @@ GitHub runs the same suites on native Apple Silicon and Intel runners (`.github/
   listed waiting first; the current step and health flags; incremental reindexing; opening a
   conversation around a search hit.
 
+## Python lint (ruff)
+
+`brew install ruff`. The gate fails with that instruction when it is missing; it never skips.
+`scripts/lint-python.sh` runs `ruff check` over `bridge/` and `scripts/` with the root `ruff.toml`, and
+`scripts/check.sh` runs it whenever a `.py` file changes. Ruff only lints here; nothing is reformatted.
+
+```sh
+scripts/lint-python.sh         # what the gate runs
+scripts/lint-python.sh --fix   # apply the safe autofixes
+```
+
+- Rules: `E`, `F`, `B`, `UP`, `SIM`, `PL`, `S` and `RUF`, minus what the code's dense style or its job
+  contradicts (one-line statements, lambdas bound to names, subprocess calls by name, complexity
+  thresholds), each with its reason in `ruff.toml`.
+- The bridge is copied into the app and has to run on macOS's own Python 3.9, so the target is `py39` and
+  `UP` never rewrites to newer syntax. `scripts/local-ci.sh` already runs the bridge tests on `/usr/bin/python3`.
+- A one-off exception goes on the line, with the reason after `--`:
+  `# noqa: S324 -- an image id, not a security boundary`. Don't ignore a rule for a file or folder in
+  `ruff.toml` unless the rule can't apply there (asserts and fake secrets in tests), and say why next to it.
+
 ## Swift tests
 
 `swift test`
@@ -59,6 +79,33 @@ GitHub runs the same suites on native Apple Silicon and Intel runners (`.github/
 - **Pricing, diagnostics and analytics:** API prices, the status.claude.com filter, diagnostic
   canaries, and analytics that need consent, honor revocation and stay off in the demo.
 - **Warp:** the tab picked is the pane still running the session, by Warp's focus link and, without one, by folder.
+
+## Swift lint (SwiftLint)
+
+`brew install swiftlint`. The gate fails with that instruction when it is missing; it never skips.
+`scripts/lint-swift.sh` lints every Swift file (Mac app, core, tests, `Packages/SideAProtocol`, `apps/ios`)
+with the one `.swiftlint.yml` at the root, and `scripts/check.sh` runs it whenever a Swift file changes.
+
+```sh
+scripts/lint-swift.sh                 # what the gate runs: anything not in the baseline fails
+scripts/lint-swift.sh --no-baseline   # every violation, to work the backlog down
+scripts/lint-swift.sh --rebaseline    # after fixing some, shrink the baseline to what is left
+```
+
+- The rule set is `only_rules`, aimed at bad practice and not formatting: `force_unwrapping`,
+  `force_try`, `force_cast`, `implicitly_unwrapped_optional`, `unowned_variable_capture`,
+  `fatal_error_message`, `discouraged_optional_boolean`, the collection-shape rules (`first_where`,
+  `contains_over_*`, `empty_count`, `sorted_first_last`), `todo`, size limits at the genuine outliers,
+  and five custom rules for this codebase: `swallowed_try` (a bare `try?` that discards its error),
+  `print_in_app`, `sleep_literal_in_tests` (a fixed wait of 100 ms or more), `user_defaults_standard`
+  and `dispatch_main_async_in_ui`.
+- `.swiftlint-baseline.json` holds the violations that were there when the linter arrived, so new code
+  is held to every rule while the backlog comes down. Fix some, run `--rebaseline`, commit the smaller file.
+- A one-off exception goes on the line, with the reason after `--`:
+  `// swiftlint:disable:next force_cast -- the type check above proves it`. Don't disable a rule for a
+  file or folder; baseline it or fix it.
+- The analyzer rules (`unused_import`, `unused_declaration`) need a compiler log from a full verbose
+  build of every target, including the iOS app, so they are not part of the gate.
 
 ## Demo mode
 
@@ -88,6 +135,29 @@ local build, and is never inferred from the tests above:
 
 Local builds are "Side A Dev" with their own bundle ID and no updater, so testing never disturbs
 an installed copy.
+
+## TypeScript lint (oxlint)
+
+`relay/` and `site/` are linted with [oxlint](https://oxc.rs) and its type-aware rules, which run
+through `oxlint-tsgolint`. Both are exact-version devDependencies, so `npm ci` installs them; nothing
+else is needed. `scripts/check.sh` runs `npm run lint` under the same `relay/` and `site/` conditions
+as the tests, after the relay's `typecheck`, which the gate runs too.
+
+```sh
+npm --prefix relay run lint       # what the gate runs; warnings are held to a count
+npm --prefix relay run lint:backlog   # every warning, to work the backlog down
+```
+
+- Config is `.oxlintrc.json` in each folder: `correctness` and `suspicious` are errors, plus
+  `no-floating-promises`, `no-misused-promises`, `eqeqeq`, `no-explicit-any`,
+  `no-non-null-assertion`, `no-console` and import and promise hygiene.
+- A rule that has a backlog is set to `warn`, and `lint` passes `--max-warnings` with today's count.
+  A new warning fails the gate; fixing some lets you lower the number in `package.json`.
+- A one-off exception goes on the line, with the reason after `--`:
+  `// oxlint-disable-next-line typescript/no-non-null-assertion -- the next line asserts it`.
+  Don't disable a rule for a file or folder; turn it to `warn` in the config with a comment instead.
+- Both `tsconfig.json` files use `noUncheckedIndexedAccess`, `noImplicitOverride` and
+  `noFallthroughCasesInSwitch`; the site also uses `exactOptionalPropertyTypes`.
 
 ## Release verification
 

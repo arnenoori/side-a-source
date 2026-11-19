@@ -452,8 +452,9 @@ public actor Paths {
             for case .direct(let url) in candidates {
                 let (reached, error) = await Self.reach(url, direct: direct, timing: timing)
                 if error == nil {
-                    streak[url, default: 0] += 1
-                    if streak[url]! >= timing.promoteAfter { return await switchTo(.direct(reached)) }
+                    let successes = (streak[url] ?? 0) + 1
+                    streak[url] = successes
+                    if successes >= timing.promoteAfter { return await switchTo(.direct(reached)) }
                 } else {
                     streak[url] = 0
                 }

@@ -1,7 +1,8 @@
 import { env, evictDurableObject, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { b64url } from '../src/bytes';
-import { Install, LIMITS } from '../src/install';
+import type { Install} from '../src/install';
+import { LIMITS } from '../src/install';
 import worker from '../src/index';
 import { BASE, FakeApns, type Mac, alert, call, context, incoming, newMac, newPhone, paired, phoneCall, randomId, register, signed, stub } from './helpers';
 
@@ -100,7 +101,7 @@ describe('rate limits', () => {
   });
 
   it('answers 503 not_configured, not 500, everywhere a network is keyed while RATE_KEY is unset', async () => {
-    const unset = { ...env, RATE_KEY: '' } as unknown as Env;
+    const unset = { ...env, RATE_KEY: '' };
     const mac = await newMac();
     const ip = { 'cf-connecting-ip': '198.51.100.30' };
     const requests = [

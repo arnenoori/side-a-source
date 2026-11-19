@@ -52,7 +52,7 @@ class SignReleaseTests(unittest.TestCase):
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
     def run_it(self):
-        return subprocess.run(["bash", "scripts/sign-release.sh"], cwd=self.root / "repo", env=self.env, capture_output=True, text=True)
+        return subprocess.run(["bash", "scripts/sign-release.sh"], cwd=self.root / "repo", env=self.env, capture_output=True, text=True, check=False)
 
     def steps(self):
         steps = {}

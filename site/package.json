@@ -8,13 +8,18 @@
     "dev": "npm run prepare:model && vite --host 127.0.0.1",
     "build": "npm run prepare:model && tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/release.test.mjs tests/framing.test.mjs tests/discovery.test.mjs tests/analytics.test.mjs tests/how.test.mjs tests/remote.test.mjs"
+    "test": "node --test tests/release.test.mjs tests/framing.test.mjs tests/discovery.test.mjs tests/analytics.test.mjs tests/how.test.mjs tests/remote.test.mjs",
+    "lint": "oxlint --type-aware --quiet --max-warnings 50",
+    "lint:backlog": "oxlint --type-aware",
+    "prelint": "npm run prepare:model"
   },
   "dependencies": {
     "three": "0.185.1"
   },
   "devDependencies": {
     "@types/three": "0.185.4",
+    "oxlint": "1.91.0",
+    "oxlint-tsgolint": "7.0.2006",
     "sharp": "0.35.5",
     "typescript": "7.0.2",
     "vite": "^8.3.5"

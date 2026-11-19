@@ -8,10 +8,15 @@
     "typecheck": "wrangler types && tsc --noEmit",
     "types": "wrangler types",
     "check": "wrangler deploy --dry-run --env='' --outdir dist && wrangler deploy --dry-run --env=staging --outdir dist",
-    "pretest": "wrangler types"
+    "pretest": "wrangler types",
+    "prelint": "wrangler types",
+    "lint": "oxlint --type-aware --quiet --max-warnings 219",
+    "lint:backlog": "oxlint --type-aware"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.11",
+    "oxlint": "1.91.0",
+    "oxlint-tsgolint": "7.0.2006",
     "typescript": "7.0.2",
     "vitest": "4.1.12",
     "wrangler": "4.156.0"

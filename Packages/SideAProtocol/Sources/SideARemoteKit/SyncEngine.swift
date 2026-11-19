@@ -479,7 +479,7 @@ public actor SyncEngine {
                 if turnedAway { refused = true }
                 addressIndex += 1
                 client = client.at(endpoint.addresses[addressIndex % endpoint.addresses.count])
-                if addressIndex % endpoint.addresses.count != 0 { continue }
+                if !addressIndex.isMultiple(of: endpoint.addresses.count) { continue }
                 // One stray network can sit in the middle; every address saying so means the Mac's key is new.
                 if keyChanged == endpoint.addresses.count { run = nil; return set(.keyChanged) }
                 keyChanged = 0
@@ -598,7 +598,9 @@ public actor SyncEngine {
         struct Sequence: Decodable { var seq: Int? }
         guard let seq = (try? JSONDecoder().decode(Sequence.self, from: data))?.seq, recon.undecodable(seq: seq) else { return }
         KitLog.log(.sync, "event \(seq) did not decode; refreshing state")
-        try? await refresh()
+        do { try await refresh() } catch {
+            KitLog.log(.sync, "refresh after event \(seq) failed: \(error)")
+        }
     }
 
     static func next(after closed: SocketClosed, bye: String?) -> Next {
@@ -871,7 +873,9 @@ public actor SyncEngine {
     }
 
     private func send(_ message: ClientMessage) async {
-        try? await socket?.send(.text(Self.text(message)))
+        do { try await socket?.send(.text(Self.text(message))) } catch {
+            KitLog.log(.sync, "send failed: \(error)")
+        }
     }
 
     static func text(_ message: ClientMessage) -> String {

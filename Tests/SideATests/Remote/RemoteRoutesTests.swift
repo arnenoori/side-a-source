@@ -187,7 +187,7 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     let scene = Scene()
     let (status, open) = try await scene.call("GET", "v1/hello", device: nil)
     #expect(status == 200 && open["paired"] == nil && open["protocolVersion"] as? Int == 1 && open["remoteOn"] != nil)
-    #expect((open["mac"] as? [String: String]) == ["id": "", "name": ""] && (open["capabilities"] as? [String]) == [])
+    #expect((open["mac"] as? [String: String]) == ["id": "", "name": ""] && (open["capabilities"] as? [String])?.isEmpty == true)
     #expect((open["endpoints"] as? [String: String]) == ["tailnet": ""] && open["keyID"] as? String == "")
     let (_, paired) = try await scene.call("GET", "v1/hello")
     #expect(paired["paired"] as? Bool == true && (paired["mac"] as? [String: String])?["name"]?.isEmpty == false)

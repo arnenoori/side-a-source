@@ -735,7 +735,5 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         main(sys.argv[1:])
-    except KeyboardInterrupt:
-        pass

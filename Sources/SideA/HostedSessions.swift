@@ -965,7 +965,11 @@ final class HostedSessions {
         cancelVerifier(session.name)
         let folder = runtime.appendingPathComponent("hosted/\(session.name)")
         let screen = await run(["capture-pane", "-p", "-J", "-t", pane(session.name), "-S", "-200"]).output
-        try? PrivateFile.writeText(screen + "\n" + "Session ended (\(ended)).\n", to: folder.appendingPathComponent("last.txt"))
+        do {
+            try PrivateFile.writeText(screen + "\n" + "Session ended (\(ended)).\n", to: folder.appendingPathComponent("last.txt"))
+        } catch {
+            log.error("couldn't keep \(session.name, privacy: .public)'s last screen: \(error.localizedDescription, privacy: .public)")
+        }
         _ = await run(["kill-session", "-t", "=\(session.name)"])
         log.info("\(session.name, privacy: .public) ended (\(ended, privacy: .public))")
         if !session.worktree.isEmpty {

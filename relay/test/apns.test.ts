@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { providerToken } from '../src/apns';
-import { FakeApns, alert, call, paired, phoneCall, signed, type Mac, type Phone } from './helpers';
+import { FakeApns, alert, nth, call, paired, phoneCall, signed, type Mac, type Phone } from './helpers';
 import { env } from 'cloudflare:test';
 
 afterEach(() => vi.restoreAllMocks());
@@ -62,7 +62,8 @@ describe('APNs responses', () => {
     const { mac, phone } = await paired(apns);
     apns.answer(phone.apnsToken, { status: 403, reason: 'ExpiredProviderToken' });
     expect((await send(mac, phone)).result).toBe('ok');
-    const [first, second] = apns.to(phone.apnsToken);
+    const first = nth(apns.to(phone.apnsToken), 0);
+    const second = nth(apns.to(phone.apnsToken), 1);
     expect(second.headers.authorization).not.toBe(first.headers.authorization);
 
     apns.answer(phone.apnsToken, { status: 403, reason: 'InvalidProviderToken' }, { status: 403, reason: 'InvalidProviderToken' });
@@ -103,6 +104,6 @@ describe('provider token', () => {
     expect(await providerToken(env, at + 2399)).toBe(first);
     const next = await providerToken(env, at + 2400);
     expect(next).not.toBe(first);
-    expect(JSON.parse(atob(next.split('.')[1])).iat).toBe(at + 2400);
+    expect(JSON.parse(atob(nth(next.split('.'), 1))).iat).toBe(at + 2400);
   });
 });

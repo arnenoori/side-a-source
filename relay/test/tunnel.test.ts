@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import { b64url, sha256, utf8 } from '../src/bytes';
 import { CLOSE, FRAME, TUNNEL, Tunnel, frame, parseFrame, take } from '../src/tunnel';
-import { BASE, type Mac, type Phone, call, context, incoming, newMac, newPhone, randomId, register, signed } from './helpers';
+import { BASE, type Mac, type Phone, nth, call, context, incoming, newMac, newPhone, randomId, register, signed } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -17,7 +17,8 @@ class End {
     let reading = Promise.resolve();
     ws.addEventListener('message', event => {
       const data = event.data as string | ArrayBuffer | Blob;
-      reading = reading.then(async () => { this.messages.push(data instanceof Blob ? await data.arrayBuffer() : data); });
+      const previous = reading;
+      reading = (async () => { await previous; this.messages.push(data instanceof Blob ? await data.arrayBuffer() : data); })();
     });
     ws.addEventListener('close', event => { this.closed = { code: event.code, reason: event.reason }; });
   }
@@ -35,7 +36,7 @@ class End {
   }
 
   control(type: string) {
-    return this.until(() => this.messages.filter(m => typeof m === 'string').map(m => JSON.parse(m as string)).find(m => m.type === type), type);
+    return this.until(() => this.messages.filter(m => typeof m === 'string').map(m => JSON.parse(m)).find(m => m.type === type), type);
   }
 
   // Takes the frame so the next call finds the one after it.
@@ -112,7 +113,7 @@ describe('the Mac socket', () => {
 
   it('replaces the one before it', async () => {
     const { mac, macEnd, phones } = await tunnel();
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     await phone.control('mac');
     const second = (await connectMac(mac)).end!;
     expect((await macEnd.closing()).code).toBe(CLOSE.replaced);
@@ -125,7 +126,7 @@ describe('the Mac socket', () => {
   it('answers pings without the object', async () => {
     const { macEnd } = await tunnel();
     macEnd.send('ping');
-    await macEnd.until(() => macEnd.messages.includes('pong') || undefined, 'pong');
+    await expect(macEnd.until(() => macEnd.messages.includes('pong') || undefined, 'pong')).resolves.toBe(true);
   });
 
   it('is refused while the tunnel is paused', async () => {
@@ -142,18 +143,18 @@ describe('phones', () => {
     const { mac, macEnd, phones } = await tunnel();
     const stranger = newPhone(mac);
     expect((await connectPhone(stranger.bearer)).response.status).toBe(401);
-    const wrongSecret = phones[0].bearer.slice(0, -4) + 'AAAA';
+    const wrongSecret = nth(phones, 0).bearer.slice(0, -4) + 'AAAA';
     expect((await connectPhone(wrongSecret)).response.status).toBe(401);
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     expect(await phone.control('mac')).toEqual({ type: 'mac', online: true });
-    macEnd.send(await deviceList(phones[0], stranger));
+    macEnd.send(await deviceList(nth(phones, 0), stranger));
     await macEnd.processed();
     expect((await connectPhone(stranger.bearer)).response.status).toBe(101);
   });
 
   it('carry bytes both ways untouched, the stream id carrying the slot', async () => {
     const { macEnd, phones } = await tunnel();
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     await phone.control('mac');
     const hello = crypto.getRandomValues(new Uint8Array(TUNNEL.maxPayload));
     phone.send(frame(FRAME.open, 7));
@@ -161,7 +162,7 @@ describe('phones', () => {
     const open = await macEnd.frame(FRAME.open);
     expect(open.stream & 0xffff).toBe(7);
     expect(open.stream >>> 16).toBeGreaterThan(0);
-    expect(JSON.parse(new TextDecoder().decode(open.payload))).toEqual({ device: phones[0].deviceId });
+    expect(JSON.parse(new TextDecoder().decode(open.payload))).toEqual({ device: nth(phones, 0).deviceId });
     const data = await macEnd.frame(FRAME.data);
     expect(data.stream).toBe(open.stream);
     expect(new Uint8Array(data.payload)).toEqual(hello);
@@ -179,15 +180,15 @@ describe('phones', () => {
 
   it('keep their slots apart', async () => {
     const { macEnd, phones } = await tunnel(2);
-    const a = (await connectPhone(phones[0].bearer)).end!;
-    const b = (await connectPhone(phones[1].bearer)).end!;
+    const a = (await connectPhone(nth(phones, 0).bearer)).end!;
+    const b = (await connectPhone(nth(phones, 1).bearer)).end!;
     await a.control('mac'); await b.control('mac');
     a.send(frame(FRAME.open, 1));
     b.send(frame(FRAME.open, 1));
     const first = await macEnd.frame(FRAME.open);
     const second = await macEnd.frame(FRAME.open);
     expect(first.stream).not.toBe(second.stream);
-    const toB = [first, second].find(open => new TextDecoder().decode(open.payload).includes(phones[1].deviceId))!;
+    const toB = [first, second].find(open => new TextDecoder().decode(open.payload).includes(nth(phones, 1).deviceId))!;
     macEnd.send(frame(FRAME.data, toB.stream, utf8('for b')));
     expect(new TextDecoder().decode((await b.frame(FRAME.data)).payload)).toBe('for b');
     expect(a.messages.filter(m => typeof m !== 'string')).toEqual([]);
@@ -195,7 +196,7 @@ describe('phones', () => {
 
   it('hear that the Mac is offline, and their streams are reset', async () => {
     const { macEnd, phones } = await tunnel();
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     await phone.control('mac');
     macEnd.ws.close(1000, 'bye');
     await phone.until(() => phone.messages.includes('{"type":"mac","online":false}') || undefined, 'offline');
@@ -207,7 +208,7 @@ describe('phones', () => {
 
   it('tell the Mac when they go', async () => {
     const { macEnd, phones } = await tunnel();
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     await phone.control('mac');
     phone.send(frame(FRAME.open, 1));
     const { stream } = await macEnd.frame(FRAME.open);
@@ -220,13 +221,13 @@ describe('phones', () => {
 
   it("don't get a slot that closed within the quarantine, so late frames for it reach nobody", async () => {
     const { macEnd, phones } = await tunnel();
-    const first = (await connectPhone(phones[0].bearer)).end!;
+    const first = (await connectPhone(nth(phones, 0).bearer)).end!;
     await first.control('mac');
     first.send(frame(FRAME.open, 1));
     const { stream } = await macEnd.frame(FRAME.open);
     first.ws.close(1000, '');
     await macEnd.control('gone');
-    const second = (await connectPhone(phones[0].bearer)).end!;
+    const second = (await connectPhone(nth(phones, 0).bearer)).end!;
     await second.control('mac');
     second.send(frame(FRAME.open, 1));
     const reopened = await macEnd.frame(FRAME.open);
@@ -238,37 +239,37 @@ describe('phones', () => {
 
   it('are closed 4401 when revoked', async () => {
     const { macEnd, phones } = await tunnel(2);
-    const kept = (await connectPhone(phones[0].bearer)).end!;
-    const revoked = (await connectPhone(phones[1].bearer)).end!;
+    const kept = (await connectPhone(nth(phones, 0).bearer)).end!;
+    const revoked = (await connectPhone(nth(phones, 1).bearer)).end!;
     await kept.control('mac'); await revoked.control('mac');
-    macEnd.send(await deviceList(phones[0]));
+    macEnd.send(await deviceList(nth(phones, 0)));
     expect((await revoked.closing()).code).toBe(CLOSE.revoked);
     expect(kept.closed).toBeUndefined();
-    expect((await connectPhone(phones[1].bearer)).response.status).toBe(401);
+    expect((await connectPhone(nth(phones, 1).bearer)).response.status).toBe(401);
   });
 
   it('are closed 4409 when their device pairs again under the same id', async () => {
     const { mac, macEnd, phones } = await tunnel(2);
-    const old = (await connectPhone(phones[0].bearer)).end!;
-    const other = (await connectPhone(phones[1].bearer)).end!;
+    const old = (await connectPhone(nth(phones, 0).bearer)).end!;
+    const other = (await connectPhone(nth(phones, 1).bearer)).end!;
     await old.control('mac'); await other.control('mac');
     const secret = crypto.getRandomValues(new Uint8Array(32));
-    const again = { ...phones[0], secret, bearer: `Bearer d1.${mac.installId}.${phones[0].deviceId}.${b64url(secret)}` };
-    macEnd.send(await deviceList(again, phones[1]));
+    const again = { ...nth(phones, 0), secret, bearer: `Bearer d1.${mac.installId}.${nth(phones, 0).deviceId}.${b64url(secret)}` };
+    macEnd.send(await deviceList(again, nth(phones, 1)));
     expect((await old.closing()).code).toBe(CLOSE.replaced);
     expect(other.closed).toBeUndefined();
     await macEnd.processed();
-    expect((await connectPhone(phones[0].bearer)).response.status).toBe(401);
+    expect((await connectPhone(nth(phones, 0).bearer)).response.status).toBe(401);
     expect((await connectPhone(again.bearer)).response.status).toBe(101);
   });
 
   it('keep two sockets per device, the oldest making room', async () => {
     const { phones } = await tunnel();
-    const first = (await connectPhone(phones[0].bearer)).end!;
+    const first = (await connectPhone(nth(phones, 0).bearer)).end!;
     await first.control('mac');
-    const second = (await connectPhone(phones[0].bearer)).end!;
+    const second = (await connectPhone(nth(phones, 0).bearer)).end!;
     await second.control('mac');
-    const third = (await connectPhone(phones[0].bearer)).end!;
+    const third = (await connectPhone(nth(phones, 0).bearer)).end!;
     await third.control('mac');
     expect((await first.closing()).code).toBe(CLOSE.replaced);
     expect(second.closed).toBeUndefined();
@@ -276,11 +277,11 @@ describe('phones', () => {
 
   it('are closed for an oversized or malformed frame', async () => {
     const { phones } = await tunnel();
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     await phone.control('mac');
     phone.send(frame(FRAME.data, 1, new Uint8Array(TUNNEL.maxPayload + 1)));
     expect((await phone.closing()).code).toBe(CLOSE.tooBig);
-    const other = (await connectPhone(phones[0].bearer)).end!;
+    const other = (await connectPhone(nth(phones, 0).bearer)).end!;
     await other.control('mac');
     other.send(frame(9, 1));
     expect((await other.closing()).code).toBe(CLOSE.tooBig);
@@ -454,7 +455,7 @@ describe('pairing over the relay', () => {
     for (let i = 0; i < TUNNEL.pairStreams; i++) opens.push(await macEnd.frame(FRAME.open));
     // One ends with a FIN each way and one with a reset: two more may open. A FIN from one side only (stream 3)
     // still counts, so opening and half-closing can't get past the limit.
-    macEnd.send(frame(FRAME.fin, opens[0].stream));
+    macEnd.send(frame(FRAME.fin, nth(opens, 0).stream));
     const fin = await phone.frame(FRAME.fin);
     phone.send(frame(FRAME.fin, fin.stream));
     phone.send(frame(FRAME.reset, 2));
@@ -477,7 +478,7 @@ describe('pairing over the relay', () => {
     for (let stream = 1; stream <= TUNNEL.pairStreams; stream++) phone.send(frame(FRAME.open, stream));
     for (let i = 0; i < TUNNEL.pairStreams; i++) await macEnd.frame(FRAME.open);
     macEnd.ws.close(1000);
-    await phone.until(() => phone.messages.filter(m => typeof m === 'string').map(m => JSON.parse(m as string)).find(m => m.type === 'mac' && !m.online), 'mac offline');
+    await phone.until(() => phone.messages.filter(m => typeof m === 'string').map(m => JSON.parse(m)).find(m => m.type === 'mac' && !m.online), 'mac offline');
     // The phone ends one stream with a FIN and is answered with a reset, since no Mac holds the other half.
     phone.send(frame(FRAME.fin, 1));
     expect((await phone.frame(FRAME.reset)).stream).toBe(1);
@@ -526,7 +527,7 @@ describe('what a tunnel can cost', () => {
     const probe = frame(FRAME.reset, (0xfffe << 16 | 1) >>> 0).buffer as ArrayBuffer;
     const at = Date.now();
     await inObject(mac, async (instance, state) => {
-      const ws = state.getWebSockets('mac')[0];
+      const ws = nth(state.getWebSockets('mac'), 0);
       for (let i = 0; i < TUNNEL.macBurstFrames; i++) await instance.tunnel.message(ws, probe, at);
       expect(ws.readyState).toBe(WebSocket.OPEN);
       await instance.tunnel.message(ws, probe, at);
@@ -537,7 +538,7 @@ describe('what a tunnel can cost', () => {
   it('refuses every socket once the install has spent its day', async () => {
     const { mac, phones } = await tunnel(1);
     await budget(mac, TUNNEL.dayBytes);
-    const refused = await connectPhone(phones[0].bearer);
+    const refused = await connectPhone(nth(phones, 0).bearer);
     expect(refused.response.status).toBe(429);
     const wait = Number(refused.response.headers.get('retry-after'));
     expect(wait).toBeGreaterThan(0);
@@ -547,7 +548,7 @@ describe('what a tunnel can cost', () => {
 
   it('closes open sockets when the day runs out, and a new day starts clean', async () => {
     const { mac, macEnd, phones } = await tunnel(1);
-    const phone = (await connectPhone(phones[0].bearer)).end!;
+    const phone = (await connectPhone(nth(phones, 0).bearer)).end!;
     await phone.control('mac');
     const later = Date.now() + TUNNEL.budgetFlushEvery + 1;
     await budget(mac, TUNNEL.dayBytes - 1, later);
@@ -573,9 +574,10 @@ describe('what a tunnel can cost', () => {
 
   it('limits unproved upgrades per network before waking an object', async () => {
     const closed = { ...env, TUNNEL_LIMIT: { limit: async () => ({ success: false }) } } as unknown as Env;
-    const get = vi.fn();
+    const get = vi.fn<() => string>();
     const response = await worker.fetch(incoming(new Request(BASE + '/v1/tunnel/phone', {
       headers: { ...upgrade, authorization: `SideA-Pair ${randomId()}.${randomId()}`, 'cf-connecting-ip': '198.51.100.20' },
+    // oxlint-disable-next-line typescript/no-misused-spread -- a stand-in that only needs get and idFromName.
     })), { ...closed, INSTALLS: { ...env.INSTALLS, get, idFromName: () => 'x' } } as unknown as Env, context);
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toBe('10');
@@ -594,7 +596,7 @@ describe('what a tunnel can cost', () => {
 describe('the tunnel and the install', () => {
   it('closes every socket when the install is deleted', async () => {
     const { mac, macEnd, phones } = await tunnel();
-    const { end: phoneEnd } = await connectPhone(phones[0].bearer);
+    const { end: phoneEnd } = await connectPhone(nth(phones, 0).bearer);
     await phoneEnd!.control('mac');
     expect((await call(await signed(mac, 'DELETE', '/v1/installs'))).status).toBe(204);
     expect((await macEnd.closing()).code).toBe(CLOSE.revoked);
@@ -613,9 +615,9 @@ describe('the tunnel and the install', () => {
     const next = await newMac();
     let reads = 0;
     // The first read is the key the signature is checked with; the second, the key after a rotation landed meanwhile.
-    const tunnel = new Tunnel({} as DurableObjectState, () => (reads++ === 0 ? mac.publicKey : next.publicKey));
+    const object = new Tunnel({} as DurableObjectState, () => (reads++ === 0 ? mac.publicKey : next.publicKey));
     const request = await signed(mac, 'GET', '/v1/tunnel/mac', undefined, { headers: upgrade });
-    expect(await tunnel.accept(request, 'mac')).toMatchObject({ status: 401, code: 'unauthorized' });
+    expect(await object.accept(request, 'mac')).toMatchObject({ status: 401, code: 'unauthorized' });
   });
 
   it("closes the Mac's socket when the install key rotates, and takes one signed with the new key", async () => {

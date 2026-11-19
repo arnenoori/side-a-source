@@ -96,7 +96,7 @@ private func bridgeRefusals(_ commands: [[String]]) throws -> [[String]: String]
     #expect(commands.contains(["pool-token", "acct", "--refused", "h1"]))
     #expect(commands.contains(["codex-pool-token", "acct", "--refused", "h1"]))
     #expect(commands.contains { $0.first == "renew" })
-    #expect(try bridgeRefusals(commands) == [:])
+    #expect(try bridgeRefusals(commands).isEmpty)
 }
 
 @Test func theCheckCatchesACommandTheBridgeDoesntKnow() throws {

@@ -148,7 +148,9 @@ final class RemotePush {
 
     /// Remote's uninstall: the install and all its devices go.
     func deleteInstall() async {
-        try? await relay?.deleteInstall()
+        do { try await relay?.deleteInstall() } catch {
+            RemoteLog.shared("the relay didn't delete this install: \(error.localizedDescription)")
+        }
         client = nil
         relayState = "unregistered"
     }

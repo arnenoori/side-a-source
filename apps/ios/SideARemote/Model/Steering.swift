@@ -141,7 +141,7 @@ extension AppModel {
     /// so the composer's send moves it into Side A's tmux first, then types it there.
     func needsContinue(_ id: SessionKey) -> Bool {
         guard let session = sessions.session(id), session.hosted == nil, session.status == .idle, !session.headless else { return false }
-        if session.abilities.contains(.replyTerminal) || session.abilities.contains(.replyInbox) { return false }
+        if !session.abilities.isDisjoint(with: [.replyTerminal, .replyInbox, .replyTyped]) { return false }
         return session.abilities.contains(.continueOnPhone) && tools.can(.continueOnPhone)
     }
 
@@ -161,7 +161,7 @@ extension AppModel {
     /// A Codex session outside Side A's panes and outside Codex's shared server: what's sent waits for it to finish.
     func outsideSharedServer(_ id: SessionKey) -> Bool {
         guard let session = sessions.session(id) else { return false }
-        return tools.can(.replyTerminal) && session.agent == .codex && session.hosted == nil && !session.abilities.contains(.replyTerminal)
+        return tools.can(.replyTerminal) && session.agent == .codex && session.hosted == nil && session.abilities.isDisjoint(with: [.replyTerminal, .replyTyped])
     }
 
     /// The reply Codex or Claude dropped, in full when this phone still has it; the flag quotes only its first

@@ -4,22 +4,20 @@ import SideAProtocol
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Everything a screen needs to attach photos: the drawer, the system pickers it hands over to, the camera, and the
-/// text field's paste hook. The session composer and the New Session sheet each own one and show the + and the tray
+/// Everything a screen needs to attach photos: the drawer, the system pickers it hands over to, the camera, and what the
+/// text field's paste takes. The session composer and the New Session sheet each own one and show the + and the tray
 /// their own way; the photos go into the Mac's `ComposerAttachments` under whatever key the screen names (a session's
 /// id, or a draft's before the session exists).
 @MainActor @Observable
 final class AttachSurface {
     nonisolated deinit {}
 
-    let drawer = DrawerController()
-    let paste = PasteBridge()
-    /// What the paste hook and the drawer's Paste row read at the moment of pasting, not at the moment they were set up.
+    let drawer = AttachDrawer()
+    /// What the field's paste and the drawer's Paste row read at the moment of pasting, not at the moment they were set up.
     let target = AttachTarget()
     var picks: [PhotosPickerItem] = []
     var showsPicker = false
     var showsFiles = false
-    var takesPhoto = false
 
     /// Photos the tray takes, 0 when the Mac can't take uploads.
     func room(_ key: SessionKey?, tools: MacTools) -> Int {
@@ -28,22 +26,21 @@ final class AttachSurface {
 
     func add(_ images: [Data], room: Int) { for data in images.prefix(room) { target.add(data) } }
 
-    /// Opens the drawer, or closes whatever is up. False when there is nothing to attach (a Mac that can't take uploads, a
+    /// Opens the drawer, or brings the keyboard back in its place. False when there is nothing to attach (a Mac that can't take uploads, a
     /// full tray, no window yet): the caller does what it did before the drawer. `options` is the menu's last row;
     /// nil leaves it out.
     @discardableResult
     func open(key: SessionKey?, tools: MacTools, reduceMotion: Bool, options: (() -> Void)?) -> Bool {
         guard let key else { return false }
         let room = room(key, tools: tools)
-        let rows = DrawerRows.make(canUpload: tools.can(.uploads), room: room, hasCamera: CameraPicker.isAvailable,
+        let rows = DrawerRows.make(canUpload: tools.can(.uploads), room: room, hasCamera: drawer.camera.hasCamera,
                                    clipboardHasImage: UIPasteboard.general.hasImages, options: options != nil)
-        guard rows.attaches, drawer.scene != nil else { return false }
+        guard rows.attaches else { return false }
         let attachments = tools.attachments
         let hooks = DrawerHooks(
             room: { attachments.room(key) },
             reserve: { attachments.reserve(preview: $0, in: key, refetch: $1) },
             supply: { attachments.supply($0, $1, in: key) },
-            camera: { [self] in takesPhoto = true },
             files: { [self] in showsFiles = true },
             picker: { [self] in showsPicker = true },
             pasteImage: { [self] in
@@ -58,10 +55,15 @@ final class AttachSurface {
 }
 
 extension View {
-    /// The presenters and hooks an `AttachSurface` needs from the screen it sits in: the pickers, the camera, the paste
-    /// hook on `focused`'s field, and the drawer closed whenever the screen goes away, changes key or leaves the foreground.
-    func attachments(_ surface: AttachSurface, key: SessionKey?, tools: MacTools, focused: FocusState<Bool>.Binding) -> some View {
-        modifier(AttachPresenters(surface: surface, key: key, tools: tools, focused: focused))
+    /// The presenters and hooks an `AttachSurface` needs from the screen it sits in: the pickers, the camera, and the
+    /// drawer closed whenever the screen goes away, changes key or leaves the foreground.
+    func attachments(_ surface: AttachSurface, key: SessionKey?, tools: MacTools) -> some View {
+        modifier(AttachPresenters(surface: surface, key: key, tools: tools))
+    }
+
+    /// The drawer as a popover from this view, for a screen with no keyboard area to take (an iPad with a hardware keyboard).
+    func attachPopover(_ surface: AttachSurface) -> some View {
+        modifier(AttachPopover(drawer: surface.drawer))
     }
 }
 
@@ -69,29 +71,54 @@ private struct AttachPresenters: ViewModifier {
     @Bindable var surface: AttachSurface
     let key: SessionKey?
     let tools: MacTools
-    var focused: FocusState<Bool>.Binding
     @Environment(\.scenePhase) private var scenePhase
 
     private var room: Int { surface.room(key, tools: tools) }
 
     func body(content: Content) -> some View {
         content
-            .background { SceneAnchor { scene, size, safe, container in
-                surface.drawer.scene = scene
-                surface.drawer.windowSize = size
-                surface.drawer.safe = safe
-                surface.drawer.container = container
-            } }
-            // The drawer's window never becomes key, so Escape from a hardware keyboard arrives here, focus or none.
+            .modifier(AttachPickers(surface: surface, key: key, tools: tools))
+            .background { WindowReader { surface.drawer.window = $0 } }
+            // Escape from a hardware keyboard closes it, with focus in the field or not.
             .background {
                 if surface.drawer.isOpen {
-                    Button("Close") { surface.drawer.dismiss() }
+                    Button("Close") { surface.drawer.escape() }
                         .keyboardShortcut(.cancelAction)
                         .opacity(0)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                 }
             }
+            .onChange(of: key, initial: true) { _, key in
+                let target = surface.target
+                target.session = key
+                target.attachments = tools.attachments
+                target.canUpload = tools.can(.uploads)
+            }
+            // A different Mac has its own tray.
+            .onChange(of: ObjectIdentifier(tools.attachments)) { surface.target.attachments = tools.attachments }
+            .onChange(of: tools.can(.uploads)) { _, can in surface.target.canUpload = can }
+            .onAppear { KeyboardMetrics.start() }
+            .onDisappear { surface.drawer.abort() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background { surface.drawer.abort() }
+                // The camera may have been allowed or refused in Settings while the app was away.
+                if phase == .active { surface.drawer.camera.refresh() }
+            }
+            .onChange(of: key) { surface.drawer.abort() }
+    }
+}
+
+/// The system pickers the drawer hands over to, and the drop of photos from another app.
+private struct AttachPickers: ViewModifier {
+    @Bindable var surface: AttachSurface
+    let key: SessionKey?
+    let tools: MacTools
+
+    private var room: Int { surface.room(key, tools: tools) }
+
+    func body(content: Content) -> some View {
+        content
             // Photos dragged in from another app on iPad go in as Files and Paste do.
             .onDrop(of: [.image], delegate: PhotoDrop(room: room) { [surface, key, tools] data in
                 surface.add([data], room: surface.room(key, tools: tools))
@@ -114,36 +141,18 @@ private struct AttachPresenters: ViewModifier {
                     return try? Data(contentsOf: url)
                 }, room: room)
             }
-            .fullScreenCover(isPresented: $surface.takesPhoto) {
-                CameraPicker { data in surface.add([data], room: room) }
-                    .ignoresSafeArea()
-            }
-            .onChange(of: key, initial: true) { _, key in
-                let target = surface.target
-                target.session = key
-                target.attachments = tools.attachments
-                target.canUpload = tools.can(.uploads)
-                surface.paste.room = { [target] in target.room }
-                surface.paste.onImage = { [target] data in target.add(data) }
-            }
-            // A different Mac has its own tray.
-            .onChange(of: ObjectIdentifier(tools.attachments)) { surface.target.attachments = tools.attachments }
-            .onChange(of: tools.can(.uploads)) { _, can in surface.target.canUpload = can }
-            .onAppear { KeyboardTracker.start() }
-            .onDisappear { surface.drawer.abort() }
-            .onChange(of: scenePhase) { _, phase in if phase == .background { surface.drawer.abort() } }
-            .onChange(of: key) { surface.drawer.abort() }
-            .onChange(of: focused.wrappedValue) { _, isFocused in
-                guard isFocused else { return }
-                // The field becomes first responder a little after focus says so; look for it for a moment.
-                Task { @MainActor in
-                    for _ in 0..<10 {
-                        surface.paste.install()
-                        if surface.paste.isInstalled { return }
-                        try? await Task.sleep(for: .milliseconds(100))
-                    }
-                }
-            }
+    }
+}
+
+private struct AttachPopover: ViewModifier {
+    let drawer: AttachDrawer
+
+    func body(content: Content) -> some View {
+        content.popover(isPresented: Binding(get: { drawer.showsPopover }, set: { if !$0 { drawer.abort() } }), arrowEdge: .bottom) {
+            AttachPanel(drawer: drawer, inPopover: true)
+                .frame(width: 380, height: 420)
+                .presentationCompactAdaptation(.popover)
+        }
     }
 }
 
@@ -194,5 +203,24 @@ struct PhotoDrop: DropDelegate {
             }
         }
         return true
+    }
+}
+
+/// Reports the window the view is in, without taking part in layout.
+struct WindowReader: UIViewRepresentable {
+    let onChange: (UIWindow?) -> Void
+
+    func makeUIView(context: Context) -> Anchor {
+        let view = Anchor()
+        view.onChange = onChange
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: Anchor, context: Context) { view.onChange = onChange }
+
+    final class Anchor: UIView {
+        var onChange: ((UIWindow?) -> Void)?
+        override func didMoveToWindow() { super.didMoveToWindow(); onChange?(window) }
     }
 }

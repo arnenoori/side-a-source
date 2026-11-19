@@ -168,7 +168,7 @@ final class AppRoot {
     }
 
     func setForeground(_ foreground: Bool) {
-        if reviewing { foreground ? ReviewDemo.cancelRequest() : ReviewDemo.scheduleRequest() }
+        if reviewing { if foreground { ReviewDemo.cancelRequest() } else { ReviewDemo.scheduleRequest() } }
         if foreground { relinkMacs() }
         for mac in macs { mac.link?.setForeground(foreground) }
         if foreground { Launch.afterFirstFrame { Task { await Revocations.run() } } }

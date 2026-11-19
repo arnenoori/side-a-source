@@ -7,8 +7,12 @@ public enum PushCache {
 
     public static func store(_ payload: Data, for requestID: String) {
         guard let folder, let file = file(requestID) else { return }
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try? payload.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try payload.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        } catch {
+            RemoteLog.error(.push, "couldn't keep a push payload: \(error.localizedDescription)")
+        }
         prune()
     }
 

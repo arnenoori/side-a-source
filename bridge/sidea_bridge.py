@@ -128,7 +128,7 @@ def auth_status(root, account, binary=None):
     env = clean_environment(profile)
     env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = selector_for(root, account)
     result = subprocess.run([binary or claude_binary(), "auth", "status", "--json"],
-        env=env, capture_output=True, timeout=25, text=True)
+        env=env, capture_output=True, timeout=25, text=True, check=False)
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -182,7 +182,7 @@ class Unconfirmed(ValueError):
 KEYCHAIN_NOT_FOUND = 44
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def read_secret(service):
     # Logins are only written by renew(), under Claude Code's refresh lock. Only "no such item" is
     # an empty slot: anything else read as empty could put a backup over a live login.
@@ -190,7 +190,7 @@ def read_secret(service):
     for limit in (15, 45):
         try:
             result = subprocess.run(["security", "find-generic-password", "-a", keychain_user(), "-s", service, "-w"],
-                                    capture_output=True, text=True, timeout=limit)
+                                    capture_output=True, text=True, timeout=limit, check=False)
         except subprocess.TimeoutExpired:
             problem = f"no answer in {limit}s"
             continue
@@ -369,10 +369,10 @@ def repair_selection(root, config):
 
 def post_json(url, body, headers=None, method="POST"):
     import urllib.request  # ssl and http.client cost Python's startup a fifth of a second; the session viewer never needs them
-    request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+    request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),  # noqa: S310 -- https endpoints the bridge names itself
         method=method, headers={"Content-Type": "application/json", "User-Agent": "claude-cli (side-a)", **(headers or {})})
     # A refresh token is spent once the endpoint answers, so a slow answer is worth waiting for.
-    with urllib.request.urlopen(request, timeout=60 if url == TOKEN_URL else 20) as response:
+    with urllib.request.urlopen(request, timeout=60 if url == TOKEN_URL else 20) as response:  # noqa: S310 -- https endpoints the bridge names itself
         return json.load(response)
 
 
@@ -740,11 +740,11 @@ def run_as(root, account, args, timeout):
     # picks the account's own login, which the CLI refreshes itself if needed.
     env["CLAUDE_SECURESTORAGE_CONFIG_DIR"] = selector_for(root, account)
     return subprocess.run([claude_binary(), *args], env=env, cwd=root, capture_output=True,
-                          text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+                          text=True, timeout=timeout, stdin=subprocess.DEVNULL, check=False)
 
 
 # Claude Code's own OAuth client and token endpoint: renewing here is the same request Claude Code makes.
-TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+TOKEN_URL = "https://platform.claude.com/v1/oauth/token"  # noqa: S105 -- an endpoint URL, not a secret
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 
@@ -882,7 +882,7 @@ def undo_swap(root, slots, logins):
         if item != login:
             write_secret(service, login)
     subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", SWAP_JOURNAL],
-                   capture_output=True, timeout=15)
+                   capture_output=True, timeout=15, check=False)
     read_secret.cache_clear()
 
 
@@ -931,7 +931,7 @@ def finish_swap(root, locked=False):
             with contextlib.suppress(ValueError, OSError, subprocess.TimeoutExpired):
                 watch_trade(root, slots, [wanted[1], wanted[0]], journal["undo"])
         deleted = subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", SWAP_JOURNAL],
-                                 capture_output=True, timeout=15)
+                                 capture_output=True, timeout=15, check=False)
         read_secret.cache_clear()
         if deleted.returncode != 0 and read_secret(SWAP_JOURNAL):
             raise ValueError("The trade finished but its journal could not be removed; retrying.")
@@ -951,7 +951,7 @@ def forget_trade(root, entry):
         index = read_json(watch_path(root), {}) or {}
         atomic_json(watch_path(root), {"trades": [e for e in index.get("trades", []) if e["id"] != entry["id"]]})
         subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", watch_service(entry)],
-                       capture_output=True, timeout=15)
+                       capture_output=True, timeout=15, check=False)
     read_secret.cache_clear()
 
 
@@ -962,7 +962,7 @@ def watch_trade(root, slots, logins, homes):
         old = [e for e in index.get("trades", []) if set(e["slots"]) & set(slots) or time.time() - e["at"] >= WATCH_SECONDS]
         for entry in old:
             subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", watch_service(entry)],
-                           capture_output=True, timeout=15)
+                           capture_output=True, timeout=15, check=False)
         entry = {"id": os.urandom(6).hex(), "at": time.time(), "slots": slots, "homes": homes}
         write_secret(watch_service(entry), {"logins": [{"claudeAiOauth": login["claudeAiOauth"]} for login in logins]})
         atomic_json(watch_path(root), {"trades": [e for e in index.get("trades", []) if e not in old] + [entry]})
@@ -1127,7 +1127,7 @@ def rehome(root, config):
         if processes is not None:
             for slot in set(spare) - set(processes.values()):
                 subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", slot_service(root, slot)],
-                               capture_output=True, timeout=15)
+                               capture_output=True, timeout=15, check=False)
         wanted = {**others, **{account_id: slot for account_id, slot in final.items() if slot not in (account_id, "mac")}}
         moved = [a for a in accounts if a["id"] in current and current[a["id"]] != final[a["id"]]]
         if wanted == homes and not restored:
@@ -1147,7 +1147,7 @@ def rehome(root, config):
 
 def forget_backup(account):
     subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", backup_service(account)],
-                   capture_output=True, timeout=15)
+                   capture_output=True, timeout=15, check=False)
     read_secret.cache_clear()
 
 
@@ -1199,10 +1199,10 @@ ENVIRONMENT_RETRIES = (0.2, 1.0)
 
 def listed_processes():
     """`ps` output for this user's processes, or None with listing_problem set."""
-    global listing_problem
+    global listing_problem  # noqa: PLW0603 -- the listing problem is one process-wide note, set by whichever listing fails
     for limit in PS_LIMITS:
         try:
-            listing = subprocess.run(["ps", "-o", "pid=,comm=", "-U", keychain_user()], capture_output=True, text=True, timeout=limit)
+            listing = subprocess.run(["ps", "-o", "pid=,comm=", "-U", keychain_user()], capture_output=True, text=True, timeout=limit, check=False)
         except subprocess.TimeoutExpired:
             listing_problem = f"ps took over {limit}s"
             continue
@@ -1222,7 +1222,7 @@ def process_state(pid):
     except OSError:
         return ""
     try:
-        found = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=10)
+        found = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
     return found.stdout.strip() if found.returncode == 0 else ""
@@ -1236,7 +1236,7 @@ def slot_processes(root, config):
     """Each running claude process's pid with the slot it reads its login from; None when unknown,
     with the reason in listing_problem. One process that stays unreadable could be reading either side
     of a trade, so it holds up every trade: a process that has finished can't read anything."""
-    global listing_problem
+    global listing_problem  # noqa: PLW0603 -- the listing problem is one process-wide note, set by whichever listing fails
     listing_problem = ""
     output = listed_processes()
     if output is None:
@@ -1281,13 +1281,14 @@ def slot_processes(root, config):
 
 # What Claude Code's rate_limit reply calls each limit ("You've hit your session limit · resets 1pm"),
 # checked in this order: a monthly spend cap reply names the plan limit after it.
-LIMIT_PHRASES = (("model:fable", "fable limit"), ("seven_day", "weekly limit"), ("five_hour", "session limit"))
+LIMIT_PHRASES = (("model:fable", "fable limit"), ("seven_day", "weekly limit"), ("five_hour", "session limit"),
+                 ("five_hour", "5-hour limit"))
+# The errors a turn can end on that another try gets past: a limit, and a response cut off by sleep or the network.
+STALL_ERRORS = ("rate_limit", "server_error")
 
 
-def session_limit(session_id):
-    """The limit a session's latest main-thread reply says it hit, and when, or None. Claude Code
-    writes the API's rate_limit error as a synthetic reply: direct proof the account is out, even
-    while the usage endpoint answers 429 for it."""
+def last_reply(session_id):
+    """A session's latest main-thread reply, or None. Claude Code writes an API error as a synthetic reply."""
     for path in (Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"):
         with open(path, "rb") as stream:
             stream.seek(0, os.SEEK_END)
@@ -1300,16 +1301,50 @@ def session_limit(session_id):
                 entry = json.loads(line)
             except ValueError:
                 continue  # the first, partial line of the tail
-            if entry.get("type") != "assistant" or entry.get("isSidechain"):
-                continue
-            if not (entry.get("isApiErrorMessage") and entry.get("error") == "rate_limit"):
-                return None
-            content = (entry.get("message") or {}).get("content")
-            text = (content if isinstance(content, str) else " ".join(
-                part.get("text", "") for part in content or [] if isinstance(part, dict))).casefold()
-            limit = next((window for window, phrase in LIMIT_PHRASES if phrase in text), None)
-            return {"limit": limit, "at": epoch(entry.get("timestamp"))} if limit and entry.get("timestamp") else None
+            if entry.get("type") == "assistant" and not entry.get("isSidechain"):
+                return entry
     return None
+
+
+def named_limit(entry):
+    """The limit a rate_limit reply names, or None: another service's 429 (Side A's pool, with every account out) names none."""
+    content = (entry.get("message") or {}).get("content")
+    text = (content if isinstance(content, str) else " ".join(
+        part.get("text", "") for part in content or [] if isinstance(part, dict))).casefold()
+    return next((window for window, phrase in LIMIT_PHRASES if phrase in text), None)
+
+
+def session_limit(session_id):
+    """The limit a session's latest main-thread reply says it hit, and when, or None: direct proof the
+    account is out, even while the usage endpoint answers 429 for it."""
+    entry = last_reply(session_id)
+    if not (entry and entry.get("isApiErrorMessage") and entry.get("error") == "rate_limit"):
+        return None
+    limit = named_limit(entry)
+    return {"limit": limit, "at": epoch(entry.get("timestamp"))} if limit and entry.get("timestamp") else None
+
+
+def session_stall(session_id):
+    """The error a session's latest main-thread reply stopped on, and when, when another try could get past it and
+    it isn't an account's own limit (session_limit's): a response cut off, or a 429 that names no limit."""
+    entry = last_reply(session_id)
+    if not (entry and entry.get("isApiErrorMessage") and entry.get("error") in STALL_ERRORS and entry.get("timestamp")):
+        return None
+    if entry["error"] == "rate_limit" and named_limit(entry):
+        return None
+    return {"error": entry["error"], "at": epoch(entry["timestamp"])}
+
+
+def stalled_sessions(processes):
+    """Each running session whose last reply is such an error, by session id."""
+    found = {}
+    for pid in processes or {}:
+        with contextlib.suppress(OSError, ValueError, AttributeError, KeyError, TypeError):
+            record = read_json(Path.home() / ".claude" / "sessions" / f"{pid}.json", {}) or {}
+            stall = session_stall(record["sessionId"]) if is_uuid(record.get("sessionId")) else None
+            if stall:
+                found[record["sessionId"]] = stall
+    return found
 
 
 def session_model(session_id):
@@ -1455,10 +1490,10 @@ def write_secret(service, blob):
         # A timeout's own text carries the arguments, which here can hold the token: it stops here.
         with contextlib.suppress(subprocess.TimeoutExpired, KeychainBusy):
             if len(command) <= STDIN_LIMIT:
-                result = subprocess.run(["security", "-i"], input=command + "\n", capture_output=True, text=True, timeout=15)
+                result = subprocess.run(["security", "-i"], input=command + "\n", capture_output=True, text=True, timeout=15, check=False)
             else:
                 result = subprocess.run(["security", "add-generic-password", "-U", "-a", keychain_user(), "-s", service, "-X", hexed],
-                                        capture_output=True, text=True, timeout=15)
+                                        capture_output=True, text=True, timeout=15, check=False)
             read_secret.cache_clear()
             if result.returncode == 0 and "error" not in result.stderr.lower() and read_secret(service) == blob:
                 return
@@ -1652,7 +1687,7 @@ def retry_generation(root, config, account, service, slot, due, blob, spent, ref
         # The copy it came from was spent with this; only a slot no account calls home is cleared.
         if other_slot and other_slot not in (read_json(homes_path(root), {}) or {}).values():
             subprocess.run(["security", "delete-generic-password", "-a", keychain_user(), "-s", slot_service(root, other_slot)],
-                           capture_output=True, timeout=15)
+                           capture_output=True, timeout=15, check=False)
             read_secret.cache_clear()
 
 
@@ -1809,10 +1844,7 @@ def scan_codex(path, previous=None):
             now = vector(total) if total else None
             # Like ccusage: the turn's own usage when the running total moved (it can restart after
             # compaction), else the growth of the total. A repeated event moves nothing.
-            if last and (now is None or now != state["last"]):
-                delta = vector(last)
-            else:
-                delta = [max(a - b, 0) for a, b in zip(now or state["last"], state["last"])]
+            delta = vector(last) if last and (now is None or now != state["last"]) else [max(a - b, 0) for a, b in zip(now or state["last"], state["last"])]
             if now is not None:
                 state["last"] = now
             if not any(delta):
@@ -1866,7 +1898,7 @@ def recent_model(within=1800):
 def machine_identity(root):
     """A stable id per Mac, so reinstalling never leaves an old copy of this Mac's totals counted twice."""
     try:
-        hardware = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True, timeout=5).stdout
+        hardware = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True, timeout=5, check=False).stdout
         hardware = next(line.split('"')[-2] for line in hardware.splitlines() if "IOPlatformUUID" in line)
     except (OSError, subprocess.TimeoutExpired, StopIteration, IndexError):
         hardware = ""
@@ -1876,7 +1908,7 @@ def machine_identity(root):
     elif not path.exists():
         path.write_text(str(uuid.uuid4()))
     try:
-        name = subprocess.run(["scutil", "--get", "ComputerName"], capture_output=True, text=True, timeout=5).stdout.strip()
+        name = subprocess.run(["scutil", "--get", "ComputerName"], capture_output=True, text=True, timeout=5, check=False).stdout.strip()
     except (OSError, subprocess.TimeoutExpired):
         name = ""
     return path.read_text().strip(), name or "This Mac"
@@ -2301,7 +2333,7 @@ def write_island_launcher(root):
 MODEL_SWITCH_SINCE = (2, 1, 251)
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def claude_versions():
     """The version of every claude this Mac has where Side A looks, None for one that wouldn't say. The native
     installer links claude to versions/<version>, so most are read without starting one."""
@@ -2313,7 +2345,7 @@ def claude_versions():
         text = real.name if real.parent.name == "versions" else ""
         if not re.fullmatch(r"\d+\.\d+\.\d+", text):
             with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-                text = subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL).stdout
+                text = subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False).stdout
         match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", text)
         found.append(tuple(int(part) for part in match.groups()) if match else None)
     return found
@@ -2556,10 +2588,8 @@ def main():
     # Claude Code's refresh lock, instead of leaving every session on that login waiting a minute.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     # Own process group, so the app's watchdog can stop any claude or codex child with us.
-    try:
+    with contextlib.suppress(OSError):
         os.setpgid(0, 0)
-    except OSError:
-        pass
     parser = build_parser()
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
@@ -2664,7 +2694,7 @@ def main():
                           "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),
                           "logins": login_stamps(root, config), "loginEnds": login_ends(root, config),
                           "live": live_limits(root, config), "busy": busy_logins(root, config, processes),
-                          "limits": limit_errors(root, config, processes), "models": slot_models(processes), "quiet": slot_quiet(processes)}))
+                          "limits": limit_errors(root, config, processes), "stalled": stalled_sessions(processes), "models": slot_models(processes), "quiet": slot_quiet(processes)}))
         return
     if args.command == "swap":
         swap(root, config, args.slot, account_by_id(config, args.account), share=args.share)

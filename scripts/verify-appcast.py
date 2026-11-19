@@ -10,7 +10,7 @@ root = Path(__file__).resolve().parent.parent
 metadata = plistlib.loads((root / 'scripts/Info.plist').read_bytes())
 feed, installer = Path(sys.argv[1]), Path(sys.argv[2])
 namespace = {'sparkle': 'http://www.andymatuschak.org/xml-namespaces/sparkle'}
-items = ET.parse(feed).findall('./channel/item')
+items = ET.parse(feed).findall('./channel/item')  # noqa: S314 -- the feed this release just built
 assert len(items) == 1, 'Expected one current update'
 item = items[0]
 version = metadata['CFBundleShortVersionString']

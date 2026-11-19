@@ -53,7 +53,7 @@ struct Composer: View {
     let canInterrupt: Bool
     let showsFollow: Bool
     let follow: FollowBadge
-    var focused: FocusState<Bool>.Binding
+    @Binding var focused: Bool
     let onSend: () -> Void
     let onInterrupt: () -> Void
     let onFollow: () -> Void
@@ -80,19 +80,16 @@ struct Composer: View {
     @State private var surface = AttachSurface()
     @State private var sends = 0
     @State private var interrupts = 0
-    /// Where the caret is, for the "/" or "$" word it's in.
-    @State private var selection: TextSelection?
+    /// Where the caret is (a UTF-16 range), for the "/" or "$" word it's in.
+    @State private var selection = NSRange(location: 0, length: 0)
     /// The suggestion a hardware keyboard's Return or Tab takes, and the text Esc closed the list for.
     @State private var highlighted = 0
     @State private var dismissedFor: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppModel.self) private var model
 
-    /// The caret as a UTF-16 offset; the end when the field hasn't reported one.
-    private var caret: Int {
-        guard case .selection(let range)? = selection?.indices, range.upperBound <= text.endIndex else { return text.utf16.count }
-        return range.upperBound.utf16Offset(in: text)
-    }
+    /// The caret as a UTF-16 offset.
+    private var caret: Int { min(selection.location + selection.length, text.utf16.count) }
 
     private var suggestion: (range: NSRange, options: [AgentOptions.Option])? {
         guard let session, dismissedFor != text, let commands = model.tools.agent(session.agent)?.commands,
@@ -119,7 +116,7 @@ struct Composer: View {
                         .glassEffectTransition(.matchedGeometry)
                 }
                 if let session {
-                    AttachmentTray(session: session.id, landing: surface.drawer.landing) { id, frame in surface.drawer.trayFrames[id] = frame }
+                    AttachmentTray(session: session.id)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if let suggestion {
@@ -130,6 +127,9 @@ struct Composer: View {
                     Button(action: openDrawer) {
                         Image(systemName: "plus")
                             .font(.system(size: 19, weight: .medium))
+                            // The + turns to an ×: the same button puts the keyboard back.
+                            .rotationEffect(.degrees(surface.drawer.isOpen ? 45 : 0))
+                            .animation(Motion.snappy(reduceMotion), value: surface.drawer.isOpen)
                             .frame(width: 48, height: 48)
                             .contentShape(.circle)
                             .hoverEffect(.highlight)
@@ -137,18 +137,14 @@ struct Composer: View {
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
                     .glassEffectID("plus", in: glass)
-                    // The drawer opens as this circle, so it stands aside while the drawer is up.
-                    .opacity(surface.drawer.hidesPlus ? 0 : 1)
-                    .animation(nil, value: surface.drawer.hidesPlus)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { surface.drawer.plusFrame = $0 }
-                    .accessibilityLabel("Add")
-                    .accessibilityHint("Attachments, model and commands")
+                    .attachPopover(surface)
+                    .accessibilityLabel(surface.drawer.isOpen ? "Show keyboard" : "Add")
+                    .accessibilityHint(surface.drawer.isOpen ? "" : "Attachments, model and commands")
 
                     field
                         .glassEffectID("field", in: glass)
                 }
                 .disabled(disabledReason != nil)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { surface.drawer.composerFrame = $0 }
                 if unsent != nil || notice != nil || disabledReason != nil || dropped != nil || blocked != nil {
                     statusLine
                         .padding(.horizontal, Space.xs)
@@ -173,20 +169,20 @@ struct Composer: View {
         .sheet(isPresented: $showsAdd) {
             AddSheet(session: session) { command in
                 text = command + " "
-                focused.wrappedValue = true
+                focused = true
             }
         }
         #if DEBUG
         .task { await debugLaunch() }
         #endif
-        .attachments(surface, key: session?.id, tools: model.tools, focused: focused)
+        .attachments(surface, key: session?.id, tools: model.tools)
     }
 
     #if DEBUG
-    /// `--focus-composer`, `--tray-full`, `--drawer menu|photos`: states for screenshots and checks, reached without taps.
+    /// `--focus-composer`, `--tray-full`, `--drawer panel|large|camera`: states for screenshots and checks, reached without taps.
     private func debugLaunch() async {
         let arguments = ProcessInfo.processInfo.arguments
-        guard arguments.contains("--focus-composer") || arguments.contains("--tray-full") || arguments.contains("--drawer") || arguments.contains("--show-picker") else { return }
+        guard arguments.contains("--focus-composer") || arguments.contains("--tray-full") || arguments.contains("--drawer") || arguments.contains("--show-picker") || arguments.contains("--draft") else { return }
         try? await Task.sleep(for: .milliseconds(1200))
         // `--show-picker` / `--show-files`: the system pickers without the drawer, to tell the drawer from the simulator.
         if arguments.contains("--show-picker") { surface.showsPicker = true }
@@ -200,12 +196,15 @@ struct Composer: View {
                 model.tools.attachments.add(picture.jpegData(compressionQuality: 0.8)!, to: session.id)
             }
         }
-        if arguments.contains("--focus-composer") { focused.wrappedValue = true; try? await Task.sleep(for: .milliseconds(900)) }
+        // `--draft "text"` puts text in the field, to see commands tinted.
+        if let index = arguments.firstIndex(of: "--draft"), index + 1 < arguments.count { text = arguments[index + 1] }
+        if arguments.contains("--focus-composer") { focused = true; try? await Task.sleep(for: .milliseconds(900)) }
         if let index = arguments.firstIndex(of: "--drawer"), index + 1 < arguments.count {
             openDrawer()
-            if arguments[index + 1] == "photos" { try? await Task.sleep(for: .milliseconds(700)); surface.drawer.showPhotos() }
-            // `--blur-after-drawer`: the keyboard goes away while the drawer is open.
-            if arguments.contains("--blur-after-drawer") { try? await Task.sleep(for: .milliseconds(1800)); focused.wrappedValue = false }
+            if arguments[index + 1] == "large" { try? await Task.sleep(for: .milliseconds(900)); surface.drawer.toggleDetent() }
+            // `--drawer camera` opens the viewfinder (with `--fake-camera`); `--camera-interrupted` takes the camera away.
+            if arguments[index + 1] == "camera" { try? await Task.sleep(for: .milliseconds(900)); surface.drawer.openCamera() }
+            if arguments.contains("--camera-interrupted") { try? await Task.sleep(for: .milliseconds(600)); surface.drawer.camera.setInterrupted(true) }
         }
     }
     #endif
@@ -222,31 +221,8 @@ struct Composer: View {
 
     private var field: some View {
         HStack(alignment: .bottom, spacing: Space.xs) {
-            TextField(placeholder, text: $text, selection: $selection, axis: .vertical)
-                .lineLimit(1...6)
-                .font(.body)
-                .focused(focused)
-                .padding(.vertical, 13)
-                .padding(.leading, Space.m)
-                .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: .down) { press in
-                    guard let suggestion else { return .ignored }
-                    switch press.key {
-                    case .upArrow: highlighted = max(highlighted - 1, 0)
-                    case .downArrow: highlighted = min(highlighted + 1, suggestion.options.count - 1)
-                    case .escape: dismissedFor = text
-                    default: pick(suggestion.options[min(highlighted, suggestion.options.count - 1)], at: suggestion.range)
-                    }
-                    return .handled
-                }
-                .onKeyPress(.return, phases: .down) { press in
-                    if let suggestion, !press.modifiers.contains(.shift) {
-                        pick(suggestion.options[min(highlighted, suggestion.options.count - 1)], at: suggestion.range)
-                        return .handled
-                    }
-                    guard !press.modifiers.contains(.shift), hasText, !offline, !uploading else { return .ignored }
-                    send()
-                    return .handled
-                }
+            ComposerField(text: $text, selection: $selection, isFocused: $focused, placeholder: placeholder,
+                          drawer: surface.drawer, paste: surface.target, onKey: handle, highlights: highlights(in:))
             trailingControl
                 .opacity(disabledReason == nil ? 1 : 0)
                 .needsMac()
@@ -360,13 +336,38 @@ struct Composer: View {
         }
     }
 
+    /// The words in the field that are real commands for this session's agent: tinted as they are typed.
+    private func highlights(in text: String) -> [NSRange] {
+        guard let session else { return [] }
+        return CommandHighlight.ranges(in: text, agent: session.agent, commands: model.tools.agent(session.agent)?.commands ?? [])
+    }
+
+    /// A hardware keyboard's keys: the suggestion list's, and Return to send. Anything not answered here is the field's.
+    private func handle(_ key: HardwareKey) -> Bool {
+        if let suggestion {
+            let chosen = suggestion.options[min(highlighted, suggestion.options.count - 1)]
+            switch key {
+            case .up: highlighted = max(highlighted - 1, 0)
+            case .down: highlighted = min(highlighted + 1, suggestion.options.count - 1)
+            case .escape: dismissedFor = text
+            case .tab: pick(chosen, at: suggestion.range)
+            case .enter(let shift):
+                guard !shift else { return false }
+                pick(chosen, at: suggestion.range)
+            }
+            return true
+        }
+        guard case .enter(let shift) = key, !shift, hasText, !offline, !uploading else { return false }
+        send()
+        return true
+    }
+
     /// A suggestion replaces the word, ready for its arguments.
     private func pick(_ option: AgentOptions.Option, at range: NSRange) {
         let applied = CommandSuggestions.apply(option, to: text, at: range)
         text = applied.text
-        let caret = String.Index(utf16Offset: min(applied.caret, applied.text.utf16.count), in: applied.text)
-        selection = TextSelection(insertionPoint: caret)
-        focused.wrappedValue = true
+        selection = NSRange(location: min(applied.caret, applied.text.utf16.count), length: 0)
+        focused = true
     }
 
     private func send() {

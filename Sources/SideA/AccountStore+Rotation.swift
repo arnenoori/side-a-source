@@ -31,7 +31,19 @@ extension AccountStore {
     func recordRotation(_ record: RotationRecord) {
         rotationRecords.add(record)
         remote.events?.autopilotChanged()
+        guard record.kind == .moved else { return }
+        // Those of its sessions stopped on a limit can carry on once the trade reaches them.
+        let limited = Set(limitHits.values.flatMap(\.sessions))
+        let moved = Set(record.sessions.map(\.id))
+        let waiting = sessions.live.filter { moved.contains(WireBuilders.key($0)) }.compactMap(\.sessionID).filter(limited.contains)
+        stopped { $0.move(waiting, at: record.at) }
     }
+
+    func toggleSmart() { setAutopilot(!config.smartMode) }
+    func accountID(inSlot slot: String) -> String? { busyLogins?[slot] }
+    func isActive(_ account: Account) -> Bool { activeIDs[account.provider] == account.id }
+    func setFollowFable(_ value: Bool) { config.followFable = value; persist() }
+    func setSwapAt(_ value: Double) { config.swapAt = value; persist() }
 
     /// Per login in use, where its sessions go when it fills up. Codex logins are never traded, so only Claude's.
     func nextMoves(now: Double) -> [NextMove] {

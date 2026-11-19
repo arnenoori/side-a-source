@@ -4,15 +4,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 actionlint
 shellcheck scripts/*.sh
+./scripts/lint-python.sh
 python3 -m unittest discover -s scripts/tests -v
 python3 -m unittest discover -s bridge/tests -v
 # The app accepts Python 3.9, which is macOS's own /usr/bin/python3.
 if [[ "$(/usr/bin/python3 -c 'import sys; print(sys.version_info[:2] == (3, 9))' 2>/dev/null)" == True ]]; then
   /usr/bin/python3 -m unittest discover -s bridge/tests -v
 fi
+./scripts/lint-swift.sh
 ./scripts/sync-bridge.sh
 swift test
 npm --prefix site ci
+npm --prefix site run lint
 npm --prefix site test
 npm --prefix site run build
 SIDEA_RELEASE_BUILD=1 ./scripts/build-app.sh release arm64

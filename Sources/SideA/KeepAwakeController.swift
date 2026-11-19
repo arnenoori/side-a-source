@@ -3,6 +3,7 @@ import CoreGraphics
 import IOKit
 import IOKit.ps
 import IOKit.pwr_mgt
+import os
 import ServiceManagement
 import SideACore
 import SideAKeepAwakeCore
@@ -249,6 +250,7 @@ extension HelperStatus {
 
 @MainActor
 final class MacSleepSystem: SleepSystem {
+    private let logger = Logger(subsystem: "com.arnenoori.sidea", category: "keepawake")
     private let root: String
     private let service = SMAppService.daemon(plistName: KeepAwakeHelper.plistName)
     private var connection: NSXPCConnection?
@@ -304,14 +306,18 @@ final class MacSleepSystem: SleepSystem {
     var helper: HelperStatus { HelperStatus(service.status) }
 
     func registerHelper() -> HelperStatus {
-        try? service.register()
+        do { try service.register() } catch {
+            logger.error("couldn't register the keep-awake helper: \(error.localizedDescription, privacy: .public)")
+        }
         return helper
     }
 
     func unregisterHelper() async {
         connection?.invalidate()
         connection = nil
-        try? await service.unregister()
+        do { try await service.unregister() } catch {
+            logger.error("couldn't unregister the keep-awake helper: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     func openLoginItems() { SMAppService.openSystemSettingsLoginItems() }

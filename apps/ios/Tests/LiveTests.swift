@@ -425,6 +425,7 @@ final class LiveTests: XCTestCase {
         await fails("settings") { _ = try await tools.change(row, SettingsChange(mode: .plan), title: "Plan") }
         await fails("autopilot") { try await tools.setAutopilot(false) }
         await fails("answers") { try await tools.setAnswersRecommended(true) }
+        await fails("continues") { try await tools.setContinuesStopped(false) }
         await fails("move at") { try await tools.setSwapAt(90) }
         await fails("follow Fable") { try await tools.setFollowFable(false) }
         await fails("compact") { try await tools.compact("s") }
@@ -450,6 +451,13 @@ final class LiveTests: XCTestCase {
         XCTAssertTrue(demo.can(.autopilotAnswers))
         try await demo.setAnswersRecommended(true)
         XCTAssertEqual(demo.autopilot?.answersRecommended, true)
+        XCTAssertFalse(live.can(.autopilotContinues))
+        XCTAssertTrue(demo.can(.autopilotContinues))
+        try await demo.setContinuesStopped(false)
+        XCTAssertEqual(demo.autopilot?.continuesStopped, false)
+        // Another change keeps it.
+        try await demo.setAnswersRecommended(false)
+        XCTAssertEqual(demo.autopilot?.continuesStopped, false)
         XCTAssertEqual(demo.autopilot?.enabled, false)
         XCTAssertTrue(work.with(active: true).active)
         XCTAssertEqual(work.with(active: true).name, "Work")

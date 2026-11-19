@@ -118,7 +118,12 @@ final class FakeSocket: SocketConnection, @unchecked Sendable {
     var raw: [SocketMessage] { lock.withLock { _raw } }
     var closedByClient: Int? { lock.withLock { _closed } }
 
+    private var _sendError: Error?
+    /// Every send from now on fails with this error.
+    func failSends(_ error: Error) { lock.withLock { _sendError = error } }
+
     func send(_ message: SocketMessage) async throws {
+        if let error = lock.withLock({ _sendError }) { throw error }
         var decoded: ClientMessage?
         if case .text(let text) = message { decoded = try? JSONDecoder().decode(ClientMessage.self, from: Data(text.utf8)) }
         // Together, so a test that saw the frame also sees it decoded.

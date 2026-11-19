@@ -35,7 +35,7 @@ export class Ledger extends DurableObject<Env> {
     return true;
   }
 
-  async alarm() {
+  override async alarm() {
     await this.ctx.storage.deleteAll();
   }
 }

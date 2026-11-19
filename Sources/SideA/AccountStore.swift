@@ -102,6 +102,10 @@ final class AccountStore {
     @ObservationIgnored private var slotQuiet: [String: Double] = [:]
     /// Per account, the newest limit a running session reported hitting, when, and every session whose last reply says so.
     @ObservationIgnored var limitHits: [String: (limit: String, at: Double, sessions: [String])] = [:]
+    /// `runtime/stopped.json`, so a relaunch still knows which sessions to ask.
+    /// Running sessions whose last reply is an error another try could get past, as the bridge last read them.
+    @ObservationIgnored var stalls: [String: (error: String, at: Double)] = [:]
+    @ObservationIgnored lazy var stoppedSessions = (try? PrivateFile.read(StoppedSessions.self, from: stoppedURL)) ?? StoppedSessions()
     @ObservationIgnored private var reportAt = Date.distantPast
     @ObservationIgnored private var sessionsIndexedAt = Date.distantPast
     @ObservationIgnored private var limitMarkerDate: Date?
@@ -150,10 +154,12 @@ final class AccountStore {
     @ObservationIgnored private(set) lazy var island = Island(store: self)
     /// The harness puts its own in place, so the store's changes reach the controller it serves.
     @ObservationIgnored lazy var remote = RemoteController(store: self, keychain: isDemo ? .inMemory() : .forApp())
+    // swiftlint:disable unowned_variable_capture -- the store owns HostedSessions and outlives it.
     /// Tests put one on a private tmux socket in its place.
     @ObservationIgnored lazy var hosted = HostedSessions(root: root, bridge: { [unowned self] in try await self.bridgeOutput($0) },
                                                                       live: { [unowned self] in await self.sessions.freshLive() },
                                                                       changed: { [unowned self] in await self.sessions.refreshLive() })
+    // swiftlint:enable unowned_variable_capture
     enum PoolRun {
         case off, starting
         case running(PoolProxy, port: UInt16)
@@ -266,7 +272,9 @@ final class AccountStore {
             readConfig()
         } else if Bundle.main.bundleURL.pathExtension == "app" {
             // First launch: Autopilot only helps while running, so start with the Mac.
-            try? SMAppService.mainApp.register()
+            do { try SMAppService.mainApp.register() } catch {
+                integrationLog.error("couldn't add Side A to the login items: \(error.localizedDescription, privacy: .public)")
+            }
         }
         if !isDemo {
             let mirror = PreferencesMirror(root: root, syncFolder: { [weak self] in self?.preferencesSyncFolder },
@@ -413,7 +421,6 @@ final class AccountStore {
             return nil
         }
     }
-    func accountID(inSlot slot: String) -> String? { busyLogins?[slot] }
     /// Only Remote's recorder listens; without a paired phone this costs a static check.
     private func remoteUsageChanged() { remote.events?.usageChanged() }
     /// Codex logins are never traded, so a profile's home is its account; its own home is the Mac's.
@@ -483,7 +490,6 @@ final class AccountStore {
     var selected: Account? { config.selected }
     /// The Mac-wide Claude account (shown in the menu bar title).
     var active: Account? { config.accounts.first { $0.id == activeIDs[.claude] } }
-    func isActive(_ account: Account) -> Bool { activeIDs[account.provider] == account.id }
     var schedule: WorkSchedule? { report.flatMap { WorkSchedule($0.activity) } }
     var trackNumber: Int { (config.accounts.firstIndex { $0.id == config.selectedID } ?? 0) + 1 }
     var python: String? { dependencies.python.path }
@@ -512,7 +518,6 @@ final class AccountStore {
         config.step(offset); persist()
         Sounds.play(.tick)
     }
-    func toggleSmart() { setAutopilot(!config.smartMode) }
     /// Autopilot on or off, from the Mac's toggles or the phone.
     func setAutopilot(_ enabled: Bool) {
         guard config.smartMode != enabled else { return }
@@ -1031,8 +1036,6 @@ final class AccountStore {
         persist()
         remote.events?.autopilotChanged()
     }
-    func setFollowFable(_ value: Bool) { config.followFable = value; persist() }
-    func setSwapAt(_ value: Double) { config.swapAt = value; persist() }
     func setSync(_ value: Bool) {
         config.sync = value; persist(); reportAt = .distantPast
         preferences?.syncChanged()
@@ -1052,10 +1055,14 @@ final class AccountStore {
     private var reportURL: URL { root.appendingPathComponent("runtime/report.json") }
     private var usageCacheURL: URL { root.appendingPathComponent("runtime/usage-cache.json") }
     private func saveUsageCache() {
-        try? PrivateFile.write(UsageCache(usage: usage, at: saved(\.usageAt), backoff: saved(\.backoffUntil), primed: saved(\.primedAt),
-                                          active: Dictionary(uniqueKeysWithValues: activeIDs.map { ($0.key.rawValue, $0.value) }),
-                                          failing: Array(failingIDs), issues: health.mapValues(\.saved), readAt: readAt),
-                               to: usageCacheURL)
+        do {
+            try PrivateFile.write(UsageCache(usage: usage, at: saved(\.usageAt), backoff: saved(\.backoffUntil), primed: saved(\.primedAt),
+                                             active: Dictionary(uniqueKeysWithValues: activeIDs.map { ($0.key.rawValue, $0.value) }),
+                                             failing: Array(failingIDs), issues: health.mapValues(\.saved), readAt: readAt),
+                                  to: usageCacheURL)
+        } catch {
+            integrationLog.error("couldn't save the usage cache: \(error.localizedDescription, privacy: .public)")
+        }
     }
     /// Active accounts, and any a running session uses, change fastest. An idle account at a limit
     /// can only change if its limit resets early, so it is read hourly until the reset.
@@ -1103,8 +1110,9 @@ final class AccountStore {
     }
     @discardableResult func refreshActive() async -> Bool {
         let generation = selectionGeneration
-        struct Active: Decodable { let busyProblem: String?; let healed: [String]?; let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]?; let busy: [Busy]?; let limits: [String: Hit]?; let models: [String: [String?]]?; let quiet: [String: Double]? }
+        struct Active: Decodable { let busyProblem: String?; let healed: [String]?; let accountID: String?; let email: String; let codexAccountID: String?; let codexEmail: String; let claudeModel: String?; let logins: [String: Double]?; let loginEnds: [String: Double]?; let live: [String: Live]?; let busy: [Busy]?; let limits: [String: Hit]?; let stalled: [String: Stall]?; let models: [String: [String?]]?; let quiet: [String: Double]? }
         struct Hit: Decodable { let limit: String; let at: Double; let sessions: [String]? }
+        struct Stall: Decodable { let error: String; let at: Double }
         struct Busy: Decodable { let slot: String; let account: String? }
         struct Live: Decodable { let at: Double; let windows: [UsageWindow] }
         activeProblem = nil
@@ -1146,6 +1154,7 @@ final class AccountStore {
         // endpoint answers 429 for it: that limit counts as full until a newer reading.
         let stopped = limitHits.mapValues(\.sessions)
         limitHits = (value.limits ?? [:]).mapValues { ($0.limit, $0.at, $0.sessions ?? []) }
+        stalls = (value.stalled ?? [:]).mapValues { ($0.error, $0.at) }
         if limitHits.mapValues(\.sessions) != stopped { remote.events?.liveChanged() }
         for (id, hit) in value.limits ?? [:] where hit.at > (readAt[id]?.timeIntervalSince1970 ?? 0) {
             if let account = config.accounts.first(where: { $0.id == id }), Date().timeIntervalSince1970 - hit.at < 300 {
@@ -1229,6 +1238,7 @@ final class AccountStore {
         guard at("reading usage") else { return }
         await refresh(config.accounts.filter { $0.ready && dueForRead($0) }.map(\.id))
         guard at("after reading usage") else { return }
+        await continueStopped(now: Date().timeIntervalSince1970)
         Task { await refreshReport(maxAge: 3600) }
         checkTelemetry()
         // Keeps session search close to current, so opening Sessions shows results at once.

@@ -134,11 +134,15 @@ public enum PoolBridge {
         let usable = { (id: String) in
             open.first { $0.id == id }.map { member in member.usage.map { Planner.hasHeadroom($0, full: full, now: now) } ?? true } ?? false
         }
-        return router.route(session: session, now: now, usable: usable) {
+        let chosen = router.route(session: session, now: now, usable: usable) {
             open.first { usable($0.id) }?.id
                 // Unread usage may be stale; Codex serves a full account from its credits.
                 ?? (provider == .codex ? open.first?.id : nil)
         }
+        if chosen != nil, let session {
+            do { try HelperRefusals(root: root).served(session) } catch { log("couldn't update the stopped sessions: \(error.localizedDescription)") }
+        }
+        return chosen
     }
 
     public func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential {
@@ -169,8 +173,11 @@ public enum PoolBridge {
         }
     }
 
-    public func poolRefused(_ provider: AgentProvider?, status: Int, message: String) {
+    public func poolRefused(_ provider: AgentProvider?, session: String?, status: Int, message: String) {
         log("answered \(status): \(message)")
+        // The app asks it to carry on once it runs again and an account has room.
+        guard let provider, let session else { return }
+        do { try HelperRefusals(root: root).refuse(session, provider, at: clock()) } catch { log("couldn't note the stopped session: \(error.localizedDescription)") }
     }
 
     public func poolHealthReport() -> [String: Int] {

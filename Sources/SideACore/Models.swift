@@ -56,6 +56,9 @@ public struct Configuration: Codable, Equatable, Sendable {
     public var moveAt: Double { swapAt ?? Self.defaultMoveAt }
     /// A question with a recommended choice, or a plan, is answered after a minute unanswered. Nil means off.
     public var answerRecommended: Bool?
+    /// A session a limit stopped is sent "Please continue" once an account can answer it again. Nil means on.
+    // swiftlint:disable:next discouraged_optional_boolean -- configs saved before this setting have no such key
+    public var continueStopped: Bool?
     /// Claude Code in Terminal goes through Side A's local proxy, which picks an account per conversation. Nil means off.
     public var pool: Bool?
     /// Pool mode also serves the user's other Macs over Tailscale. Nil means off.

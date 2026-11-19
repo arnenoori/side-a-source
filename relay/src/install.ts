@@ -136,7 +136,7 @@ interface State {
   windows: Record<string, Window>;
 }
 
-const buffer = (bytes: Uint8Array) => bytes.slice().buffer as ArrayBuffer;
+const buffer = (bytes: Uint8Array) => bytes.slice().buffer;
 
 // The token, app and host a challenge went to. A proof only counts for the route it was sent on.
 const routeOf = (device: { apns_token: string | null; bundle: string; environment: string }) =>
@@ -170,7 +170,7 @@ export class Install extends DurableObject<Env> {
   }
 
   // The tunnel's WebSocket upgrades, routed by the Worker. Only a registered install tunnels.
-  async fetch(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     const role = new URL(request.url).pathname === '/v1/tunnel/mac' ? 'mac' : 'phone';
     const result: Response | Refusal = this.exists() ? await this.tunnel.accept(request, role)
       : { status: 401, code: 'unauthorized', message: 'Unknown install' };
@@ -180,16 +180,16 @@ export class Install extends DurableObject<Env> {
     return Response.json({ error: { code: result.code, message: result.message, retryable } }, { status: result.status, headers });
   }
 
-  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
     await this.tunnel.message(ws, message);
   }
 
-  async webSocketClose(ws: WebSocket, code: number) {
+  override async webSocketClose(ws: WebSocket, code: number) {
     this.tunnel.closed(ws);
     try { ws.close(code === 1005 || code === 1006 ? 1000 : code, ''); } catch {}
   }
 
-  async webSocketError(ws: WebSocket) {
+  override async webSocketError(ws: WebSocket) {
     this.tunnel.closed(ws);
   }
 
@@ -301,6 +301,7 @@ export class Install extends DurableObject<Env> {
       case 'delete':
         return answer({ status: 204 });
       case 'putDevice':
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- `fresh` is made for every putDevice.
         return this.putDevice(state, installId, op.deviceId, op.device, now, fresh!);
       case 'deleteDevice':
         this.sql.exec('DELETE FROM activities WHERE device_id = ?', op.deviceId);
@@ -325,12 +326,12 @@ export class Install extends DurableObject<Env> {
                                       gone_at, gone_reason, verified, challenge_hash, challenge_sent, challenge_route)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?)`,
       id, input.apnsToken, input.bundle, input.environment, buffer(input.secretHash), input.pushToStartToken ?? null, input.appVersion,
-      sameToken ? existing!.token_updated : now, sameToken ? existing!.verified : 0,
-      sameToken ? existing!.challenge_hash : null, sameToken ? existing!.challenge_sent : null, sameToken ? existing!.challenge_route : null);
+      sameToken ? existing.token_updated : now, sameToken ? existing.verified : 0,
+      sameToken ? existing.challenge_hash : null, sameToken ? existing.challenge_sent : null, sameToken ? existing.challenge_route : null);
     // Activity tokens were reported under the old proof or the old pairing.
     const samePairing = existing !== undefined && equalBytes(new Uint8Array(existing.secret_hash), input.secretHash);
     if (!sameToken || !samePairing) this.sql.exec('DELETE FROM activities WHERE device_id = ?', id);
-    const verified = sameToken && existing!.verified === 1;
+    const verified = sameToken && existing.verified === 1;
     const challenge = verified ? undefined : this.challenge(state, installId, id, now, fresh);
     return answer({ status: existing ? 200 : 201, body: { verified } }, challenge);
   }
@@ -359,7 +360,8 @@ export class Install extends DurableObject<Env> {
     if (wanted === 5) return 5;
     const last = state.windows[key]?.last ?? 0;
     if (now - last < LIMITS.urgentActivityGap || this.take(state, key, HOUR, LIMITS.urgentActivityPerHour, now)) return 5;
-    state.windows[key].last = now;
+    const window = state.windows[key];
+    if (window) window.last = now;
     return 10;
   }
 
@@ -371,7 +373,7 @@ export class Install extends DurableObject<Env> {
       const test = this.take(state, 'send.test', HOUR, LIMITS.testsPerHour, now);
       if (test) return answer(error(429, 'rate_limited', 'Too many test pushes this hour', test));
     }
-    const { install_id: installId } = this.install();
+    this.install();
     const seconds = Math.floor(now / 1000);
     const plan: Plan = { targets: [], results: [] };
     // The privacy page promises activity tokens last 12 hours; the daily alarm alone would keep them up to 36.
@@ -400,6 +402,7 @@ export class Install extends DurableObject<Env> {
       } else {
         const activity = this.sql.exec<{ update_token: string; bundle: string; environment: Environment }>(
           'SELECT update_token, bundle, environment FROM activities WHERE id = ? AND device_id = ? AND created > ?',
+          // oxlint-disable-next-line typescript/no-non-null-assertion -- an activity send that isn't a start names its activity (parseSend).
           send.activityId!, deviceId, activitiesFrom).toArray()[0];
         if (!activity) plan.results.push({ device: deviceId, result: 'gone' });
         else plan.targets.push({
@@ -429,12 +432,14 @@ export class Install extends DurableObject<Env> {
         this.sql.exec('UPDATE devices SET environment = ? WHERE id = ? AND apns_token = ?', outcome.environment, deviceId, delivery.token);
       }
       if (outcome.result === 'ok' && target.ending) {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- an activity target carries its activity id.
         this.sql.exec('DELETE FROM activities WHERE id = ? AND update_token = ?', target.activityId!, delivery.token);
       }
       if (outcome.result !== 'gone') continue;
       // A phone that registered again after APNs's 410 keeps its new token.
       const before = outcome.timestamp ?? now + 1;
       if (kind === 'activity') {
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- an activity target carries its activity id.
         this.sql.exec('DELETE FROM activities WHERE id = ? AND update_token = ? AND created < ?', target.activityId!, delivery.token, before);
       } else if (kind === 'start') {
         this.sql.exec('UPDATE devices SET push_to_start = NULL WHERE id = ? AND push_to_start = ? AND token_updated < ?', deviceId, delivery.token, before);
@@ -479,6 +484,7 @@ export class Install extends DurableObject<Env> {
         // Live Activity tokens hang off the proof, so they go with it; the Mac's next registration brings push-to-start back.
         if (newToken) this.sql.exec('DELETE FROM activities WHERE device_id = ?', deviceId);
         // The old token's challenge dies with it, so the next one goes out at once.
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- `fresh` is made for every tokens op.
         const challenge = newToken ? this.challenge(state, this.install().install_id, deviceId, now, fresh!) : undefined;
         return answer({ status: 200, body: { verified: !newToken && device.verified === 1 } }, challenge);
       }
@@ -486,6 +492,7 @@ export class Install extends DurableObject<Env> {
         const expected = device.challenge_hash && new Uint8Array(device.challenge_hash);
         const current = device.challenge_sent !== null && now - device.challenge_sent < LIMITS.challengeLifetime
           && device.challenge_route === routeOf(device);
+        // oxlint-disable-next-line typescript/no-non-null-assertion -- `proof` is made for every verify op.
         if (!expected || !current || !equalBytes(expected, proof!)) {
           return answer(error(403, 'bad_challenge', 'Challenge is wrong or expired'));
         }
@@ -516,7 +523,7 @@ export class Install extends DurableObject<Env> {
     }
   }
 
-  async alarm() {
+  override async alarm() {
     const now = Date.now();
     if (!this.exists()) return;
     const nextPairingEnd = this.tunnel.sweepPairing(now);

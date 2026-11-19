@@ -62,114 +62,80 @@ final class DrawerLogicTests: XCTestCase {
         XCTAssertFalse(DrawerRows.make(canUpload: true, room: 0, hasCamera: true, clipboardHasImage: false).attaches)
         XCTAssertFalse(DrawerRows.make(canUpload: true, room: 2, hasCamera: false, clipboardHasImage: false).camera)
     }
+}
 
-    // MARK: Geometry
 
-    private func layout(window: CGSize = CGSize(width: 402, height: 874), plusY: CGFloat = 800, composerWidth: CGFloat = 370,
-                        menuHeight: CGFloat = 270, keyboardTop: CGFloat? = nil) -> DrawerLayout {
-        DrawerLayout(window: window, safe: EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0),
-                     plus: CGRect(x: 16, y: plusY - 24, width: 48, height: 48),
-                     composer: CGRect(x: 16, y: plusY - 24, width: composerWidth, height: 48),
-                     menuSize: CGSize(width: 316, height: menuHeight), keyboardTop: keyboardTop)
+@MainActor
+final class PanelLogicTests: XCTestCase {
+    private let detents = PanelDetents(base: 336, window: 874, safeTop: 62)
+
+    func testThePanelOpensAtTheKeyboardsHeightAndPullsUpToTheGrid() {
+        XCTAssertGreaterThan(detents.large, detents.base)
+        XCTAssertLessThanOrEqual(detents.large, 874 * 0.82)
+        // A short window never makes the large detent smaller than the keyboard it replaced.
+        XCTAssertEqual(PanelDetents(base: 300, window: 400, safeTop: 20).large, 300)
     }
 
-    func testTheMenuStaysInsideTheWindowWhetherTheKeyboardIsUpOrDown() {
-        for plusY in [800.0, 560.0, 90.0] {
-            let menu = layout(plusY: plusY).menu
-            XCTAssertGreaterThanOrEqual(menu.minY, 62 + DrawerLayout.gutter - 0.01)
-            XCTAssertLessThanOrEqual(menu.maxY, 874 - DrawerLayout.gutter + 0.01)
-        }
+    func testReleasingSettlesOnTheNearestRestOrCloses() {
+        XCTAssertEqual(detents.settle(height: 340, velocity: 0), .base)
+        XCTAssertEqual(detents.settle(height: detents.large - 10, velocity: 0), .large)
+        XCTAssertEqual(detents.settle(height: 340, velocity: -2000), .large, "a flick up carries on")
+        XCTAssertEqual(detents.settle(height: detents.large, velocity: 3000), .base, "a flick down from the grid comes back to the keyboard's height")
+        XCTAssertEqual(detents.settle(height: 336 - detents.dismissDistance - 20, velocity: 0), .dismiss)
+        XCTAssertEqual(detents.settle(height: 336, velocity: 1800), .dismiss)
     }
 
-    func testTheMenuOpensAroundThePlusWhenThereIsRoom() {
-        let menu = layout(plusY: 520).menu
-        XCTAssertEqual(menu.midY, 520 + 7, accuracy: 0.5)
-        XCTAssertEqual(menu.minX, 16)
+    func testPastTheLargeDetentThePanelResists() {
+        XCTAssertEqual(detents.rubberBanded(detents.large - 50), detents.large - 50)
+        XCTAssertEqual(detents.rubberBanded(detents.large + 90), detents.large + 30, accuracy: 0.001)
     }
 
-    func testThePanelStartsAsThePlusAndEndsAsTheSheet() {
-        let l = layout()
-        let start = PanelFrame.at(open: 0, morph: 0, layout: l, sheetTop: l.mediumTop)
-        XCTAssertEqual(start.rect, l.plus)
-        XCTAssertEqual(start.radius, 24)
-        let menu = PanelFrame.at(open: 1, morph: 0, layout: l, sheetTop: l.mediumTop)
-        XCTAssertEqual(menu.rect, l.menu)
-        let sheet = PanelFrame.at(open: 1, morph: 1, layout: l, sheetTop: l.mediumTop)
-        XCTAssertEqual(sheet.rect, l.sheet(top: l.mediumTop))
-        XCTAssertEqual(sheet.radius, DrawerLayout.sheetRadius)
+    func testTheKeyboardsHeightIsRememberedPerOrientation() {
+        var heights = KeyboardHeights()
+        XCTAssertEqual(heights.height(landscape: false, isPad: false), 336, "a default before any keyboard was seen")
+        heights.remember(346, landscape: false)
+        heights.remember(200, landscape: true)
+        XCTAssertEqual(heights.height(landscape: false, isPad: false), 346)
+        XCTAssertEqual(heights.height(landscape: true, isPad: false), 200)
+        heights.remember(48, landscape: false)
+        XCTAssertEqual(heights.height(landscape: false, isPad: false), 346, "a shortcuts bar is not a keyboard")
     }
 
-    func testTheDetentsAreOrderedAndTheSheetKeepsItsGutterAtTheBottom() {
-        let l = layout()
-        XCTAssertLessThan(l.largeTop, l.mediumTop)
-        XCTAssertLessThan(l.mediumTop, l.dismissTop)
-        XCTAssertEqual(l.sheet(top: l.mediumTop).maxY, 874 - DrawerLayout.gutter)
+    func testOnlyAnIPadWithoutADockedSoftKeyboardGetsAPopover() {
+        XCTAssertEqual(PanelPresentation.decide(isPad: false, hardwareKeyboard: true, keyboardDocked: false), .keyboardArea)
+        XCTAssertEqual(PanelPresentation.decide(isPad: true, hardwareKeyboard: false, keyboardDocked: true), .keyboardArea)
+        XCTAssertEqual(PanelPresentation.decide(isPad: true, hardwareKeyboard: true, keyboardDocked: true), .popover)
+        XCTAssertEqual(PanelPresentation.decide(isPad: true, hardwareKeyboard: false, keyboardDocked: false), .popover)
     }
 
-    func testTheDrawerStopsAboveTheKeyboard() {
-        let l = layout(plusY: 520, keyboardTop: 560)
-        XCTAssertEqual(l.sheetBottom, 560 - DrawerLayout.gutter)
-        XCTAssertLessThanOrEqual(l.menu.maxY, 560 - DrawerLayout.gutter)
-        XCTAssertLessThanOrEqual(l.sheet(top: l.mediumTop).maxY, 560)
-        XCTAssertGreaterThanOrEqual(l.mediumTop, l.largeTop)
+    func testTheCameraTileDoesWhatThePermissionAllows() {
+        let notYet = CameraAccess(.notDetermined, hasCamera: true)
+        XCTAssertTrue(notYet.asksOnTap)
+        XCTAssertFalse(notYet.showsPreview)
+        let allowed = CameraAccess(.authorized, hasCamera: true)
+        XCTAssertTrue(allowed.showsPreview)
+        XCTAssertTrue(allowed.opensCamera)
+        let refused = CameraAccess(.denied, hasCamera: true)
+        XCTAssertFalse(refused.showsPreview)
+        XCTAssertTrue(refused.opensCamera, "the full camera path says what to do about a refusal")
+        XCTAssertEqual(CameraAccess(.restricted, hasCamera: true), .denied)
+        // The simulator has no camera whatever the permission says, and a tap there does nothing.
+        let none = CameraAccess(.authorized, hasCamera: false)
+        XCTAssertEqual(none, .unavailable)
+        XCTAssertFalse(none.showsPreview)
+        XCTAssertFalse(none.opensCamera)
     }
 
-    func testASmallPhoneWithTheKeyboardUpKeepsAUsableSheet() {
-        let l = layout(window: CGSize(width: 375, height: 667), plusY: 330, keyboardTop: 407)
-        XCTAssertGreaterThanOrEqual(l.sheetBottom - l.mediumTop, 250)
-        XCTAssertGreaterThanOrEqual(l.mediumTop, l.largeTop)
-        XCTAssertLessThanOrEqual(l.menu.maxY, 407)
+    func testThePreviewIsUprightForHowTheInterfaceIsHeld() {
+        XCTAssertEqual(CameraAccess.previewAngle(for: .portrait), 90)
+        XCTAssertEqual(CameraAccess.previewAngle(for: .landscapeRight), 0)
+        XCTAssertEqual(CameraAccess.previewAngle(for: .landscapeLeft), 180)
+        XCTAssertEqual(CameraAccess.previewAngle(for: .portraitUpsideDown), 270)
     }
 
-    func testASmallPhoneStillGetsATallEnoughSheet() {
-        let l = layout(window: CGSize(width: 375, height: 667), plusY: 380)
-        XCTAssertGreaterThanOrEqual(l.sheetBottom - l.mediumTop, DrawerLayout.minSheetHeight)
-        XCTAssertGreaterThanOrEqual(l.mediumTop, l.largeTop)
-    }
-
-    func testReleasingASheetSettlesOnTheNearestDetentOrCloses() {
-        let l = layout()
-        XCTAssertEqual(l.settle(top: l.mediumTop + 10, velocity: 0), l.mediumTop)
-        XCTAssertEqual(l.settle(top: l.largeTop + 30, velocity: 0), l.largeTop)
-        XCTAssertEqual(l.settle(top: l.mediumTop - 20, velocity: -2500), l.largeTop)
-        XCTAssertNil(l.settle(top: l.dismissTop + 20, velocity: 0))
-        XCTAssertNil(l.settle(top: l.mediumTop + 20, velocity: 3000))
-    }
-
-    func testThePastTheTopOfTheLargeDetentResists() {
-        let l = layout()
-        XCTAssertEqual(l.rubberBanded(l.largeTop + 40), l.largeTop + 40)
-        XCTAssertEqual(l.rubberBanded(l.largeTop - 30), l.largeTop - 10, accuracy: 0.001)
-    }
-
-    /// An iPad's sheet stays a panel by the composer; a phone's still opens under the status bar.
-    func testATallWideWindowCapsTheSheetsHeight() {
-        let pad = layout(window: CGSize(width: 1032, height: 1376), plusY: 1320, composerWidth: 720)
-        XCTAssertEqual(pad.sheetBottom - pad.largeTop, DrawerLayout.sheetMaxHeight)
-        XCTAssertLessThanOrEqual(pad.sheetBottom - pad.mediumTop, DrawerLayout.sheetMaxHeight)
-        XCTAssertLessThan(pad.largeTop, pad.mediumTop)
-        XCTAssertEqual(layout().largeTop, 62 + DrawerLayout.gutter)
-    }
-
-    /// Opened from an iPad form sheet, the drawer stays inside the sheet, not the window.
-    func testTheDrawerStaysInsideTheSheetItIsIn() {
-        var l = layout(window: CGSize(width: 1032, height: 1376), plusY: 800, composerWidth: 560)
-        l.container = CGRect(x: 236, y: 420, width: 560, height: 440)
-        XCTAssertEqual(l.sheetBottom, 860 - DrawerLayout.gutter)
-        XCTAssertEqual(l.largeTop, 420 + DrawerLayout.gutter)
-        XCTAssertGreaterThanOrEqual(l.mediumTop, l.largeTop)
-        XCTAssertGreaterThanOrEqual(l.menu.minY, 420 + DrawerLayout.gutter)
-        XCTAssertLessThanOrEqual(l.menu.maxY, 860 - DrawerLayout.gutter)
-        l.keyboardTop = 760
-        XCTAssertEqual(l.sheetBottom, 760 - DrawerLayout.gutter)
-    }
-
-    func testAWideWindowGetsMoreColumnsAndACappedSheet() {
-        XCTAssertEqual(DrawerLayout.columns(for: 370), 3)
-        XCTAssertEqual(DrawerLayout.columns(for: 560), 4)
-        let wide = layout(window: CGSize(width: 1024, height: 1366), plusY: 1300, composerWidth: 900)
-        XCTAssertEqual(wide.sheetWidth, DrawerLayout.sheetMaxWidth)
-        XCTAssertLessThanOrEqual(wide.menu.maxX, 1024)
+    func testAWideWindowGetsMoreColumns() {
+        XCTAssertEqual(DrawerGrid.columns(for: 370), 3)
+        XCTAssertEqual(DrawerGrid.columns(for: 700), 5)
     }
 }
 
@@ -238,242 +204,126 @@ final class DrawerAttachmentTests: XCTestCase {
 }
 
 @MainActor
-final class PasteHookTests: XCTestCase {
+final class ComposerFieldTests: XCTestCase {
     /// Never the general pasteboard: on a simulator it syncs to the Mac's clipboard.
-    private let board = UIPasteboard.withUniqueName()
-
-    override func tearDown() {
-        UIPasteboard.remove(withName: board.name)
+    private func field(board: UIPasteboard, room: Int) -> (ComposerTextView, () -> Int) {
+        let view = ComposerTextView()
+        view.pasteboard = board
+        view.pasteRoom = { room }
+        var pasted = 0
+        view.onPasteImage = { _ in pasted += 1 }
+        return (view, { pasted })
     }
 
-    private func picture() -> UIImage { UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { _ in } }
-
-    private func canPaste(_ view: UIView) -> Bool { view.canPerformAction(#selector(UIResponder.paste(_:)), withSender: nil) }
-
-    private func bridge(room: Int) -> PasteBridge {
-        let bridge = PasteBridge()
-        bridge.pasteboard = board
-        bridge.room = { room }
-        return bridge
+    private func board() throws -> UIPasteboard {
+        let board = try XCTUnwrap(UIPasteboard(name: UIPasteboard.Name("sidea-field-\(UUID().uuidString)"), create: true))
+        board.items = []
+        return board
     }
 
-    private struct Field: View {
-        @State private var text = ""
-        var body: some View { TextField("Message", text: $text, axis: .vertical) }
+    private func picture() -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 8, height: 8)).image { UIColor.blue.setFill(); $0.fill(CGRect(x: 0, y: 0, width: 8, height: 8)) }
     }
 
-    /// The composer's real field: a SwiftUI vertical TextField in a window, found the way the app finds it.
-    private func realField() throws -> (UIWindow, UITextView) {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let window = UIWindow(windowScene: scene)
-        window.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
-        let host = UIHostingController(rootView: Field())
-        window.rootViewController = host
-        window.makeKeyAndVisible()
-        host.view.layoutIfNeeded()
-        func find(_ view: UIView) -> UITextView? {
-            if let text = view as? UITextView { return text }
-            for child in view.subviews { if let found = find(child) { return found } }
-            return nil
-        }
-        return (window, try XCTUnwrap(find(host.view), "the SwiftUI field is no longer a UITextView"))
+    func testPastingAPictureAttachesItAndTextStaysText() throws {
+        let clipboard = try board()
+        let (view, pasted) = field(board: clipboard, room: 2)
+        clipboard.image = picture()
+        XCTAssertTrue(view.canPerformAction(#selector(UIResponderStandardEditActions.paste(_:)), withSender: nil))
+        view.paste(nil)
+        XCTAssertEqual(pasted(), 1)
+
+        clipboard.string = "hello"
+        view.paste(nil)
+        XCTAssertEqual(pasted(), 1, "text is the field's own paste")
     }
 
-    func testAViewThatIsntATextViewIsLeftAlone() {
-        XCTAssertFalse(PasteSubclass.eligible(UITextField()))
-        XCTAssertFalse(PasteSubclass.eligible(UIView()))
-        let field = UITextField()
-        let before = object_getClass(field)
-        XCTAssertFalse(PasteSubclass.hook(field))
-        XCTAssertTrue(object_getClass(field) == before)
+    func testAFullTrayLeavesThePasteToTheField() throws {
+        let clipboard = try board()
+        let (view, pasted) = field(board: clipboard, room: 0)
+        clipboard.image = picture()
+        view.paste(nil)
+        XCTAssertEqual(pasted(), 0)
     }
 
-    func testAFailedLookupOrAnIneligibleViewHooksNothing() throws {
-        let bridge = bridge(room: 3)
-        // Nothing has the keyboard in a test: the lookup finds nothing and nothing is joined.
-        bridge.install()
-        XCTAssertFalse(bridge.isInstalled)
-        let observed = UITextView()
-        let token = observed.observe(\.text) { _, _ in }
-        let before = object_getClass(observed)
-        XCTAssertFalse(bridge.attach(observed))
-        XCTAssertFalse(bridge.isInstalled)
-        XCTAssertTrue(object_getClass(observed) == before)
-        token.invalidate()
+    func testTintingACommandChangesOnlyItsColourAndLeavesTheCaretAndWhatIsTypedNextPlain() {
+        let view = ComposerTextView()
+        view.text = "/review now"
+        view.selectedRange = NSRange(location: 4, length: 0)
+        view.restyle([NSRange(location: 0, length: 7)], tint: .red)
+        XCTAssertEqual(view.text, "/review now", "the text is the plain text that is sent")
+        XCTAssertEqual(view.selectedRange, NSRange(location: 4, length: 0))
+        let tinted = view.textStorage.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? UIColor
+        let plain = view.textStorage.attribute(.foregroundColor, at: 9, effectiveRange: nil) as? UIColor
+        XCTAssertEqual(tinted, .red)
+        XCTAssertEqual(plain, .label)
+        XCTAssertEqual(view.typingAttributes[.foregroundColor] as? UIColor, .label)
+        // The same weight and size either way, so nothing shifts.
+        let tintedFont = view.textStorage.attribute(.font, at: 2, effectiveRange: nil) as? UIFont
+        let plainFont = view.textStorage.attribute(.font, at: 9, effectiveRange: nil) as? UIFont
+        XCTAssertEqual(tintedFont, plainFont)
+        // The command is edited away: the tint goes with it.
+        view.text = "review now"
+        view.restyle([], tint: .red)
+        XCTAssertEqual(view.textStorage.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? UIColor, .label)
     }
 
-    func testAViewKeyValueObservingHasSwappedIsLeftAlone() {
-        let view = UITextView()
-        let token = view.observe(\.text) { _, _ in }
-        XCTAssertFalse(PasteSubclass.eligible(view))
-        token.invalidate()
-    }
-
-    func testTheSubclassIsMadeOncePerClassAndRehookingChangesNothing() {
-        let first = UITextView(), second = UITextView()
-        XCTAssertTrue(PasteSubclass.hook(first))
-        let made = PasteSubclass.createdCount
-        let hookedClass = object_getClass(first)
-        XCTAssertTrue(NSStringFromClass(try! XCTUnwrap(hookedClass)).hasPrefix("SideAPaste_"))
-        XCTAssertTrue(PasteSubclass.hook(second))
-        XCTAssertEqual(PasteSubclass.createdCount, made)
-        XCTAssertTrue(object_getClass(second) == hookedClass)
-        XCTAssertTrue(PasteSubclass.hook(first))
-        XCTAssertEqual(PasteSubclass.createdCount, made)
-        XCTAssertTrue(object_getClass(first) == hookedClass)
-    }
-
-    func testTheHookWorksOnTheRealSwiftUIField() throws {
-        let (window, field) = try realField()
-        defer { window.isHidden = true }
-        let original = object_getClass(field)
-        XCTAssertTrue(field.becomeFirstResponder())
-        let bridge = bridge(room: 2)
-        var received: Data?
-        bridge.onImage = { received = $0 }
-        bridge.install()
-        XCTAssertTrue(bridge.isInstalled, "the lookup didn't find the field that has the keyboard")
-        XCTAssertFalse(object_getClass(field) == original, "the runtime class didn't change")
-        board.image = picture()
-        XCTAssertTrue(canPaste(field))
-        field.paste(nil)
-        XCTAssertNotNil(received)
-        // A full tray leaves Paste to the field, which can't paste a picture.
-        bridge.room = { 0 }
-        received = nil
-        field.paste(nil)
-        XCTAssertNil(received)
-    }
-
-    func testTextPasteOnTheRealFieldIsWhatItWasWithoutTheHook() throws {
-        let (window, field) = try realField()
-        defer { window.isHidden = true }
-        let plain = UITextView()
-        XCTAssertTrue(field.becomeFirstResponder())
-        let bridge = bridge(room: 2)
-        bridge.install()
-        XCTAssertTrue(bridge.isInstalled)
-        // The hook answers for its own pasteboard only when that holds a picture and nothing else.
-        board.string = "hello"
-        XCTAssertEqual(bridge.decision, .text)
-        var received: Data?
-        bridge.onImage = { received = $0 }
-        field.paste(nil)
-        XCTAssertNil(received)
-        XCTAssertEqual(canPaste(field), canPaste(plain))
-    }
-
-    func testAHookedViewWhoseBridgeIsGoneBehavesAsBefore() throws {
-        let view = UITextView()
-        var bridge: PasteBridge? = self.bridge(room: 2)
-        XCTAssertTrue(bridge!.attach(view))
-        bridge = nil
-        XCTAssertEqual(canPaste(view), canPaste(UITextView()))
+    func testThePlaceholderShowsOnlyWhileTheFieldIsEmpty() {
+        let view = ComposerTextView()
+        view.updatePlaceholder()
+        XCTAssertFalse(view.placeholderLabel.isHidden)
+        view.text = "x"
+        view.updatePlaceholder()
+        XCTAssertTrue(view.placeholderLabel.isHidden)
     }
 }
 
 @MainActor
-final class DrawerControllerTests: XCTestCase {
-    private func controller() throws -> DrawerController {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let c = DrawerController()
-        c.scene = scene
-        c.windowSize = CGSize(width: 402, height: 874)
-        c.safe = EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0)
-        c.plusFrame = CGRect(x: 16, y: 780, width: 48, height: 48)
-        c.composerFrame = CGRect(x: 16, y: 780, width: 370, height: 48)
-        return c
+final class AttachDrawerTests: XCTestCase {
+    private func hooks(room: Int = 4) -> DrawerHooks {
+        DrawerHooks(room: { room }, reserve: { _, _ in UUID() }, supply: { _, _ in }, files: {}, picker: {},
+                    pasteImage: { false }, options: {})
     }
 
-    private let rows = DrawerRows(camera: false, photos: true, files: true, paste: false)
-
-    private func hooks(paste: @escaping () -> Bool = { false }) -> DrawerHooks {
-        DrawerHooks(room: { 3 }, reserve: { _, _ in nil }, supply: { _, _ in }, camera: {}, files: {}, picker: {},
-                    pasteImage: paste, options: {})
+    private func open(_ drawer: AttachDrawer) {
+        drawer.toggle(rows: DrawerRows.make(canUpload: true, room: 4, hasCamera: false, clipboardHasImage: false), hooks: hooks(), reduceMotion: false)
     }
 
-    func testClosingBeforeThePanelStartedToOpenClosesAtOnce() async throws {
-        for reduceMotion in [false, true] {
-            let c = try controller()
-            c.toggle(rows: rows, hooks: hooks(), reduceMotion: reduceMotion)
-            XCTAssertEqual(c.mode, .menu)
-            c.dismiss()
-            XCTAssertEqual(c.mode, .closed, "reduceMotion \(reduceMotion): nothing animated, so nothing would have finished it")
-            XCTAssertFalse(c.closing)
-            // The lead task that would have opened it was cancelled.
-            await Task.yield(); await Task.yield()
-            XCTAssertEqual(c.open, 0)
-        }
+    func testThePanelOpensAtTheKeyboardsHeightAndTheSamePressBringsTheKeyboardBack() {
+        let drawer = AttachDrawer()
+        open(drawer)
+        XCTAssertTrue(drawer.isOpen)
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        XCTAssertEqual(drawer.height, KeyboardMetrics.shared.panelHeight(landscape: false, isPad: isPad))
+        XCTAssertEqual(drawer.height, drawer.detents.base)
+        XCTAssertFalse(drawer.isLarge)
+        open(drawer)
+        XCTAssertFalse(drawer.isOpen)
+        XCTAssertFalse(KeyboardMetrics.shared.panelIsShowing)
     }
 
-    func testARotationMidDragLeavesNoStuckDrag() throws {
-        let c = try controller()
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        c.moveSheet(to: 300)
-        XCTAssertTrue(c.isDragging)
-        c.windowSize = CGSize(width: 874, height: 402)
-        XCTAssertEqual(c.mode, .closed)
-        XCTAssertFalse(c.isDragging)
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        XCTAssertFalse(c.isDragging, "a new opening starts without a drag")
-        c.abort()
+    func testPullingUpSettlesOnTheGridAndPullingDownFarEnoughCloses() {
+        let drawer = AttachDrawer()
+        open(drawer)
+        drawer.drag(by: -300)
+        drawer.endDrag(velocity: -800)
+        XCTAssertTrue(drawer.isLarge)
+        XCTAssertEqual(drawer.height, drawer.detents.large)
+        drawer.toggleDetent()
+        XCTAssertEqual(drawer.height, drawer.detents.base)
+        drawer.drag(by: 200)
+        drawer.endDrag(velocity: 600)
+        XCTAssertFalse(drawer.isOpen, "a long pull down closes it like the keyboard")
     }
 
-    func testARotationMidConfirmDoesntLetTheNextConfirmFinishEarly() async throws {
-        let c = try controller()
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        try await Task.sleep(for: .milliseconds(60))
-        c.dismiss()
-        XCTAssertTrue(c.closing)
-        c.landed(c.generation)
-        XCTAssertEqual(c.landings, 1)
-        c.abort()
-        XCTAssertEqual(c.landings, 0)
-        XCTAssertEqual(c.mode, .closed)
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        try await Task.sleep(for: .milliseconds(60))
-        c.dismiss()
-        c.landed(c.generation)
-        XCTAssertTrue(c.closing, "one landing is not both")
-        c.abort()
+    func testTheKeyboardGoingAwayTakesThePanelWithIt() {
+        let drawer = AttachDrawer()
+        open(drawer)
+        drawer.fieldEnded()
+        XCTAssertFalse(drawer.isOpen)
     }
 
-    func testAStaleCloseTimerCantCloseANewerOpening() async throws {
-        let c = try controller()
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        try await Task.sleep(for: .milliseconds(60))
-        c.dismiss()
-        c.abort()
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        try await Task.sleep(for: .milliseconds(900))
-        XCTAssertEqual(c.mode, .menu)
-        XCTAssertFalse(c.closing)
-        c.abort()
-    }
-
-    func testAPasteRowWithNothingToTakeKeepsTheDrawerAndSaysSo() async throws {
-        let c = try controller()
-        c.toggle(rows: rows, hooks: hooks(paste: { false }), reduceMotion: false)
-        c.pasteFromClipboard()
-        XCTAssertEqual(c.mode, .menu)
-        XCTAssertTrue(c.pasteFailed)
-        c.abort()
-        let d = try controller()
-        var pasted = false
-        d.toggle(rows: rows, hooks: hooks(paste: { pasted = true; return true }), reduceMotion: false)
-        d.pasteFromClipboard()
-        XCTAssertTrue(pasted)
-        XCTAssertTrue(d.closing || d.mode == .closed)
-        d.abort()
-    }
-
-    func testAbortClosesAnOpenDrawerAndIsHarmlessOtherwise() throws {
-        let c = try controller()
-        c.abort()
-        XCTAssertEqual(c.mode, .closed)
-        c.toggle(rows: rows, hooks: hooks(), reduceMotion: false)
-        c.abort()
-        XCTAssertEqual(c.mode, .closed)
-        XCTAssertFalse(c.hidesPlus)
+    func testTheCameraTileIsAGlyphWhereThereIsNoCamera() {
+        XCTAssertFalse(AttachDrawer().camera.access.showsPreview, "no camera on a simulator, and nothing needed to know")
     }
 }

@@ -42,11 +42,11 @@ struct DemoData {
 
     /// What Autopilot says about these accounts: a move waiting for a pause, and sessions stopped on Studio's limit.
     var rotation: AutopilotState {
-        guard let hold = autopilot.first(where: { $0.kind == .waiting }) else { return AutopilotState(enabled: true, answersRecommended: false) }
+        guard let hold = autopilot.first(where: { $0.kind == .waiting }) else { return AutopilotState(enabled: true, answersRecommended: false).continuing(true) }
         let t = now.timeIntervalSince1970
         return AutopilotState(enabled: true, pending: hold, decisions: autopilot.filter { $0.id != hold.id }, answersRecommended: false, held: [hold],
                               next: [NextMove(id: "work", from: "Work", to: "Personal", atPercent: 95, minutes: 40)],
-                              waiting: WaitingSummary(account: "Studio", at: t + 40 * 60), swapAt: 95, followFable: true, fableMode: false)
+                              waiting: WaitingSummary(account: "Studio", at: t + 40 * 60), swapAt: 95, followFable: true, fableMode: false).continuing(true)
     }
 
     var outlook: UsageOutlook {
@@ -64,6 +64,14 @@ struct DemoData {
         static let landing = "e5f6a7b8-landing"
         static let syncRequest = "7d1e0b6a-4c2f-4b8e-9a51-0c3f2e9d8b71"
         static let cacheQuestion = "2c9a5e17-8b3d-4f60-a1c4-6e7b8d9f0a12"
+    }
+
+    /// The Codex session's first message. `--demo-command-message` makes it start with a command, to see commands tinted in a sent bubble.
+    private static var lanPrompt: String {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo-command-message") { return "/review the LAN mode change, then run $repo-lint and $migrate." }
+        #endif
+        return "Add LAN mode: Bonjour discovery and a pinned self-signed certificate."
     }
 
     init(now: Date = .now) {
@@ -181,7 +189,7 @@ struct DemoData {
             ID.cache: Self.cacheTranscript(now: now),
             ID.ship: Self.shortTranscript(prompt: "Ship 0.5.37: bump the version, write the changelog, build the release.",
                                           reply: "Bumping the version and writing the changelog entry.", running: "Editing Island.swift", now: now),
-            ID.lan: Self.shortTranscript(prompt: "Add LAN mode: Bonjour discovery and a pinned self-signed certificate.",
+            ID.lan: Self.shortTranscript(prompt: Self.lanPrompt,
                                          reply: "I'll start with the listener on the Mac.", running: "Running swift build", now: now),
             ID.postgres: Self.shortTranscript(prompt: "Move storefront to Postgres 17 and run the migrations.",
                                               reply: "Running the migrations against the local database.", running: "Running pnpm db:migrate", now: now),

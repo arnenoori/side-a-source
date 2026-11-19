@@ -1,5 +1,6 @@
 import Foundation
 import SideAProtocol
+import SideARemoteShared
 
 /// What the phone last saw of one Mac: its sessions, accounts and the newest page of the transcripts it opened, so a
 /// launch draws them at once and the Mac's snapshot replaces them when it lands. Open requests are never kept: one
@@ -34,8 +35,12 @@ struct StateCache: Codable {
     func save(_ macID: String) {
         guard let url = Self.url(macID), let data = try? JSONEncoder().encode(self) else { return }
         Self.queue.async {
-            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            } catch {
+                RemoteLog.error(.sync, "couldn't save the state cache: \(error.localizedDescription)")
+            }
         }
     }
 

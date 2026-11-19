@@ -186,9 +186,10 @@ enum PreviewProxy {
 
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
             let over = lock.withLock { () -> Bool in
+                // The task may already be gone (finished or cancelled): then there is nothing to count.
                 guard tasks[dataTask.taskIdentifier] != nil else { return false }
-                tasks[dataTask.taskIdentifier]!.data.append(data)
-                return tasks[dataTask.taskIdentifier]!.data.count > maxBody
+                tasks[dataTask.taskIdentifier]?.data.append(data)
+                return (tasks[dataTask.taskIdentifier]?.data.count ?? 0) > maxBody
             }
             if over { dataTask.cancel(); finish(dataTask, .failure(TooLarge())) }
         }

@@ -1,5 +1,7 @@
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -107,7 +109,7 @@ class SessionTests(unittest.TestCase):
                  {'type': 'response_item', 'timestamp': '2026-10-09T10:00:01Z', 'payload': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': '# AGENTS.md instructions for /code/api'}]}},
                  {'type': 'response_item', 'timestamp': '2026-10-09T10:00:02Z', 'payload': {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': 'Fix the flaky upload test'}]}},
                  {'type': 'response_item', 'timestamp': '2026-10-09T10:00:03Z', 'payload': {'type': 'function_call', 'name': 'shell', 'arguments': '{"command": "pytest -k upload"}', 'call_id': 'c1'}}]
-        (folder / 'rollout-2026-10-09-thread-1.jsonl').write_text(''.join(json.dumps(l) + '\n' for l in lines))
+        (folder / 'rollout-2026-10-09-thread-1.jsonl').write_text(''.join(json.dumps(entry) + '\n' for entry in lines))
         with patch.object(sessions, 'codex_threads', return_value={'thread-1': {'title': 'Flaky upload', 'tokens': 900, 'branch': 'dev'}}):
             sessions.index(self.root)
         found = sessions.recent(self.root, agent='codex')['sessions'][0]
@@ -133,6 +135,16 @@ class SessionTests(unittest.TestCase):
         with patch.object(sessions, 'VIEWS_KEPT', 2):
             sessions.tidy(self.root, db)
         self.assertEqual((cached('views'), cached('view_state')), ({'mid', 'new'}, {'mid', 'new'}))
+
+    def test_a_view_that_cannot_be_rebuilt_is_reported_and_the_pass_goes_on(self):
+        for sid in ('a', 'b'):
+            self.write(sid, [user('u-' + sid, 'Hello from ' + sid, '2026-10-01T10:00:00Z')])
+        failures = io.StringIO()
+        with patch.object(sessions, 'update_view', side_effect=RuntimeError('disk full')), contextlib.redirect_stderr(failures):
+            result = sessions.index(self.root)
+        self.assertEqual(result['indexed'], 2)
+        self.assertEqual(failures.getvalue().count("couldn't rebuild the view"), 2)
+        self.assertIn('disk full', failures.getvalue())
 
     def test_live_lists_running_sessions_waiting_first(self):
         registry = self.home / '.claude/sessions'; registry.mkdir(parents=True)
@@ -245,7 +257,7 @@ class SessionTests(unittest.TestCase):
             return {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'is_error': error, 'content': 'x'}]}}
         path = self.project / 'h.jsonl'
         def health(lines, status='busy', quiet=0):
-            path.write_text(''.join(json.dumps(l) + '\n' for l in lines))
+            path.write_text(''.join(json.dumps(entry) + '\n' for entry in lines))
             os.utime(path, (time.time() - quiet, time.time() - quiet))
             return sessions.health(path, status)
         working = health([call('Edit', {'file_path': '/code/app/Island.swift'}), result()])
@@ -254,7 +266,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(health([call('Bash', {'command': 'swift  build'})])['activity'], 'Running swift build')
         self.assertEqual(health([call('Read', {'file_path': '/a'})], quiet=900)['flag'], {'kind': 'stuck', 'text': 'No progress for 15 min'})
         self.assertEqual(health([call('Bash', {'command': 'make'}), result(True)] * 3)['flag']['kind'], 'loop')
-        failing = [l for n in range(4) for l in (call('Bash', {'command': f'make {n}'}), result(True))]
+        failing = [entry for n in range(4) for entry in (call('Bash', {'command': f'make {n}'}), result(True))]
         self.assertEqual(health(failing)['flag'], {'kind': 'failing', 'text': '4 failed steps in a row'})
         self.assertEqual(health(failing + [{'type': 'user', 'message': {'content': 'Try another way'}}])['flag'], None)
         self.assertEqual(health([call('Read', {'file_path': '/a'}, 180_000)], 'idle')['flag'], {'kind': 'bloated', 'text': 'Context is 180k tokens'})
@@ -442,7 +454,7 @@ class RenameLiveTests(unittest.TestCase):
         bridge = Path(__file__).parents[1] / 'sidea_bridge.py'
         request = json.dumps({'id': 1, 'args': ['rename', '--name=-v2 plan', '--', 's1']}) + '\n'
         done = subprocess.run([sys.executable, str(bridge), '--root', os.path.join(self.temp, 'root'), 'sessions', 'serve'],
-                              input=request, env={**os.environ, 'HOME': str(self.home)}, capture_output=True, text=True, timeout=20)
+                              input=request, env={**os.environ, 'HOME': str(self.home)}, capture_output=True, text=True, timeout=20, check=False)
         self.assertEqual(json.loads(done.stdout.splitlines()[0]).get('result'), {'renamed': True}, done.stdout + done.stderr)
         thread.join(2)
         self.assertEqual(got[-1]['name'], '-v2 plan')

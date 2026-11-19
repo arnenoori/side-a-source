@@ -16,7 +16,7 @@ export function mountKeepAwake(scene: HTMLElement) {
   const again = $<HTMLButtonElement>('[data-ka-again]');
   const rows = [...scene.querySelectorAll<HTMLElement>('.ka-row')].map(el => ({
     el, bar: el.querySelector<HTMLElement>('.mini-bar')!, sub: el.querySelector<HTMLElement>('.ka-sub')!,
-    busy: el.querySelector('.ka-sub')!.textContent!, start: Number(el.dataset.start), rate: Number(el.dataset.rate), p: 0,
+    busy: el.querySelector('.ka-sub')!.textContent, start: Number(el.dataset.start), rate: Number(el.dataset.rate), p: 0,
   }));
 
   let closed = false, asleep = false, visible = false, touched = false, armed = false;
@@ -114,6 +114,7 @@ export function mountKeepAwake(scene: HTMLElement) {
   lap.addEventListener('pointercancel', release);
 
   new IntersectionObserver(([entry]) => {
+    if (!entry) return;
     visible = entry.isIntersecting;
     if (visible && !touched && !armed && !reducedMotion.matches) {
       armed = true;

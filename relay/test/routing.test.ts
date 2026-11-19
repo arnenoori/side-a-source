@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
-import { FakeApns, alert, call, context, incoming, newMac, newPhone, paired, phoneCall, putDevice, register, signed } from './helpers';
+import { FakeApns, alert, call, context, incoming, newMac, newPhone, paired, phoneCall, putDevice, register, signed, stubApns } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -81,7 +81,7 @@ describe('APNs routing per registration', () => {
   });
 
   it('reads the allowlist from APNS_BUNDLES', async () => {
-    new FakeApns();
+    stubApns();
     const narrow = { ...env, APNS_BUNDLES: APP } as unknown as Env;
     const mac = await newMac();
     await register(mac);

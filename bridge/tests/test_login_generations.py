@@ -475,7 +475,7 @@ class ListingTests(unittest.TestCase):
         real_sleep = patch.object(bridge.time, 'sleep', side_effect=None)
         with real_sleep:
             for _ in range(200):
-                if 'Z' in subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True).stdout:
+                if 'Z' in subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True, check=False).stdout:
                     break
         self.assertIsNone(bridge.process_environment(pid))
         self.assertEqual(bridge.environment_failures[pid], 'Invalid argument')
@@ -515,7 +515,7 @@ class ActiveCommandTests(unittest.TestCase):
             home = root / 'home'
             home.mkdir()
             env = {**os.environ, 'PATH': f"{bin_dir}{os.pathsep}{os.environ['PATH']}", 'HOME': str(home), 'CODEX_HOME': str(root / 'codex')}
-            done = subprocess.run([sys.executable, str(Path(bridge.__file__)), '--root', str(root), 'active'], capture_output=True, text=True, timeout=120, env=env)
+            done = subprocess.run([sys.executable, str(Path(bridge.__file__)), '--root', str(root), 'active'], capture_output=True, text=True, timeout=120, env=env, check=False)
             self.assertEqual(done.returncode, 0, done.stderr)
             answer = json.loads(done.stdout)
             self.assertIsNone(answer['busy'])

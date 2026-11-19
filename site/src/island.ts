@@ -35,7 +35,11 @@ export function mountIsland(demo: HTMLElement, section: Element) {
   let visible = false;
   let started = false;
   let collapsedAt = 0;
-  const item = () => items[index % items.length];
+  const item = (): Item => {
+    const found = items[index % items.length];
+    if (!found) throw new Error('The island demo has no items');
+    return found;
+  };
   const later = (ms: number, run: () => void) => { clearTimeout(timer); timer = window.setTimeout(run, ms); };
 
   const glyph = (agent: Item['agent']) =>
@@ -71,9 +75,9 @@ export function mountIsland(demo: HTMLElement, section: Element) {
       pane.inert = !on;
     }
     const current = item();
-    const key = next === 'done' ? ['R', 'Reply'] : ['Y', 'Allow'];
-    letter.textContent = key[0];
-    keysLabel.textContent = key[1];
+    const [shortcut, label] = next === 'done' ? ['R', 'Reply'] : ['Y', 'Allow'];
+    letter.textContent = shortcut ?? null;
+    keysLabel.textContent = label ?? null;
     keys.disabled = !(next === 'ask' || next === 'done' || next === 'compact');
     keys.setAttribute('aria-label', next === 'done' ? `Reply to ${current.title} (Control Option R)` : 'Allow (Control Option Y)');
     fit();
@@ -173,6 +177,7 @@ export function mountIsland(demo: HTMLElement, section: Element) {
   show('rest');
 
   new IntersectionObserver(([entry]) => {
+    if (!entry) return;
     visible = entry.isIntersecting;
     if (visible && !started) { started = true; later(700, arrive); }
   }, { threshold: 0.35 }).observe(section);

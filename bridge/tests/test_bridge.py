@@ -210,13 +210,13 @@ class BridgeTests(unittest.TestCase):
             self.assertNotIn('function claude',rc.read_text())
             selector=self.root/'runtime/claude-selector'; selector.parent.mkdir(parents=True,exist_ok=True)
             run=lambda: subprocess.run(['zsh','-fc',f"source {rc}; (( ${{preexec_functions[(I)_side_a_select]}} )) || exit 3; _side_a_select; eval 'claude --version'"],
-                                       capture_output=True,text=True).stdout.strip()
+                                       capture_output=True,text=True, check=False).stdout.strip()
             selector.write_text('/profiles/x\n')
             self.assertEqual(run(),'/profiles/x|--version')
             # From brandedDaniel's fork: `source ~/.zshrc && claude` ran before preexec existed and used
             # the Mac login. Also under `set -u`, with cat aliased to something that decorates output.
             sourced=subprocess.run(['zsh','-fc',f"set -u; alias cat='echo decorated'; source {rc} && {fake}/claude --version && sidea >/dev/null"],
-                                   capture_output=True,text=True)
+                                   capture_output=True,text=True, check=False)
             self.assertEqual((sourced.stdout.strip(),sourced.returncode),('/profiles/x|--version',0))
             # Review: the Mac login must be selected explicitly (empty), or an exported
             # CLAUDE_CONFIG_DIR would pick that directory's login instead.
@@ -226,7 +226,7 @@ class BridgeTests(unittest.TestCase):
             bridge.set_shell(self.root,False)
             self.assertFalse(selector.exists())
             self.assertEqual(subprocess.run(['zsh','-fc',f"PATH={fake}:$PATH; {bridge.shell_snippet(self.root).splitlines()[1]}; _side_a_select; claude --version"],
-                                            capture_output=True,text=True).stdout.strip(),'unset|--version')
+                                            capture_output=True,text=True, check=False).stdout.strip(),'unset|--version')
         self.assertEqual(rc.read_text(),mine)
     def test_limit_hook_is_silent_rate_limit_only_and_removable(self):
         home=self.root/'home'; (home/'.claude').mkdir(parents=True)
@@ -339,7 +339,7 @@ class BridgeTests(unittest.TestCase):
         def run(event,pid='4242'):
             command=hooks[event][0]['hooks'][0]['command']
             done=subprocess.run(['/bin/sh','-c',command],input=json.dumps({'hook_event_name':event,'tool_name':'Bash'}),
-                                capture_output=True,text=True,timeout=20,env={**os.environ,'CLAUDE_PID':pid})
+                                capture_output=True,text=True,timeout=20,env={**os.environ,'CLAUDE_PID':pid}, check=False)
             return json.loads(done.stdout) if done.stdout else None
         mailbox=bridge.island_mail(self.root)/'4242.json'
         self.assertIsNone(run('PostToolUse'))
@@ -354,7 +354,7 @@ class BridgeTests(unittest.TestCase):
         # A subagent's tool call leaves the note for the session itself, but is stopped like any other.
         mailbox.write_text(json.dumps({'kind':'note','text':'Use the staging database'}))
         sub=lambda event: subprocess.run(['/bin/sh','-c',hooks[event][0]['hooks'][0]['command']],capture_output=True,text=True,timeout=20,
-                                         input=json.dumps({'hook_event_name':event,'tool_name':'Bash','agent_id':'a1'}),env={**os.environ,'CLAUDE_PID':'4242'}).stdout
+                                         input=json.dumps({'hook_event_name':event,'tool_name':'Bash','agent_id':'a1'}),env={**os.environ,'CLAUDE_PID':'4242'}, check=False).stdout
         self.assertEqual(sub('PostToolUse'),''); self.assertTrue(mailbox.exists())
         self.assertIsNotNone(run('PostToolUse'))
         # Paused on background work, there is no next tool call: the Stop hook waits and wakes the session with the note.
@@ -391,7 +391,7 @@ class BridgeTests(unittest.TestCase):
             hooks=bridge.read_json(home/'.codex/hooks.json')['hooks']
         def run(event,thread='01a152eb-366a-7261-b816-a5b65dfad495'):
             done=subprocess.run(['/bin/sh','-c',hooks[event][0]['hooks'][0]['command']],capture_output=True,text=True,timeout=20,
-                                input=json.dumps({'hook_event_name':event,'tool_name':'exec_command','session_id':thread}))
+                                input=json.dumps({'hook_event_name':event,'tool_name':'exec_command','session_id':thread}), check=False)
             return json.loads(done.stdout) if done.stdout else None
         mailbox=bridge.island_mail(self.root)/'codex'/'01a152eb-366a-7261-b816-a5b65dfad495.json'
         self.assertIsNone(run('PostToolUse'))
@@ -479,18 +479,19 @@ class BridgeTests(unittest.TestCase):
         stop={'hook_event_name':'Stop','session_id':'s','cwd':'/tmp','last_assistant_message':'Done.'}
         for event in ('Stop','PostToolUse'):
             done=subprocess.run(['/bin/sh','-c',hooks[event][0]['hooks'][0]['command']],input=json.dumps({**stop,'hook_event_name':event}),
-                                capture_output=True,text=True,timeout=5,env={**os.environ,'CLAUDE_PID':'4242'})
+                                capture_output=True,text=True,timeout=5,env={**os.environ,'CLAUDE_PID':'4242'}, check=False)
             # Exit 2 would wake an idle session with Python's "can't open file" as its next instruction.
             self.assertEqual((event,done.returncode,done.stdout,done.stderr),(event,0,'',''))
     def test_island_hook_relays_the_islands_answer_and_steps_aside_without_side_a(self):
-        import socket, threading
+        import socket
+        import threading
         home=self.root/'home'; (home/'.claude').mkdir(parents=True)
         with patch.object(Path,'home',return_value=home):
             bridge.set_island(self.root,'claude',True)
             command=bridge.read_json(home/'.claude/settings.json')['hooks']['PermissionRequest'][0]['hooks'][0]['command']
         request={'hook_event_name':'PermissionRequest','session_id':'s','cwd':'/tmp','tool_name':'Bash','tool_input':{'command':'ls'},
                  'permission_suggestions':[{'type':'addRules','rules':[{'toolName':'Bash','ruleContent':'ls'}],'behavior':'allow','destination':'localSettings'}]}
-        run=lambda env={}: subprocess.run(['/bin/sh','-c',command],input=json.dumps(request),capture_output=True,text=True,timeout=20,env={**os.environ,**env})
+        run=lambda env={}: subprocess.run(['/bin/sh','-c',command],input=json.dumps(request),capture_output=True,text=True,timeout=20,env={**os.environ,**env}, check=False)
         # No island: nothing printed, so Claude Code asks in the terminal.
         self.assertEqual((run().returncode,run().stdout),(0,''))
         server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); server.bind(str(bridge.island_socket(self.root))); server.listen(4)
@@ -513,7 +514,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(run().stdout,''); self.assertEqual(run().stdout,'')
         # A finished turn is reported without waiting; one paused on background work isn't.
         stop={'hook_event_name':'Stop','session_id':'s','cwd':'/tmp','last_assistant_message':'Done.','background_tasks':[]}
-        stop_run=lambda payload: subprocess.run(['/bin/sh','-c',command],input=json.dumps(payload),capture_output=True,text=True,timeout=5)
+        stop_run=lambda payload: subprocess.run(['/bin/sh','-c',command],input=json.dumps(payload),capture_output=True,text=True,timeout=5, check=False)
         woken=stop_run(stop); released=stop_run({**stop,'stop_hook_active':True}); paused=self.paused_stop(command,{**stop,'background_tasks':[{'id':'1'}]})
         # A follow-up wakes the idle session through asyncRewake: exit 2 with the request on stderr.
         # The turn a follow-up woke ends with stop_hook_active set, and still waits for the next one.
@@ -549,7 +550,7 @@ class BridgeTests(unittest.TestCase):
         sys.path.insert(0,str(Path(bridge.__file__).parent)); import island_hook
         return island_hook
 
-    def run_hook(self, island_hook, request, agent='codex', answer=AssertionError('asked')):
+    def run_hook(self, island_hook, request, agent='codex', answer=AssertionError('asked')):  # noqa: B008 -- the stub raises this default if the island is asked; one shared instance is fine
         """main() on one request; `answer` is what the island replies, or an exception when it must not be asked."""
         out=MagicMock()
         ask=patch.object(island_hook,'ask',side_effect=answer) if isinstance(answer,Exception) else patch.object(island_hook,'ask',return_value=answer)
@@ -683,7 +684,8 @@ class BridgeTests(unittest.TestCase):
         with transcript.open('a') as stream: stream.write(result('w1')+'\n')
         self.assertFalse(twin())
         # ask() gives up and closes when the check says so.
-        import socket, threading
+        import socket
+        import threading
         sock=self.root/'w.sock'; server=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); server.bind(str(sock)); server.listen(1); self.addCleanup(server.close)
         closed=threading.Event()
         def hold():
@@ -720,7 +722,7 @@ class BridgeTests(unittest.TestCase):
         def run(event,agent='claude',**payload):
             command=hooks[event][0]['hooks'][0]['command'] if agent=='claude' else bridge.island_command(self.root,'codex')
             done=subprocess.run(['/bin/sh','-c',command],input=json.dumps({'hook_event_name':event,'session_id':'s1','cwd':'/tmp',**payload}),
-                                capture_output=True,text=True,timeout=20,env={**os.environ,'CLAUDE_PID':'4242'})
+                                capture_output=True,text=True,timeout=20,env={**os.environ,'CLAUDE_PID':'4242'}, check=False)
             self.assertEqual((done.returncode,done.stdout),(0,''))
         run('PostModelSwitch',from_model='claude-opus-5-5',to_model='claude-sonnet-5-5',source='command',permission_mode='plan',effort={'level':'high'})
         self.assertEqual(self.paused_stop(hooks['Stop'][0]['hooks'][0]['command'],{'hook_event_name':'Stop','session_id':'s1','cwd':'/tmp',
@@ -781,7 +783,7 @@ class BridgeTests(unittest.TestCase):
             line=bridge.read_json(home/'.claude/settings.json')['statusLine']
             self.assertEqual(line['padding'],2)
             run=lambda env: subprocess.run(['/bin/zsh','-c',line['command']],input=payload,capture_output=True,text=True,
-                                           env={**os.environ,**env}).stdout
+                                           env={**os.environ,**env}, check=False).stdout
             # The user's statusline sees the input byte for byte.
             self.assertEqual(run({'CLAUDE_SECURESTORAGE_CONFIG_DIR':str(self.root/'profiles'/other['id'])+'/'}),'mine:'+payload)
             with patch.object(bridge,'mac_email',return_value=None):
@@ -790,10 +792,10 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(live[other['id']]['windows'][1]['percent'],40.0)
             # Each session keeps its own copy for its row, limits or not; an id that isn't one is never a file name.
             mine_line='{"session_id":"5b0e-s1","model":{"id":"claude-opus-5-5"},"effort":{"level":"high"}}'
-            subprocess.run(['/bin/zsh','-c',line['command']],input=mine_line,capture_output=True,text=True)
+            subprocess.run(['/bin/zsh','-c',line['command']],input=mine_line,capture_output=True,text=True, check=False)
             self.assertEqual((bridge.live_dir(self.root)/'s/5b0e-s1.json').read_text(),mine_line)
             for hostile in ('{"session_id":"../../x","a":1}','{"session_id":"a b","a":1}','{"model":{"id":"x"}}'):
-                subprocess.run(['/bin/zsh','-c',line['command']],input=hostile,capture_output=True,text=True)
+                subprocess.run(['/bin/zsh','-c',line['command']],input=hostile,capture_output=True,text=True, check=False)
             self.assertEqual(sorted(p.name for p in (bridge.live_dir(self.root)/'s').iterdir()),['5b0e-s1.json'])
             self.assertFalse((self.root/'runtime/x.json').exists())
             # A session with no limits yet (or a broken file) adds nothing.
@@ -805,7 +807,7 @@ class BridgeTests(unittest.TestCase):
             bridge.atomic_json(home/'.claude/settings.json',{})
             bridge.set_live(self.root,True)
             self.assertEqual(subprocess.run(['/bin/sh','-c',bridge.read_json(home/'.claude/settings.json')['statusLine']['command']],
-                                            input=payload,capture_output=True,text=True).stdout,'')
+                                            input=payload,capture_output=True,text=True, check=False).stdout,'')
             bridge.set_live(self.root,False)
             self.assertEqual(bridge.read_json(home/'.claude/settings.json'),{})
             # A statusline that only mentions the marker is the user's, never unwrapped or dropped.
@@ -1183,6 +1185,30 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
             bridge.atomic_json(bridge.swapped_path(self.root),{'mac':at+1})
             self.assertEqual(bridge.limit_errors(self.root,config,{11:'mac'}),{})
             self.assertEqual(bridge.limit_errors(self.root,config,None),{})
+    def test_a_session_stopped_on_an_error_another_try_gets_past_is_listed(self):
+        home=self.root/'home'; sessions=home/'.claude/sessions'; sessions.mkdir(parents=True)
+        project=home/'.claude/projects/-Users-x-app'; project.mkdir(parents=True)
+        def session(pid,lines):
+            sid=str(uuid.uuid4())
+            (sessions/f'{pid}.json').write_text(json.dumps({'pid':pid,'sessionId':sid,'status':'idle'}))
+            (project/f'{sid}.jsonl').write_text(''.join(json.dumps(line)+'\n' for line in lines))
+            return sid
+        at='2026-11-18T10:05:00Z'
+        error=lambda kind,text: {'type':'assistant','isApiErrorMessage':True,'error':kind,'timestamp':at,
+                                 'message':{'model':'<synthetic>','content':[{'type':'text','text':text}]}}
+        reply={'type':'assistant','timestamp':'2026-11-18T10:00:00Z','message':{'model':'claude-opus-5-5','content':[]}}
+        pool=session(21,[reply,error('rate_limit',"API Error: Request rejected (429) · Every Claude account in Side A's pool is at its limit or needs a sign-in.")])
+        slept=session(22,[reply,error('server_error','API Error: Your computer went to sleep mid-response.'),{'type':'user','message':{'content':'x'}}])
+        named=session(23,[error('rate_limit',"You've hit your 5-hour limit · resets 5:30pm (America/Los_Angeles)")])
+        session(24,[error('server_error','API Error: The response stopped arriving.'),reply])  # answered since
+        session(25,[error('invalid_request','API Error: prompt is too long')])
+        with patch.object(Path,'home',return_value=home):
+            when=bridge.epoch(at)
+            self.assertEqual(bridge.stalled_sessions({21:'mac',22:'mac',23:'mac',24:'mac',25:'mac',26:'mac'}),
+                             {pool:{'error':'rate_limit','at':when},slept:{'error':'server_error','at':when}})
+            self.assertEqual(bridge.stalled_sessions(None),{})
+            # Claude Code's newer wording for the 5-hour limit is the account's own limit, not a stall.
+            self.assertEqual(bridge.session_limit(named),{'limit':'five_hour','at':when})
     def test_recovery_keeps_a_login_renewed_before_any_write(self):
         a=account('Alpha'); b=account('Beta')
         mac=bridge.GLOBAL_SERVICE; beta=bridge.profile_service(self.root,b['id'])
@@ -1205,7 +1231,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         (runtime/'claude-selector').write_text('/profile\n')
         pins=bridge.pins_path(self.root); pins.mkdir(); (pins/'work').write_text('/work\n')
         show='print -r -- "${ANTHROPIC_BASE_URL:-none} ${ANTHROPIC_AUTH_TOKEN:-none} ${SIDE_A_POOL:-none} ${CLAUDE_SECURESTORAGE_CONFIG_DIR:-none}"'
-        run=lambda script: subprocess.run(['zsh','-fc',f"{line}; {script}"],capture_output=True,text=True).stdout.split('\n')
+        run=lambda script: subprocess.run(['zsh','-fc',f"{line}; {script}"],capture_output=True,text=True, check=False).stdout.split('\n')
         bridge.pool_path(self.root).write_text(f"http://127.0.0.1:47317 k3y {os.getpid()}\n")
         claude='"claude -c" "claude -c" "claude --dangerously-skip-permissions -c"'
         self.assertEqual(run(f"_side_a_select {claude}; {show}")[0],'http://127.0.0.1:47317 k3y 1 none')
@@ -1231,7 +1257,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         (runtime/'claude-selector').write_text('/profile\n')
         bridge.pool_path(self.root).write_text(f"http://127.0.0.1:47317 k3y {os.getpid()}\n")
         show='print -r -- "${CODEX_HOME:-none} ${SIDE_A_POOL_KEY:-none} ${ANTHROPIC_AUTH_TOKEN:-none}"'
-        run=lambda script: subprocess.run(['zsh','-fc',f"{line}; {script}"],capture_output=True,text=True).stdout.split('\n')[0]
+        run=lambda script: subprocess.run(['zsh','-fc',f"{line}; {script}"],capture_output=True,text=True, check=False).stdout.split('\n')[0]
         home=runtime/'codex-pool'
         self.assertEqual(run(f"_side_a_select codex codex codex; {show}"),'none none none')
         home.mkdir(); (home/'config.toml').write_text('')
@@ -1254,7 +1280,8 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
 
     @unittest.skipIf(sys.version_info < (3,11),'needs tomllib')
     def test_codex_pool_home_follows_the_users_config_and_holds_no_login(self):
-        import codex_bridge, tomllib
+        import codex_bridge
+        import tomllib
         source=self.root/'dot-codex'; (source/'sessions').mkdir(parents=True)
         (source/'auth.json').write_text('{"secret":1}'); (source/'state_5.sqlite').write_text(''); (source/'ipc').mkdir()
         (source/'config.toml').write_text('model = "m"\nmodel_provider = "openai"\n\n[features]\nx = true\n')
@@ -1276,7 +1303,9 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         self.assertFalse(Path(home,'config.toml').exists())
 
     def test_the_macs_codex_login_is_never_renewed_by_the_pool(self):
-        import codex_bridge, base64, json as j
+        import codex_bridge
+        import base64
+        import json as j
         jwt=lambda exp: 'a.'+base64.urlsafe_b64encode(j.dumps({'exp':exp}).encode()).decode().rstrip('=')+'.c'
         account={'id':'x','name':'Mac','email':'m@x','provider':'codex'}
         with patch.object(codex_bridge,'owned'),patch.object(codex_bridge,'invocation',return_value=(['codex'],{'CODEX_HOME':str(self.root)})),\
@@ -1301,7 +1330,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         runtime=self.root/'runtime'; runtime.mkdir(parents=True,exist_ok=True)
         (runtime/'claude-selector').write_text('/profile\n')
         show='print -r -- "${ANTHROPIC_BASE_URL:-none} ${ANTHROPIC_AUTH_TOKEN:-none} ${CLAUDE_SECURESTORAGE_CONFIG_DIR:-none}"'
-        run=lambda script: subprocess.run(['zsh','-fc',f"{snippet.splitlines()[1]}; {script}"],capture_output=True,text=True).stdout.splitlines()
+        run=lambda script: subprocess.run(['zsh','-fc',f"{snippet.splitlines()[1]}; {script}"],capture_output=True,text=True, check=False).stdout.splitlines()
         hub=socket.socket(); hub.bind(('127.0.0.1',0)); hub.listen(); port=hub.getsockname()[1]
         claude='claude claude claude'
         self.assertEqual(run(f"sidea pool join http://127.0.0.1:{port} sh4re")[0],"claude and codex here now use that Mac's pool while it's reachable.")
@@ -1357,7 +1386,7 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
     def test_rehome_untangles_accounts_pointing_at_each_others_logins(self):
         # The state a Mac reached: two accounts on one slot, each slot holding someone else's login.
         names=['Ai','Golf','Noori','Nerds','Dallas','Arne','Agn']
-        ai,golf,noori,nerds,dallas,arne,agn=accts=[account(n) for n in names]; config={'accounts':accts}
+        ai,golf,noori,nerds,dallas,_arne,_agn=accts=[account(n) for n in names]; config={'accounts':accts}
         keychain,login=self.rehome_keychain()
         slot=lambda a: bridge.profile_service(self.root,a['id'])
         keychain[bridge.GLOBAL_SERVICE]=login('ai',1)
@@ -1530,8 +1559,8 @@ export SIDE_A_PIN=studio; rm '%s'/studio; show
         for python in dict.fromkeys([sys.executable]+[p for p in ['/usr/bin/python3'] if os.path.exists(p)]):
             with self.subTest(python=python):
                 def serve(stdin):
-                    done=subprocess.run([python,str(Path(bridge.__file__)),'--root',str(self.root/'SideA'),'sessions','serve'],input=stdin,
-                                        capture_output=True,text=True,timeout=60,env={**os.environ,'HOME':str(home)})
+                    done=subprocess.run([python,str(Path(bridge.__file__)),'--root',str(self.root/'SideA'),'sessions','serve'],input=stdin,  # noqa: B023 -- serve() is called within the iteration that binds python
+                                        capture_output=True,text=True,timeout=60,env={**os.environ,'HOME':str(home)}, check=False)
                     return [json.loads(line) for line in done.stdout.splitlines()],done.stderr
                 replies,stderr=serve(stdin)
                 # A failed request answers with its error and the loop keeps serving.

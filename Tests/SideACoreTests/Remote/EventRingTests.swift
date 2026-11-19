@@ -8,7 +8,7 @@ import Testing
     #expect(ring.seq == 5)
     #expect(ring.replay(epoch: "e1", after: 3, now: 0) == [40, 50])
     #expect(ring.replay(epoch: "e1", after: 2, now: 0) == [30, 40, 50])
-    #expect(ring.replay(epoch: "e1", after: 5, now: 0) == [])
+    #expect(ring.replay(epoch: "e1", after: 5, now: 0)?.isEmpty == true)
     // Older than the ring, from the future, another launch, or a first connect: a snapshot.
     #expect(ring.replay(epoch: "e1", after: 1, now: 0) == nil)
     #expect(ring.replay(epoch: "e1", after: 6, now: 0) == nil)

@@ -136,7 +136,9 @@ extension SessionCommands {
         let name = try await start(StartHosted(cwd: cwd, agent: live.provider, model: body.model ?? body.handoff.model,
                                                accountID: body.accountID ?? body.handoff.accountID, prompt: prompt), key: key, origin: origin)
         if let old = live.hosted, store.hosted.sessions.contains(where: { $0.name == old }) {
-            try? await store.hosted.end(old)
+            do { try await store.hosted.end(old) } catch {
+                RemoteLog.shared("couldn't end \(old) after handing it off: \(error.localizedDescription)")
+            }
         } else {
             _ = await store.sessions.terminate([live], still: { _ in true })
         }

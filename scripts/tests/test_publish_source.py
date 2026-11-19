@@ -104,7 +104,7 @@ class PublishTests(unittest.TestCase):
         self.git(["add", "-A"], cwd=self.repo)
         self.git(["commit", "-qm", tag], cwd=self.repo)
         self.git(["tag", tag], cwd=self.repo)
-        return subprocess.run(["bash", "scripts/publish-source.sh", tag], cwd=self.repo, env=self.env, capture_output=True, text=True)
+        return subprocess.run(["bash", "scripts/publish-source.sh", tag], cwd=self.repo, env=self.env, capture_output=True, text=True, check=False)
 
     def public_tags(self):
         return subprocess.run(["git", "ls-remote", "--tags", str(self.remote)], env=self.env, capture_output=True, text=True, check=True).stdout

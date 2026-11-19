@@ -1,6 +1,7 @@
 import { runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Install, LIMITS } from '../src/install';
+import type { Install} from '../src/install';
+import { LIMITS } from '../src/install';
 import { FakeApns, alert, call, hexToken, newMac, newPhone, paired, phoneCall, putDevice, randomId, register, signed, stub } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
@@ -77,7 +78,7 @@ describe('replay protection under concurrency', () => {
 
 describe('the nonce table', () => {
   const fill = (installId: string, seen: number) => runInDurableObject(stub(installId), (_: Install, state) => {
-    const nonces = Object.fromEntries(Array.from({ length: LIMITS.nonces }, (_, i) => [`n${i}`, seen]));
+    const nonces = Object.fromEntries(Array.from({ length: LIMITS.nonces }, (_item, i) => [`n${i}`, seen]));
     state.storage.sql.exec('INSERT OR REPLACE INTO state VALUES (1, ?)', JSON.stringify({ nonces, windows: {} }));
   });
 

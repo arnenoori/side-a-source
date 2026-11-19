@@ -314,13 +314,14 @@ final class TunnelClient: @unchecked Sendable {
     private func frame(_ data: Data) {
         guard let frame = TunnelFrame(data) else { return }
         guard frame.kind == .open else {
-            guard let waiting = opening[frame.stream] else { return mux.received(frame) }
+            guard var waiting = opening[frame.stream] else { return mux.received(frame) }
             // What a phone may send before the stream is spliced: its credit window, the same as after.
             guard waiting.reduce(frame.payload.count, { $0 + $1.payload.count }) <= TunnelMux.Tuning().window, waiting.count < 64 else {
                 opening[frame.stream] = nil
                 return send(.data(TunnelFrame.reset(frame.stream, "over credit").encoded))
             }
-            opening[frame.stream]!.append(frame)
+            waiting.append(frame)
+            opening[frame.stream] = waiting
             return
         }
         let slot = frame.stream >> 16

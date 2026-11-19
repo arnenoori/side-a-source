@@ -12,8 +12,9 @@ const server = await createServer({
   server: { host: '127.0.0.1', port: 4181, strictPort: true },
   plugins: [{
     name: 'save-poster',
-    configureServer(server) {
-      server.middlewares.use('/save-poster', async (req, res) => {
+    configureServer(devServer) {
+      // oxlint-disable-next-line typescript/no-misused-promises, oxc/no-async-endpoint-handlers -- a local dev tool: the handler answers its own failures in the try below.
+      devServer.middlewares.use('/save-poster', async (req, res) => {
         if (req.method !== 'POST') { res.statusCode = 405; res.end(); return; }
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);

@@ -61,6 +61,9 @@ ios_tests() {
 }
 
 ran=0
+# Cheap, so it goes first: a lint failure shouldn't wait behind the tests.
+if touches '\.py$|^ruff\.toml$|^scripts/lint-python\.sh$'; then ./scripts/lint-python.sh; ran=1; fi
+if touches '\.swift$|^\.swiftlint|^scripts/lint-swift\.sh$'; then ./scripts/lint-swift.sh; ran=1; fi
 if touches '^(bridge|Sources|Tests|Packages|Package\.)'; then
   python3 -m unittest discover -s bridge/tests
   # The app runs the bridge on macOS's own Python 3.9, which the release also tests on.
@@ -89,6 +92,6 @@ if [[ -n "$changed" ]]; then
   python3 scripts/scan-public-source.py "$public"
   ran=1
 fi
-if touches '^site/'; then npm --prefix site ci && npm --prefix site test && npm --prefix site run build; ran=1; fi
-if touches '^relay/'; then (cd relay && npm test); ran=1; fi
+if touches '^site/'; then npm --prefix site ci && npm --prefix site run lint && npm --prefix site test && npm --prefix site run build; ran=1; fi
+if touches '^relay/'; then (cd relay && npm run typecheck && npm run lint && npm test); ran=1; fi
 [[ "$ran" == 1 ]] && echo "Checks passed.$skipped" || echo "Nothing here needs checks."

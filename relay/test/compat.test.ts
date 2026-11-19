@@ -27,7 +27,8 @@ function receiver(ws: WebSocket) {
   ws.accept();
   ws.addEventListener('message', event => {
     const data = event.data as string | ArrayBuffer | Blob;
-    reading = reading.then(async () => { messages.push(data instanceof Blob ? await data.arrayBuffer() : data); });
+    const previous = reading;
+    reading = (async () => { await previous; messages.push(data instanceof Blob ? await data.arrayBuffer() : data); })();
   });
   const until = async <T>(find: () => T | undefined) => {
     for (const deadline = Date.now() + 10_000; Date.now() < deadline;) {

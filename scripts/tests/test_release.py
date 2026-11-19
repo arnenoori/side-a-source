@@ -24,7 +24,7 @@ class ReleaseSafetyTests(unittest.TestCase):
         (self.root / "CHANGELOG.md").write_text(f"# Changelog\n\n## {self.version} — 2026-10-25\n\nFixture change.\n\n## 0.0.1 — 2026-01-01\n\nOld.\n")
 
     def check(self, tag):
-        return subprocess.run(["python3", "scripts/check-release.py", tag], cwd=self.root, capture_output=True, text=True)
+        return subprocess.run(["python3", "scripts/check-release.py", tag], cwd=self.root, capture_output=True, text=True, check=False)
 
     def test_matching_release_passes(self):
         self.assertEqual(self.check(self.tag).returncode, 0)
@@ -126,7 +126,7 @@ if sys.argv[1:3] == ["release", "list"]:
         gh.chmod(0o700)
         log = self.root / "calls.jsonl"
         env = dict(os.environ, PATH=f"{binaries}:{os.environ['PATH']}", CALL_LOG=str(log), RELEASE_STATE=state, RELEASE_TAG=self.tag)
-        result = subprocess.run(["bash", "scripts/publish-release.sh", self.tag], cwd=self.root, env=env, capture_output=True, text=True)
+        result = subprocess.run(["bash", "scripts/publish-release.sh", self.tag], cwd=self.root, env=env, capture_output=True, text=True, check=False)
         import json
         calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
         return result, calls

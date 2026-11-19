@@ -35,6 +35,10 @@ struct AutopilotLiveSection: View {
                         Toggle("Answer with recommended after 1 minute", isOn: Binding(get: { answers }, set: { toggleAnswers($0) }))
                             .disabled(toggling)
                     }
+                    if model.tools.can(.autopilotContinues), let continues = state.continuesStopped {
+                        Toggle("Continue sessions once a limit lifts", isOn: Binding(get: { continues }, set: { enabled in change { try await model.tools.setContinuesStopped(enabled) } }))
+                            .disabled(toggling)
+                    }
                     if model.tools.can(.rotation) {
                         if let swapAt = state.swapAt {
                             Picker("Move at", selection: Binding(get: { swapAt }, set: { percent in change { try await model.tools.setSwapAt(percent) } })) {
@@ -185,6 +189,7 @@ private struct AutopilotDecisionRow: View {
         case .waiting: "hourglass"
         case .failed: "exclamationmark.triangle"
         case .answered: "checkmark.bubble"
+        case .continued: "play.circle"
         case .stuck: "pause.circle"
         case .priorityWait: "clock"
         default: "sparkles"

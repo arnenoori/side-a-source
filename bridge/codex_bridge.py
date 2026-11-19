@@ -251,7 +251,7 @@ def prime(root, account):
     owned(root, account)
     base, env = invocation(root, account)
     result = subprocess.run(base + ["exec", "--skip-git-repo-check", "-s", "read-only", "Reply with OK."],
-        env=env, cwd=root, capture_output=True, timeout=180, stdin=subprocess.DEVNULL)
+        env=env, cwd=root, capture_output=True, timeout=180, stdin=subprocess.DEVNULL, check=False)
     if result.returncode != 0:
         raise ValueError(f"{account['name']} could not start its 5-hour window.")
 

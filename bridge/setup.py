@@ -43,7 +43,7 @@ def tool(name):
     if not path:
         return {"name": name, "path": None, "version": None}
     try:
-        result = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+        result = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL, check=False)
         match = re.search(r"\b\d+\.\d+(?:\.\d+)?\b", result.stdout + result.stderr) if result.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         match = None
@@ -324,7 +324,7 @@ def mcp_health():
         raise ValueError("Install Claude Code first: https://code.claude.com/docs/en/setup")
     try:
         result = subprocess.run([binary, "mcp", "list"], capture_output=True, text=True, timeout=30,
-                                stdin=subprocess.DEVNULL, cwd=Path.home())
+                                stdin=subprocess.DEVNULL, cwd=Path.home(), check=False)
     except subprocess.TimeoutExpired:
         raise ValueError("Checking MCP servers took longer than 30 seconds.") from None
     return {"servers": parse_mcp_list(result.stdout)}

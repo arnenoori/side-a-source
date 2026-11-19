@@ -1,6 +1,7 @@
+import AVFoundation
 import CoreGraphics
 import Photos
-import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 /// What the field's Paste does with what is on the clipboard. Text wins whenever there is any: a copied
@@ -46,107 +47,9 @@ enum PhotoAccess: Equatable {
     var needsSettings: Bool { self == .denied }
 }
 
-/// The drawer's geometry in window coordinates: where the menu opens around the +, where the photo sheet
-/// sits at each detent, and how far a drag has to go to count. Pure, so a small phone, a wide window and
-/// the keyboard being up or down all test the same way.
-struct DrawerLayout: Equatable {
-    var window: CGSize
-    var safe: EdgeInsets
-    /// The + button, and the composer's whole row, in window coordinates.
-    var plus: CGRect
-    var composer: CGRect
-    var menuSize: CGSize
-    /// Where the keyboard's top edge is, when it is up. The drawer stops above it: nothing in an app can draw over
-    /// the keyboard on iOS 26.
-    var keyboardTop: CGFloat?
-    /// The sheet the + sits in, when it stops short of the window's bottom (an iPad form sheet): the drawer stays
-    /// inside it.
-    var container: CGRect? = nil
-
-    static let gutter: CGFloat = 12
-    static let menuRadius: CGFloat = 46
-    static let sheetRadius: CGFloat = 52
-    static let sheetMaxWidth: CGFloat = 560
-    /// The least a sheet is drawn at, so a small phone with its keyboard up still shows a row of photos.
-    static let minSheetHeight: CGFloat = 300
-
-    /// The panel before it opens is the + button itself: the same circle, in the same place.
-    var well: CGRect { plus }
-
-    private var left: CGFloat { max(composer.minX, safe.leading + Self.gutter) }
-
-    /// Centred on the + (a little below, as the reference measures), kept inside the window.
-    var menu: CGRect {
-        let bottomLimit = sheetBottom
-        let topLimit = max(safe.top, container?.minY ?? 0) + Self.gutter
-        var top = plus.midY + 7 - menuSize.height / 2
-        top = min(top, bottomLimit - menuSize.height)
-        top = max(top, topLimit)
-        let width = min(menuSize.width, window.width - left - Self.gutter)
-        return CGRect(x: left, y: top, width: width, height: menuSize.height)
-    }
-
-    var sheetWidth: CGFloat { min(composer.width, Self.sheetMaxWidth, window.width - left - Self.gutter) }
-    var sheetBottom: CGFloat { min(keyboardTop ?? .infinity, container?.maxY ?? .infinity, window.height) - Self.gutter }
-    /// The tallest the sheet gets in a window wider than it, as on iPad: it stays a panel by the composer rather
-    /// than a column the window's height, over the title and the tab bar.
-    static let sheetMaxHeight: CGFloat = 720
-    /// Fully open: under the status bar on a phone, at most `sheetMaxHeight` tall in a wider window.
-    var largeTop: CGFloat {
-        let top = max(safe.top, container?.minY ?? 0) + Self.gutter
-        guard window.width > Self.sheetMaxWidth + 2 * Self.gutter else { return top }
-        return max(top, sheetBottom - Self.sheetMaxHeight)
-    }
-    /// Where the sheet first opens: enough rows to choose from, with the field still in view above it.
-    var mediumTop: CGFloat {
-        let wanted = window.height * 0.42
-        return max(min(max(wanted, largeTop + 120), sheetBottom - Self.minSheetHeight), largeTop)
-    }
-    /// Below this the sheet has been let go of.
-    var dismissTop: CGFloat { mediumTop + (sheetBottom - mediumTop) * 0.28 }
-
-    func sheet(top: CGFloat) -> CGRect {
-        CGRect(x: left, y: top, width: sheetWidth, height: max(sheetBottom - top, 0))
-    }
-
-    /// Where a let-go sheet comes to rest, from where it is and how fast it was going (pt/s, down positive);
-    /// nil to close. Momentum counts for a quarter second, the way a scroll view's does.
-    func settle(top: CGFloat, velocity: CGFloat) -> CGFloat? {
-        let projected = top + velocity * 0.25
-        if projected > dismissTop { return nil }
-        return abs(projected - largeTop) < abs(projected - mediumTop) ? largeTop : mediumTop
-    }
-
-    /// Past the large detent the sheet resists: a third of the finger's travel.
-    func rubberBanded(_ top: CGFloat) -> CGFloat {
-        top >= largeTop ? top : largeTop - (largeTop - top) / 3
-    }
-
-    /// The columns the grid wants at a width: three on a phone, more in a wide window.
-    static func columns(for width: CGFloat) -> Int { max(3, Int(width / 130)) }
-}
-
-/// The panel's frame at one instant of the open and the morph: the circle around the +, grown to the menu,
-/// and then to the sheet.
-struct PanelFrame: Equatable {
-    var rect: CGRect
-    var radius: CGFloat
-
-    static func at(open: CGFloat, morph: CGFloat, layout: DrawerLayout, sheetTop: CGFloat) -> PanelFrame {
-        let shaped = mix(morph, layout.menu, layout.sheet(top: sheetTop))
-        let radius = mix(morph, DrawerLayout.menuRadius, DrawerLayout.sheetRadius)
-        return PanelFrame(rect: mix(open, layout.well, shaped), radius: mix(open, layout.well.height / 2, radius))
-    }
-
-    static func mix(_ t: CGFloat, _ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * t }
-    static func mix(_ t: CGFloat, _ a: CGRect, _ b: CGRect) -> CGRect {
-        CGRect(x: mix(t, a.minX, b.minX), y: mix(t, a.minY, b.minY), width: mix(t, a.width, b.width), height: mix(t, a.height, b.height))
-    }
-}
-
-/// The rows the menu shows. A tray that is full or a Mac that can't take uploads has nothing to attach to,
+/// The rows the panel shows. A tray that is full or a Mac that can't take uploads has nothing to attach to,
 /// so only the options remain, and the + keeps opening the options sheet. A screen with no options of its own to
-/// offer (New Session has its model chips) leaves that row out.
+/// offer (New Session has its model chips) leaves that row out. `camera` is whether this device has a camera to show live.
 struct DrawerRows: Equatable {
     var camera: Bool
     var photos: Bool
@@ -160,5 +63,104 @@ struct DrawerRows: Equatable {
     static func make(canUpload: Bool, room: Int, hasCamera: Bool, clipboardHasImage: Bool, options: Bool = true) -> DrawerRows {
         let attach = canUpload && room > 0
         return DrawerRows(camera: attach && hasCamera, photos: attach, files: attach, paste: attach && clipboardHasImage, options: options)
+    }
+}
+
+/// Where the camera stands, and what the live tile therefore does. Like `PhotoAccess`, whatever the state the full
+/// camera stays reachable.
+enum CameraAccess: Equatable {
+    case notDetermined, authorized, denied, unavailable
+
+    init(_ status: AVAuthorizationStatus, hasCamera: Bool) {
+        guard hasCamera else { self = .unavailable; return }
+        switch status {
+        case .authorized: self = .authorized
+        case .notDetermined: self = .notDetermined
+        case .denied, .restricted: self = .denied
+        @unknown default: self = .denied
+        }
+    }
+
+    /// The tile shows what the camera sees.
+    var showsPreview: Bool { self == .authorized }
+    /// A tap raises the system's question instead of opening the camera.
+    var asksOnTap: Bool { self == .notDetermined }
+    /// A tap opens the full camera, which handles a refusal itself.
+    var opensCamera: Bool { self == .authorized || self == .denied }
+
+    /// The angle the preview is rotated to so it is upright for the way the interface is held.
+    static func previewAngle(for orientation: UIInterfaceOrientation) -> CGFloat {
+        switch orientation {
+        case .portraitUpsideDown: 270
+        case .landscapeLeft: 180
+        case .landscapeRight: 0
+        default: 90
+        }
+    }
+}
+
+/// Where the panel goes: into the keyboard's place, or a popover from the + where there is no keyboard area to take
+/// (an iPad with a hardware keyboard, or one with its keyboard floating or split).
+enum PanelPresentation: Equatable {
+    case keyboardArea, popover
+
+    static func decide(isPad: Bool, hardwareKeyboard: Bool, keyboardDocked: Bool) -> PanelPresentation {
+        isPad && (hardwareKeyboard || !keyboardDocked) ? .popover : .keyboardArea
+    }
+}
+
+/// How tall the panel is at each of its two rests, and where a let-go drag comes to rest. Pure, so every phone, window
+/// and keyboard height tests the same way.
+struct PanelDetents: Equatable {
+    /// The keyboard's height, which the panel takes exactly.
+    var base: CGFloat
+    var window: CGFloat
+    var safeTop: CGFloat
+
+    enum Rest: Equatable { case base, large, dismiss }
+
+    /// Fully open: the grid takes the window below a strip of the screen that keeps the composer in view.
+    var large: CGFloat { max(base, min(window - safeTop - 170, window * 0.82)) }
+    /// How much of a drag, past `base`, a downward let-go must cover to close.
+    var dismissDistance: CGFloat { max(base * 0.22, 56) }
+
+    /// Where a let-go panel comes to rest, from the height it was let go at and how fast the finger was going
+    /// (pt/s, down positive). Momentum counts for a quarter second, the way a scroll view's does.
+    func settle(height: CGFloat, velocity: CGFloat) -> Rest {
+        var projected = height - velocity * 0.25
+        // From the grid a flick comes down to the keyboard's height; only a drag that starts there closes the panel.
+        if height > base + 12 { projected = max(projected, base) }
+        if projected < base - dismissDistance { return .dismiss }
+        return abs(projected - large) < abs(projected - base) ? .large : .base
+    }
+
+    /// Past the large detent the panel resists: a third of the finger's travel. Below the base it follows the finger.
+    func rubberBanded(_ height: CGFloat) -> CGFloat {
+        height <= large ? height : large + (height - large) / 3
+    }
+}
+
+/// The keyboard's height for each way the screen is held, so a panel that takes its place is the same height.
+struct KeyboardHeights: Equatable {
+    var portrait: CGFloat?
+    var landscape: CGFloat?
+
+    /// Heights below this are an accessory bar (a hardware keyboard's shortcuts), not a keyboard.
+    static let least: CGFloat = 150
+
+    mutating func remember(_ height: CGFloat, landscape isLandscape: Bool) {
+        guard height >= Self.least else { return }
+        if isLandscape { landscape = height } else { portrait = height }
+    }
+
+    /// What was last seen, or a sensible height when no keyboard has been.
+    func height(landscape isLandscape: Bool, isPad: Bool) -> CGFloat {
+        if let seen = isLandscape ? landscape : portrait { return seen }
+        switch (isPad, isLandscape) {
+        case (false, false): return 336
+        case (false, true): return 212
+        case (true, false): return 420
+        case (true, true): return 360
+        }
     }
 }

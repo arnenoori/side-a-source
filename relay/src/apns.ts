@@ -128,7 +128,7 @@ export async function deliver(env: ApnsKey, delivery: Delivery, options: Deliver
     }
     if (status >= 500) {
       if (attempt < BACKOFF.length) {
-        await sleep(BACKOFF[attempt++]);
+        await sleep(BACKOFF[attempt++] ?? 0);
         continue;
       }
       return { result: 'retry', after: 30, reason };

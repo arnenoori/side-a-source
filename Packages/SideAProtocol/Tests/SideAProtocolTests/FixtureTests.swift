@@ -128,7 +128,7 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
         let data = try Data(contentsOf: Fixtures.folder().appendingPathComponent(file))
         #expect(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() == hash, "\(file) changed after it shipped")
     }
-    #expect(Set(Fixtures.files()).subtracting(listed.keys).sorted() == [], "add new fixtures to MANIFEST")
+    #expect(Set(Fixtures.files()).subtracting(listed.keys).isEmpty, "add new fixtures to MANIFEST")
 }
 
 @Test func unknownValuesFromANewerMacStillDecode() throws {

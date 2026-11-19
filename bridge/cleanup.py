@@ -13,6 +13,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import contextlib
 
 DAYS = 90
 MAX_REPOS = 50
@@ -216,10 +217,8 @@ def restore(root):
         if destination.suffix == ".jsonl":
             restored.append(str(destination))
     for folder in sorted((p for p in source.rglob("*") if p.is_dir()), key=lambda p: -len(p.parts)):
-        try:
+        with contextlib.suppress(OSError):
             folder.rmdir()
-        except OSError:
-            pass
     return {"restored": restored, "skipped": skipped, "reindexed": reindex(root, back) if back else True}
 
 
@@ -228,7 +227,7 @@ def git(*args, cwd=None):
     env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"}
     try:
         done = subprocess.run(["git", *(["-C", str(cwd)] if cwd else []), *args], capture_output=True, text=True,
-                              timeout=GIT_TIMEOUT, env=env, stdin=subprocess.DEVNULL)
+                              timeout=GIT_TIMEOUT, env=env, stdin=subprocess.DEVNULL, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
         return 1, "", str(error)
     return done.returncode, done.stdout.strip(), done.stderr.strip()
@@ -296,7 +295,7 @@ def cwds_in_use():
     None when lsof fails, so callers refuse rather than guess."""
     try:
         done = subprocess.run(["lsof", "-a", "-d", "cwd", "-Fpn"], capture_output=True, text=True, timeout=GIT_TIMEOUT,
-                              stdin=subprocess.DEVNULL)
+                              stdin=subprocess.DEVNULL, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if not done.stdout:

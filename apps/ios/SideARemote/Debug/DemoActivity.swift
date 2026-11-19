@@ -21,6 +21,7 @@ enum DemoActivity {
                 _ = try Activity.request(attributes: MacActivityAttributes(macID: "demo"),
                                          content: ActivityContent(state: state, staleDate: .now.addingTimeInterval(30 * 60)))
             } catch {
+                // swiftlint:disable:next print_in_app -- debug-only demo helper, compiled out of release builds.
                 print("DemoActivity: \(error)")
             }
         }

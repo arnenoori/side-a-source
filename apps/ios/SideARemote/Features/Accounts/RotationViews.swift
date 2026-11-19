@@ -25,7 +25,7 @@ enum RotationText {
 
     /// "~40m", "~1h 20m": the Mac's reading of the pace, never a promise.
     static func estimate(_ minutes: Int) -> String {
-        minutes < 60 ? "~\(minutes)m" : minutes % 60 == 0 ? "~\(minutes / 60)h" : "~\(minutes / 60)h \(minutes % 60)m"
+        minutes < 60 ? "~\(minutes)m" : minutes.isMultiple(of: 60) ? "~\(minutes / 60)h" : "~\(minutes / 60)h \(minutes % 60)m"
     }
 
     /// "41% left · runs out Thu". The date only when the Mac could work one out.

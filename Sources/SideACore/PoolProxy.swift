@@ -8,7 +8,8 @@ import Network
     func poolTokenFailed(_ account: String, _ error: any Error)
     func poolAnswered(_ account: String, status: Int, headers: HTTPHeaders)
     /// A request the pool answered itself, with no account's reply.
-    func poolRefused(_ provider: AgentProvider?, status: Int, message: String)
+    /// `session`: the conversation, when the refusal was every account being out.
+    func poolRefused(_ provider: AgentProvider?, session: String?, status: Int, message: String)
     /// What `GET /side-a/health` reports to a Mac using this pool.
     func poolHealthReport() -> [String: Int]
 }
@@ -204,7 +205,7 @@ public final class PoolProxy: @unchecked Sendable {
         defer { servingLock.withLock { serving -= 1 } }
         let service = services.first { request.target.hasPrefix($0.prefix) }
         let refuse = { [weak self] (status: Int, type: String, message: String) async in
-            await self?.decisions?.poolRefused(service?.provider, status: status, message: message)
+            await self?.decisions?.poolRefused(service?.provider, session: nil, status: status, message: message)
             client.fail(status, type, message)
         }
         guard Self.authorized(request, key: key) else { return client.fail(401, "authentication_error", "Side A's pool key is missing or wrong.") }
@@ -249,7 +250,9 @@ public final class PoolProxy: @unchecked Sendable {
             }
         }
         if Task.isCancelled { return client.close() }
-        await refuse(429, "rate_limit_error", "Every \(service.provider.title) account in Side A's pool is at its limit or needs a sign-in.")
+        let message = "Every \(service.provider.title) account in Side A's pool is at its limit or needs a sign-in."
+        await decisions?.poolRefused(service.provider, session: conversation, status: 429, message: message)
+        client.fail(429, "rate_limit_error", message)
     }
 
     private struct PoolTokenError: Error { let underlying: any Error }

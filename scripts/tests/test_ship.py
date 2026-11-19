@@ -102,7 +102,7 @@ class ShipTests(unittest.TestCase):
     def ship(self, release=None, feed_build=None, runs=(), dispatch_sha=None):
         self.state.write_text(json.dumps({"release": release, "feed_build": feed_build, "runs": list(runs),
                                           "dispatch_sha": dispatch_sha or self.head}))
-        result = subprocess.run(["bash", "scripts/ship.sh"], cwd=self.repo, env=self.env, capture_output=True, text=True)
+        result = subprocess.run(["bash", "scripts/ship.sh"], cwd=self.repo, env=self.env, capture_output=True, text=True, check=False)
         calls = [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
         return result, calls
 
