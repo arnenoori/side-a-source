@@ -101,9 +101,12 @@ final class AppLock {
         case .background:
             away = true
             leftAt = .now
-            OwnerAuth.expire()
         case .active:
-            if let leftAt, Date.now.timeIntervalSince(leftAt) >= Self.after, Self.enabled, !PairedMac.all().isEmpty { locked = true }
+            // A glance at another app or a locked screen doesn't cost a Face ID; the same absence that locks the app does.
+            if let leftAt, Date.now.timeIntervalSince(leftAt) >= Self.after {
+                OwnerAuth.expire()
+                if Self.enabled, !PairedMac.all().isEmpty { locked = true }
+            }
             leftAt = nil
             away = false
             if locked { Task { await unlock() } }

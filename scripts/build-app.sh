@@ -35,6 +35,7 @@ cp scripts/com.sidea.pool.plist "$agent"
 mkdir -p "$app_path/Contents/Resources/bridge"
 cp bridge/*.py "$app_path/Contents/Resources/bridge/"
 cp Sources/SideA/Resources/discman.json "$app_path/Contents/Resources/discman.json"
+ditto Sources/SideA/Resources/AppIcons "$app_path/Contents/Resources/AppIcons"
 cp scripts/Info.plist "$app_path/Contents/Info.plist"
 # Local builds get their own identity and no updater, so they never install updates over themselves
 # or collide with an installed copy's updater. Release builds opt in; verify-bundle.py rejects anything else.

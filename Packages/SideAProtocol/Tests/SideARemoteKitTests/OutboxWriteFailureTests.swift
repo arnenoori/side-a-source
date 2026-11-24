@@ -58,6 +58,7 @@ private func shortTimeoutOutbox() throws -> (Outbox, URL) {
 
     let again = try #require(await sync.retry(itemID: item.id))
     try await until("delivered") { if case .delivered = await sync.state.outcomes[again.id] { true } else { false } }
-    #expect(mac.calls.compactMap { $0.value(forHTTPHeaderField: "Idempotency-Key") } == [again.id])
+    // A reply settled `notDelivered` goes again under its first key, which the Mac runs as new when it never had it.
+    #expect(again.id != item.id && mac.calls.compactMap { $0.value(forHTTPHeaderField: "Idempotency-Key") } == [item.id])
     await sync.stop()
 }

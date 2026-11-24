@@ -24,6 +24,7 @@ struct MenuPlayer: View {
                     .buttonStyle(.plain).help("Refresh usage")
             }
             statusLine
+            ScreenShareLine(share: store.remote.screen)
             ForEach(AgentProvider.allCases) { provider in
                 if let email = store.loginsToAdd[provider] {
                     HStack {

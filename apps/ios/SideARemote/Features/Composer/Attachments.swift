@@ -189,6 +189,17 @@ final class ComposerAttachments {
         return ready.compactMap { if case .ready(let id) = $0.state { id } else { nil } }
     }
 
+    /// A reply given back after it went: its photos return to the tray as the uploads they are, as far as there is room.
+    /// No bytes come back with them, so one the Mac has since cleared is attached again by hand.
+    func giveBack(_ ids: [String], of turn: String, to session: SessionKey) {
+        let previews = sent[turn] ?? []
+        let have = Set(ready(session))
+        for (index, id) in ids.enumerated() where !have.contains(id) && room(session) > 0 {
+            pending[session, default: []].append(Pending(preview: previews.indices.contains(index) ? previews[index] : UIImage(), data: Data(),
+                                                         state: .ready(id)))
+        }
+    }
+
     /// A retried reply's photos, onto the turn that now carries them.
     func carry(from turn: String, to next: String) {
         guard turn != next, let photos = sent.removeValue(forKey: turn) else { return }

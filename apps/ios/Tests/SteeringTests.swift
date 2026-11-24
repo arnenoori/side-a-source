@@ -125,11 +125,50 @@ final class SteeringTests: XCTestCase {
         XCTAssertEqual(model.deliveries("asking"), [])
     }
 
+    /// The control beside Send shows only when there is a choice; the pick lasts for the running turn.
+    func testDeliveryControlAndRememberedPick() {
+        var queued = working("claude", .claude, abilities: [.note, .interrupt, .followUp])
+        queued.turnID = "t-1"
+        let others = [working("older", .codex, hosted: "sa-4", abilities: [.type, .terminal, .interrupt]),
+                      working("note-only", .claude, abilities: [.note]),
+                      working("idle", .claude, hosted: "sa-3", abilities: [.type, .terminal], status: .idle)]
+        let model = model([queued] + others)
+        XCTAssertFalse(AppModel.offersChoice(model.deliveries("older")))
+        XCTAssertFalse(AppModel.offersChoice(model.deliveries("note-only")))
+        XCTAssertFalse(AppModel.offersChoice(model.deliveries("idle")))
+        XCTAssertNil(model.delivery("older"), "one way to send: no control")
+        XCTAssertEqual(model.delivery("claude"), .nextStep, "the first way is what a plain send does")
+        XCTAssertNil(model.pickedDelivery("claude"))
+
+        model.chooseDelivery(.afterTurn, for: "claude")
+        XCTAssertEqual(model.delivery("claude"), .afterTurn)
+        XCTAssertEqual(model.pickedDelivery("claude"), .afterTurn)
+        XCTAssertNil(model.pickedDelivery("note-only"), "per session")
+
+        // A new turn starts over.
+        var next = queued
+        next.turnID = "t-2"
+        model.sessions.replace([next] + others, finished: [:])
+        XCTAssertNil(model.pickedDelivery("claude"))
+        XCTAssertEqual(model.delivery("claude"), .nextStep)
+
+        // A pick the session no longer offers is ignored.
+        model.chooseDelivery(.interrupt, for: "claude")
+        XCTAssertNil(model.pickedDelivery("claude"))
+        model.chooseDelivery(.afterTurn, for: "claude")
+        model.deliveryChoices.clear("claude")
+        XCTAssertNil(model.pickedDelivery("claude"))
+    }
+
+    func testDeliveriesNameThemselvesInOneWord() {
+        XCTAssertEqual(Delivery.allCases.map(\.shortTitle), ["Steer", "Next", "Queue", "Interrupt"])
+    }
+
     func testSendAfterThisTurnQueuesAndNextStepWaits() async throws {
         let model = model([working("claude", .claude, abilities: [.note, .interrupt, .followUp])])
         model.send("After you finish, run the linter", to: "claude", as: .afterTurn)
         model.send("Use the staging DB", to: "claude", as: .nextStep)
-        try await Task.sleep(for: .milliseconds(700))
+        for _ in 0..<500 where model.transcripts.outgoing["claude"]?.map(\.state) != [.queued, .note] { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.transcripts.outgoing["claude"]?.map(\.state), [.queued, .note])
     }
 
@@ -137,7 +176,7 @@ final class SteeringTests: XCTestCase {
         let model = model([working("hosted-claude", .claude, hosted: "sa-1", abilities: [.type, .terminal, .interrupt, .followUp])])
         model.send("Stop, use the other branch", to: "hosted-claude", as: .interrupt)
         XCTAssertEqual(model.transcripts.outgoing["hosted-claude"]?.map(\.state), [.sending])
-        try await Task.sleep(for: .milliseconds(700))
+        for _ in 0..<500 where model.transcripts.outgoing["hosted-claude"]?.map(\.state) != [.sent] { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(model.transcripts.outgoing["hosted-claude"]?.map(\.state), [.sent])
     }
 

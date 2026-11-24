@@ -27,7 +27,9 @@ extension AccountStore {
         guard let python, let bridgeURL else { throw BridgeFailure(message: "Install Python 3 to connect your accounts.") }
         let deadline = BridgeDeadline.current(timeout)
         // The bridge leads its own process group; stopping the group also stops a hung claude or codex child.
-        let run = await ProcessRunner.run(python, [bridgeURL.path, "--root", root.path] + args, timeout: deadline, priority: priority, group: true)
+        let run = await Perf.bridge(args.first ?? "") {
+            await ProcessRunner.run(python, [bridgeURL.path, "--root", root.path] + args, timeout: deadline, priority: priority, group: true)
+        }
         if let failure = run.launchError { throw failure }
         if run.status != 0 {
             // The helper returns sanitized diagnostics; raw CLI stderr is never logged.

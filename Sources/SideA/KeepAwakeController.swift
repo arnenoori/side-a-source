@@ -58,6 +58,8 @@ final class KeepAwakeController {
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var asked = false
     @ObservationIgnored private var handingOff = false
+    /// Whether a paired phone holds a connection now; Remote sets it. An open app that asks nothing is still in use.
+    @ObservationIgnored var phoneConnected: (() -> Bool)?
 
     init(system: SleepSystem?, defaults: UserDefaults = .standard) {
         self.system = system
@@ -100,6 +102,7 @@ final class KeepAwakeController {
     func check(now: Double = Date().timeIntervalSince1970) {
         guard let system else { return }
         state.observe(working: settings.enabled ? system.workingAgents() : 0, now: now)
+        if phoneConnected?() == true { state.phone(now: now) }
         if lidSleepPending, !system.lidClosed() { cancelLidCheck() }
         if settings.lidClosed { helper = system.helper }
         let power = settings.lidClosed ? system.power() : KeepAwake.Power(onAC: false, battery: nil)
@@ -115,10 +118,16 @@ final class KeepAwakeController {
             restoreSleep()
         }
         if state.holdsAssertion(settings, now: now), !lidSleepPending {
-            holding = system.hold(state.reason)
+            holding = system.hold(state.reason(now: now))
         } else if holding {
             system.release(); holding = false
         }
+    }
+
+    /// A paired phone made a request. The Mac stays up for it from now, not from the next look.
+    func phoneSeen(now: Double = Date().timeIntervalSince1970) {
+        state.phone(now: now)
+        if settings.enabled, !holding { check(now: now) }
     }
 
     var line: String? { state.line(settings, sleepDisabled: sleepDisabled, now: Date().timeIntervalSince1970) }

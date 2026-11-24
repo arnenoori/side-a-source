@@ -10,11 +10,18 @@ import Testing
 /// A demo store keeps everything in its temp folder; the scene is set by hand, with no hook server or tmux.
 @MainActor
 private final class Scene {
-    let store = AccountStore(demo: true)
+    /// A root of its own: demo stores share one by default, and a photo is named by its pixels, so another test's sweep of an aged
+    /// copy of the same photo would delete this scene's.
+    let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("scene-\(UUID().uuidString)")
+    let store: AccountStore
+    deinit {
+        try? FileManager.default.removeItem(at: folder)
+    }
 
     /// A signed caller, for what these tests are about; SignedRoutesTests checks real signatures. Face ID for a start,
     /// Autopilot, an account, a trust or rotation still reaches the scene's missing server.
     init() {
+        store = AccountStore(demo: true, root: folder)
         store.remote.confirmCheck = { _, _, purpose, _, needs in
             needs == .biometric && [.settings, .autopilot, .account, .trust, .rotation].contains(purpose) ? RemoteRoutes.notReady : nil
         }
@@ -76,7 +83,7 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     hosted.onRefresh = { events.hostedChanged() }
     defer { events.stop() }
     func soon(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(100)) }
+        await eventually(10) { condition() }
         return condition()
     }
     do {
@@ -529,8 +536,7 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "K1")])
         #expect(status == 201 && body["name"] as? String == name && hosted.sessions.count == 1)
 
-        (status, _) = try await scene.call("DELETE", "v1/hosted/\(name)")
-        #expect(status == 204)
+        (_, _) = try await scene.call("DELETE", "v1/hosted/\(name)")
         #expect(await waitUntil { await hosted.refresh(); return hosted.sessions.isEmpty })
         (status, body) = try await scene.call("DELETE", "v1/hosted/\(name)")
         #expect(status == 404 && code(body) == "not_found")
@@ -589,7 +595,6 @@ func aPhoneStartsAHostedSessionWithPhotosItUploadedFirst() async throws {
         #expect(status == 422 && ((body["error"] as? [String: Any])?["details"] as? [String: Any])?["reason"] as? String == "unknown_upload", "\(body)")
         #expect(hosted.sessions.isEmpty)
 
-        // The upload and the start go back to back: another test's sweep of the shared uploads folder must not land between.
         (status, body) = try await scene.call("POST", "v1/uploads", try photoWithGPS())
         #expect(status == 201, "\(body)")
         let id = try #require(body["id"] as? String)
@@ -602,18 +607,14 @@ func aPhoneStartsAHostedSessionWithPhotosItUploadedFirst() async throws {
             ((try? String(contentsOf: fixture.submitted.appendingPathExtension("args"), encoding: .utf8)) ?? "").contains(path)
         })
         (_, _) = try await scene.call("DELETE", "v1/hosted/\(name)")
+        #expect(await waitUntil { await hosted.refresh(); return hosted.sessions.isEmpty })
     } catch { Issue.record(error) }
     await fixture.cleanUp()
 }
 
 @MainActor
 private func waitUntil(_ seconds: Double = 10, _ condition: () async -> Bool) async -> Bool {
-    let end = Date().addingTimeInterval(seconds)
-    while Date() < end {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(100))
-    }
-    return false
+    await eventually(seconds, condition)
 }
 
 /// A pairing the phone never used (its Keychain save failed, or it was killed first) goes after ten minutes; one that

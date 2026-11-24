@@ -259,7 +259,10 @@ public enum CodexAppServer {
                     length = Int(view[2]) << 8 | Int(view[3]); offset = 4
                 } else if length == 127 {
                     guard view.count >= 10 else { return nil }
-                    length = view[2..<10].reduce(0) { $0 << 8 | Int($1) }; offset = 10
+                    // Unsigned until checked: a top bit set would make a negative Int that passes the limit.
+                    let wide = view[2..<10].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+                    guard wide <= UInt64(maxMessage) else { throw AppServerClient.Failure.refused }
+                    length = Int(wide); offset = 10
                 }
                 guard length <= maxMessage else { throw AppServerClient.Failure.refused }
                 let maskAt = offset

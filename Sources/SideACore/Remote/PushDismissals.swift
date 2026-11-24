@@ -20,6 +20,8 @@ public struct PushDismissals: Sendable {
         alerted[collapse, default: []].formUnion(devices)
     }
 
+    public func showing(_ collapse: String) -> [String] { alerted[collapse].map { $0.sorted() } ?? [] }
+
     /// The devices to clear it on, once; nil `answeredBy` when no phone answered it.
     public mutating func settled(_ collapse: String, answeredBy device: String?) -> [String] {
         guard let devices = alerted.removeValue(forKey: collapse) else { return [] }

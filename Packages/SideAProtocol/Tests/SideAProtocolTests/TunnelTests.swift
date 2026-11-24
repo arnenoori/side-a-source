@@ -13,6 +13,10 @@ import Testing
     #expect(TunnelFrame(Data([2, 0, 0, 0, 1]) + Data(count: TunnelFrame.maxPayload + 1)) == nil)
     #expect(TunnelControl(text: #"{"type":"mac","online":false}"#)?.online == false)
     #expect(TunnelControl(type: "pairing").text == #"{"type":"pairing"}"#)
+    // What the relay reads to watch a Mac: its spelling is the relay's too.
+    #expect(TunnelControl.watch.text == #"{"type":"watch"}"#)
+    #expect(TunnelControl.goodbye(TunnelControl.Goodbye.sleep).text == #"{"reason":"sleep","type":"goodbye"}"#)
+    #expect([TunnelControl.Goodbye.quit, TunnelControl.Goodbye.off] == ["quit", "off"])
 }
 
 /// Two muxes joined in memory, the way the relay joins them: the phone's end takes connections from a front listener,
@@ -133,10 +137,11 @@ final class Rig: @unchecked Sendable {
     let port = try await rig.ready()
     let client = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
     client.start(queue: .global())
-    try await Task.sleep(for: .milliseconds(100))
+    for _ in 0..<1500 where client.state != .ready { try await Task.sleep(for: .milliseconds(20)) }
     // A first keystroke goes at once; the burst behind it within 16 ms is coalesced.
     let before = rig.queue.sync { rig.frames }
     for byte in 0..<40 { client.send(content: Data([UInt8(byte)]), completion: .contentProcessed { _ in }) }
+    // swiftlint:disable:next sleep_literal_in_tests -- the check is an upper bound on frames, so the 16 ms coalescing window and the echo must have had time to happen
     try await Task.sleep(for: .milliseconds(150))
     let data = rig.queue.sync { rig.frames } - before
     client.cancel()

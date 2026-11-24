@@ -73,22 +73,27 @@ struct DiffCard: View {
     /// What the full diff's page zooms out of.
     let sourceID: String
     let diff: FileDiff
+    var sessionID: SessionKey?
     static let maxHunks = 3
     static let maxLines = 40
 
-    init(sourceID: String, diff: FileDiff) { self.sourceID = sourceID; self.diff = diff }
-    init(tool: TranscriptTool, diff: FileDiff) { self.init(sourceID: "diff-\(tool.id)-\(diff.path)", diff: diff) }
+    init(sourceID: String, diff: FileDiff, sessionID: SessionKey? = nil) { self.sourceID = sourceID; self.diff = diff; self.sessionID = sessionID }
+    init(tool: TranscriptTool, diff: FileDiff, sessionID: SessionKey? = nil) {
+        self.init(sourceID: "diff-\(tool.id)-\(diff.path)", diff: diff, sessionID: sessionID)
+    }
+
+    private var route: Route { .diff(diff, sourceID: sourceID, session: sessionID) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            NavigationLink(value: Route.diff(diff, sourceID: sourceID)) {
+            NavigationLink(value: route) {
                 DiffHeader(diff: diff)
             }
             .buttonStyle(.plain)
             Divider().opacity(0.5)
             DiffHunks(diff: diff, maxHunks: Self.maxHunks, maxLines: Self.maxLines)
             if diff.hunks.count > Self.maxHunks || diff.hunks.reduce(0, { $0 + $1.lines.count }) > Self.maxLines {
-                NavigationLink(value: Route.diff(diff, sourceID: sourceID)) {
+                NavigationLink(value: route) {
                     Text("Show full diff")
                         .font(.footnote.weight(.medium))
                         .frame(maxWidth: .infinity, minHeight: 36)
@@ -270,6 +275,7 @@ struct FileChip: View {
     let tool: TranscriptTool
     let path: String
     let bytes: Int
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         let name = (path as NSString).lastPathComponent
@@ -300,18 +306,24 @@ struct FileChip: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .contextMenu {
             Button("Copy Path", systemImage: "doc.on.doc") { UIPasteboard.general.string = path }
-            ShareLink(item: path) { Label("Share", systemImage: "square.and.arrow.up") }
+            if model.tools.isLive, model.tools.can(.fileRead) {
+                ShareLink(item: SharedFile(tools: model.tools, sessionID: SubagentRef(key: sessionID)?.parent ?? sessionID, path: path),
+                          preview: SharePreview(name)) { Label("Share", systemImage: "square.and.arrow.up") }
+            }
         }
         .accessibilityLabel("\(name), \(Formatting.size(bytes))")
+        .accessibilityHint("Opens the file")
     }
 
     static func symbol(_ ext: String) -> String {
         switch ext.lowercased() {
         case "md": "text.document"
         case "pdf": "doc.richtext"
-        case "png", "jpg", "jpeg", "heic": "photo"
-        case "csv": "tablecells"
+        case "png", "jpg", "jpeg", "heic", "gif", "webp", "svg": "photo"
+        case "csv", "tsv", "xlsx", "xls", "numbers": "tablecells"
         case "json": "curlybraces"
+        case "html", "htm": "globe"
+        case "pptx", "ppt", "key": "rectangle.on.rectangle"
         default: "doc"
         }
     }

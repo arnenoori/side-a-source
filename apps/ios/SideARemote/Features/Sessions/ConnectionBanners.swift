@@ -14,7 +14,7 @@ struct ConnectionBanners: View {
 
     /// Under the navigation bar as an inset row, never a toast; the content below keeps its age.
     @ViewBuilder private var banners: some View {
-        switch model.mac.state {
+        switch model.mac.shown {
         case .reconnecting:
             // The chip says "Reconnecting…"; the row joins once the data is a minute old.
             if let age = Formatting.age(of: model.mac.lastSeen) {

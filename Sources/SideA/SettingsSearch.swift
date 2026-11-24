@@ -150,6 +150,7 @@ struct SettingsEntry: Hashable {
         .init(title: "Open at login", tab: .general, words: "startup launch"),
         .init(title: "Show only in the menu bar", tab: .general, words: "dock icon"),
         .init(title: "3D player", tab: .general, words: "disc"),
+        .init(title: "App Icon", tab: .general, words: "dock appearance midnight cobalt gold glass chrome pixel"),
         .init(title: "Keep awake while agents work", tab: .general, words: "sleep caffeinate lid battery"),
         .init(title: "Sync with your other Macs", tab: .general, words: "icloud drive"),
         .init(title: "Updates", tab: .general, words: "version upgrade automatic install"),

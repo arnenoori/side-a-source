@@ -94,6 +94,12 @@ struct RequestPayload: View {
 }
 
 extension RemoteRequest {
+    /// Allow from a Sessions row's swipe, a full swipe included: what the row shows whole, and nothing that needs Face ID.
+    var allowsFromRow: Bool { !isQuestion && allowGate != .biometric && fitsRow }
+
+    /// Allow straight from the card: all of it shows there, so nothing waits for the sheet. A plan is reviewed, not allowed.
+    func allowsOnCard(whole: Bool) -> Bool { whole && !truncated && plan == nil }
+
     /// Short enough that a Sessions row's two lines show all of it, so its swipe can Allow; the change of an edit
     /// never shows on a row, and a swipe never allows what needed an escape to be seen.
     var fitsRow: Bool {

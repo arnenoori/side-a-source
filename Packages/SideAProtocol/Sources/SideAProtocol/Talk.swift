@@ -40,10 +40,93 @@ public struct RemoteReply: Codable, Hashable, Sendable {
     /// Hosted and `replyTerminal` sessions only; missing means `.queue` on a hosted session and `.steer` on a
     /// `replyTerminal` one.
     public let submit: ReplySubmit?
+    /// Capability `replies.queue`: the `QueuedReply.id` this takes the place of, keeping its turn in the queue. 409
+    /// `queue_changed` when that reply has gone or changed since.
+    public var replaces: String?
+    /// Capability `replies.seen`; sent only to a Mac that lists it, since the signature covers the body.
+    public var seen: String?
+    /// Capability `replies.promote`.
+    public var promotes: String?
     public init(text: String, mode: ReplyMode = .auto, keys: [Key]? = nil, attachments: [String] = [], turnID: String? = nil,
                 submit: ReplySubmit? = nil) {
         self.text = text; self.mode = mode; self.keys = keys; self.attachments = attachments; self.turnID = turnID; self.submit = submit
     }
+}
+
+/// The phone and the Mac must name where a session stands the same way, or `seen` would refuse every reply.
+public enum ReplyMark {
+    public static let statusPrefix = "status "
+
+    /// The one a reply records as `seen` first. Several, because a turn has one id while it runs and another once
+    /// finished, and a notification knows only the finished one.
+    public static func marks(_ session: RemoteSession?, _ finished: FinishedSession?) -> [String] {
+        let turns = [session?.turnID, finished?.turnID].compactMap { $0 }
+        return turns.isEmpty ? [session?.statusAt.map { "\(statusPrefix)\($0)" }].compactMap { $0 } : turns
+    }
+}
+
+/// The Mac's rule for a reply that names where the session stood (`RemoteReply.seen`): 409 `session_moved_on` unless
+/// this still says it.
+///
+/// The phone is stricter with a reply it held back (`ReplyFlight.movedOn`, `ReplyFlights.unsendable`): it lets one go
+/// only while its own mark is still one of the session's, and never with no mark at all. The person typed it hours ago,
+/// perhaps, and nothing they saw since says what it now answers. The Mac judges a reply as it arrives, a moment after it
+/// was typed, so it also lets through what can't have been a turn the person missed: a session that names no turn, a
+/// status mark while it isn't working, and the sender's own earlier reply having started the turn (`chain`).
+public enum ReplyAdmission {
+    public static func admits(seen: String, marks: Set<String>, working: Bool, chained: @autoclosure () -> Bool) -> Bool {
+        if marks.contains(seen) || chained() { return true }
+        // A status change names no turn, so only working again says another began; with no turn named now, nothing tells.
+        if seen.hasPrefix(ReplyMark.statusPrefix) { return !working }
+        return !marks.contains { !$0.hasPrefix(ReplyMark.statusPrefix) }
+    }
+
+    /// One of a sender's earlier replies with the same `seen`: the turn it starts is one they meant, so their next reply,
+    /// sent before the phone heard of that turn, still names the one before it.
+    public struct Earlier: Sendable, Equatable {
+        public let at: Timestamp
+        public let words: String
+        /// The turn it started or joined, once the session's record showed it.
+        public let turn: String?
+        public init(at: Timestamp, words: String, turn: String?) { self.at = at; self.words = words; self.turn = turn }
+    }
+
+    /// Until its turn shows in the record; after that, as long as that turn is the session's.
+    public static let chainWindow: TimeInterval = 30
+    public static let chainKept: TimeInterval = 3600
+
+    public static func keeps(age: TimeInterval, turnKnown: Bool) -> Bool {
+        age < (turnKnown ? chainKept : chainWindow)
+    }
+
+    public enum Chain: Equatable, Sendable {
+        case none
+        case known
+        /// The newest turn is this earlier reply's, by its words, and the caller records it.
+        case claims(Int)
+    }
+
+    /// Time alone can't tell the sender's own new turn from one someone at the Mac started meanwhile; the record can.
+    /// Newest first; a turn may be recorded up to 2 s before the reply was, as clocks go.
+    public static func chain(_ earlier: [Earlier], newest: (id: String, at: Timestamp, text: String)?, sameWords: (String, String) -> Bool) -> Chain {
+        guard !earlier.isEmpty, let newest else { return .none }
+        for (index, reply) in earlier.enumerated().reversed() {
+            if let turn = reply.turn {
+                if turn == newest.id { return .known }
+                continue
+            }
+            guard newest.at >= reply.at - 2, sameWords(newest.text, reply.words) else { continue }
+            return .claims(index)
+        }
+        return .none
+    }
+}
+
+public extension Capability {
+    /// `RemoteReply.seen`, and 409 `session_moved_on`.
+    static let repliesSeen = Self(rawValue: "replies.seen")
+    /// `RemoteReply.promotes`.
+    static let repliesPromote = Self(rawValue: "replies.promote")
 }
 
 public struct ReplyResult: Codable, Hashable, Sendable {

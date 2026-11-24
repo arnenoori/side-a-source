@@ -40,11 +40,12 @@ final class CaptureProtocol: URLProtocol, @unchecked Sendable {
     #expect(!analytics.enabled)
     analytics.capture(.launched)
     analytics.capture(.accountConnected, provider: .claude)
-    try await Task.sleep(for: .milliseconds(100))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving nothing is sent: there is no event to wait for
+    try await Task.sleep(for: .milliseconds(50))
     #expect(CaptureProtocol.requests.isEmpty)
     analytics.setEnabled(true)
     analytics.capture(.accountConnected, provider: .claude)
-    for _ in 0..<30 where CaptureProtocol.requests.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { !CaptureProtocol.requests.isEmpty }
     #expect(CaptureProtocol.requests.count == 1)
     #expect(CaptureProtocol.requests.first?.url?.absoluteString == "https://us.i.posthog.com/i/v0/e/")
     let body = try #require(CaptureProtocol.requests.first?.httpBody)
@@ -59,7 +60,8 @@ final class CaptureProtocol: URLProtocol, @unchecked Sendable {
     analytics.capture(.launched)
     let demo = AppAnalytics(defaults: defaults, allowed: false, token: "phc_fixture", session: session)
     demo.setEnabled(true); demo.capture(.accountConnected, provider: .claude)
-    try await Task.sleep(for: .milliseconds(100))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving a demo-mode capture sends nothing more
+    try await Task.sleep(for: .milliseconds(50))
     #expect(CaptureProtocol.requests.count == 1)
     #expect(!AppAnalytics(defaults: defaults, token: "phc_fixture", session: session).enabled)
     #expect(!demo.enabled)

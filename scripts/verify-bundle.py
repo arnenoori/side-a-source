@@ -34,6 +34,7 @@ def main():
     # The fixed paths AppResources reads; SwiftPM's resource bundle must not ship.
     expected_resources = {f"Resources/bridge/{path.name}": path for path in (root / "bridge").glob("*.py")}
     expected_resources["Resources/discman.json"] = root / "Sources/SideA/Resources/discman.json"
+    expected_resources.update({f"Resources/AppIcons/{path.name}": path for path in (root / "Sources/SideA/Resources/AppIcons").glob("*.png")})
     require("Resources/bridge/sidea_bridge.py" in expected_resources, "No bridge sources found")
     for name, source in expected_resources.items():
         require((contents / name).is_file(), f"Resource missing: {name}")

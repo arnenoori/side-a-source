@@ -163,10 +163,11 @@ private final class FakeAnthropic: @unchecked Sendable {
     #expect(decisions.answered.map(\.0) == ["full", "ok"])
 }
 
-/// A lost connection may have got there, so only the routes that make a turn take the risk of a second one.
+/// A lost connection may have got there, so only turns, and routes that change nothing, risk a second one.
 @Test func onlyTurnsAreResentOnALostConnection() {
     #expect(PoolProxy.resends("/v1/messages?beta=true") && PoolProxy.resends("/v1/messages") && PoolProxy.resends("/codex/responses"))
-    #expect(!PoolProxy.resends("/v1/messages/count_tokens") && !PoolProxy.resends("/v1/messages/batches") && !PoolProxy.resends("/codex/models"))
+    #expect(PoolProxy.resends("/v1/messages/count_tokens") && PoolProxy.resends("/codex/models", method: "GET"))
+    #expect(!PoolProxy.resends("/v1/messages/batches") && !PoolProxy.resends("/codex/models"))
 }
 
 @MainActor @Test func aSharedPoolServesOnlyAdmittedPeersWithTheShareKey() async throws {
@@ -309,7 +310,7 @@ private actor Admitted {
     var open = false
     func poolAccount(_ provider: AgentProvider, session: String?, excluding: Set<String>) -> String? { excluding.isEmpty ? "ok" : nil }
     func poolToken(_ account: String, refused: Bool) async throws -> PoolCredential {
-        while !open { try await Task.sleep(for: .milliseconds(10)) }
+        await eventually { open }
         return PoolCredential(token: "tok-ok", accountID: nil)
     }
     func poolRefused(_ provider: AgentProvider?, session: String?, status: Int, message: String) {}

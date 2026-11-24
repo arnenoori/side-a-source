@@ -1,0 +1,6 @@
+{
+  "fix": "atMac",
+  "kind": "signedOut",
+  "message": "Claude isn't signed in on the Mac (Work). Sign in again there to go on.",
+  "retryable": false
+}

@@ -44,26 +44,65 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let content = response.notification.request.content
-        // Actions only on a payload this phone opened; anything else just opens the app.
-        guard let payload = PushOpener.verified(response.notification.request) else {
-            if let payload = PushPayload(userInfo: content.userInfo) { open(payload) }
+        // The relay's own word that a Mac went quiet: nothing sealed, nothing to act on, so it opens that Mac.
+        if content.categoryIdentifier == PushCategory.macQuiet.rawValue {
+            if let link = Self.quietLink(content.userInfo) { open(link) }
             return
         }
+        // Actions only on a payload this phone opened; anything else just opens the app.
+        guard let payload = PushOpener.verified(response.notification.request) else {
+            guard let payload = PushPayload(userInfo: content.userInfo) else { return }
+            if content.userInfo[Self.composeKey] as? Bool == true, let link = Self.composeLink(for: payload) { return open(link) }
+            return open(payload)
+        }
+        let typed = (response as? UNTextInputNotificationResponse)?.userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identifier = response.notification.request.identifier
         let result: NotificationAnswer.Result
         if let answer = NotificationCategories.answer(for: response.actionIdentifier), let request = payload.rid {
             result = await NotificationAnswer.send(answer, to: request, macID: payload.mac)
-        } else if let reply = response as? UNTextInputNotificationResponse, let session = payload.sid {
-            result = await NotificationAnswer.reply(reply.userText, to: session, turnID: payload.turnID, macID: payload.mac)
+        } else if let typed, !typed.isEmpty, response.actionIdentifier == NotificationCategories.Action.answer, let request = payload.rid,
+                  PushOpener.answersTyped(payload), let question = payload.questions?.first {
+            let answer = RemoteAnswer.answers([QuestionAnswer(question: question.question, picked: [], other: typed)])
+            result = await NotificationAnswer.send(answer, to: request, macID: payload.mac, typed: payload.sid.map { (text: typed, session: $0) })
+        } else if let typed, !typed.isEmpty, let session = payload.sid {
+            // Face ID's Reply brought the app forward with the words: they wait in the field, where one Face ID sends them.
+            if content.categoryIdentifier == PushCategory.finishedFaceID.rawValue {
+                NotificationDrafts.keep(typed, session: session, mac: payload.mac)
+                if let link = Self.composeLink(for: payload) { open(link) }
+                return
+            }
+            result = await NotificationAnswer.reply(typed, to: session, turnID: payload.turnID, macID: payload.mac)
         } else {
             open(payload)
             return
         }
         switch result {
         case .sent, .answeredElsewhere: break
+        case .queued(let mac) where payload.rid == nil:
+            await notice("Not confirmed yet: open Side A Remote to see whether your reply reached \(mac).", payload, replacing: identifier)
         case .queued(let mac): await couldNotReach(mac, payload)
+        // Nothing runs a notification's work later: only the app, once opened, sends it.
+        case .held(let mac):
+            await notice("Not sent yet: couldn't reach \(mac). Side A Remote sends your reply when you next open it, unless the session has moved on by then.",
+                         payload, replacing: identifier)
+        case .kept(let message): await notice(message, payload, replacing: identifier, compose: payload.rid == nil)
         case .failed(let message) where response is UNTextInputNotificationResponse: await notice("\(message) Open to send it again.", payload)
-        case .failed, .noMac: await couldNotReach(PairedMac.load(payload.mac)?.displayName ?? "your Mac", payload)
+        case .failed, .noMac: await couldNotReach(PairedMac.load(payload.mac)?.displayName ?? PairedMac.all().map(\.endpoint.kind).shared.your(), payload)
         }
+    }
+
+    /// The Mac a "gone quiet" push names, `q` being the id its Live Activities carry: its Sessions, where the connection's state is.
+    static func quietLink(_ userInfo: [AnyHashable: Any], macs: [PairedMac] = PairedMac.all()) -> URL? {
+        guard let named = userInfo["q"] as? String,
+              let mac = macs.first(where: { $0.relayInstallID.map(RelayDevice.activityMacID(install:)) == named }) else { return nil }
+        return URL(string: "sidea-remote://mac/\(mac.endpoint.macID)")
+    }
+
+    /// A notice's tap that opens the session's composer with what the notification couldn't send.
+    static let composeKey = "compose"
+
+    static func composeLink(for payload: PushPayload) -> URL? {
+        payload.sid.flatMap { URL(string: "sidea-remote://compose/\(payload.mac)/\($0)") }
     }
 
     /// Open and connected to that Mac, the app already shows it: no banner, no sound.
@@ -79,8 +118,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     private func open(_ payload: PushPayload) {
         guard let url = Self.link(for: payload) else { return }
-        UIApplication.shared.open(url)
+        open(url)
     }
+
+    private func open(_ url: URL) { UIApplication.shared.open(url) }
 
     /// Open's destination: the request, else the session, else for a grouped Ready that Mac's sessions.
     static func link(for payload: PushPayload) -> URL? {
@@ -92,14 +133,20 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     /// "Couldn't reach MacBook Pro. Open to answer." in place of the one that failed.
     private func couldNotReach(_ mac: String, _ payload: PushPayload) async { await notice("Couldn't reach \(mac). Open to answer.", payload) }
 
-    private func notice(_ body: String, _ payload: PushPayload) async {
+    /// `replacing`: the notification acted on, which this takes the place of; `compose` makes its tap open the session's
+    /// composer.
+    private func notice(_ body: String, _ payload: PushPayload, replacing identifier: String? = nil, compose: Bool = false) async {
         let content = UNMutableNotificationContent()
         content.title = payload.title ?? "Side A needs you"
         content.subtitle = payload.subtitle ?? ""
         content.body = body
         content.threadIdentifier = payload.sid ?? ""
-        content.userInfo = ["p": (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(payload))) ?? [:]]
-        try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: payload.rid ?? UUID().uuidString,
-                                                                                 content: content, trigger: nil))
+        var info: [String: Any] = ["p": (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(payload))) ?? [:]]
+        if compose { info[Self.composeKey] = true }
+        content.userInfo = info
+        let request = UNNotificationRequest(identifier: payload.rid ?? identifier ?? UUID().uuidString, content: content, trigger: nil)
+        do { try await UNUserNotificationCenter.current().add(request) } catch {
+            RemoteLog.error(.push, "couldn't post a notification: \(KitLog.describe(error))")
+        }
     }
 }

@@ -24,16 +24,6 @@ private actor Inbox {
     }
 }
 
-@MainActor
-private func soon(_ seconds: Double = 10, _ condition: () async -> Bool) async -> Bool {
-    let end = Date().addingTimeInterval(seconds)
-    while Date() < end {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(50))
-    }
-    return false
-}
-
 private func say(_ text: String, uuid: String, session: String, to home: URL) throws {
     let line: [String: Any] = ["type": "user", "uuid": uuid, "sessionId": session, "timestamp": "\(TranscriptFixture.today)T10:01:00Z", "cwd": "/tmp/app",
                                "message": ["role": "user", "content": [["type": "text", "text": text]]]]
@@ -70,7 +60,7 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     let port = freePort()
     server.serve(addresses: ["127.0.0.1"], port: port)
     defer { server.stop() }
-    for _ in 0..<250 where server.listenerStates.values.first != .ready { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { server.listenerStates.values.first == .ready }
 
     // The cursor the phone holds; then a message arrives while it's away.
     let page = try RemoteTranscript.page(try await store.sessions.remoteReply(["show", "--format", "remote", "--limit", "50", "--", "t1"]))
@@ -88,13 +78,13 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     }
     func send(_ message: ClientMessage) async throws { try await socket.send(.text(String(decoding: try JSONEncoder().encode(message), as: UTF8.self))) }
     try await send(.hello(epoch: nil, lastSeq: nil, capabilities: [.events, .transcriptStream]))
-    #expect(await soon { await inbox.events.contains { if case .snapshot = $0 { true } else { false } } })
+    #expect(await eventually { await inbox.events.contains { if case .snapshot = $0 { true } else { false } } })
 
     try await send(.subscribe(sessions: ["t1": page.after]))
-    #expect(await soon { await inbox.appended == ["Away message"] })
+    #expect(await eventually { await inbox.appended == ["Away message"] })
 
     try say("Live message", uuid: "u10", session: "t1", to: home)
-    let live = await soon { await inbox.appended == ["Away message", "Live message"] }
+    let live = await eventually { await inbox.appended == ["Away message", "Live message"] }
     let heard = await inbox.events
     #expect(live, "\(heard)")
     // Each delta's cursor is what the phone pages from next: nothing past it.
@@ -106,7 +96,7 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     var lines = TranscriptFixture.lines(session: "t1", cwd: "/tmp/app", day: TranscriptFixture.today)
     lines[0]["uuid"] = "u0-rewritten"
     try TranscriptFixture.write(lines, session: "t1", home: home)
-    #expect(await soon { await inbox.events.contains { if case .transcriptReset(let session, _) = $0 { session == "t1" } else { false } } })
+    #expect(await eventually { await inbox.events.contains { if case .transcriptReset(let session, _) = $0 { session == "t1" } else { false } } })
     socket.close(code: 1000, reason: nil)
 }
 
@@ -148,7 +138,7 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     let port = freePort()
     server.serve(addresses: ["127.0.0.1"], port: port)
     defer { server.stop() }
-    for _ in 0..<250 where server.listenerStates.values.first != .ready { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { server.listenerStates.values.first == .ready }
 
     var request = URLRequest(url: URL(string: "wss://127.0.0.1:\(port)/v1/ws/events")!)
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -161,8 +151,9 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
         }
     }
     try await socket.send(.text(String(decoding: try JSONEncoder().encode(ClientMessage.hello(epoch: nil, lastSeq: nil, capabilities: [.events])), as: UTF8.self)))
-    #expect(await soon { await inbox.events.contains { if case .welcome(let welcome) = $0 { welcome.snapshotOverREST } else { false } } })
-    try await Task.sleep(for: .milliseconds(300))
+    #expect(await eventually { await inbox.events.contains { if case .welcome(let welcome) = $0 { welcome.snapshotOverREST } else { false } } })
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that no snapshot follows a welcome that says to fetch it over REST
+    try await Task.sleep(for: .milliseconds(90))
     #expect(await !inbox.events.contains { if case .snapshot = $0 { true } else { false } })
 }
 
@@ -180,6 +171,7 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     let server = RemoteServer(identity: identity, epoch: "e1") { _, _ in HTTPResponse(status: 404) }
     let hub = EventHub(queue: server.queue, epoch: "e1", snapshot: { { seq, epoch in StateSnapshot(seq: seq, epoch: epoch) } }, hello: {
         // The first welcome takes its time on the main actor, so the second hello lands before it.
+        // swiftlint:disable:next sleep_as_sync_in_tests -- the slow welcome is the point
         Thread.sleep(forTimeInterval: 0.3)
         return Hello(app: "", build: 0, mac: MacInfo(id: "", name: ""), capabilities: [], epoch: "e1", serverTime: 0, remoteOn: true,
               endpoints: Endpoints(tailnet: ""), keyID: "")
@@ -190,7 +182,7 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     let port = freePort()
     server.serve(addresses: ["127.0.0.1"], port: port)
     defer { server.stop() }
-    for _ in 0..<250 where server.listenerStates.values.first != .ready { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { server.listenerStates.values.first == .ready }
 
     var request = URLRequest(url: URL(string: "wss://127.0.0.1:\(port)/v1/ws/events")!)
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -205,7 +197,8 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     let hello = String(decoding: try JSONEncoder().encode(ClientMessage.hello(epoch: nil, lastSeq: nil, capabilities: [.events])), as: UTF8.self)
     try await socket.send(.text(hello))
     try await socket.send(.text(hello))
-    #expect(await soon { await inbox.events.contains { if case .welcome = $0 { true } else { false } } })
+    #expect(await eventually { await inbox.events.contains { if case .welcome = $0 { true } else { false } } })
+    // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- proving no second welcome follows: the window must outlast the first welcome's 0.3 s
     try await Task.sleep(for: .milliseconds(500))
     #expect(await inbox.events.filter { if case .welcome = $0 { true } else { false } }.count == 1)
     socket.close(code: 1000, reason: nil)

@@ -55,7 +55,8 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
     /// The category's buttons, while the card is up: a typed answer or one of the actions.
     func didReceive(_ response: UNNotificationResponse, completionHandler completion: @escaping (UNNotificationContentExtensionResponseOption) -> Void) {
         guard let card else { return completion(.dismissAndForwardAction) }
-        if let typed = response as? UNTextInputNotificationResponse, response.actionIdentifier == NotificationCategories.Action.writeOwn {
+        if let typed = response as? UNTextInputNotificationResponse,
+           [NotificationCategories.Action.writeOwn, NotificationCategories.Action.answer].contains(response.actionIdentifier) {
             card.typed(typed.userText)
             completion(.doNotDismiss)
         } else if let answer = NotificationCategories.answer(for: response.actionIdentifier), card.payload != nil {

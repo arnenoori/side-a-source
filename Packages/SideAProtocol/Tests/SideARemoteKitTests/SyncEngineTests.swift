@@ -298,7 +298,7 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     let replied = await sync.reply(sid, reply, id: "k1")
     #expect(replied == .reply(sid, reply, id: "k1", macID: endpoint.macID, now: replied.createdAt))
     let replyBody = try encoder.encode(reply)
-    #expect(replied.body == replyBody && replied.expiresAt - replied.createdAt == 600)
+    #expect(replied.body == replyBody && replied.expiresAt - replied.createdAt == Outbox.Item.replyLifetime)
 }
 
 @Test func theMacsOwnStateAndIncidentsFollowEvents() async throws {

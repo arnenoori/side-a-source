@@ -4,8 +4,13 @@ Use short feature/fix branches and focused pull requests. Keep business logic ou
 of views, keep the native UI and bridge state contracts documented, and do not add
 dependencies when the platform/standard library is sufficient.
 
-Checks run on your Mac, not GitHub Actions. `git config core.hooksPath .githooks` once per clone runs
-`scripts/check.sh` before each push, with the gates the changed files need; `scripts/check.sh --all` runs them all.
+Checks run on your Mac, not GitHub Actions. The pre-push hook (`.githooks`) runs `scripts/check.sh` on each pushed commit,
+with the gates the changed files need; `scripts/check.sh --all` runs them all. `scripts/setup-hooks.sh` sets
+`core.hooksPath` when it is unset, and `dev.sh` and `check.sh` call it, so every worktree of a clone gets the hook; a
+scratch clone gets it the first time either runs, or run `scripts/setup-hooks.sh` yourself.
+A run that passes every gate its change needs, on a clean tree with nothing skipped, posts a `local-check` commit status
+on that commit (after the push, from the hook; or `scripts/check.sh --post <sha>`). Merge with `scripts/merge-pr.sh <number>`
+instead of `gh pr merge`: it refuses a PR whose head commit has no `local-check` success, checking the commit itself first.
 Any change also gets the public-source scan (home paths, tailnet names, tokens) over `git archive HEAD`.
 A `Packages/` change runs the iOS tests too, since apps/ios builds against `Packages/SideAProtocol`; with no
 iPhone simulator it fails, unless `SIDEA_IOS_TESTS=skip` is set, which says loudly that they were skipped.

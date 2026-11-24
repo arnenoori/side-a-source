@@ -62,8 +62,12 @@ public struct AgentOptions: Codable, Hashable, Sendable {
     public let models: [ModelOption]
     /// Slash commands, the user's own included.
     public let commands: [Option]
-    public init(agent: AgentProvider, installed: Bool, models: [ModelOption] = [], commands: [Option] = []) {
-        self.agent = agent; self.installed = installed; self.models = models; self.commands = commands
+    /// Whether the Mac has a login for this agent, so a handoff to it can start. Nil from a Mac without `restart.agent`.
+    // swiftlint:disable:next discouraged_optional_boolean -- absent from a Mac without restart.agent
+    public var signedIn: Bool?
+    // swiftlint:disable:next discouraged_optional_boolean -- the initialiser mirrors the optional field
+    public init(agent: AgentProvider, installed: Bool, models: [ModelOption] = [], commands: [Option] = [], signedIn: Bool? = nil) {
+        self.agent = agent; self.installed = installed; self.models = models; self.commands = commands; self.signedIn = signedIn
     }
 }
 

@@ -1,0 +1,18 @@
+{
+  "accountID": "c0dec0de-1111-4222-8333-444455556666",
+  "agent": "codex",
+  "effort": "high",
+  "handoff": {
+    "branch": "fix/island",
+    "cwd": "/Users/you/code/app",
+    "failed": "",
+    "fromAgent": "claude",
+    "goal": "Keep the island's height steady when a question arrives",
+    "lastMessages": "",
+    "next": "",
+    "project": "app"
+  },
+  "message": "Take it from here: measure the card first, then run the tests.",
+  "model": "gpt-5.5",
+  "permissionMode": "default"
+}

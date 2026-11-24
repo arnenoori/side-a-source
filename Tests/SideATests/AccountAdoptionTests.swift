@@ -33,11 +33,9 @@ import Testing
     }
     func tick() async throws {
         #expect(await store.refreshActive())
-        // The adds start in their own tasks.
-        try await Task.sleep(for: .milliseconds(30))
-        for _ in 0..<100 where !store.adopting.isEmpty {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        // The adds start in their own main-actor tasks; yielding lets each reach its first wait, then it is `adopting`.
+        for _ in 0..<10 { await Task.yield() }
+        await eventually { store.adopting.isEmpty }
     }
 }
 

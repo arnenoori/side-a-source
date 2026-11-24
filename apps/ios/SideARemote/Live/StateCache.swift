@@ -13,6 +13,9 @@ struct StateCache: Codable {
     var savedAt: Date
     /// What was typed in each session's composer and not sent. Missing in a file written before drafts were kept.
     var drafts: [SessionKey: String]?
+    /// New Session's folders, models and commands, so the sheet works while the Mac is out of reach. Missing in older files.
+    var projects: [RemoteProject]?
+    var options: OptionsList?
 
     /// Transcripts kept, the sessions most recently active first, and messages kept of each.
     static let keptTranscripts = 12
@@ -60,6 +63,7 @@ extension AppModel {
             transcripts.set(list, hasEarlier: (list.first?.seq ?? 0) > 0, for: session)
         }
         for (session, text) in cache.drafts ?? [:] where transcripts.drafts[session, default: ""].isEmpty { transcripts.drafts[session] = text }
+        tools.restore(options: cache.options, projects: cache.projects)
         mac.lastSeen = cache.savedAt
     }
 
@@ -72,6 +76,6 @@ extension AppModel {
         }
         let drafts = transcripts.drafts.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return StateCache(sessions: sessions.sessions, finished: finished, accounts: accounts.accounts, transcripts: kept, savedAt: .now,
-                          drafts: drafts.isEmpty ? nil : drafts)
+                          drafts: drafts.isEmpty ? nil : drafts, projects: tools.projects.isEmpty ? nil : tools.projects, options: tools.options)
     }
 }

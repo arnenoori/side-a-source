@@ -4,8 +4,8 @@
 import { DurableObject } from 'cloudflare:workers';
 import { NONCE_WINDOW, installIdFor, verifyEd25519 } from './auth';
 import { b64url, equalBytes, sha256 } from './bytes';
-import type { Delivery, Environment, Outcome } from './apns';
-import { MAX_DEVICES, activityRequest, alertRequest, challengeRequest, macIDFor, type Send } from './send';
+import { deliver, type Delivery, type Environment, type Outcome } from './apns';
+import { MAX_DEVICES, activityRequest, alertRequest, challengeRequest, macIDFor, quietRequest, type Quiet, type Send } from './send';
 import { Tunnel, type Refusal } from './tunnel';
 
 const MINUTE = 60_000;
@@ -55,6 +55,8 @@ export interface DeviceInput extends ApnsRoute {
   secretHash: Uint8Array;
   pushToStartToken?: string;
   appVersion: string;
+  // The phone asked to hear when its Mac goes quiet; undefined from a Mac that doesn't say, which leaves it as it was.
+  quiet?: boolean;
 }
 
 export type MacOp =
@@ -160,7 +162,8 @@ export class Install extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.tunnel = new Tunnel(ctx, () => this.exists() ? new Uint8Array(this.install().public_key) : null);
+    this.tunnel = new Tunnel(ctx, () => this.exists() ? new Uint8Array(this.install().public_key) : null,
+      (alerted, now) => { if (alerted) ctx.waitUntil(this.tell('back', now).catch(() => null)); });
     // Keepalives are answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
@@ -185,12 +188,12 @@ export class Install extends DurableObject<Env> {
   }
 
   override async webSocketClose(ws: WebSocket, code: number) {
-    this.tunnel.closed(ws);
+    await this.tunnel.closed(ws);
     try { ws.close(code === 1005 || code === 1006 ? 1000 : code, ''); } catch {}
   }
 
   override async webSocketError(ws: WebSocket) {
-    this.tunnel.closed(ws);
+    await this.tunnel.closed(ws);
   }
 
   private exists(): boolean {
@@ -209,6 +212,12 @@ export class Install extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS activities(id TEXT PRIMARY KEY, device_id TEXT, update_token TEXT, bundle TEXT,
                                             environment TEXT, created INTEGER);
       CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY, data TEXT);`);
+  }
+
+  // The devices that asked to hear when the Mac goes quiet. Its own table, so an install from before it needs no migration.
+  private quietDevices(): string[] {
+    this.sql.exec('CREATE TABLE IF NOT EXISTS quiet_devices(id TEXT PRIMARY KEY)');
+    return this.sql.exec<{ id: string }>('SELECT id FROM quiet_devices').toArray().map(row => row.id);
   }
 
   private install() {
@@ -293,7 +302,7 @@ export class Install extends DurableObject<Env> {
         // A gone device stays listed until the Mac removes it, but can't be verified.
         const { devices, verified } = this.sql.exec<{ devices: number; verified: number }>(
           'SELECT COUNT(*) AS devices, COUNT(CASE WHEN verified = 1 AND apns_token IS NOT NULL THEN 1 END) AS verified FROM devices').one();
-        const activities = this.sql.exec('SELECT COUNT(*) AS n FROM activities').one().n as number;
+        const activities = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM activities').one().n;
         const gone = this.sql.exec<{ device: string; reason: string | null }>(
           'SELECT id AS device, gone_reason AS reason FROM devices WHERE apns_token IS NULL ORDER BY gone_at').toArray();
         return answer({ status: 200, body: { registered: true, devices, verified, activities, gone, paused: op.paused } });
@@ -306,6 +315,8 @@ export class Install extends DurableObject<Env> {
       case 'deleteDevice':
         this.sql.exec('DELETE FROM activities WHERE device_id = ?', op.deviceId);
         this.sql.exec('DELETE FROM devices WHERE id = ?', op.deviceId);
+        this.quietDevices();
+        this.sql.exec('DELETE FROM quiet_devices WHERE id = ?', op.deviceId);
         return answer({ status: 204 });
       case 'send':
         return this.plan(state, op.send, now, macID);
@@ -316,11 +327,16 @@ export class Install extends DurableObject<Env> {
 
   private putDevice(state: State, installId: string, id: string, input: DeviceInput, now: number, fresh: Fresh): Answer {
     const existing = this.device(id);
-    if (!existing && this.sql.exec('SELECT COUNT(*) AS n FROM devices').one().n as number >= MAX_DEVICES) {
+    if (!existing && this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM devices').one().n >= MAX_DEVICES) {
       return answer(error(409, 'too_many_devices', `An install has at most ${MAX_DEVICES} devices`));
     }
     // The proof was for one token at one app and host; moving any of them needs a new one.
     const sameToken = existing?.apns_token === input.apnsToken && existing.bundle === input.bundle && existing.environment === input.environment;
+    if (input.quiet !== undefined) {
+      this.quietDevices();
+      if (input.quiet) this.sql.exec('INSERT OR IGNORE INTO quiet_devices VALUES (?)', id);
+      else this.sql.exec('DELETE FROM quiet_devices WHERE id = ?', id);
+    }
     this.sql.exec(
       `INSERT OR REPLACE INTO devices(id, apns_token, bundle, environment, secret_hash, push_to_start, app_version, token_updated,
                                       gone_at, gone_reason, verified, challenge_hash, challenge_sent, challenge_route)
@@ -518,28 +534,68 @@ export class Install extends DurableObject<Env> {
       case 'unpair':
         this.sql.exec('DELETE FROM activities WHERE device_id = ?', deviceId);
         this.sql.exec('DELETE FROM devices WHERE id = ?', deviceId);
+        this.quietDevices();
+        this.sql.exec('DELETE FROM quiet_devices WHERE id = ?', deviceId);
         this.tunnel.forget(deviceId);
         return answer({ status: 204 });
     }
   }
 
+  // A Mac that has gone quiet, found by the alarm, and a word to the phones that asked: once per outage, one push each, through
+  // the same per-minute and per-day limits as a send. Returns when to look again.
+  async watch(now: number): Promise<number | null> {
+    const quiet = this.tunnel.quiet(now);
+    if (!quiet.alert) return quiet.next;
+    const done = await this.tell(quiet.alert, now);
+    if (done) return this.tunnel.quiet(now).next;
+    // Paused, unconfigured, limited or unreachable: the outage is still untold, and tried again shortly.
+    this.tunnel.unalert();
+    return now + (done === null ? 5 * MINUTE : MINUTE);
+  }
+
+  // true: told (or nobody to tell); false: APNs said retry; null: not now.
+  private async tell(kind: Quiet, now: number): Promise<boolean | null> {
+    if (!this.exists()) return true;
+    const on = (value: string | undefined) => /^(1|true|yes)$/i.test(value ?? '');
+    if (on(this.env.RELAY_PAUSED) || on(this.env.RELAY_TUNNEL_PAUSED) || !this.env.APNS_KEY_P8 || !this.env.APNS_KEY_ID || !this.env.APNS_TEAM_ID) return null;
+    const { install_id: installId } = this.install();
+    const macID = await macIDFor(installId);
+    const asked = new Set(this.quietDevices());
+    const rows = this.sql.exec<DeviceRow>('SELECT * FROM devices WHERE apns_token IS NOT NULL AND verified = 1').toArray()
+      .filter(device => asked.has(device.id));
+    if (!rows.length) return true;
+    const state = this.load(now);
+    const wait = this.take(state, 'send.minute', MINUTE, LIMITS.sendsPerMinute, now) || this.take(state, 'send.day', DAY, LIMITS.sendsPerDay, now);
+    this.save(state, now);
+    if (wait) return null;
+    const seconds = Math.floor(now / 1000);
+    const targets: Target[] = rows.flatMap(device => device.apns_token === null ? [] : [{
+      deviceId: device.id, kind: 'device' as const,
+      delivery: { token: device.apns_token, environment: device.environment, request: quietRequest(kind, macID, seconds, device.bundle), canFlip: true },
+    }]);
+    const reports = await Promise.all(targets.map(async target => ({ target, outcome: await deliver(this.env, target.delivery, { now: seconds }) })));
+    await this.settle(reports.filter(({ outcome }) => outcome.result === 'ok' || outcome.result === 'gone'));
+    return !reports.some(({ outcome }) => outcome.result === 'retry');
+  }
+
   override async alarm() {
     const now = Date.now();
     if (!this.exists()) return;
+    const next = await this.watch(now);
     const nextPairingEnd = this.tunnel.sweepPairing(now);
     this.sql.exec('DELETE FROM activities WHERE created < ?', now - LIMITS.activityLifetime);
     const { created, last_send: lastSend, empty_since: emptySince } = this.sql.exec<{ created: number; last_send: number | null; empty_since: number | null }>(
       'SELECT created, last_send, empty_since FROM install').one();
     // A Mac that only tunnels is as alive as one that sends.
     const lastUsed = Math.max(lastSend ?? created, this.tunnel.lastUsed() ?? 0);
-    const live = (this.sql.exec('SELECT COUNT(*) AS n FROM devices WHERE apns_token IS NOT NULL').one().n as number) + this.tunnel.devices();
+    const live = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM devices WHERE apns_token IS NOT NULL').one().n + this.tunnel.devices();
     if (now - lastUsed > LIMITS.silentInstall || (!live && emptySince !== null && now - emptySince > LIMITS.emptyInstall)) {
       await this.erase();
       return;
     }
     if (!live && emptySince === null) this.sql.exec('UPDATE install SET empty_since = ?', now);
     if (live && emptySince !== null) this.sql.exec('UPDATE install SET empty_since = NULL');
-    await this.ctx.storage.setAlarm(Math.min(now + DAY, nextPairingEnd ?? Infinity));
+    await this.ctx.storage.setAlarm(Math.min(now + DAY, nextPairingEnd ?? Infinity, next ?? Infinity));
   }
 
   private async erase() {

@@ -293,6 +293,49 @@ connection that presents another key, so nothing else on the network can stand i
   `remote/idempotency.sqlite`, so a retry never runs twice. A first prompt starting with `-` is
   refused, and prompts follow `--` on the agent's command line, so a prompt is never read as a flag.
   Model and effort must be one plain word.
+- **Files.** A paired phone can open a file in a live session's folder, with its token alone, as it reads the
+  transcript. The real path, symlinks followed, must be inside that folder's real path; only regular files of at
+  most 20 MiB with no other hard link go (a link inside the folder can be any file on the Mac), and never `.env*`, `*.pem`, `*.p12`, `*.pfx`, SSH key names (`id_rsa*`
+  and the like), `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, or anything under a folder named `.git`, `.ssh`,
+  `.aws`, `.gnupg`, `.docker`, `.kube`, `.codex`, `.azure`, `.gcloud` or `.terraform`, nor other key and credential
+  files (`*.key`, `*.p8`, `*.tfstate`, `auth.json`, `credentials*`, `service-account*`; `FileReads` holds the list).
+  Nothing under `~/Library`, `~/.claude`, `~/.config` or the home folder's own sign-in folders goes, whatever the
+  session's folder, and from a session whose folder is the home folder, above it or inside one of those, nothing
+  whose path has a hidden part, so sign-ins,
+  shell history and Side A's own keys stay on the Mac. The list is names, not contents: a secret in an ordinary
+  file inside a project goes as the transcript would show it. A refusal is logged without the path.
+- **Screen on iPhone** shows the Mac's whole display, or one window, as live video: everything on it, including
+  other apps, notifications and anything typed into them. It is off until turned on at the Mac in Settings › iPhone ›
+  Screen, and its clicks and typing are a second switch, also off. Each opening of `/v1/ws/screen` needs a fresh Face ID
+  signature whose subject is the mode (`view` or `control`), so a signature to watch never lets the phone click; control
+  also asks the phone's owner first, as terminal typing does. One device watches at a time; a new one replaces it.
+  macOS's own Screen Recording permission gates the capture (Side A never asks for it because of a phone, only when you
+  turn the switch on at the Mac), and its recording indicator shows while a phone watches, beside a line in Side A's menu
+  with End. Clicks and keys are posted only with Accessibility allowed, the Control switch on, the socket opened for
+  control, a stream running and the Mac's screen unlocked, at most 30 a second. Capture runs only while a phone is
+  connected and reporting each second; six seconds of silence, the app going to the background, the socket dropping, the
+  switch going off, Remote stopping or the Mac sleeping each end it, and the capture lives inside Side A's process, so it
+  ends with it. The log (`remote.log`) records each opening and its end with the connection number, a six-character
+  device id, the mode and the route; never frames, window titles, typed text or click positions. Frames go over the
+  same TLS as everything else, and over the relay inside that TLS, so the relay sees only their size.
+- **Dictation.** The phone's mic records only after you tap it and asks for the microphone the first time. The recording
+  (AAC, mono, 16 kHz) goes from the phone to the Mac over Remote's TLS, and from the Mac to the speech-to-text provider
+  set in Settings > iPhone > Dictation (OpenAI), with words to listen for: the session's project name, the session's
+  title as the phone shows it, and the names of files git lists for the session's folder. No file names go when the
+  folder isn't a git repository or is the home folder or above it, and the folder is never walked for them. The
+  provider's API key is entered on the Mac, kept in Remote's Keychain service (`AfterFirstUnlockThisDeviceOnly`), shown
+  masked and never sent to the phone. Nothing is stored: the Mac holds the audio and the words in memory for the one
+  request, through an ephemeral URL session, keeps no idempotency record of it, and logs only the length, size, model,
+  time taken and outcome. Each phone may have one recording in flight and 120 an hour; past that the Mac answers 429
+  `transcribe_limited` and the phone transcribes on its own. On the phone the recording sits in the app's temporary
+  folder until its words are in the field, it is discarded (× or New Session's Cancel), or New Session starts without
+  it. One that neither the
+  Mac nor the phone could transcribe stays there, under the session's id or New Session's draft, so that field offers
+  Retry and Discard when it next opens; the first dictation field shown after each launch deletes any recording older
+  than a day. When the Mac can't transcribe, the phone does it on device with Apple's speech framework, and nothing
+  leaves the phone. The words are never sent by themselves: they land in the message field to edit. Test, on the Mac,
+  sends a phrase the Mac speaks itself, encoded through a temporary file deleted at once, only when pressed. What the
+  provider keeps is its own policy.
 - **Answering by itself.** With Autopilot's answers on, a question whose every part has an option
   marked recommended is answered after a minute. The agent writes that mark itself, so plans are
   never approved this way, and the answer tells the agent you haven't seen the question.
@@ -353,7 +396,7 @@ means the confirm key only.
 | Deny a request, or hand it back to the terminal | Token |
 | Allow a read inside a project of prose, a picture or source, outside hidden folders and not named for settings or secrets; a Glob, or a Grep that doesn't show matching lines, there | Token, so it can be answered from the Lock Screen |
 | Allow any other read, any edit, patch or new file, a Grep showing lines, any command, MCP tool, web fetch, unknown tool, or a request with hidden characters or padding | Unlock |
-| Allow anything flagged destructive; trust a folder; move the Mac's login; turn Autopilot or its answers on or off; open a terminal | Face ID |
+| Allow anything flagged destructive; trust a folder; move the Mac's login; turn Autopilot or its answers on or off; open a terminal; watch the screen, or control it | Face ID |
 | Allow while switching mode, or Always | Unlock; Face ID if it enters a permissive mode |
 | Change a session's settings | Unlock; Face ID if it enters a permissive mode (`bypassPermissions`, `auto`, `dontAsk`, or any mode Side A doesn't know) |
 | Reply, restart or continue | Unlock; Face ID if the session is permissive or Side A can't read its mode |
@@ -369,9 +412,25 @@ These need only the token, and why:
   phone with `Remove Device`.
 - **Uploads:** a photo runs nothing until a signed reply or start refers to it. Each phone holds at
   most 500 MB until its photos expire after 7 days, then gets a clear refusal.
-- **Interrupt and delete a queued note:** they only stop or withdraw, and must work at once.
+- **Transcribe:** it changes nothing on the Mac and answers only the words of the recording sent with it. A stolen
+  token could spend the Mac's speech-to-text credit until you revoke the phone, at most 120 recordings of up to 5
+  minutes an hour, one at a time.
+- **Interrupt and delete a queued note:** they only stop or withdraw, and must work at once. An interrupt's
+  `resend` types again only what that stop took off the prompt: words a signed reply already sent.
 - **Pin, rename or archive a past conversation, draft a handoff:** bookkeeping that can be undone. A
   draft runs nothing until a signed restart uses it.
+- **Read a handoff's prompt** (`GET /v1/handoffs/{id}`): it is the first prompt of a session the phone
+  can already read. Only an id Side A recorded is served, from the file it named; the phone never
+  sends a path.
+
+**Handoff files.** Handing a session off to the other agent (Claude to Codex, or back) writes the
+whole handoff, nothing left out, and the prompt as sent to
+`~/Library/Application Support/SideA/handoffs/<id>.md` and `<id>.sent.md`, mode 0600, outside any
+repository, with a small `<id>.json` naming the two conversations, agents and models. They hold the
+session's goal, branch, changed file names and diff stat, its plan, recent turns and the message you
+typed: the same words its transcript already holds. Side A deletes them after 30 days. The bridge's
+index keeps only the link (conversation ids, agents, models, time and the file's path), never the
+text, and nothing of a session's content goes into the logs.
 - **Close a preview, push diagnostics, check for an update, remove this device:** each changes only
   the phone's own link, and runs nothing.
 - **Register push:** the phone sends this on every connection, including background refresh on a locked

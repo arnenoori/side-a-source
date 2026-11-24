@@ -1,3 +1,4 @@
+import CryptoKit
 import SideAProtocol
 import SideARemoteShared
 import SwiftUI
@@ -63,6 +64,16 @@ final class ImageStore {
         guard let fetch, let fresh = try? await fetch(id, false), UIImage(data: fresh) != nil else { return nil }
         await Task.detached { [disk] in disk.store(fresh, id, thumbnail: false) }.value
         return fresh
+    }
+
+    /// Bytes fetched some other way, kept under their SHA-1 as the Mac's images are, so the viewer can show them.
+    func keep(_ data: Data, mime: String, name: String) async -> ImageRef? {
+        guard let image = await Self.decode(data) else { return nil }
+        let id = Insecure.SHA1.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        memory.setObject(image, forKey: key(id, false), cost: Int(image.size.width * image.size.height * image.scale * image.scale * 4))
+        await Task.detached(priority: .utility) { [disk] in disk.store(data, id, thumbnail: false) }.value
+        return ImageRef(id: id, mime: mime, bytes: data.count, width: Int(image.size.width * image.scale), height: Int(image.size.height * image.scale),
+                        source: .other, name: name)
     }
 
     private func key(_ id: String, _ thumbnail: Bool) -> NSString { (id + (thumbnail ? ".thumb" : "")) as NSString }

@@ -13,6 +13,7 @@ import SwiftUI
 struct NewSessionSheet: View {
     let onStarted: (HostedSession, AppModel) -> Void
     @Environment(AppRoot.self) private var root
+    @Environment(KeyRequests.self) private var keys: KeyRequests?
     @Environment(AppModel.self) private var shown
     @Environment(\.dismiss) private var dismiss
     /// The draft, held by the app until it starts or is discarded (`NewSessionForm`).
@@ -33,9 +34,13 @@ struct NewSessionSheet: View {
     /// The folders wouldn't load: shown in place of the list, with Try Again, not in the chip bar.
     @State private var loadError: String?
     @State private var starting = false
+    /// Start missed the Mac and asks again under the same key until it's back or the signature runs out.
+    @State private var waitingForMac = false
+    @State private var startTask: Task<Void, Never>?
     @State private var loading = true
     @State private var picking = false
     @State private var discarding = false
+    @State private var choosingModel = false
     @State private var started = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.windowIsRegular) private var wide
@@ -47,6 +52,7 @@ struct NewSessionSheet: View {
     @State private var attach = AttachSurface()
     /// The tray the photos are in, so a different Mac can have them sent to it.
     @State private var held: ComposerAttachments?
+    @State private var dictation = Dictation()
 
     /// The Macs that can start a session here.
     private var hosts: [AppModel] { root.macs.filter { $0.tools.can(.hosted) } }
@@ -57,14 +63,17 @@ struct NewSessionSheet: View {
     private var tools: MacTools { model.tools }
     private var macPicked: Bool { macID != nil || !asksMac || root.shown != nil }
     private var canStart: Bool {
-        project != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !starting && macPicked && !uploading
+        project != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !starting && macPicked && !uploading && !dictation.isBusy
     }
     private var attachments: ComposerAttachments { tools.attachments }
     /// A Mac that predates uploads gets no + at all, never a start that would leave a photo out.
     private var canAttach: Bool { Self.offersPhotos(canUpload: tools.can(.uploads), macPicked: macPicked) }
     static func offersPhotos(canUpload: Bool, macPicked: Bool) -> Bool { canUpload && macPicked }
     private var uploading: Bool { attachments.isUploading(draft) }
-    private var hasDraft: Bool { !prompt.isEmpty || !attachments.items(draft).isEmpty }
+    /// Something Cancel would lose: typed text, photos or a recording, not a blank field.
+    private var hasDraft: Bool {
+        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.items(draft).isEmpty || dictation.holdsRecording
+    }
     private var room: Int { attach.room(draft, tools: tools) }
     private var models: [ModelOption] { tools.models(for: agent) }
     private var chosenModel: ModelOption? { models.first { $0.id == modelID } }
@@ -76,6 +85,8 @@ struct NewSessionSheet: View {
                 VStack(alignment: .leading, spacing: Space.l) {
                     ComposerField(text: Bindable(form).prompt, selection: $promptSelection, isFocused: $focused, placeholder: "What should it do?",
                                   label: "Prompt", minLines: 6, maxLines: nil, insets: .zero, drawer: attach.drawer, paste: attach.target)
+                    PromptDictation(dictation: dictation, text: Bindable(form).prompt, selection: $promptSelection, focused: $focused, model: model,
+                                    project: project?.name, shelf: draft)
                     if prompt.isEmpty, project == nil, !recent.isEmpty, macPicked {
                         suggestions
                     }
@@ -103,8 +114,6 @@ struct NewSessionSheet: View {
                             Task { await load() }
                         }
                         .buttonStyle(.glass)
-                        .needsMac()
-                        .environment(model)
                     }
                 } else if tools.projects.isEmpty {
                     ContentUnavailableView("No Folders Yet", systemImage: "folder",
@@ -129,17 +138,16 @@ struct NewSessionSheet: View {
                         Button("Start") { start() }
                             .buttonStyle(.glassProminent)
                             .disabled(!canStart)
-                            .needsMac()
-                            .environment(model)
                     }
                 }
             }
-            .sheet(isPresented: $picking) { ProjectPicker(selection: Bindable(form).project).environment(model) }
+            .navigationDestination(isPresented: $picking) { ProjectPicker(selection: Bindable(form).project).environment(model) }
         }
         // A fitted iPad sheet is as tall as the title bar, the prompt and recents (no less than room for the folder list
         // or a message in its place) and the chips.
         .frame(idealHeight: wide ? 56 + max(contentHeight, 300) + barHeight : nil)
-        .interactiveDismissDisabled(hasDraft || starting)
+        // A swipe down closes it with the draft kept for the next time; only Cancel discards.
+        .interactiveDismissDisabled(starting || dictation.isBusy || attach.strip.holdsTouch)
         // On iPad a compose sheet as tall as what it holds; a phone's, and a narrow window's, fill the screen anyway.
         .presentationSizing(.form.fitted(horizontal: false, vertical: true))
         .attachments(attach, key: draft, tools: tools)
@@ -151,10 +159,10 @@ struct NewSessionSheet: View {
         .sensoryFeedback(.error, trigger: error) { _, new in new != nil }
         .task(id: model.macID) { await load() }
         // Another Mac has its own folders, models and accounts.
-        .onChange(of: macID) { project = nil; modelID = nil; effort = nil; accountID = nil; loading = true }
-        .onChange(of: agent) { modelID = nil; effort = nil; accountID = nil }
-        .onChange(of: modelID) { effort = nil }
-        .onChange(of: project) { if project?.gitRoot == nil { worktree = false } }
+        .onChange(of: macID) { project = nil; loading = true }
+        .onChange(of: agent) { keepOffered() }
+        .onChange(of: modelID) { keepOffered() }
+        .onChange(of: prompt) { newDraftStarted() }
         .onAppear { focused = true }
         #if DEBUG
         .task { await debugLaunch() }
@@ -184,7 +192,7 @@ struct NewSessionSheet: View {
         }
         if let mode = value("--drawer") {
             try? await Task.sleep(for: .milliseconds(900))
-            attach.open(key: draft, tools: tools, reduceMotion: reduceMotion, options: nil)
+            attach.open(key: draft, tools: tools, reduceMotion: reduceMotion)
             if mode == "large" { try? await Task.sleep(for: .milliseconds(900)); attach.drawer.toggleDetent() }
         }
     }
@@ -204,12 +212,17 @@ struct NewSessionSheet: View {
     private var suggestions: some View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text("Recent")
-                .font(.footnote.weight(.semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+                .accessibilityAddTraits(.isHeader)
             ForEach(recent) { folder in
                 Button { project = folder } label: { ProjectRow(project: folder) }
                     .buttonStyle(.plain)
+            }
+            if loadError != nil {
+                Text("From earlier · couldn't refresh from \(model.mac.name)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -221,12 +234,30 @@ struct NewSessionSheet: View {
             AttachmentTray(session: draft)
                 .environment(model)
                 .padding(.horizontal, Space.m)
+            if attach.strip.isShown {
+                RecentStripView(strip: attach.strip, window: attach.drawer.window)
+                    .padding(.horizontal, Space.m)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.destructive)
                     .padding(.horizontal, Space.m)
                     .transition(.opacity)
+            } else if waitingForMac {
+                HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+                    Label("Starts when connected", systemImage: "tray.and.arrow.up").foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    // The draft stays: the same key makes a later Start the same session, never a second one.
+                    Button("Stop Waiting") { startTask?.cancel() }
+                        .fontWeight(.semibold)
+                        .buttonStyle(.borderless)
+                        .hitArea(vertical: 12)
+                }
+                .font(.footnote)
+                .padding(.horizontal, Space.m)
+                .transition(.opacity)
             }
             Group {
                 // In a regular-width sheet every chip shows, wrapping onto a second row rather than scrolling out of sight.
@@ -250,28 +281,18 @@ struct NewSessionSheet: View {
         .padding(.vertical, Space.xs)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
         .animation(Motion.smooth(reduceMotion), value: error)
+        .animation(Motion.smooth(reduceMotion), value: waitingForMac)
         .animation(Motion.smooth(reduceMotion), value: attachments.items(draft).map(\.id))
+        .animation(Motion.smooth(reduceMotion), value: attach.strip.isShown)
     }
 
-    /// The same + as the composer's: the panel takes the keyboard's place, and the + turns to an ×.
+    /// The same + as the composer's: a tap for the menu, a hold for recent photos. No session yet, so no session files.
     private var attachButton: some View {
-        Button {
-            attach.open(key: draft, tools: tools, reduceMotion: reduceMotion, options: nil)
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 17, weight: .medium))
-                .rotationEffect(.degrees(attach.drawer.isOpen ? 45 : 0))
-                .animation(Motion.snappy(reduceMotion), value: attach.drawer.isOpen)
-                .frame(width: 44, height: 44)
-                .contentShape(.circle)
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
+        AttachButton(surface: attach, key: draft, tools: tools, diameter: 44, glyph: 17, label: "Attach photos")
         .attachPopover(attach)
         .disabled(room == 0)
         .needsMac()
         .environment(model)
-        .accessibilityLabel("Attach photos")
     }
 
     @ViewBuilder private var chipItems: some View {
@@ -304,15 +325,15 @@ struct NewSessionSheet: View {
 
     private var macChip: some View {
         Menu {
-            Picker("Mac", selection: Binding { macID ?? (root.shown != nil ? model.macID : nil) } set: { macID = $0 }) {
+            Picker(hosts.map(\.mac.kind).shared.titleNoun, selection: Binding { macID ?? (root.shown != nil ? model.macID : nil) } set: { macID = $0 }) {
                 ForEach(hosts, id: \.macID) { mac in
                     Label(mac.mac.name, systemImage: "laptopcomputer").tag(Optional(mac.macID))
                 }
             }
         } label: {
-            ChipLabel(symbol: "laptopcomputer", text: macPicked ? model.mac.name : "Mac", prominent: !macPicked)
+            ChipLabel(symbol: "laptopcomputer", text: macPicked ? model.mac.name : hosts.map(\.mac.kind).shared.titleNoun, prominent: !macPicked)
         }
-        .accessibilityLabel(macPicked ? "Mac, \(model.mac.name)" : "Choose a Mac")
+        .accessibilityLabel(macPicked ? "\(model.mac.kind.titleNoun), \(model.mac.name)" : "Choose a \(hosts.map(\.mac.kind).shared.titleNoun)")
     }
 
     private var agentChip: some View {
@@ -332,22 +353,13 @@ struct NewSessionSheet: View {
     }
 
     private var modelChip: some View {
-        Menu {
-            Picker("Model", selection: Bindable(form).modelID) {
-                Text("Default").tag(String?.none)
-                ForEach(models, id: \.id) { Text($0.title).tag(Optional($0.id)) }
-            }
-            if let chosenModel, !chosenModel.efforts.isEmpty {
-                Picker("Effort", systemImage: "gauge.with.dots.needle.50percent", selection: Bindable(form).effort) {
-                    ForEach(chosenModel.efforts, id: \.self) { Text($0.title).tag(Optional($0)) }
-                }
-                .pickerStyle(.menu)
-            }
-        } label: {
-            let effortText = (effort ?? chosenModel?.defaultEffort).flatMap { $0 == .auto ? nil : $0.title }
-            ChipLabel(symbol: nil, text: [chosenModel?.title ?? "Default model", effortText].compactMap { $0 }.joined(separator: " · "))
+        Button { choosingModel = true } label: {
+            ChipLabel(symbol: nil, text: ModelOption.chipText(chosenModel, effort: effort))
         }
-        .accessibilityLabel("Model, \(chosenModel?.title ?? "default")")
+        .accessibilityLabel("Model, \(ModelOption.chipText(chosenModel, effort: effort))")
+        .sheet(isPresented: $choosingModel) {
+            ModelEffortSheet(models: models, offersDefault: true, modelID: Bindable(form).modelID, effort: Bindable(form).effort)
+        }
     }
 
     private var worktreeChip: some View {
@@ -364,7 +376,7 @@ struct NewSessionSheet: View {
 
     private var macTabChip: some View {
         Menu {
-            Picker("Mac Tab", selection: $openOnMac) {
+            Picker("\(model.mac.kind.titleNoun) Tab", selection: $openOnMac) {
                 Text("Also open a tab on \(model.mac.name)").tag(true)
                 Text("Only on \(ThisDevice.kind)").tag(false)
             }
@@ -392,21 +404,69 @@ struct NewSessionSheet: View {
     // MARK: Actions
 
     private func load() async {
+        // From the options it already has, so a choice made while the refresh runs isn't overwritten after it.
+        if tools.options != nil { seed() }
         async let options: Void = tools.loadOptions()
         loadError = nil
         do { try await tools.loadProjects() } catch { loadError = MacTools.message(error) }
         await options
         loading = false
+        seed()
         if project == nil, tools.projects.count == 1 { project = tools.projects.first }
-        if tools.agent(.claude)?.installed == false, tools.agent(.codex)?.installed == true { agent = .codex }
+        if tools.agent(agent)?.installed == false, let other = AgentProvider.allCases.first(where: { tools.agent($0)?.installed == true }) {
+            agent = other
+        }
+    }
+
+    private func seed() {
+        guard form.seeded != model.macID else { return }
+        // Another Mac has its own models and accounts. Cleared here, not in onChange(of: macID), which can run after this.
+        if form.seeded != nil { modelID = nil; effort = nil; accountID = nil; worktree = false }
+        form.seeded = model.macID
+        guard let last = ListPrefsStore.newSession(mac: model.macID) else { return }
+        if let remembered = last.agent, tools.agent(remembered)?.installed != false { agent = remembered }
+        if let id = last.modelID, let option = tools.models(for: agent).first(where: { $0.id == id }) {
+            modelID = id
+            if let remembered = last.effort, option.efforts.contains(remembered) { effort = remembered }
+        }
+        if let id = last.accountID, accounts.count > 1, accounts.contains(where: { $0.id == id }) { accountID = id }
+        worktree = last.worktree
+    }
+
+    private func keepOffered() {
+        if let modelID, !models.contains(where: { $0.id == modelID }) { self.modelID = nil }
+        if let effort, chosenModel?.efforts.contains(effort) != true { self.effort = nil }
+        if let accountID, !accounts.contains(where: { $0.id == accountID }) { self.accountID = nil }
     }
 
     /// Gone for good: the photos that were waiting go with the sheet.
     /// Cancel, or Discard: the draft is gone for good, its photos with it.
     private func leave() {
-        attachments.discard(draft)
-        root.newSession = NewSessionForm()
+        startTask?.cancel()
+        // Thrown away, not finished: closing the sheet would otherwise send what's being said.
+        dictation.cancel(refocus: false)
+        let form = root.newSession, photos = draft, tray = attachments, app = root, requests = keys, undoable = hasDraft
+        app.newSession = NewSessionForm()
         dismiss()
+        guard undoable else { return tray.discard(photos) }
+        // The photos wait out the Undo, so taking it brings back the draft exactly as it was. Never over a newer draft.
+        Self.discardNotice = Pill.undoable("Draft discarded", expired: { tray.discard(photos) }) {
+            Self.discardNotice = nil
+            let newer = app.newSession
+            guard newer.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, tray.items(newer.draft).isEmpty else {
+                return tray.discard(photos)
+            }
+            app.newSession = form
+            requests?.newSession += 1
+        }
+    }
+
+    @MainActor private static var discardNotice: Pill.Item.ID?
+
+    private func newDraftStarted() {
+        guard let notice = Self.discardNotice, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Self.discardNotice = nil
+        Pill.end(notice)
     }
 
     private func start() {
@@ -421,20 +481,25 @@ struct NewSessionSheet: View {
             return
         case .ready(let ids): photos = ids
         }
-        let request = StartHosted(cwd: project.path, agent: agent, model: modelID, effort: effort?.rawValue, worktree: worktree,
+        let request = StartHosted(cwd: project.path, agent: agent, model: modelID, effort: effort?.rawValue, worktree: worktree && project.gitRoot != nil,
                                   accountID: accountID, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                                   attachments: photos, openOnMac: tools.can(.hostedShow) && openOnMac ? true : nil)
+        let choices = NewSessionPrefs(agent: agent, modelID: modelID, effort: effort, accountID: accountID, worktree: worktree)
+        let startedOn = model.macID
         starting = true
         error = nil
         let tapped = Date.now
-        Task {
-            defer { starting = false }
+        startTask = Task {
+            defer { starting = false; waitingForMac = false }
             do {
-                let hosted = try await tools.start(request, key: key)
+                let hosted = try await tools.start(request, key: key) { waitingForMac = true }
                 model.transcripts.started(hosted.name, prompt: request.prompt ?? "", at: tapped)
                 // The photos show on the first prompt's bubble until the Mac's own copy of the turn replaces it.
                 _ = attachments.take(draft, for: model.transcripts.firstPrompts[hosted.name]?.id)
                 started += 1
+                // A recording that failed was left out by choice; its draft is gone with the form.
+                dictation.cancel(refocus: false)
+                ListPrefsStore.setNewSession(choices, mac: startedOn)
                 root.newSession = NewSessionForm()
                 dismiss()
                 onStarted(hosted, model)
@@ -449,7 +514,7 @@ struct NewSessionSheet: View {
                 error = "A photo went up again. Start once it's done."
             } catch {
                 // Nothing started: the prompt is still in the field and the photos are still in the tray.
-                self.error = MacTools.message(error)
+                if !Task.isCancelled { self.error = MacTools.message(error) }
             }
         }
     }
@@ -537,8 +602,11 @@ final class NewSessionForm {
     var agent: AgentProvider = .claude
     var modelID: String?
     var effort: Effort?
+    /// Asked for; used only in a folder with a git root.
     var worktree = false
     var accountID: String?
+    /// The Mac whose last choices this draft took (`ListPrefsStore.newSession`), so a reopened draft keeps its own.
+    var seeded: String?
     /// One key per session started, so a second tap can't make a second session.
     var key = UUID().uuidString.lowercased()
     /// The tray's key: photos wait under it until Start names them.

@@ -111,6 +111,16 @@ struct RemoteKeychain: @unchecked Sendable {
 
     func deleteInstallKey() { delete("install") }
 
+    // MARK: Transcription key
+
+    func transcriptionKey() throws -> String? {
+        try read("transcription", what: "The transcription key").map { String(decoding: $0, as: UTF8.self) }
+    }
+    func writeTranscriptionKey(_ key: String) throws {
+        try write(Data(key.utf8), "transcription", label: "Side A Remote transcription key", what: "The transcription key")
+    }
+    func deleteTranscriptionKey() { delete("transcription") }
+
     // MARK: Items
 
     private func read(_ account: String, what: String) throws -> Data? {

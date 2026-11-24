@@ -9,7 +9,7 @@ import SwiftUI
 final class NotificationCardModel {
     nonisolated deinit {}
 
-    enum Sending: Equatable { case idle, sending, sent, answeredElsewhere, queued(String), failed(String) }
+    enum Sending: Equatable { case idle, sending, sent, answeredElsewhere, queued(String), kept(String), failed(String) }
 
     let category: String
     let payload: PushPayload?
@@ -82,11 +82,13 @@ final class NotificationCardModel {
                 sending = .failed("Unlock your \(ThisDevice.kind) to answer.")
                 return
             }
-            let result = await NotificationAnswer.send(answer, to: request, macID: payload.mac)
+            let typed = questions.indices.compactMap { typedText[$0] }.joined(separator: "\n\n")
+            let result = await NotificationAnswer.send(answer, to: request, macID: payload.mac, typed: payload.sid.map { (text: typed, session: $0) })
             switch result {
             case .sent: sending = .sent
             case .answeredElsewhere: sending = .answeredElsewhere
-            case .queued(let mac): sending = .queued(mac)
+            case .queued(let mac), .held(let mac): sending = .queued(mac)
+            case .kept(let message): sending = .kept(message)
             case .failed(let message): sending = .failed(message)
             case .noMac: sending = .failed("This \(ThisDevice.kind) isn't paired with that Mac any more.")
             }
@@ -132,13 +134,16 @@ struct NotificationCard: View {
         case .sent:
             Outcome(symbol: "checkmark.circle.fill", tint: .green, line: "Sent")
         case .answeredElsewhere:
-            Outcome(symbol: "checkmark.circle", tint: .secondary, line: "Answered on the Mac")
+            Outcome(symbol: "checkmark.circle", tint: .secondary, line: "Answered on \(card.payload.flatMap { PairedMac.load($0.mac) }?.endpoint.kind.the() ?? "the Mac")")
+        // Its signature lasts two minutes: only an app that reaches the Mac soon sends it, so the card asks for that.
         case .queued(let mac):
-            Outcome(symbol: "clock", tint: .secondary, line: "Couldn't reach \(mac). Side A Remote will send it when it can.")
+            Outcome(symbol: "clock", tint: .secondary, line: "Couldn't reach \(mac). Open Side A Remote to send it.")
+        case .kept(let line):
+            Outcome(symbol: "square.and.pencil", tint: .secondary, line: line)
         default:
             switch card.payload == nil ? "" : card.category {
             case "": OpenToAnswer(line: "Open Side A Remote", open: card.onOpen)
-            case "QUESTION": QuestionBody(card: card)
+            case "QUESTION", "QUESTION_OPEN": QuestionBody(card: card)
             case "PLAN": PlanBody(card: card)
             default: RequestBody(card: card)
             }

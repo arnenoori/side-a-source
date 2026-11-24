@@ -61,7 +61,7 @@ struct TurnDiffPage: View {
                         .padding(.horizontal, Space.xxs)
                 }
                 ForEach(diff.files, id: \.path) { file in
-                    DiffCard(sourceID: "turn-\(turnID)-\(file.path)", diff: file)
+                    DiffCard(sourceID: "turn-\(turnID)-\(file.path)", diff: file, sessionID: sessionID)
                 }
             }
             .padding(Space.m)

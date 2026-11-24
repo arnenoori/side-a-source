@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SideAProtocol
+import SideARemoteKit
 
 /// Where a session sits on the Sessions list, in Side A's order: what needs you first.
 enum SessionPhase: Int, CaseIterable, Comparable {
@@ -32,7 +33,7 @@ struct SessionExtras: Hashable {
     var lastReply: String?
 }
 
-enum GroupBy: String, CaseIterable, Identifiable {
+enum GroupBy: String, CaseIterable, Identifiable, Codable {
     case project, account, none
     var id: String { rawValue }
     var title: String { self == .none ? "None" : rawValue.capitalized }
@@ -44,18 +45,33 @@ final class SessionsStore {
 
     private(set) var sessions: [RemoteSession]
     private(set) var extras: [SessionKey: SessionExtras]
-    var groupBy: GroupBy = .project
-    var showIdle = false
+    /// Kept on this device for this Mac, so the list is the same at the next launch.
+    var prefs: ListPrefs { didSet { if prefs != oldValue { ListPrefsStore.save(prefs, mac: macID, in: defaults) } } }
+    var groupBy: GroupBy { get { prefs.groupBy } set { prefs.groupBy = newValue } }
+    var sortBy: SortBy { get { prefs.sortBy } set { prefs.sortBy = newValue } }
+    var idleExpanded: Bool { get { prefs.idleExpanded } set { prefs.idleExpanded = newValue } }
+    /// The title the row shows, renamed or not, which Name orders and search matches by.
+    @ObservationIgnored var title: (RemoteSession) -> String = \.title
+
+    @ObservationIgnored private let macID: String
+    @ObservationIgnored private let defaults: UserDefaults
 
     /// `rows(_:)`'s answer for each phase, made once per change: the Sessions screen asks a dozen times a render.
     private var buckets: [SessionPhase: [RemoteSession]] = [:]
 
-    init(_ sessions: [RemoteSession], extras: [SessionKey: SessionExtras] = [:]) {
-        self.sessions = sessions; self.extras = extras
+    init(_ sessions: [RemoteSession], extras: [SessionKey: SessionExtras] = [:], macID: String = "", defaults: UserDefaults = .standard) {
+        self.sessions = sessions; self.extras = extras; self.macID = macID; self.defaults = defaults
+        prefs = ListPrefsStore.load(mac: macID, in: defaults)
         rebucket()
     }
 
     func session(_ id: SessionKey) -> RemoteSession? { sessions.first { $0.id == id } }
+
+    /// The queue as the phone just left it, until the Mac's own row says the same.
+    func setQueued(_ queued: [QueuedReply], for id: SessionKey) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[index].queued = queued.isEmpty ? nil : queued
+    }
 
     /// A new snapshot from the Mac. A session first seen now keeps that as its start, so the order
     /// within a phase never shifts under the user's thumb.
@@ -83,9 +99,25 @@ final class SessionsStore {
         buckets = Dictionary(grouping: sorted, by: SessionPhase.init)
     }
 
-    /// Rows of a phase under quiet subheaders, in order of first appearance.
-    func groups(_ phase: SessionPhase) -> [(title: String?, rows: [RemoteSession])] {
-        let rows = rows(phase)
+    func sorted(_ rows: [RemoteSession]) -> [RemoteSession] {
+        let key: (RemoteSession) -> (String, String)
+        switch sortBy {
+        case .newest: return rows
+        case .name: key = { (self.title($0), "") }
+        case .project: key = { ($0.project, self.title($0)) }
+        }
+        // Ties keep their newest-first place, so equal names never swap between renders.
+        return rows.enumerated().map { (key: key($1), index: $0, row: $1) }.sorted { a, b in
+            let first = a.key.0.localizedStandardCompare(b.key.0)
+            if first != .orderedSame { return first == .orderedAscending }
+            let second = a.key.1.localizedStandardCompare(b.key.1)
+            return second == .orderedSame ? a.index < b.index : second == .orderedAscending
+        }.map(\.row)
+    }
+
+    /// Rows of a phase under quiet subheaders: in order of first appearance, or alphabetical once rows are sorted.
+    func groups(_ phase: SessionPhase, where include: (RemoteSession) -> Bool = { _ in true }) -> [(title: String?, rows: [RemoteSession])] {
+        let rows = sorted(rows(phase).filter(include))
         guard groupBy != .none else { return [(nil, rows)] }
         var order: [String] = []
         var byKey: [String: [RemoteSession]] = [:]
@@ -94,7 +126,16 @@ final class SessionsStore {
             if byKey[key] == nil { order.append(key) }
             byKey[key, default: []].append(row)
         }
+        if sortBy != .newest { order.sort { $0.localizedStandardCompare($1) == .orderedAscending } }
         return order.map { ($0, byKey[$0]!) }
+    }
+
+    /// Every word of the query in the title, project, branch, account or model, whatever its case or accents.
+    func matches(_ session: RemoteSession, _ query: String) -> Bool {
+        let words = query.split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty else { return true }
+        let fields = [title(session), session.title, session.project, session.branch, session.accountName, session.model].compactMap { $0 }
+        return words.allSatisfy { word in fields.contains { $0.localizedStandardContains(word) } }
     }
 
     /// The demo's stand-in for the Mac leaving or clearing mail.
@@ -321,40 +362,10 @@ final class TranscriptStore {
 
     // MARK: Outgoing
 
-    /// A turn this phone sent that the Mac's transcript doesn't show yet. A note never shows there
-    /// (the session reads it through a hook), so it stays as the phone's own record.
-    struct Outgoing: Hashable, Identifiable {
-        let id: String
-        var text: String
-        let at: Date
-        var state: State
+    // The replies in TranscriptStore+Outgoing.swift keep their state here, since an extension stores nothing.
 
-        enum State: Hashable {
-            case sending
-            /// Accepted; waits for the Mac's copy of the turn.
-            case sent
-            /// Waits for the turn to end: a hosted session's queue, or Codex's own (`submit: .queue`).
-            case queued
-            /// Waits for the session's next step (the Mac holds it as a note), and Take Back works until then.
-            case note
-            case takingBack
-            /// The session took it: shown as delivered.
-            case read
-        }
-
-        var isPendingNote: Bool { state == .note || state == .takingBack }
-    }
-
-    /// A reply the Mac didn't take: its text goes back into the field with "Not sent · Retry" under it.
-    struct Unsent: Hashable {
-        let text: String
-        let reason: String
-        /// The reply's flight, by its outbox item, for a Retry with what it carried; nil sends the text fresh.
-        let item: String?
-    }
-
-    private(set) var outgoing: [SessionKey: [Outgoing]] = [:]
-    private(set) var unsent: [SessionKey: Unsent] = [:]
+    var outgoing: [SessionKey: [Outgoing]] = [:]
+    var unsent: [SessionKey: Unsent] = [:]
     /// What's typed in each session's composer, kept across visits; a failed reply or a taken-back note returns here.
     var drafts: [SessionKey: String] = [:] {
         didSet { if drafts != oldValue { onDraftsChanged?() } }
@@ -362,186 +373,20 @@ final class TranscriptStore {
     /// Live: the link saves the drafts a moment after they settle, so a kill doesn't lose what was typed.
     @ObservationIgnored var onDraftsChanged: (() -> Void)?
     /// A steer the Mac refused ("Couldn't stop it"), shown under the field until the next one.
-    private(set) var notices: [SessionKey: String] = [:]
-
-    func notice(_ text: String?, in session: SessionKey) { if notices[session] != text { notices[session] = text } }
-
-    /// Shows the turn at once; the link (or the demo) moves its state along.
-    @discardableResult func send(_ text: String, to session: SessionKey, at: Date = .now) -> Outgoing {
-        unsent[session] = nil
-        let turn = Outgoing(id: UUID().uuidString.lowercased(), text: text, at: at, state: .sending)
-        outgoing[session, default: []].append(turn)
-        return turn
-    }
-
-    func mark(_ id: String, in session: SessionKey, _ state: Outgoing.State) {
-        guard let index = outgoing[session]?.firstIndex(where: { $0.id == id }), outgoing[session]?[index].state != state else { return }
-        outgoing[session]?[index].state = state
-        if state == .sent || state == .queued { settleOutgoing(session) }
-    }
-
+    var notices: [SessionKey: String] = [:]
+    /// Photos of replies given back, by the turn that carried them, for the tray: their text alone would drop them.
+    @ObservationIgnored var photosBack: ((_ photos: [(turn: String, ids: [String])], _ session: SessionKey) -> Void)?
     /// The prompt of a session started from this phone, by its hosted name, until the session's transcript shows it.
-    private(set) var firstPrompts: [String: Outgoing] = [:]
-
-    /// Start returned: the prompt shows at once, as a reply does, already accepted.
-    func started(_ name: String, prompt: String, at: Date) {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        firstPrompts[name] = Outgoing(id: UUID().uuidString.lowercased(), text: text, at: at, state: .sent)
-    }
-
+    var firstPrompts: [String: Outgoing] = [:]
     /// The session each first prompt was last carried into.
-    private var carried: [String: SessionKey] = [:]
-
+    var carried: [String: SessionKey] = [:]
     /// A reply for a session coming back hosted under that name (Continue), typed once its row is listed hosted.
-    private(set) var waitingReplies: [String: Outgoing] = [:]
-
-    func wait(_ text: String, for name: String, at: Date) {
-        waitingReplies[name] = Outgoing(id: UUID().uuidString.lowercased(), text: text, at: at, state: .sending)
-    }
-
-    func takeWaitingReply(_ name: String) -> String? { waitingReplies.removeValue(forKey: name)?.text }
-
-    /// The hosted session has a row: its prompt waits in that transcript until the Mac's copy arrives. Again under a
-    /// new key when the row's key changes, as a Codex `pid-…` one does once its thread starts.
-    func carryFirstPrompt(_ name: String, to session: SessionKey) {
-        guard let turn = firstPrompts[name] else { return }
-        if let old = carried[name], old != session { outgoing[old]?.removeAll { $0.id == turn.id } }
-        carried[name] = session
-        if outgoing[session]?.contains(where: { $0.id == turn.id }) != true { outgoing[session, default: []].append(turn) }
-        settleOutgoing(session)
-    }
-
-    /// The process ended: nothing it was asked will show, and its text goes back to `session`'s field when given.
-    func dropFirstPrompt(_ name: String, giveBackTo session: SessionKey? = nil) {
-        let lost = [firstPrompts.removeValue(forKey: name), waitingReplies.removeValue(forKey: name)].compactMap { $0 }
-        if let old = carried.removeValue(forKey: name) { outgoing[old]?.removeAll { turn in lost.contains { $0.id == turn.id } } }
-        if let session { giveBack(lost.map(\.text), in: session, reason: "It ended before it took this.") }
-    }
-
-    /// A turn shown while something else happens first (Continue, Resume), gone without giving its text back.
-    func discard(_ id: String, in session: SessionKey) { outgoing[session]?.removeAll { $0.id == id } }
-
-    /// The Mac didn't take it: the turn goes, its text waits in the field. False when the turn is already gone.
-    /// The Mac gave up on what it was holding for this session.
-    func failQueued(in session: SessionKey, reason: String) {
-        let lost = outgoing[session]?.filter { $0.state == .queued } ?? []
-        outgoing[session]?.removeAll { $0.state == .queued }
-        giveBack(lost.map(\.text), in: session, reason: reason)
-    }
-
-    /// What the Mac still remembers giving up on, against what this phone has already settled; answers the new settled set.
-    /// The phone that sent a reply gets it back even with no turn left to show for it, as after a relaunch. Another phone's
-    /// comes with no words and is only noted. One from an old queue file gives back this phone's own turns from before it.
-    func settle(_ dropped: [DroppedReply], device: String, settled: Set<String>) -> Set<String> {
-        let fresh = dropped.filter { !settled.contains($0.id) }.sorted { $0.at < $1.at }
-        for (session, records) in Dictionary(grouping: fresh, by: \.sessionID) {
-            var lost: [String] = []
-            for record in records {
-                if record.reason == .oldQueue {
-                    let held = outgoing[session]?.filter { $0.state == .queued && $0.at.timeIntervalSince1970 <= record.at } ?? []
-                    outgoing[session]?.removeAll { turn in held.contains { $0.id == turn.id } }
-                    lost += held.map(\.text)
-                } else if record.device == device, let text = record.text {
-                    let turn = outgoing[session]?.first { $0.state == .queued && $0.text == text && $0.at.timeIntervalSince1970 <= record.at }
-                    if let turn { outgoing[session]?.removeAll { $0.id == turn.id } }
-                    lost.append(text)
-                }
-            }
-            giveBack(lost, in: session, reason: records[0].reason.unsentReason)
-        }
-        return settled.intersection(dropped.map(\.id)).union(fresh.map(\.id))
-    }
-
-    private func giveBack(_ texts: [String], in session: SessionKey, reason: String) {
-        guard !texts.isEmpty else { return }
-        let text = texts.joined(separator: "\n\n")
-        unsent[session] = Unsent(text: text, reason: reason, item: nil)
-        restore(text, in: session)
-    }
-
-    /// `earlier`: replies that failed before this one and are folded into it, since a session shows one unsent reply. Their
-    /// words lead, and replace the field when the field still holds just them.
-    @discardableResult func fail(_ id: String, in session: SessionKey, reason: String, item: String?, joining earlier: [String] = []) -> Bool {
-        guard let turn = outgoing[session]?.first(where: { $0.id == id }) else { return false }
-        outgoing[session]?.removeAll { $0.id == id }
-        let text = (earlier + [turn.text]).joined(separator: "\n\n")
-        unsent[session] = Unsent(text: text, reason: reason, item: item)
-        let typed = drafts[session, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)
-        if earlier.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == typed }) { drafts[session] = "" }
-        restore(text, in: session)
-        return true
-    }
-
-    /// A turn the outbox still holds from before this launch: back as it was.
-    func adopt(_ id: String, text: String, at: Date, to session: SessionKey) {
-        guard outgoing[session]?.contains(where: { $0.id == id }) != true else { return }
-        outgoing[session, default: []].append(Outgoing(id: id, text: text, at: at, state: .sending))
-    }
-
-    /// Text back into the field, unless something new is being typed there.
-    private func restore(_ text: String, in session: SessionKey) {
-        if drafts[session, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { drafts[session] = text }
-    }
-
-    func clearUnsent(_ session: SessionKey) { unsent[session] = nil }
-
-    /// Take Back landed: the note leaves the transcript and returns the text it carried.
-    @discardableResult func withdraw(_ id: String, in session: SessionKey, restoring: Bool = true) -> String? {
-        guard let turn = outgoing[session]?.first(where: { $0.id == id }) else { return nil }
-        outgoing[session]?.removeAll { $0.id == id }
-        if restoring { restore(turn.text, in: session) }
-        return turn.text
-    }
-
-    /// An Edit that came too late: the session already read the note, so its text waits in the field as a new message.
-    func editTooLate(_ id: String, in session: SessionKey) {
-        guard let turn = outgoing[session]?.first(where: { $0.id == id }) else { return }
-        restore(turn.text, in: session)
-        notice("Already sent. Your text is in the field as a new message.", in: session)
-    }
-
-    /// The note this phone left that the session hasn't read yet.
-    func pendingNote(_ session: SessionKey) -> Outgoing? { outgoing[session]?.last(where: \.isPendingNote) }
-
-    /// A second note while one waits replaces it on the Mac (one mail slot per session), so the two
-    /// travel as one: the waiting turn takes the new text and goes back to sending.
-    func merge(_ text: String, into id: String, in session: SessionKey) -> String? {
-        guard let index = outgoing[session]?.firstIndex(where: { $0.id == id }) else { return nil }
-        outgoing[session]?[index].text += "\n\n" + text
-        outgoing[session]?[index].state = .sending
-        return outgoing[session]?[index].text
-    }
-
-    /// The session's mail emptied without a Take Back from here: it read the note.
-    func noteRead(in session: SessionKey) {
-        for index in outgoing[session]?.indices ?? 0..<0 where outgoing[session]?[index].state == .note {
-            outgoing[session]?[index].state = .read
-        }
-    }
-
-    /// A sent turn goes once the Mac's transcript has a user turn with its text from about then on.
-    private func settleOutgoing(_ session: SessionKey) {
-        guard let turns = outgoing[session], turns.contains(where: { $0.state == .sent || $0.state == .queued }) else { return }
-        let users = (messages[session] ?? []).filter { $0.role == .user }
-        let shown = turns.filter { turn in
-            (turn.state == .sent || turn.state == .queued) && users.contains { user in
-                user.text?.trimmingCharacters(in: .whitespacesAndNewlines) == turn.text
-                    && (user.at ?? .infinity) >= turn.at.timeIntervalSince1970 - 30
-            }
-        }
-        // A first prompt the agent rewrote (a slash command is logged as its expansion) goes once any user turn follows it.
-        let rewritten = carried.filter { $0.value == session }.compactMap { firstPrompts[$0.key] }.filter { turn in
-            users.contains { ($0.at ?? 0) >= turn.at.timeIntervalSince1970 - 30 }
-        }
-        let gone = Set((shown + rewritten).map(\.id))
-        guard !gone.isEmpty else { return }
-        outgoing[session]?.removeAll { gone.contains($0.id) }
-        for (name, turn) in firstPrompts where gone.contains(turn.id) {
-            firstPrompts[name] = nil
-            carried[name] = nil
-        }
-    }
+    var waitingReplies: [String: Outgoing] = [:]
+    /// Bubbles the transcript settled, kept a while for a receipt that says one wasn't read after all.
+    @ObservationIgnored var shownAway: [SessionKey: [Outgoing]] = [:]
+    /// User turns that already settled one, by uuid: one user turn is one message, so two "yes" need two. The transcript's
+    /// rather than a bubble's, since it outlives the bubble it settled.
+    @ObservationIgnored var settledBy: [SessionKey: Set<String>] = [:]
 }
 
 @Observable

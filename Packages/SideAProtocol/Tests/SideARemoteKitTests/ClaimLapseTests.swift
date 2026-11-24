@@ -33,13 +33,15 @@ private func connected(holding id: String, path: String = "/v1/sessions/a/reply"
 @Test func anItemBehindALapsedClaimIsSentOnceItLapses() async throws {
     let clock = Clock(1000)
     let (sync, _, mac) = try await connected(holding: "held", clock: clock)
+    // swiftlint:disable:next sleep_literal_in_tests -- proving nothing is sent while the claim holds: there is no event to wait for
     try await Task.sleep(for: .milliseconds(100))
     let early = await sync.state.outcomes["held"]
     #expect(early == nil && mac.calls.isEmpty, "the other process still holds it")
 
     clock.now = 1031
     try await until("sent") { if case .delivered = await sync.state.outcomes["held"] { true } else { false } }
-    #expect(await sync.state.pending.isEmpty)
+    // The outcome is recorded a step before the item leaves the list.
+    try await until("cleared") { await sync.state.pending.isEmpty }
     await sync.stop()
 }
 

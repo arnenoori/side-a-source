@@ -22,6 +22,12 @@ public extension Capability {
     static let incidents = Self(rawValue: "incidents")
     /// `StateSnapshot.droppedReplies`.
     static let repliesDropped = Self(rawValue: "replies.dropped")
+    /// `RemoteSession.queued`, `RemoteReply.replaces` and `DELETE /v1/sessions/{id}/queue/{qid}`.
+    static let repliesQueue = Self(rawValue: "replies.queue")
+    /// `GET /v1/sessions/{id}/files?q=`, for `@` file mentions.
+    static let files = Self(rawValue: "files")
+    /// `GET /v1/sessions/{id}/file?path=`, a file's bytes for the phone's viewer.
+    static let fileRead = Self(rawValue: "files.read")
     static let options = Self(rawValue: "options")
     static let updateCheck = Self(rawValue: "update.check")
     static let lan = Self(rawValue: "lan")
@@ -57,6 +63,18 @@ public extension ErrorCode {
     static let turnNotFound = Self(rawValue: "turn_not_found")
     /// 409: this Codex can't do what was asked from Side A.
     static let unsupported = Self(rawValue: "unsupported")
+    /// 404: no file at that path in the session's folder, or not a regular file.
+    static let fileNotFound = Self(rawValue: "file_not_found")
+    /// 403: a file the Mac doesn't send; `details.reason` is a `FileRefusal`.
+    static let fileRefused = Self(rawValue: "file_refused")
+}
+
+/// `details.reason` of a 403 `file_refused`.
+public enum FileRefusal: String, Codable, Hashable, Sendable, Error {
+    case outside
+    case secret
+    /// Another hard link to the file could be anywhere on the Mac.
+    case linked
 }
 
 /// `GET /v1/approvals?cursor=`: the Remote approvals log.
@@ -98,7 +116,32 @@ public struct InterruptRequest: Codable, Hashable, Sendable {
         public static let nextStep = Self(rawValue: "nextStep")
     }
     public let when: When
-    public init(when: When) { self.when = when }
+    /// Interrupt and Send: a reply follows, and the replies the stop takes back go with it as one prompt. Missing
+    /// (older phones) is a plain Stop, which gives them back unsent.
+    // swiftlint:disable:next discouraged_optional_boolean -- absent from phones that send a plain Stop
+    public var send: Bool?
+    /// With capability `interrupt.resend`: no reply follows, and what the stop takes back goes again on its own as the
+    /// next prompt, from the Mac, once the stopped turn has ended.
+    // swiftlint:disable:next discouraged_optional_boolean -- absent without capability interrupt.resend
+    public var resend: Bool?
+    // swiftlint:disable:next discouraged_optional_boolean -- the initialiser mirrors the optional fields
+    public init(when: When, send: Bool? = nil, resend: Bool? = nil) { self.when = when; self.send = send; self.resend = resend }
+}
+
+public extension Capability {
+    /// `InterruptRequest.resend`.
+    static let interruptResend = Self(rawValue: "interrupt.resend")
+}
+
+/// Interrupt and Send on Codex, whose app server takes a new prompt only once the stopped turn has ended. These three
+/// must stay in order: `macWaits` ≤ `phoneWaits` < `carried`.
+public enum InterruptTiming {
+    /// The Mac's wait for the stopped turn to end before it sends alone (`CodexTerminals`).
+    public static let macWaits: Double = 20
+    /// The phone's wait for the same before it sends, at least as long as the Mac's.
+    public static let phoneWaits: Double = 25
+    /// How long the Mac holds what a stop took back for the reply that follows; past it, they go back to the phone.
+    public static let carried: Double = 30
 }
 
 /// What Restart Fresh hands the new session, drafted by the Mac and edited on the phone.
@@ -116,10 +159,18 @@ public struct Handoff: Codable, Hashable, Sendable {
     /// The defaults the sheet starts on: the session's account or Autopilot's pick, and its model.
     public var accountID: String?
     public var model: String?
+    // From a Mac with `restart.agent`; read-only on the phone.
+    public var plan: TurnPlan?
+    /// Bounded, and nil when git failed: a handoff never waits on git.
+    public var changes: String?
+    public var fromAgent: AgentProvider?
+    public var transcriptPath: String?
     public init(goal: String, branch: String? = nil, failed: String, next: String, lastMessages: String, cwd: String, project: String,
-                accountID: String? = nil, model: String? = nil) {
+                accountID: String? = nil, model: String? = nil, plan: TurnPlan? = nil, changes: String? = nil, fromAgent: AgentProvider? = nil,
+                transcriptPath: String? = nil) {
         self.goal = goal; self.branch = branch; self.failed = failed; self.next = next; self.lastMessages = lastMessages
         self.cwd = cwd; self.project = project; self.accountID = accountID; self.model = model
+        self.plan = plan; self.changes = changes; self.fromAgent = fromAgent; self.transcriptPath = transcriptPath
     }
 }
 
@@ -128,7 +179,21 @@ public struct RestartRequest: Codable, Hashable, Sendable {
     public let handoff: Handoff
     public let accountID: String?
     public let model: String?
-    public init(handoff: Handoff, accountID: String? = nil, model: String? = nil) { self.handoff = handoff; self.accountID = accountID; self.model = model }
+    // `restart.agent`. Nil agent: the session's own, as before.
+    public let agent: AgentProvider?
+    public let effort: String?
+    public let permissionMode: PermissionMode?
+    /// What the person typed, sent last and whole; the Mac never trims or edits it.
+    public let message: String?
+    /// `restart.agent.images`: ids of photos this phone uploaded, given to the new agent as a hosted start's are.
+    /// Sent only to a Mac that lists the capability, and nil when there are none, so the signed body is unchanged.
+    public let attachments: [String]?
+    public init(handoff: Handoff, accountID: String? = nil, model: String? = nil, agent: AgentProvider? = nil, effort: String? = nil,
+                permissionMode: PermissionMode? = nil, message: String? = nil, attachments: [String]? = nil) {
+        self.handoff = handoff; self.accountID = accountID; self.model = model
+        self.agent = agent; self.effort = effort; self.permissionMode = permissionMode; self.message = message
+        self.attachments = attachments?.isEmpty == true ? nil : attachments
+    }
 }
 
 /// `POST /v1/sessions/quit-idle`.

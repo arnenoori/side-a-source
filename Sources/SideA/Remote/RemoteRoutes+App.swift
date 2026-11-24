@@ -1,6 +1,7 @@
 import Foundation
 import SideACore
 import SideAProtocol
+import UniformTypeIdentifiers
 
 extension RemoteRoutes {
     /// Longest reply or note, in characters.
@@ -17,12 +18,15 @@ extension RemoteRoutes {
         Route("POST", "v1/sessions/{id}/compact", compact),
         Route("POST", "v1/sessions/{id}/review", review),
         Route(QueuedRoutes.takeBack.method, QueuedRoutes.takeBack.pattern, cancelMail),
+        Route("DELETE", "v1/sessions/{id}/queue/{qid}", removeQueued),
+        Route("GET", "v1/sessions/{id}/files", files),
+        Route("GET", "v1/sessions/{id}/file", file),
         Route("GET", "v1/requests", requests),
         Route("GET", "v1/requests/{rid}", request),
         Route(QueuedRoutes.answer.method, QueuedRoutes.answer.pattern, answer),
         Route("GET", "v1/accounts", accounts),
         Route("POST", "v1/uploads", upload),
-    ] + transcriptRoutes + hostedRoutes + setupRoutes + pushRoutes + previewRoutes + extraRoutes
+    ] + transcriptRoutes + hostedRoutes + setupRoutes + pushRoutes + previewRoutes + extraRoutes + transcribeRoutes + snoozeRoutes
 
     static let notReady = response(.notReady)
     static let noSession = response(.noSession)
@@ -211,8 +215,14 @@ extension RemoteRoutes {
             refused = await refusal(context, .reply, target: id, body: reply, needs: needs)
         }
         if let refused { return refused }
-        let message = SessionCommands.Message(text: reply.text, images: images, mode: reply.mode, keys: reply.keys, turnID: reply.turnID, submit: reply.submit,
+        // Whoever writes to a snoozed session wants it back in the list.
+        await MainActor.run { if let row = context.controller.events?.session(id) { context.controller.snoozes.wake(row.id) } }
+        var message = SessionCommands.Message(text: reply.text, images: images, mode: reply.mode, keys: reply.keys, turnID: reply.turnID, submit: reply.submit,
                                               origin: Island.QueuedFollowUp.Origin(device: context.device, proven: needs))
+        message.replaces = reply.replaces
+        message.seen = reply.seen
+        message.promotes = reply.promotes
+        message.idempotencyKey = context.request.headers["Idempotency-Key"]
         let plan = await MainActor.run { () -> SessionCommands.Plan in
             guard let store = context.controller.store else { return .failed(.notReady) }
             let commands = SessionCommands(store: store)
@@ -243,13 +253,15 @@ extension RemoteRoutes {
     static func hostedError(_ error: HostedError) -> HTTPResponse { response(.hosted(error)) }
 
     @Sendable static func interrupt(_ context: Context) async -> HTTPResponse {
-        let when: InterruptRequest.When
-        if context.request.body.isEmpty { when = .now } else {
+        var when = InterruptRequest.When.now, send = false, resend = false
+        if !context.request.body.isEmpty {
             guard let body = context.body(InterruptRequest.self), [.now, .nextStep].contains(body.when) else { return badJSON }
             when = body.when
+            send = body.send == true
+            resend = body.resend == true
         }
         let id = context.params["id"] ?? ""
-        return await command(context) { commands throws(SessionCommands.Failure) in try await commands.interrupt(id, when: when) }
+        return await command(context) { commands throws(SessionCommands.Failure) in try await commands.interrupt(id, when: when, send: send, resend: resend) }
     }
 
     @Sendable static func cancelMail(_ context: Context) async -> HTTPResponse {
@@ -259,6 +271,51 @@ extension RemoteRoutes {
                 try SessionCommands(store: store).takeBack(id)
                 return HTTPResponse(status: 204)
             } catch { return response(error) }
+        }
+    }
+
+    /// Takes a waiting reply out of the session's queue. Taking back needs no more than the pairing, as Take Back does.
+    @Sendable static func removeQueued(_ context: Context) async -> HTTPResponse {
+        let id = context.params["id"] ?? "", reply = context.params["qid"] ?? ""
+        return await onMain(context) { store in
+            guard let target = SessionCommands.Target(id, store: store), let conversation = target.conversation else { return response(.noSession) }
+            return store.island.removeQueued(conversation, id: reply) ? HTTPResponse(status: 204) : response(.queueChanged)
+        }
+    }
+
+    /// Files under the session's folder for an `@` mention, best match first.
+    @Sendable static func files(_ context: Context) async -> HTTPResponse {
+        let id = context.params["id"] ?? "", query = context.request.query["q"] ?? ""
+        let folder = await MainActor.run { context.controller.store.flatMap { SessionCommands.Target(id, store: $0)?.live?.cwd } }
+        guard let folder else { return noSession }
+        return json(200, FileMatches(files: await FileMentions.shared.matches(query, in: folder)))
+    }
+
+    /// One file under the session's folder, as its bytes (`FileReads`). The pairing is enough, as for the transcript and
+    /// its diffs, which already carry what the agent read and wrote.
+    @Sendable static func file(_ context: Context) async -> HTTPResponse {
+        let id = context.params["id"] ?? "", path = context.request.query["path"] ?? ""
+        guard !path.isEmpty, !path.contains("\0") else { return RemoteServer.error(400, .badRequest, "Send the file's path.") }
+        let folder = await MainActor.run { context.controller.store.flatMap { SessionCommands.Target(id, store: $0)?.live?.cwd } }
+        guard let folder else { return noSession }
+        switch await FileReads.read(path, in: folder) {
+        case .success(let data):
+            let type = UTType(filenameExtension: (path as NSString).pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+            return HTTPResponse(status: 200, headers: HTTPHeaders([("Content-Type", type), ("Cache-Control", "private, no-store")]), body: data)
+        case .failure(.missing): return RemoteServer.error(404, .fileNotFound, "That file isn't in this session's folder.")
+        case .failure(.folder): return RemoteServer.error(404, .fileNotFound, "That's a folder, not a file.")
+        case .failure(.tooLarge): return RemoteServer.error(413, .tooLarge, "That file is over \(FileReads.most >> 20) MB, too big to open on the phone.")
+        case .failure(.refused(let reason)):
+            RemoteLog.shared("refused a file read (\(reason.rawValue)) for device \(context.device.prefix(6))")
+            return RemoteServer.error(403, .fileRefused, fileRefusal(reason), details: ["reason": reason.rawValue])
+        }
+    }
+
+    static func fileRefusal(_ reason: FileReads.Refusal) -> String {
+        switch reason {
+        case .outside: "That file is outside this session's folder."
+        case .secret: "Side A doesn't send keys, credentials or anything in .git."
+        case .linked: "This file is linked from elsewhere on the Mac, so Side A doesn't send it."
         }
     }
 

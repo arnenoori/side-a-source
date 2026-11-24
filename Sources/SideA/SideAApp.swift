@@ -16,10 +16,12 @@ struct SideAApp: App {
         _updates = StateObject(wrappedValue: updates)
         DispatchQueue.main.async {
             store.setMenuBarOnly(store.config.menuBarOnly)
+            AppIconChoice.apply()
             store.startNotifications()
             store.island.start()
             store.remote.start()
             store.keepAwake.start()
+            StallWatchdog.shared.start()
             AppCopies.offerMove()
         }
     }

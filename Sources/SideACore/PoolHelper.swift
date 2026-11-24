@@ -15,16 +15,36 @@ public struct PoolFiles: Sendable {
     /// Gone when pool mode is off.
     public var plan: URL { root.appendingPathComponent("runtime/pool-plan.json") }
 
-    /// "pid started", started being the process's start time, so a pid the system gave to another process since doesn't count.
-    public static func claim(pid: Int32 = ProcessInfo.processInfo.processIdentifier) -> String {
-        "\(pid) \(started(pid).map { String($0) } ?? "0")\n"
+    /// "pid started", started being the process's start time, so a pid the system gave to another process since doesn't
+    /// count; then, on its own line, the bundle that wrote it, so a helper reopens only its own copy of Side A.
+    public static func claim(pid: Int32 = ProcessInfo.processInfo.processIdentifier, bundle: String = Bundle.main.bundleURL.path) -> String {
+        "\(pid) \(started(pid).map { String($0) } ?? "0")\n\(bundle)\n"
     }
 
     public var appRunning: Bool {
         guard let text = try? String(contentsOf: app, encoding: .utf8) else { return false }
-        let parts = text.split(whereSeparator: \.isWhitespace)
+        let parts = (text.split(separator: "\n").first ?? "").split(whereSeparator: \.isWhitespace)
         guard let pid = parts.first.flatMap({ Int32($0) }), pid > 0, let started = Self.started(pid) else { return false }
         return parts.count < 2 || parts[1] == "0" || parts[1] == Substring(String(started))
+    }
+
+    /// The claim of an app that no longer runs, as written. A quit removes its claim, so this one's app crashed, was
+    /// killed, or went down with the Mac.
+    public var orphaned: (text: String, started: Int64, bundle: String?)? {
+        guard !appRunning, let text = try? String(contentsOf: app, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n")
+        let parts = (lines.first ?? "").split(whereSeparator: \.isWhitespace)
+        guard parts.first.flatMap({ Int32($0) }) != nil else { return nil }
+        return (text, parts.count > 1 ? Int64(parts[1]) ?? 0 : 0, lines.count > 1 ? String(lines[1]) : nil)
+    }
+
+    /// When this Mac started, in microseconds since 1970.
+    public static var booted: Int64 {
+        var time = timeval()
+        var size = MemoryLayout<timeval>.stride
+        var name: [Int32] = [CTL_KERN, KERN_BOOTTIME]
+        guard sysctl(&name, 2, &time, &size, nil, 0) == 0 else { return 0 }
+        return Int64(time.tv_sec) * 1_000_000 + Int64(time.tv_usec)
     }
 
     /// Microseconds since 1970, or nil when no such process runs.
@@ -153,7 +173,8 @@ public enum PoolBridge {
     public func poolTokenFailed(_ account: String, _ error: any Error) {
         let message = error.localizedDescription
         tokens.forget(account)
-        blocked[account] = clock() + (BridgeErrorKind(error) == .signIn ? 600 : 120)
+        // Offline, every account fails alike, and blocking them would outlast the network's return.
+        if !PoolProxy.networkAway(error) { blocked[account] = clock() + (BridgeErrorKind(error) == .signIn ? 600 : 120) }
         log("\(name(account))'s login couldn't be read: \(message)")
     }
 
@@ -211,16 +232,26 @@ public enum PoolBridge {
     private var lastFailure: String?
     private let port: UInt16
     private let bridge: (([String]) async throws -> Data)?
+    /// Opens Side A again. Without it the helper only serves.
+    private let reopen: (() -> Void)?
+    /// The Side A this helper belongs to. Another copy's claim (Side A Dev beside the installed one) is its helper's to act on.
+    private let bundle: String?
+    /// When Side A was last reopened: at most `revivals` times an hour, so an app that can't stay up is left alone.
+    private var reopened: [Date] = []
+    public static let revivals = 3
 
     /// `version`: what this process runs; `installed`: what's on disk now, read afresh each time.
     public init(root: URL, version: String, installed: @escaping () -> String?, logs: URL, port: UInt16 = PoolProxy.preferredPort,
-                drain: TimeInterval = 600, bridge: (([String]) async throws -> Data)? = nil) {
+                drain: TimeInterval = 600, bridge: (([String]) async throws -> Data)? = nil, bundle: String? = nil,
+                reopen: (() -> Void)? = nil) {
         files = PoolFiles(root: root)
         self.version = version
         self.installed = installed
         self.drain = drain
         self.port = port
         self.bridge = bridge
+        self.reopen = reopen
+        self.bundle = bundle
         logFile = logs.appendingPathComponent("pool-helper.log")
     }
 
@@ -242,7 +273,10 @@ public enum PoolBridge {
         let updated = installed().map { $0 != version } ?? false
         if let data = try? Data(contentsOf: files.plan) {
             if let plan = try? JSONDecoder().decode(PoolPlan.self, from: data) {
-                if files.appRunning { stop("Side A is serving the pool") } else if let decisions { decisions.update(plan) } else { await start(plan) }
+                if files.appRunning { stop("Side A is serving the pool") } else {
+                    revive()
+                    if let decisions { decisions.update(plan) } else { await start(plan) }
+                }
             } else {
                 // A plan from a newer app: the updated helper reads it.
                 stop("the plan can't be read")
@@ -250,11 +284,31 @@ public enum PoolBridge {
             }
         } else {
             stop("pool mode is off")
+            // Still here for Remote: a phone can't reach a Mac whose Side A crashed.
+            revive()
         }
         guard updated, proxy == nil else { return nil }
         if let stoppedAt, Date().timeIntervalSince(stoppedAt) < drain { return nil }
         log("Side A was updated; restarting")
         return 75
+    }
+
+    /// Side A ended without quitting: its claim is still here and its process is not. A phone can't reach this Mac
+    /// until the app runs again, so it is reopened, unless the claim is from before this Mac last started.
+    private func revive(now: Date = Date()) {
+        guard let reopen, let claim = files.orphaned else { return }
+        if let bundle, let theirs = claim.bundle, theirs != bundle { return }
+        // Only the claim that was read: a Side A opened by hand this instant has written its own.
+        guard (try? String(contentsOf: files.app, encoding: .utf8)) == claim.text else { return }
+        try? FileManager.default.removeItem(at: files.app)
+        guard claim.started == 0 || claim.started > PoolFiles.booted else { return }
+        reopened = reopened.filter { now.timeIntervalSince($0) < 3600 }
+        guard reopened.count < Self.revivals else {
+            return log("Side A stopped unexpectedly again; it was reopened \(Self.revivals) times this hour, so it is left closed")
+        }
+        reopened.append(now)
+        log("Side A stopped unexpectedly; reopening it")
+        reopen()
     }
 
     private func start(_ plan: PoolPlan) async {

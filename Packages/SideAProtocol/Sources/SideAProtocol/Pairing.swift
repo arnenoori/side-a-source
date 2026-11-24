@@ -51,7 +51,28 @@ public struct MacInfo: Codable, Hashable, Sendable {
     /// SHA-256 of machine-id, hex, first 16; the phone's key for this Mac.
     public let id: String
     public let name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
+    /// What kind of computer this is. Absent from a Mac that predates it, and then it is `.macos`; read `kind`.
+    public let os: HostOS?
+    /// A host with no screen or windows of its own (a Linux daemon). Absent means false.
+    // swiftlint:disable:next discouraged_optional_boolean -- absent from a host that predates it
+    public let headless: Bool?
+    // swiftlint:disable:next discouraged_optional_boolean -- the same absent-means-false field
+    public init(id: String, name: String, os: HostOS? = nil, headless: Bool? = nil) {
+        self.id = id; self.name = name; self.os = os; self.headless = headless
+    }
+    /// The host's kind, `.macos` when it sends none.
+    public var kind: HostOS { os ?? .macos }
+}
+
+/// The kind of computer a host runs on. Open: a phone that doesn't know a newer value still decodes it.
+public struct HostOS: OpenEnum {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let macos = Self(rawValue: "macos")
+    public static let linux = Self(rawValue: "linux")
+    public static let windows = Self(rawValue: "windows")
+    /// Windows Subsystem for Linux: a Linux daemon on a Windows machine.
+    public static let wsl = Self(rawValue: "wsl")
 }
 
 /// Where a Mac listens now, `host:port`. The phone updates its copy on every hello over the pinned key.
@@ -219,17 +240,23 @@ public struct NotificationPrefs: Codable, Hashable, Sendable {
     public let health: Bool
     /// ROTATION pushes: Autopilot moved sessions, or every account is out. Nil from a phone that predates it, which gets none.
     public let rotation: Bool?
+    /// The relay's word that this phone's Mac has gone quiet. Nil from a phone that predates it, which doesn't know its words.
+    // swiftlint:disable:next discouraged_optional_boolean -- nil is a phone that predates it, which must get none
+    public let macQuiet: Bool?
     public init(requests: Bool = true, questions: Bool = true, plans: Bool = true, finished: Bool = true, limits: Bool = true,
                 timeSensitiveRequests: Bool = true, liveActivity: Bool = true, suppressWhileWatching: Bool = true, health: Bool = true,
+                // swiftlint:disable:next discouraged_optional_boolean -- as the property
+                macQuiet: Bool? = nil,
                 rotation: Bool? = nil) {
         self.rotation = rotation
+        self.macQuiet = macQuiet
         self.requests = requests; self.questions = questions; self.plans = plans; self.finished = finished; self.limits = limits
         self.timeSensitiveRequests = timeSensitiveRequests; self.liveActivity = liveActivity; self.suppressWhileWatching = suppressWhileWatching
         self.health = health
     }
 
     private enum CodingKeys: String, CodingKey {
-        case requests, questions, plans, finished, limits, timeSensitiveRequests, liveActivity, suppressWhileWatching, health, rotation
+        case requests, questions, plans, finished, limits, timeSensitiveRequests, liveActivity, suppressWhileWatching, health, rotation, macQuiet
     }
 
     public init(from decoder: Decoder) throws {
@@ -240,6 +267,7 @@ public struct NotificationPrefs: Codable, Hashable, Sendable {
                   liveActivity: try c.decode(Bool.self, forKey: .liveActivity),
                   suppressWhileWatching: try c.decode(Bool.self, forKey: .suppressWhileWatching),
                   health: try c.decodeIfPresent(Bool.self, forKey: .health) ?? true,
+                  macQuiet: try c.decodeIfPresent(Bool.self, forKey: .macQuiet),
                   rotation: try c.decodeIfPresent(Bool.self, forKey: .rotation))
     }
 }

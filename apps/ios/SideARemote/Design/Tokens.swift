@@ -44,6 +44,18 @@ extension View {
     }
 }
 
+extension View {
+    /// Behind a control while what it opened is up, so the menu, strip or sheet visibly belongs to it. In on touch-down,
+    /// out a little slower once the thing has gone.
+    func pressedBacking(_ shown: Bool, in shape: some Shape) -> some View {
+        background {
+            shape.fill(Color(.tertiarySystemFill))
+                .opacity(shown ? 1 : 0)
+                .animation(shown ? Motion.press : .easeOut(duration: 0.2), value: shown)
+        }
+    }
+}
+
 /// An icon-only label in its own frame, whose tap area reaches past it. Inside the label, so the button feels it.
 struct IconTarget: LabelStyle {
     var size: CGSize?
@@ -75,6 +87,12 @@ enum Motion {
     static func snappy(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25) }
     /// Rows moving between sections, which travel farther.
     static func move(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.45) }
+    /// Opacity only, so Reduce Motion keeps it as it is.
+    static let press = Animation.easeOut(duration: 0.12)
+    /// `velocity` is in fractions of the distance left per second, which is what `interpolatingSpring` takes.
+    static func settle(_ reduceMotion: Bool, velocity: Double = 0) -> Animation {
+        reduceMotion ? .easeOut(duration: 0.2) : .interpolatingSpring(duration: 0.3, bounce: 0, initialVelocity: velocity)
+    }
 }
 
 extension AgentProvider {

@@ -959,13 +959,13 @@ final class SessionStore {
 
     private static func group(_ results: [SessionInfo]) -> [ProjectGroup] {
         let present = Set(results.map(\.id))
-        let children = Dictionary(grouping: results.filter { $0.forkedFrom.map(present.contains) == true }, by: { $0.forkedFrom! })
+        let children = Dictionary(grouping: results.filter { $0.parent.map(present.contains) == true }, by: { $0.parent ?? "" })
         func tree(_ session: SessionInfo, _ depth: Int) -> [ProjectGroup.Row] {
             [.init(session: session, depth: depth)] + (children[session.id] ?? []).sorted { ($0.firstTs ?? 0) < ($1.firstTs ?? 0) }.flatMap { tree($0, depth + 1) }
         }
         var order: [String] = []
         var rows: [String: [ProjectGroup.Row]] = [:]
-        for root in results where root.forkedFrom.map(present.contains) != true {
+        for root in results where root.parent.map(present.contains) != true {
             let path = root.cwd ?? ""
             if rows[path] == nil { order.append(path) }
             rows[path, default: []] += tree(root, 0)

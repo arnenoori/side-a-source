@@ -127,7 +127,7 @@ private struct MacHeader: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            ConnectionDot(state: model.mac.state)
+            ConnectionDot(state: model.mac.shown)
             Text(model.mac.name)
         }
         .foregroundStyle(.primary)
@@ -495,8 +495,6 @@ private struct HistoryRow: View {
             TextField("Title", text: $title)
             Button("Rename") { change(HistoryChange(title: title.trimmingCharacters(in: .whitespacesAndNewlines))) }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Side A keeps the name; Claude and Codex keep theirs.")
         }
         .alert("Couldn't Do That", isPresented: Binding { failure != nil } set: { if !$0 { failure = nil } }) {
             Button("OK", role: .cancel) {}
@@ -521,7 +519,7 @@ private struct HistoryRow: View {
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 22, height: 22)
-                .accessibilityLabel(past.agent == .claude ? "Claude" : "Codex")
+                .accessibilityLabel(past.agent.title)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
                     Text(past.title).font(.body.weight(.semibold)).lineLimit(large ? 5 : 2)
@@ -530,7 +528,7 @@ private struct HistoryRow: View {
                     }
                 }
                 Text(facts)
-                    .font(.footnote.monospaced())
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
                     .lineLimit(large ? 3 : 1)
                 if !query.isEmpty, let snippet = past.snippet {
@@ -570,13 +568,17 @@ private struct HistoryRow: View {
 
     private func change(_ change: HistoryChange) {
         guard let list else { return }
+        let wasPinned = past.isPinned
         Task {
             do {
                 let updated = try await list.change(past, change)
                 search?.apply(updated)
                 if change.title != nil { renamed += 1 }
                 // The row has left this list; the pill says where it went and can bring it back.
-                if let archived = change.archived { Pill.show(archived ? "Archived" : "Unarchived") { undo(updated, archived: !archived) } }
+                if let archived = change.archived {
+                    Pill.undoable(archived ? "Archived" : "Unarchived") { undo(updated, archived ? (wasPinned ? HistoryChange(pinned: true) : HistoryChange(archived: false)) : HistoryChange(archived: true)) }
+                }
+                if let pinned = change.pinned { Pill.undoable(pinned ? "Pinned" : "Unpinned") { undo(updated, HistoryChange(pinned: !pinned)) } }
             } catch {
                 failure = MacTools.message(error)
                 failed += 1
@@ -584,12 +586,13 @@ private struct HistoryRow: View {
         }
     }
 
-    /// Puts an archive or unarchive back; the list reloads, since the row had left it.
-    private func undo(_ session: PastSession, archived: Bool) {
+    /// Puts a pin, an archive or an unarchive back; the list reloads, since the row may have left it. Archiving unpins on
+    /// the Mac, so undoing one that was pinned pins it again, which also brings it back.
+    private func undo(_ session: PastSession, _ change: HistoryChange) {
         guard let list else { return }
         Task {
             do {
-                _ = try await list.change(session, HistoryChange(archived: archived))
+                _ = try await list.change(session, change)
                 await list.refresh()
             } catch {
                 failure = MacTools.message(error)

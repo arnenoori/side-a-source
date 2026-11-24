@@ -12,7 +12,7 @@ final class InlineCameraTests: XCTestCase {
 
         var hooks: DrawerHooks {
             DrawerHooks(room: { [self] in room - reserved.count }, reserve: { [self] image, _ in reserved.append(image); return UUID() },
-                        supply: { [self] _, data in supplied.append(data) }, files: {}, picker: {}, pasteImage: { false }, options: {})
+                        supply: { [self] _, data in supplied.append(data) }, files: {}, picker: {}, pasteImage: { false })
         }
     }
 

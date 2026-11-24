@@ -28,7 +28,7 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     #expect(attempt.keyMatches && session.knows(pending.attemptID))
 
     async let decision = session.wait(pending.attemptID)
-    try await Task.sleep(for: .milliseconds(50))
+    await settle()
     session.decide(.pair)
     #expect(await decision == .pair)
     // The sheet says Paired only once the phone has its token.
@@ -76,7 +76,7 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     defer { session.end() }
     let first = try session.submit(request(session.code.code), spki: spki).get()
     async let decision = session.wait(first.attemptID)
-    try await Task.sleep(for: .milliseconds(50))
+    await settle()
     #expect(throws: PairingSession.Refusal.busy) { try session.submit(request(session.code.code), spki: spki).get() }
     #expect(await decision == .cancel)
     #expect(session.phase == .stopped(.twoDevices))
@@ -95,7 +95,7 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     defer { late.end() }
     let pending = try late.submit(request(late.code.code), spki: spki).get()
     async let decision = late.wait(pending.attemptID)
-    try await Task.sleep(for: .milliseconds(50))
+    await settle()
     late.tick(now: Date().addingTimeInterval(61))
     #expect(await decision == .timeout)
 }
@@ -134,7 +134,7 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     let first = session.code.code
     let pending = try session.submit(request(first), spki: spki).get()
     async let decision = session.wait(pending.attemptID, connection: 1)
-    try await Task.sleep(for: .milliseconds(50))
+    await settle()
     session.cancel("someone-else")
     #expect(session.attempt != nil)
     session.cancel(pending.attemptID)
@@ -145,15 +145,15 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     // A dropped connection that polls again in time keeps the attempt.
     let second = try session.submit(request(session.code.code), spki: spki).get()
     async let dropped = session.wait(second.attemptID, connection: 2)
-    try await Task.sleep(for: .milliseconds(50))
+    await settle()
     session.dropped(connection: 2)
     #expect(await dropped == .cancel)
     async let again = session.wait(second.attemptID, connection: 3)
-    try await Task.sleep(for: .milliseconds(200))
+    await settle()
     #expect(session.attempt?.id == second.attemptID)
     // One that doesn't loses it.
     session.dropped(connection: 3)
     #expect(await again == .cancel)
-    try await Task.sleep(for: .milliseconds(900))
+    await eventually { session.attempt == nil }
     #expect(session.attempt == nil && session.phase == .code)
 }

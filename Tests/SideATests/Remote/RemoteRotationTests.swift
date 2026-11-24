@@ -322,12 +322,13 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     func updates() -> [AutopilotState] { hub.recorded(after: 0).compactMap { if case .autopilotUpdate(let state) = $0 { state } else { nil } } }
 
     events.autopilotChanged()
+    // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- proving nothing is sent for an unchanged state: the update is debounced for 1 s, so the window must outlast it
     try await Task.sleep(for: .milliseconds(1400))
     #expect(updates().isEmpty, "nothing changed")
 
     store.config.followFable = false
     events.autopilotChanged()
-    for _ in 0..<100 where updates().isEmpty { try await Task.sleep(for: .milliseconds(50)) }
+    await eventually { !updates().isEmpty }
     #expect(updates().last?.followFable == false && updates().count == 1)
     #expect(events.snapshot()(0, "e1").autopilot?.followFable == false)
 }

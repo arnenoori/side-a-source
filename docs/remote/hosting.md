@@ -290,7 +290,7 @@ Notes on the launch:
 | | Claude Code | Codex |
 | --- | --- | --- |
 | New | `claude [--model M] [PROMPT]` | `codex [-m M] [-i IMG,…] [PROMPT]` |
-| Resume | `claude --resume ID [PROMPT]` | `codex resume ID [PROMPT]` |
+| Resume | `claude --resume ID [--model M] [PROMPT]` | `codex resume [-m M] ID [PROMPT]` |
 | Fork | `claude --resume ID --fork-session [PROMPT]` | `codex fork ID` if the installed Codex lists it in `codex --help`, else not offered |
 | Account | `--pin <name>` → `SIDE_A_PIN` in the session env | `codex_bridge.invocation(root, account)`, unchanged (below) |
 | Effort | `--effort` / `/effort` after start | `-c model_reasoning_effort=…` |

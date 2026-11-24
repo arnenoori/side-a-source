@@ -31,6 +31,7 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.setForeground(true)
     try await until("closed") { socket.closedByClient == 4008 }
     #expect(await sync.state.connection.cause == .macAsleep)
+    // swiftlint:disable:next sleep_literal_in_tests -- proving the cause survives the attempts that follow
     try await Task.sleep(for: .milliseconds(100))
     #expect(await sync.state.connection.cause == .macAsleep, "and through the attempts after it")
     await sync.stop()
@@ -116,6 +117,7 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     #expect(sqlite3_exec(db, "ALTER TABLE outbox RENAME TO outbox_away", nil, nil, nil) == SQLITE_OK)
     #expect(await outbox.read(for: "mac1") == nil)
     // Several rechecks go by with the table unreadable.
+    // swiftlint:disable:next sleep_literal_in_tests -- proving several rechecks of an unreadable table leave the item pending
     try await Task.sleep(for: .milliseconds(200))
     #expect(await sync.state.pending.map(\.id) == ["held"])
     sqlite3_exec(db, "ALTER TABLE outbox_away RENAME TO outbox", nil, nil, nil)

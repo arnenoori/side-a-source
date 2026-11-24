@@ -47,22 +47,20 @@ enum PhotoAccess: Equatable {
     var needsSettings: Bool { self == .denied }
 }
 
-/// The rows the panel shows. A tray that is full or a Mac that can't take uploads has nothing to attach to,
-/// so only the options remain, and the + keeps opening the options sheet. A screen with no options of its own to
-/// offer (New Session has its model chips) leaves that row out. `camera` is whether this device has a camera to show live.
+/// The rows the panel shows. A tray that is full or a Mac that can't take uploads has nothing to attach to, and the
+/// panel doesn't open. `camera` is whether this device has a camera to show live.
 struct DrawerRows: Equatable {
     var camera: Bool
     var photos: Bool
     var files: Bool
     var paste: Bool
-    var options = true
 
     var attaches: Bool { photos }
-    var count: Int { [camera, photos, files, paste, options].filter { $0 }.count }
+    var count: Int { [camera, photos, files, paste].filter { $0 }.count }
 
-    static func make(canUpload: Bool, room: Int, hasCamera: Bool, clipboardHasImage: Bool, options: Bool = true) -> DrawerRows {
+    static func make(canUpload: Bool, room: Int, hasCamera: Bool, clipboardHasImage: Bool) -> DrawerRows {
         let attach = canUpload && room > 0
-        return DrawerRows(camera: attach && hasCamera, photos: attach, files: attach, paste: attach && clipboardHasImage, options: options)
+        return DrawerRows(camera: attach && hasCamera, photos: attach, files: attach, paste: attach && clipboardHasImage)
     }
 }
 

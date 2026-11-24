@@ -65,7 +65,7 @@ extension SessionCommands {
     /// A new, resumed or forked session in Side A's tmux. `origin` names who asked, for the session's record.
     func start(_ start: StartHosted, images: [String] = [], key: String? = nil, origin: String) async throws(Failure) -> String {
         let agent: Hosting.Agent = start.agent == .codex ? .codex : .claude
-        let mode: Hosting.Mode = start.resume.map { start.fork ? .fork($0) : .resume($0) } ?? .new(model: start.model)
+        let mode: Hosting.Mode = start.resume.map { start.fork ? .fork($0) : .resume($0, model: start.model) } ?? .new(model: start.model)
         let account = start.accountID.flatMap { id in store.config.accounts.first { $0.id == id && $0.provider == start.agent } }
         if start.accountID != nil, account == nil { throw Failure(status: 404, code: .notFound, message: "That account isn't on the Mac.") }
         guard Hosting.safeOption(start.model), Hosting.safeOption(start.effort) else { throw .invalid("That model or effort isn't one Side A can start.", "invalid_option") }
@@ -118,13 +118,25 @@ extension SessionCommands {
         } catch { throw Self.readFailure(error) }
         let branch = await Task.detached { RemoteProjects.git(cwd).branch }.value ?? info?.branch
         let goal = String((info?.firstPrompt ?? info?.title ?? live.title ?? "").prefix(2000))
-        return Handoff(goal: goal, branch: branch, failed: live.flag?.text ?? "", next: "",
-                       lastMessages: Self.lastMessages(page.messages, agent: live.provider), cwd: cwd,
-                       project: URL(fileURLWithPath: cwd).lastPathComponent, accountID: accountID, model: info?.model)
+        var draft = Handoff(goal: goal, branch: branch, failed: live.flag?.text ?? "", next: "",
+                            lastMessages: Self.lastMessages(page.messages, agent: live.provider), cwd: cwd,
+                            project: URL(fileURLWithPath: cwd).lastPathComponent, accountID: accountID, model: info?.model)
+        await addHandoffFacts(&draft, live: live)
+        return draft
     }
 
     /// Starts the new hosted session first and ends the old one only once it's up, so a failed start loses nothing.
     func restart(_ id: String, _ body: RestartRequest, key: String? = nil, origin: String) async throws(Failure) -> String {
+        try await restarted(id, body, key: key, origin: origin).name
+    }
+
+    /// The other agent's start answers with the link, so the phone can show where it came from at once.
+    func restarted(_ id: String, _ body: RestartRequest, images: [String] = [], key: String? = nil,
+                   origin: String) async throws(Failure) -> (name: String, link: HandoffLink?) {
+        if let agent = body.agent, let live = Target(id, store: store)?.live, agent != live.provider {
+            let (name, link) = try await handOff(id, body, to: agent, images: images, key: key, origin: origin)
+            return (name, link)
+        }
         let prompt = Self.prompt(body.handoff)
         guard prompt.count <= Self.maxReply else { throw .invalid("That handoff is too long.", "too_long") }
         guard store.hosted.available else { throw .hosted(.unavailable) }
@@ -134,7 +146,8 @@ extension SessionCommands {
         }
         guard body.handoff.cwd == cwd else { throw Failure(status: 409, code: .cannotDeliver, message: "That handoff is for another folder.") }
         let name = try await start(StartHosted(cwd: cwd, agent: live.provider, model: body.model ?? body.handoff.model,
-                                               accountID: body.accountID ?? body.handoff.accountID, prompt: prompt), key: key, origin: origin)
+                                               accountID: body.accountID ?? body.handoff.accountID, prompt: prompt), images: images, key: key,
+                               origin: origin)
         if let old = live.hosted, store.hosted.sessions.contains(where: { $0.name == old }) {
             do { try await store.hosted.end(old) } catch {
                 RemoteLog.shared("couldn't end \(old) after handing it off: \(error.localizedDescription)")
@@ -142,12 +155,12 @@ extension SessionCommands {
         } else {
             _ = await store.sessions.terminate([live], still: { _ in true })
         }
-        return name
+        return (name, nil)
     }
 
     /// The last six turns with text, as markdown, each cut to 1,500 characters.
     nonisolated static func lastMessages(_ messages: [TranscriptMessage], agent: AgentProvider) -> String {
-        let name = agent == .codex ? "Codex" : "Claude"
+        let name = agent.title
         return messages.filter { ($0.role == .user || $0.role == .assistant) && !($0.text ?? "").isEmpty }.suffix(6).map { message in
             let text = (message.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return "**\(message.role == .user ? "You" : name):** " + (text.count > 1500 ? text.prefix(1500) + "…" : text)

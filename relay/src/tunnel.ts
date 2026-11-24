@@ -34,13 +34,25 @@ export const TUNNEL = {
   budgetFlushBytes: 16 << 20,
   budgetFlushFrames: 20_000,
   budgetFlushEvery: 60_000,
+  // A Mac that said nothing, not even a ping (every 25 s), this long has gone quiet. Past a sleep, a Wi-Fi roam and a
+  // relaunch (a minute or two each), and short enough that a crash is found before anyone's next look at the phone.
+  quietAfter: 10 * 60_000,
+  // A Mac that said it was going to sleep is given a night and a working day. After that it is worth a word.
+  asleepAfter: 24 * 3_600_000,
+  // A goodbye counts if it came this long before the Mac's last word: one that was followed by hours of pings was withdrawn.
+  goodbyeWindow: 2 * 60_000,
 };
 
-export const CLOSE = { revoked: 4401, noPairing: 4403, replaced: 4409, limited: 4429, tooBig: 1009 } as const;
+// What the Mac may say as it goes. `sleep` waits asleepAfter; the others are the owner's doing, and never alert.
+export const GOODBYES = ['quit', 'off', 'sleep'] as const;
+export type Goodbye = typeof GOODBYES[number];
+
+export const CLOSE = { revoked: 4401, noPairing: 4403, silent: 4408, replaced: 4409, limited: 4429, tooBig: 1009 } as const;
 
 const DAY = 86_400_000;
 
-interface MacAttachment { kind: 'mac' }
+// `opened`: when the socket connected, the Mac's last word until its first ping.
+interface MacAttachment { kind: 'mac'; opened?: number }
 // `streams`: open streams, counted for pairing sockets only. `live` holds each one's id and which sides sent FIN
 // (1 the phone, 2 the Mac): a stream ends with a RESET from either side, or a FIN from both.
 // `secret`: base64url of the secret hash the socket authenticated with, so a re-pairing under the same device id ends it.
@@ -53,6 +65,14 @@ interface PhoneAttachment {
 type Attachment = MacAttachment | PhoneAttachment;
 
 // The ingress refuses before any socket opens; the Worker turns this into an error response.
+// The Mac's liveness, one row once it has connected and said it can be watched. `up`: a socket is open. `since`: when it
+// connected, or when it was last heard before it went. `watch`: it announced itself for watching on this connection (an older
+// Mac doesn't, and is never alerted about). `goodbye`: what it said on the way out. `alerted`: the push for this outage is made.
+interface MacRow { up: number; since: number; watch: number; goodbye: string | null; goodbye_at: number | null; alerted: number; [key: string]: SqlStorageValue }
+
+// What the object should do about a quiet Mac, and when to look again.
+export interface Quiet { alert?: 'quiet' | 'asleep'; next: number | null }
+
 export interface Refusal { status: number; code: string; message: string; retryAfter?: number }
 
 interface Bucket { tokens: number; at: number }
@@ -90,7 +110,9 @@ export class Tunnel {
   // Spent since the budget row was last written. Lost with the object if it hibernates, which takes a quiet socket.
   private spent = { bytes: 0, frames: 0, flushed: Date.now() };
 
-  constructor(private ctx: DurableObjectState, private publicKey: () => Uint8Array | null) {}
+  constructor(private ctx: DurableObjectState, private publicKey: () => Uint8Array | null,
+              // The Mac connected: true when it had been alerted about.
+              private macConnected: (alerted: boolean, now: number) => void = () => {}) {}
 
   private get sql() {
     return this.ctx.storage.sql;
@@ -102,7 +124,9 @@ export class Tunnel {
       CREATE TABLE IF NOT EXISTS tunnel(id INTEGER PRIMARY KEY, ticket_hash BLOB, ticket_expires INTEGER, last_used INTEGER,
                                         bad_tickets INTEGER, bad_since INTEGER, nonces TEXT);
       CREATE TABLE IF NOT EXISTS tunnel_slots(slot INTEGER PRIMARY KEY, until INTEGER);
-      CREATE TABLE IF NOT EXISTS tunnel_budget(id INTEGER PRIMARY KEY, day INTEGER, bytes INTEGER, frames INTEGER);`);
+      CREATE TABLE IF NOT EXISTS tunnel_budget(id INTEGER PRIMARY KEY, day INTEGER, bytes INTEGER, frames INTEGER);
+      CREATE TABLE IF NOT EXISTS tunnel_mac(id INTEGER PRIMARY KEY, up INTEGER, since INTEGER, watch INTEGER, goodbye TEXT,
+                                            goodbye_at INTEGER, alerted INTEGER);`);
     this.sql.exec('INSERT OR IGNORE INTO tunnel VALUES (1, NULL, NULL, NULL, 0, 0, ?)', '{}');
   }
 
@@ -119,11 +143,17 @@ export class Tunnel {
 
   devices(): number {
     this.schema();
-    return this.sql.exec('SELECT COUNT(*) AS n FROM tunnel_devices').one().n as number;
+    return this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM tunnel_devices').one().n;
   }
 
   private attachment(ws: WebSocket): Attachment | null {
     return ws.deserializeAttachment() as Attachment | null;
+  }
+
+  private phoneAttachment(ws: WebSocket): PhoneAttachment {
+    const attachment = this.attachment(ws);
+    if (attachment?.kind !== 'phone') throw new Error('a phone socket without its attachment');
+    return attachment;
   }
 
   private open(tag: string) {
@@ -171,12 +201,15 @@ export class Tunnel {
     for (const old of this.open('mac')) old.close(CLOSE.replaced, 'replaced');
     const { 0: client, 1: server } = new WebSocketPair();
     this.ctx.acceptWebSocket(server, ['mac']);
-    server.serializeAttachment({ kind: 'mac' } satisfies MacAttachment);
+    server.serializeAttachment({ kind: 'mac', opened: now } satisfies MacAttachment);
     for (const phone of this.open('phone')) {
       this.restart(phone);
       phone.send(json({ type: 'mac', online: false }));
       phone.send(json({ type: 'mac', online: true }));
     }
+    const alerted = this.macUp(now);
+    await this.arm(now + TUNNEL.quietAfter);
+    this.macConnected(alerted, now);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -187,7 +220,7 @@ export class Tunnel {
     const row = this.sql.exec<{ secret_hash: ArrayBuffer }>('SELECT secret_hash FROM tunnel_devices WHERE id = ?', credential.device).toArray()[0];
     if (!row || !equalBytes(new Uint8Array(row.secret_hash), credential.secretHash)) return { status: 401, code: 'unauthorized', message: 'Unknown device' };
     if (this.overBudget(now)) return this.spentForToday(now);
-    const phones = this.open('phone').map(ws => ({ ws, attachment: this.attachment(ws) as PhoneAttachment }));
+    const phones = this.open('phone').map(ws => ({ ws, attachment: this.phoneAttachment(ws) }));
     const online = new Set(phones.map(phone => phone.attachment.device).filter(Boolean));
     if (!online.has(credential.device) && online.size >= TUNNEL.devicesOnline) {
       return { status: 429, code: 'rate_limited', message: 'Too many devices online', retryAfter: 10 };
@@ -213,9 +246,9 @@ export class Tunnel {
       return { status: 403, code: 'no_pairing', message: 'This Mac isn\'t pairing right now' };
     }
     if (this.overBudget(now)) return this.spentForToday(now);
-    const phones = this.open('phone').map(ws => this.attachment(ws) as PhoneAttachment);
+    const phones = this.open('phone').map(ws => this.phoneAttachment(ws));
     const ticketHash = b64url(hash);
-    const pairing = this.open('pair').map(ws => ({ ws, ticket: (this.attachment(ws) as PhoneAttachment).ticket }));
+    const pairing = this.open('pair').map(ws => ({ ws, ticket: (this.phoneAttachment(ws)).ticket }));
     if (pairing.filter(socket => socket.ticket === ticketHash).length >= TUNNEL.pairSockets) {
       return { status: 429, code: 'rate_limited', message: 'Too many pairing connections', retryAfter: 10 };
     }
@@ -305,13 +338,17 @@ export class Tunnel {
       for (const device of devices) this.sql.exec('INSERT OR REPLACE INTO tunnel_devices VALUES (?, ?)', device.id, device.hash.slice().buffer);
       const known = new Map(devices.map(device => [device.id, device.hash]));
       for (const phone of this.open('phone')) {
-        const { device, secret } = this.attachment(phone) as PhoneAttachment;
+        const { device, secret } = this.phoneAttachment(phone);
         if (!device) continue;
         const expected = known.get(device);
         if (!expected) phone.close(CLOSE.revoked, 'revoked');
         // Paired again under the same id: the socket opened with the old secret goes, as on the Mac.
         else if (secret !== undefined && b64url(expected) !== secret) phone.close(CLOSE.replaced, 'replaced');
       }
+    } else if (value?.type === 'watch') {
+      this.sql.exec('UPDATE tunnel_mac SET watch = 1 WHERE id = 1');
+    } else if (value?.type === 'goodbye' && GOODBYES.includes(value.reason)) {
+      this.sql.exec('UPDATE tunnel_mac SET goodbye = ?, goodbye_at = ? WHERE id = 1', value.reason, now);
     } else if (value?.type === 'pairing') {
       const hash = typeof value.ticketHash === 'string' ? fromB64url(value.ticketHash) : null;
       const expires = typeof value.expiresAt === 'number' ? Math.min(value.expiresAt * 1000, now + TUNNEL.ticketLifetime) : 0;
@@ -332,7 +369,7 @@ export class Tunnel {
   private async orphanPairing(current: string | null, now: number) {
     let orphaned = false;
     for (const ws of this.open('pair')) {
-      const attachment = this.attachment(ws) as PhoneAttachment;
+      const attachment = this.phoneAttachment(ws);
       if (attachment.ticket === current) {
         if (attachment.orphaned !== undefined) {
           delete attachment.orphaned;
@@ -354,7 +391,7 @@ export class Tunnel {
   sweepPairing(now: number): number | null {
     let next: number | null = null;
     for (const ws of this.open('pair')) {
-      const { orphaned } = this.attachment(ws) as PhoneAttachment;
+      const { orphaned } = this.phoneAttachment(ws);
       if (orphaned === undefined) continue;
       const due = orphaned + TUNNEL.pairGrace;
       if (due <= now) ws.close(CLOSE.noPairing, 'pairing ended');
@@ -368,12 +405,12 @@ export class Tunnel {
     if (!parsed) return mac.close(CLOSE.tooBig, 'bad frame');
     const slot = parsed.stream >>> 16;
     const stream = parsed.stream & 0xffff;
-    const phone = this.open('phone').find(ws => (this.attachment(ws) as PhoneAttachment).slot === slot);
+    const phone = this.open('phone').find(ws => (this.phoneAttachment(ws)).slot === slot);
     if (!phone) {
       if (parsed.type !== FRAME.reset) mac.send(frame(FRAME.reset, parsed.stream, utf8('gone')));
       return;
     }
-    if (parsed.type === FRAME.fin || parsed.type === FRAME.reset) this.ended(phone, this.attachment(phone) as PhoneAttachment, stream, parsed.type, 2);
+    if (parsed.type === FRAME.fin || parsed.type === FRAME.reset) this.ended(phone, this.phoneAttachment(phone), stream, parsed.type, 2);
     phone.send(frame(parsed.type, stream, parsed.payload));
   }
 
@@ -467,14 +504,14 @@ export class Tunnel {
 
   // Every stream went with the Mac, and no FIN or RESET will come back for them: a pairing socket starts over.
   private restart(phone: WebSocket) {
-    const attachment = this.attachment(phone) as PhoneAttachment;
+    const attachment = this.phoneAttachment(phone);
     if (!attachment.live?.length) return;
     attachment.live = [];
     attachment.streams = 0;
     phone.serializeAttachment(attachment);
   }
 
-  closed(ws: WebSocket) {
+  async closed(ws: WebSocket, now = Date.now()) {
     const attachment = this.attachment(ws);
     this.buckets.delete(ws);
     if (!attachment) return;
@@ -490,6 +527,85 @@ export class Tunnel {
         this.restart(phone);
         phone.send(json({ type: 'mac', online: false }));
       }
+      // A deleted install's sockets close after its erase; its tables stay gone.
+      if (this.publicKey()) {
+        const due = this.macDown(now, now);
+        if (due !== null) await this.arm(due);
+      }
     }
+  }
+
+  private macRow(): MacRow | undefined {
+    this.schema();
+    return this.sql.exec<MacRow>('SELECT up, since, watch, goodbye, goodbye_at, alerted FROM tunnel_mac WHERE id = 1').toArray()[0];
+  }
+
+  // The Mac's socket opened: it is up, with nothing yet said about itself. True when this ends an outage it was alerted to.
+  private macUp(now: number): boolean {
+    const alerted = this.macRow()?.alerted === 1;
+    this.sql.exec(`INSERT INTO tunnel_mac VALUES (1, 1, ?1, 0, NULL, NULL, 0)
+                   ON CONFLICT(id) DO UPDATE SET up = 1, since = ?1, watch = 0, goodbye = NULL, goodbye_at = NULL, alerted = 0`, now);
+    return alerted;
+  }
+
+  // No Mac socket is open. `heard` is the last word from it: a socket the relay never saw close ends where the pings did.
+  // A goodbye holds if it came near that last word. Past the day's budget the relay is what shut the Mac out, and that is
+  // no reason to tell anyone. Returns when the outage is worth a push, or null if it never will be.
+  private macDown(now: number, heard: number): number | null {
+    const row = this.macRow();
+    if (!row?.up) return null;
+    const said = row.goodbye_at !== null && row.goodbye_at >= heard - TUNNEL.goodbyeWindow ? row.goodbye : null;
+    const goodbye = this.overBudget(now) ? 'quit' : said;
+    this.sql.exec('UPDATE tunnel_mac SET up = 0, since = ?, goodbye = ? WHERE id = 1', heard, goodbye);
+    const wait = this.waitFor(goodbye);
+    return wait === null ? null : Math.max(now, heard + wait);
+  }
+
+  // How long a Mac that left like this may stay away before it is worth a push; null for never.
+  private waitFor(goodbye: string | null): number | null {
+    if (goodbye === 'quit' || goodbye === 'off') return null;
+    return goodbye === 'sleep' ? TUNNEL.asleepAfter : TUNNEL.quietAfter;
+  }
+
+  // The object's alarm, no later than `when`.
+  private async arm(when: number) {
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm === null || alarm > when) await this.ctx.storage.setAlarm(when);
+  }
+
+  // Where a Mac stands. Called from the alarm: a Mac whose socket never closed but stopped pinging is marked down here,
+  // so a crash, a power cut and a lid closed on an older Mac are all found the same way. Once it says an outage is
+  // due, the row is marked, so each outage is told once.
+  quiet(now: number): Quiet {
+    let row = this.macRow();
+    if (!row?.watch) return { next: null };
+    if (row.up) {
+      const mac = this.mac();
+      const heard = mac ? this.heard(mac) : row.since;
+      if (heard + TUNNEL.quietAfter > now) return { next: heard + TUNNEL.quietAfter };
+      for (const ws of this.open('mac')) {
+        try { ws.close(CLOSE.silent, 'silent'); } catch {}
+      }
+      this.macDown(now, heard);
+      row = this.macRow();
+      if (!row) return { next: null };
+    }
+    const wait = this.waitFor(row.goodbye);
+    if (row.alerted || wait === null) return { next: null };
+    const due = row.since + wait;
+    if (due > now) return { next: due };
+    this.sql.exec('UPDATE tunnel_mac SET alerted = 1 WHERE id = 1');
+    return { alert: row.goodbye === 'sleep' ? 'asleep' : 'quiet', next: null };
+  }
+
+  // The push for this outage didn't go and will be tried again: still unalerted, unless the Mac came back meanwhile.
+  unalert() {
+    this.sql.exec('UPDATE tunnel_mac SET alerted = 0 WHERE id = 1 AND up = 0');
+  }
+
+  private heard(mac: WebSocket): number {
+    const attachment = this.attachment(mac);
+    const opened = (attachment?.kind === 'mac' ? attachment.opened : undefined) ?? 0;
+    return Math.max(opened, this.ctx.getWebSocketAutoResponseTimestamp(mac)?.getTime() ?? 0);
   }
 }

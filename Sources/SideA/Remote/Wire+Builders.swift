@@ -19,7 +19,7 @@ enum WireBuilders {
         return PastSession(id: info.id, agent: info.isCodex ? .codex : .claude, title: custom ?? info.name, project: info.project, cwd: info.cwd,
                            branch: info.branch, firstAt: info.firstTs, lastAt: info.lastTs,
                            snippet: snippet.map { $0.text.replacingOccurrences(of: "\u{02}", with: "").replacingOccurrences(of: "\u{03}", with: "") },
-                           snippetUUID: snippet?.uuid, parentID: info.forkedFrom, pinned: sessions.isPinned(info.id),
+                           snippetUUID: snippet?.uuid, parentID: info.forkedFrom ?? info.handedFrom, pinned: sessions.isPinned(info.id),
                            archived: sessions.isArchived(info.id), customTitle: custom)
     }
 
@@ -122,7 +122,7 @@ enum WireBuilders {
         let agent = live.provider
         // Codex's app server: settings for the next turns, context and cost.
         let daemon = store.remote.codex.row(live)
-        return RemoteSession(id: key, conversationID: live.sessionID, agent: agent,
+        var row = RemoteSession(id: key, conversationID: live.sessionID, agent: agent,
                              title: live.sessionID.flatMap { sessions.names[$0] } ?? live.title ?? live.name ?? sessions.project(of: live.cwd), cwd: live.cwd, project: sessions.project(of: live.cwd),
                              worktree: live.cwd.map { worktree($0) } ?? false,
                              accountID: accountID, accountName: accountID.flatMap { id in store.config.accounts.first { $0.id == id }?.name },
@@ -136,8 +136,29 @@ enum WireBuilders {
                              ports: live.ports.map { $0.map { ListeningPort(port: $0.port, process: $0.command ?? "", previewURL: store.remote.previews.url(session: WireBuilders.key(live), port: $0.port)) } },
                              memoryBytes: live.memory.map { $0 << 20 }, contextPercent: daemon?.contextPercent ?? live.contextPercent,
                              abilityReasons: commands.reasons(live, status: status), settings: daemon?.settings ?? settings(live),
-                             turnID: daemon?.turnID ?? live.turnID, plan: daemon?.plan, backgroundTasks: live.runningTasks,
+                             turnID: daemon?.turnID ?? live.turnID, plan: daemon?.plan ?? live.plan, backgroundTasks: live.runningTasks,
                              limit: live.sessionID.flatMap { rows.limits[$0] })
+        let queued = live.sessionID.map { store.island.waiting($0) } ?? []
+        row.queued = queued.isEmpty ? nil : queued
+        row.receipts = store.remote.receipts.receipts(live)
+        let links = HandoffLinks.of(store)
+        links.load(store)
+        row.handoffFrom = links.link(conversation: live.sessionID, hosted: live.hosted)
+        row.pullRequest = store.remote.pulls.pull(live.prUrl)
+        row.failure = failure(live, status: status, account: row.accountName)
+        // Last: what wakes it reads the rest of the row.
+        row.snooze = store.remote.snoozes.current(row, prompt: live.promptAt)
+        return row
+    }
+
+    /// A limit or a dropped connection matters only once the session has stopped on it; mid-turn the agent tries again.
+    static func failure(_ live: LiveSession, status: SessionStatus, account: String?) -> SessionFailure? {
+        guard let error = live.lastError,
+              var failure = AgentFailure.classify(error.text, code: error.code, agent: live.provider, account: account, at: error.at),
+              failure.retryable == false || status != .working else { return nil }
+        let words = Redact.secrets(error.text).trimmingCharacters(in: .whitespacesAndNewlines)
+        failure.detail = words.isEmpty ? nil : String(words.prefix(200))
+        return failure
     }
 
     /// What the session runs with, as the bridge read it; nil when it read nothing.
@@ -169,7 +190,7 @@ enum WireBuilders {
                              worktree: session.worktree.isEmpty ? nil : SideAProtocol.Worktree(path: session.worktree, branch: "sidea/\(session.name)"),
                              sessionID: live.map(key) ?? (session.sessionID.isEmpty ? nil : session.sessionID),
                              createdAt: session.created, macAttached: hosted.macClients[session.name] != nil, viewers: viewers, alive: true,
-                             exitStatus: nil)
+                             exitStatus: nil, handoffFrom: HandoffLinks.of(store).link(conversation: live?.sessionID, hosted: session.name))
     }
 
     /// Phone viewers as the last tmux refresh counted them, which `HostedSessions.watch` keeps within seconds.

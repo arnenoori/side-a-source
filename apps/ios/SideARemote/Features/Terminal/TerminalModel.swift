@@ -17,6 +17,8 @@ final class TerminalModel {
     }
 
     let name: String
+    /// What kind of computer the session runs on, for the words that name it; set where the model is made.
+    var kind: HostOS = .macos
     private(set) var phase: Phase = .attaching
     /// The size the Mac renders at, and who set it.
     private(set) var size: (cols: Int, rows: Int, owner: String)?
@@ -93,7 +95,7 @@ final class TerminalModel {
         reconnect = Task { [weak self] in
             // Typing into a session needs its owner: Face ID or the passcode, held for a few minutes, and
             // asked again on a reconnect after that.
-            guard await OwnerAuth.confirm(reason: "Type into \(self?.name ?? "the session") on your Mac") else {
+            guard await OwnerAuth.confirm(reason: "Type into \(self?.name ?? "the session") on \(self?.kind.your() ?? HostOS.macos.your())") else {
                 let biometry = Biometry.current
                 self?.phase = .ended(biometry == .passcode ? "Your passcode is needed to use the terminal."
                                                            : "\(biometry.name) or your passcode is needed to use the terminal.")

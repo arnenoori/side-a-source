@@ -16,6 +16,7 @@ extension RemoteRoutes {
         Route("POST", "v1/sessions/{id}/ports/{port}/stop", stopServer),
         Route("POST", "v1/sessions/{id}/handoff", handoff),
         Route("POST", "v1/sessions/{id}/restart", restart),
+        Route("GET", "v1/handoffs/{id}", handoffPrompt),
         Route("GET", "v1/cleanup", cleanupReport),
         Route("POST", "v1/cleanup/archive", archive),
         Route("POST", "v1/cleanup/restore", restore),
@@ -181,16 +182,21 @@ extension RemoteRoutes {
     @Sendable static func restart(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         guard let body = context.body(RestartRequest.self) else { return badJSON }
-        let needs: ConfirmProof
+        var needs: ConfirmProof
         switch await sessionProof(context, id) {
         case .success(let proof): needs = proof
         case .failure(let unproven): return unproven.response
         }
+        if let refused = handoffRefusal(body) { return refused }
+        needs = max(needs, ConfirmProof(ConfirmPolicy.restart(body, sessionMode: .default)))
         if let refused = await refusal(context, .restart, target: id, body: body, needs: needs) { return refused }
+        let (images, unknown) = await handoffImages(context, body)
+        if let unknown { return unknown }
         let key = context.request.headers["Idempotency-Key"].map { "phone-\(context.device)-\($0)" }
         return await onMainAsync(context) { store in
             do throws(SessionCommands.Failure) {
-                return hosted(try await SessionCommands(store: store).restart(id, body, key: key, origin: "phone"), store: store)
+                let (name, link) = try await SessionCommands(store: store).restarted(id, body, images: images, key: key, origin: "phone")
+                return hosted(name, store: store, handoff: link)
             } catch { return response(error) }
         }
     }

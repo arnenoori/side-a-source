@@ -28,7 +28,7 @@ enum OwnerAuth {
         return true
     }
 
-    /// Ends the grace, as the app goes to the background.
+    /// Ends the grace, once the app has been away as long as the app lock waits.
     static func expire() {
         lock.withLock { confirmedAt = nil }
         DeviceKeys.expire()

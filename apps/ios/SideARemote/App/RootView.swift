@@ -35,7 +35,7 @@ extension DeepLink {
     /// `current` is the Mac an account link means, the one on screen.
     func landing(mac current: String) -> LinkLanding {
         switch self {
-        case .session(let id, let mac): LinkLanding(tab: .sessions, sessions: [.session(id, mac: mac)])
+        case .session(let id, let mac), .compose(let id, let mac): LinkLanding(tab: .sessions, sessions: [.session(id, mac: mac)])
         // The request's session, if it has one, opens once the request is known.
         case .request: LinkLanding(tab: .sessions)
         case .mac: LinkLanding(tab: .sessions, sessions: [])
@@ -49,6 +49,8 @@ extension DeepLink {
 
 enum DeepLink: Equatable {
     case session(SessionKey, mac: String), request(RequestID, mac: String), mac(String), accounts, account(String), search, settings
+    /// The session with its composer up, holding what a notification couldn't send.
+    case compose(SessionKey, mac: String)
 
     init?(_ url: URL) {
         guard url.scheme == "sidea-remote", let host = url.host() else { return nil }
@@ -56,6 +58,7 @@ enum DeepLink: Equatable {
         switch host {
         // The Mac id comes first.
         case "session" where parts.count == 2: self = .session(parts[1], mac: parts[0])
+        case "compose" where parts.count == 2: self = .compose(parts[1], mac: parts[0])
         case "mac" where parts.count == 1: self = .mac(parts[0])
         case "request" where parts.count == 2: self = .request(parts[1], mac: parts[0])
         case "accounts" where parts.count == 1: self = .account(parts[0])
@@ -85,7 +88,7 @@ extension View {
             Button("Open Demo", role: .destructive, action: open)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your Macs disconnect until you leave the demo.")
+            Text("Your \(PairedMac.all().map(\.endpoint.kind).shared.plural) disconnect until you leave the demo.")
         }
     }
 }
@@ -102,6 +105,7 @@ final class ApprovalPresenter {
 
 struct NoteTarget: Identifiable, Hashable {
     let session: SessionKey
+    var delivery: Delivery? = .nextStep
     var id: SessionKey { session }
 }
 
@@ -184,6 +188,10 @@ struct MainTabs: View {
             Task { @MainActor in tab = current }
         }
         .environment(\.windowIsRegular, width == .regular)
+        .environment(\.openSession) { route in
+            tab = .sessions
+            sessionsPath = [route]
+        }
         // Minimized, the bar split into the current tab and a separate search button; it stays whole.
         .tabBarMinimizeBehavior(.never)
         .waitingAccessory(showsAccessory) { show($0) }
@@ -198,7 +206,7 @@ struct MainTabs: View {
                 .environment(\.zoomNamespace, sessionsZoom)
         }
         .sheet(item: Bindable(approvals).note) { target in
-            MessageSheet(sessionID: target.session)
+            ComposerSheet(sessionID: target.session, delivery: target.delivery)
                 .environment(root.model(owning: target.session) ?? model)
         }
         .sheet(isPresented: $showsNewSession) {
@@ -210,16 +218,17 @@ struct MainTabs: View {
             .environment(model)
             .environment(\.windowIsRegular, width == .regular)
         }
-        .onChange(of: keys.newSession) { if root.visible.contains(where: { $0.tools.can(.hosted) }) { showsNewSession = true } }
+        .onChange(of: keys.newSession) { if root.canStartSession { showsNewSession = true } }
         .onOpenURL(perform: open)
         #if DEBUG
         .task {
-            // `--open-session lan|cache`: opens that demo session on launch, so the composer is one launch away.
+            // `--open-session lan|cache|ship`: opens that demo session on launch, so the composer is one launch away; with `--compose-sheet`,
+            // its Reply sheet over the list instead.
             let arguments = ProcessInfo.processInfo.arguments
             guard let index = arguments.firstIndex(of: "--open-session"), index + 1 < arguments.count else { return }
-            let id = arguments[index + 1] == "cache" ? DemoData.ID.cache : DemoData.ID.lan
+            let id = ["cache": DemoData.ID.cache, "ship": DemoData.ID.ship][arguments[index + 1]] ?? DemoData.ID.lan
             try? await Task.sleep(for: .milliseconds(400))
-            sessionsPath = [.session(id, mac: root.model.macID)]
+            if arguments.contains("--compose-sheet") { approvals.note = NoteTarget(session: id) } else { sessionsPath = [.session(id, mac: root.model.macID)] }
         }
         #endif
         .task(id: awaited) { await awaitRequest() }
@@ -238,7 +247,7 @@ struct MainTabs: View {
     /// The keyboard's ways around: each opens what its button or tab does.
     private var commands: RemoteCommandActions {
         RemoteCommandActions(
-            canStart: { root.visible.contains { $0.tools.can(.hosted) } },
+            canStart: { root.canStartSession },
             newSession: { tab = .sessions; keys.newSession += 1 },
             show: { tab = $0 },
             previousSession: { openNeighbor(step: -1) },
@@ -274,6 +283,9 @@ struct MainTabs: View {
             if let request = (root.model(for: mac) ?? model).requests.request(id) { show(request, mac: mac) } else { awaited = link }
         case .mac(let id):
             if root.macs.count > 1, root.model(for: id) != nil { root.shown = id }
+        case .compose(let session, let mac):
+            root.takeNotificationDrafts()
+            if root.model(for: mac) != nil { approvals.note = NoteTarget(session: session, delivery: nil) }
         default: break
         }
     }

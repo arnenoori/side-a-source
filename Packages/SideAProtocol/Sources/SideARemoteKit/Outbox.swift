@@ -8,7 +8,7 @@ import SQLite3
 /// Each item's id is its Idempotency-Key.
 public actor Outbox {
     public struct Item: Codable, Sendable, Identifiable, Equatable {
-        /// Also the Idempotency-Key.
+        /// Also the Idempotency-Key, unless `key` names an earlier attempt's.
         public let id: String
         public let macID: String
         public let method: String
@@ -17,28 +17,34 @@ public actor Outbox {
         public let createdAt: Timestamp
         public var attempts: Int
         public var lastError: APIError?
-        /// Answers: 24 h; replies and interrupts: 10 min.
+        /// Answers: 24 h; replies: `replyLifetime`; interrupts: `stopLifetime`; Take Back: 10 min. Read through `deadline`.
         public let expiresAt: Timestamp
         /// A retry the user tapped: the first attempt's id, and which retry this is (1, 2, …).
         public let retryOf: String?
         public let retry: Int?
         /// `X-SideA-Confirm`, signed when the user answered; good for two minutes, so a later retry needs a new tap.
         public var confirm: String?
+        /// The Idempotency-Key when it isn't `id`: a reply sent again under the key an earlier attempt may have reached the
+        /// Mac with, so the Mac's record answers it from that attempt instead of typing it twice. Its body is that attempt's.
+        public let key: String?
 
         public init(id: String = UUID().uuidString.lowercased(), macID: String, method: String = "POST", path: String, body: Data = Data(),
                     createdAt: Timestamp, attempts: Int = 0, lastError: APIError? = nil, expiresAt: Timestamp,
-                    retryOf: String? = nil, retry: Int? = nil, confirm: String? = nil) {
+                    retryOf: String? = nil, retry: Int? = nil, confirm: String? = nil, key: String? = nil) {
             self.id = id; self.macID = macID; self.method = method; self.path = path; self.body = body
             self.createdAt = createdAt; self.attempts = attempts; self.lastError = lastError; self.expiresAt = expiresAt
-            self.retryOf = retryOf; self.retry = retry; self.confirm = confirm
+            self.retryOf = retryOf; self.retry = retry; self.confirm = confirm; self.key = key
         }
 
-        /// The same mutation under a new Idempotency-Key, `<first id>:r<n>` (an answer's is `<rid>:<kind>:r<n>`),
-        /// for the same lifetime counted from `now`.
-        public func retried(_ n: Int, now: Timestamp, confirm: String? = nil) -> Item {
+        /// What goes in the Idempotency-Key header.
+        public var idempotencyKey: String { key ?? id }
+
+        /// The same mutation as `<first id>:r<n>` (an answer's is `<rid>:<kind>:r<n>`), for the same lifetime counted from
+        /// `now`. Under a new Idempotency-Key, or with `sameKey` under this one's, for an attempt that may have landed.
+        public func retried(_ n: Int, now: Timestamp, confirm: String? = nil, sameKey: Bool = false) -> Item {
             let first = retryOf ?? id
-            return Item(id: "\(first):r\(n)", macID: macID, method: method, path: path, body: body, createdAt: now,
-                        expiresAt: now + (expiresAt - createdAt), retryOf: first, retry: n, confirm: confirm)
+            return Item(id: ReplyReceipt.retry(of: first, n), macID: macID, method: method, path: path, body: body, createdAt: now,
+                        expiresAt: now + (expiresAt - createdAt), retryOf: first, retry: n, confirm: confirm, key: sameKey ? idempotencyKey : nil)
         }
 
         /// What the item acts on, so items for one session or request go in order and a retrying one
@@ -61,13 +67,27 @@ public actor Outbox {
                         path: QueuedRoutes.answer.path(request), body: body, createdAt: now, expiresAt: now + 86_400, confirm: confirm)
         }
 
-        /// A reply to a session; a finished one needs its `FinishedSession.turnID`.
+        /// A reply to a session; a finished one needs its `FinishedSession.turnID`. `key`: as on `Item`.
         public static func reply(_ session: SessionKey, _ reply: RemoteReply, id: String = UUID().uuidString.lowercased(), macID: String,
-                                 now: Timestamp, confirm: String? = nil) -> Item {
+                                 now: Timestamp, confirm: String? = nil, key: String? = nil) -> Item {
             let body = (try? RemoteClient.encoder.encode(reply)) ?? Data()
             return Item(id: id, macID: macID, method: QueuedRoutes.reply.method, path: QueuedRoutes.reply.path(session), body: body,
-                        createdAt: now, expiresAt: now + 600, confirm: confirm)
+                        createdAt: now, expiresAt: now + replyLifetime, confirm: confirm, key: key == id ? nil : key)
         }
+
+        /// Sent later than this, a reply could land in a turn the person never saw; past it, it waits on the phone until a
+        /// check that the session hasn't moved on (`ReplyFlight.since`).
+        public static let replyLifetime: Double = 60
+        /// What older builds queued a reply with: fixed, whatever `ReplyFlight.waitingLifetime` becomes.
+        static let legacyReplyLifetime: Double = 43_200
+
+        /// Rows older builds queued with a 12 h reply lifetime stop at `replyLifetime` too.
+        public var deadline: Timestamp {
+            guard expiresAt - createdAt >= Self.legacyReplyLifetime, QueuedRoutes.reply.id(inPath: path) != nil else { return expiresAt }
+            return createdAt + Self.replyLifetime
+        }
+        /// A Stop that arrives late stops whatever is running then, not what the user saw.
+        public static let stopLifetime: Double = 120
     }
 
     public enum Failure: Error {
@@ -188,7 +208,7 @@ public actor Outbox {
             expired = []
             try run("SELECT item FROM outbox WHERE mac = ? AND (claimedBy IS NULL OR claimedAt < ?)",
                     .text(macID), .real(now - Self.claimLifetime)) { statement in
-                if let item = Self.item(statement, 0), item.expiresAt <= now { expired.append(item) }
+                if let item = Self.item(statement, 0), item.deadline <= now { expired.append(item) }
             }
             for item in expired { try run("UPDATE outbox SET claimedBy = ?, claimedAt = ? WHERE id = ?", .text(owner), .real(now), .text(item.id)) }
         }
@@ -203,6 +223,16 @@ public actor Outbox {
 
     public func remove(_ id: String) {
         attempt("remove") { try run("DELETE FROM outbox WHERE id = ?", .text(id)) }
+    }
+
+    /// False when another process may be posting it or already has: its words must then not be kept to send another way.
+    public func withdraw(_ id: String, now: Timestamp) -> Bool {
+        var removed = false
+        let done = attempt("withdraw") {
+            try run("DELETE FROM outbox WHERE id = ? AND (claimedBy IS NULL OR claimedAt < ?)", .text(id), .real(now - Self.claimLifetime))
+            removed = sqlite3_changes(db) > 0
+        }
+        return done && removed
     }
 
     // MARK: Reply flights

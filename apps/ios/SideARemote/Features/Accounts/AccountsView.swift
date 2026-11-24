@@ -94,7 +94,7 @@ private struct MacAccounts: View {
         if header {
             Section {} header: {
                 HStack(spacing: 6) {
-                    ConnectionDot(state: model.mac.state)
+                    ConnectionDot(state: model.mac.shown)
                     Text(model.mac.name)
                 }
                 .foregroundStyle(.primary)

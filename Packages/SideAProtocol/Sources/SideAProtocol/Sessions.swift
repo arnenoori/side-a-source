@@ -86,7 +86,29 @@ public struct MailState: Codable, Hashable, Sendable {
 }
 
 /// One row per live agent process, plus hosted tmux sessions that have no agent process yet.
+/// A reply the Mac holds for a session until its turn ends (`ReplyResult.delivery == .queued`, Claude's Stop waiter).
+/// `id` names it for `RemoteReply.replaces` and `DELETE /v1/sessions/{id}/queue/{qid}`; it changes when the text does.
+public struct QueuedReply: Codable, Hashable, Sendable, Identifiable {
+    public let id: String
+    public let text: String
+    public init(id: String, text: String) { self.id = id; self.text = text }
+}
+
+/// `GET /v1/sessions/{id}/files?q=`: paths under the session's folder, relative to it, best match first.
+public struct FileMatches: Codable, Hashable, Sendable {
+    public let files: [String]
+    public init(files: [String]) { self.files = files }
+}
+
 public struct RemoteSession: Codable, Hashable, Sendable, Identifiable {
+    /// Capability `replies.queue`: the replies waiting for this session's turn to end, in the order they go. Left out
+    /// when there are none.
+    public var queued: [QueuedReply]?
+    /// Capability `replies.receipts`: the replies typed into it lately and where each stands. Left out when there are none.
+    public var receipts: [ReplyReceipt]?
+    public var pullRequest: PullRequest?
+    public var snooze: SessionSnooze?
+    public var failure: SessionFailure?
     /// The conversation id when known; otherwise `pid-<pid>-<started>`, or `tmux-<name>` for a hosted session still starting.
     public let id: SessionKey
     /// Claude session id or Codex thread id; transcripts are keyed by it.
@@ -144,6 +166,8 @@ public struct RemoteSession: Codable, Hashable, Sendable, Identifiable {
     public var ports: [ListeningPort]?
     /// Its process tree's memory.
     public var memoryBytes: Int?
+    /// Capability `restart.agent`: the conversation this one was handed off from by the other agent.
+    public var handoffFrom: HandoffLink?
 
     public init(id: SessionKey, conversationID: String? = nil, agent: AgentProvider, title: String, cwd: String? = nil, project: String,
                 branch: String? = nil, worktree: Bool = false, accountID: String? = nil, accountName: String? = nil, model: String? = nil,
@@ -166,6 +190,9 @@ public struct RemoteSession: Codable, Hashable, Sendable, Identifiable {
 
     /// Why `ability` is off, when the Mac said.
     public func reason(_ ability: SessionAbility) -> String? { abilityReasons?[ability.rawValue] }
+
+    /// Its model or its effort can change from the phone.
+    public var takesModelSettings: Bool { abilities.contains(.settingsModel) || abilities.contains(.settingsEffort) }
 }
 
 /// The twin of `Island.Ready`: a turn that ended with nothing left running.
@@ -209,11 +236,14 @@ public struct HostedSession: Codable, Hashable, Sendable, Identifiable {
     /// The pane is still running (remain-on-exit keeps dead panes).
     public let alive: Bool
     public let exitStatus: Int?
+    /// Capability `restart.agent`: set on the session a handoff started, before its row carries the link.
+    public var handoffFrom: HandoffLink?
     public init(name: String, agent: AgentProvider, cwd: String, project: String, worktree: Worktree? = nil, sessionID: SessionKey? = nil,
-                createdAt: Timestamp, macAttached: Bool = false, viewers: Int = 0, alive: Bool = true, exitStatus: Int? = nil) {
+                createdAt: Timestamp, macAttached: Bool = false, viewers: Int = 0, alive: Bool = true, exitStatus: Int? = nil,
+                handoffFrom: HandoffLink? = nil) {
         self.name = name; self.agent = agent; self.cwd = cwd; self.project = project; self.worktree = worktree
         self.sessionID = sessionID; self.createdAt = createdAt; self.macAttached = macAttached; self.viewers = viewers
-        self.alive = alive; self.exitStatus = exitStatus
+        self.alive = alive; self.exitStatus = exitStatus; self.handoffFrom = handoffFrom
     }
 }
 

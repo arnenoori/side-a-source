@@ -24,6 +24,9 @@ final class RelayClient: @unchecked Sendable {
         let secretHash: String
         let pushToStartToken: String?
         let appVersion: String
+        /// Whether the phone asked to hear when this Mac goes quiet; absent from a phone that can't say.
+        // swiftlint:disable:next discouraged_optional_boolean -- nil is a phone that can't say, which leaves the relay as it was
+        var notifyQuiet: Bool?
     }
 
     /// The most devices one send may name: the relay's MAX_DEVICES.

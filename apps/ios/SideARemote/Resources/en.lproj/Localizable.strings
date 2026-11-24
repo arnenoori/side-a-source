@@ -8,5 +8,9 @@
 "PUSH_ROTATION_FALLBACK" = "Autopilot moved your sessions";
 "PUSH_TEST_FALLBACK" = "Notifications from your Mac work";
 "PUSH_ANSWERED" = "Answered";
+/* Sent by the relay itself when a Mac stops answering; the words are fixed here and never come from the Mac. */
+"PUSH_MAC_QUIET" = "Your Mac has gone quiet";
+"PUSH_MAC_ASLEEP" = "Your Mac has been asleep for a day";
+"PUSH_MAC_BACK" = "Your Mac is back";
 "ACTIVITY_START_TITLE" = "Side A";
 "ACTIVITY_START_BODY" = "Sessions are working";

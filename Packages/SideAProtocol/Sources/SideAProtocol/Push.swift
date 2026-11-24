@@ -17,12 +17,19 @@ public struct PushCategory: OpenEnum {
     /// Autopilot moved sessions, or no account has room. Only to a phone that said `rotation` in its `hello`.
     public static let rotation = Self(rawValue: "ROTATION")
     public static let test = Self(rawValue: "TEST")
+    /// The relay's own, when a Mac goes quiet and when it is back: no envelope, no Service Extension, the words are the
+    /// loc-keys `PUSH_MAC_QUIET`, `PUSH_MAC_ASLEEP` and `PUSH_MAC_BACK`. The Mac can't send it.
+    public static let macQuiet = Self(rawValue: "MAC_QUIET")
     /// Relay `kind: "dismiss"` only; no envelope.
     public static let answered = Self(rawValue: "ANSWERED")
     /// Never travels: the Service Extension switches a `REQUEST` to it only when the authenticated payload says `gate: "lockScreen"`.
     public static let requestSafe = Self(rawValue: "REQUEST_SAFE")
     /// Never travels: Open only, for a request whose detail was cut to fit (`full: false`), so nothing is allowed unseen.
     public static let open = Self(rawValue: "OPEN")
+    /// Never travels: a `FINISHED` whose payload says `faceID`. Its Reply opens the app, where Face ID can sign it.
+    public static let finishedFaceID = Self(rawValue: "FINISHED_FACE_ID")
+    /// Never travels: a `QUESTION` one typed answer can't settle, a set of several or one that didn't fit. Open only.
+    public static let questionOpen = Self(rawValue: "QUESTION_OPEN")
 
     public var locKey: String? {
         switch self {
@@ -110,6 +117,10 @@ public struct PushPayload: Codable, Hashable, Sendable {
     public let resetsAt: Timestamp?
     /// True: an update to a notification already shown, so it comes without a sound. Nil from a Mac that never says.
     public let quiet: Bool?
+    /// finished: a reply to this session takes Face ID (`ConfirmPolicy.session`), so the phone's Reply opens the app
+    /// rather than sending one the Mac would refuse. Nil from a Mac that never says.
+    // swiftlint:disable:next discouraged_optional_boolean -- absent from a Mac that never says
+    public let faceID: Bool?
 
     public var kind: PushKind { PushKind(rawValue: t) }
 
@@ -117,12 +128,13 @@ public struct PushPayload: Codable, Hashable, Sendable {
                 subtitle: String? = nil, body: String? = nil, gate: AllowGate? = nil, risk: IslandRisk? = nil, riskReason: String? = nil,
                 agent: AgentProvider? = nil, questions: [IslandQuestion]? = nil, plan: String? = nil, full: Bool? = nil,
                 turnID: String? = nil, summary: String? = nil, account: String? = nil, window: String? = nil, percent: Int? = nil,
-                resetsAt: Timestamp? = nil, quiet: Bool? = nil) {
+                // swiftlint:disable:next discouraged_optional_boolean -- the initialiser mirrors the optional fields
+                resetsAt: Timestamp? = nil, quiet: Bool? = nil, faceID: Bool? = nil) {
         v = 1; self.t = t; self.mac = mac; self.sent = sent; self.rid = rid; self.sid = sid; self.title = title
         self.subtitle = subtitle; self.body = body; self.gate = gate; self.risk = risk; self.riskReason = riskReason
         self.agent = agent; self.questions = questions; self.plan = plan; self.full = full; self.turnID = turnID
         self.summary = summary; self.account = account; self.window = window; self.percent = percent; self.resetsAt = resetsAt
-        self.quiet = quiet
+        self.quiet = quiet; self.faceID = faceID
     }
 }
 

@@ -33,6 +33,7 @@ struct SelectableText: UIViewRepresentable {
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.openURL) private var openURL
+    @Environment(\.openFile) private var openFile
     /// UIKit doesn't see SwiftUI's tint: the selection handles and highlight take the accent from here.
     @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
 
@@ -117,7 +118,7 @@ struct SelectableText: UIViewRepresentable {
                 }
                 if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             }
-            // Only http(s) links reach here (MarkdownParser drops the rest); they open through SwiftUI's openURL.
+            // Only http(s) links and FileLinks reach here (MarkdownParser drops the rest); see primaryActionFor.
             if let link = run.link {
                 attributes[.link] = link
                 attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -177,7 +178,19 @@ struct SelectableText: UIViewRepresentable {
 
         func textView(_ textView: UITextView, primaryActionFor textItem: UITextItem, defaultAction: UIAction) -> UIAction? {
             guard case .link(let url) = textItem.content else { return defaultAction }
+            // A file opens in the app's viewer or not at all: the system would hand `sidea-file:` to whatever claims it.
+            if let path = FileLink.path(url) { return UIAction { [parent] _ in parent.openFile?.open(path) } }
             return UIAction { [parent] _ in parent.openURL(url) }
+        }
+
+        /// A file's long-press offers the viewer and its path, never the system's Open Link or Share.
+        func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
+            guard case .link(let url) = textItem.content, let path = FileLink.path(url) else { return UITextItem.MenuConfiguration(menu: defaultMenu) }
+            var actions = [UIAction(title: "Copy Path", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = path }]
+            if let open = parent.openFile {
+                actions.insert(UIAction(title: "Open", image: UIImage(systemName: "doc.text")) { _ in open(path) }, at: 0)
+            }
+            return UITextItem.MenuConfiguration(preview: nil, menu: UIMenu(children: actions))
         }
     }
 }

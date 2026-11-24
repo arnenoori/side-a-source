@@ -619,6 +619,26 @@ class RemoteTests(unittest.TestCase):
         self.rollout('thread-1', [response({'type': 'reasoning', 'summary': [], 'text': 'z' * 5000})] * 1000)
         self.assertEqual(live()[0]['status'], 'unknown')
 
+    def test_live_codex_says_when_a_message_was_last_typed(self):
+        def event(at, **payload):
+            return {'type': 'event_msg', 'timestamp': at, 'payload': payload}
+        main = self.rollout('thread-1', [event('2026-10-09T10:00:01Z', type='task_started', turn_id='t1'),
+                                         event('2026-10-09T10:00:02Z', type='agent_message', message='hi')])
+        tree = ({100: 1.0}, {}, {100: 1791559000}, {100: 'codex'})
+        def live():
+            with patch.object(sessions, 'process_tree', return_value=tree), patch.object(sessions, 'listening', return_value={}), \
+                    patch.object(sessions, 'tmux_panes', return_value={}), \
+                    patch.object(sessions, 'codex_open', return_value={100: {'rollouts': [str(main)], 'cwd': '/code/api'}}):
+                return sessions.live(self.root)['sessions'][0]
+        self.assertIsNone(live()['promptAt'], 'agent output is not a message')
+        typed = sessions.epoch('2026-10-09T10:00:05Z')
+        self.rollout('thread-1', [event('2026-10-09T10:00:05Z', type='user_message', message='more')], 'a')
+        self.assertEqual(live()['promptAt'], typed)
+        # Agent output and tool results after it leave it where it was.
+        self.rollout('thread-1', [event('2026-10-09T10:00:09Z', type='agent_message', message='ok'),
+                                  response({'type': 'function_call_output', 'call_id': 'c', 'output': 'x'})], 'a')
+        self.assertEqual(live()['promptAt'], typed)
+
     def test_live_codex_reads_a_rollout_again_only_when_it_changes(self):
         main = self.rollout('thread-1', [{'type': 'event_msg', 'timestamp': '2026-10-09T10:00:01Z', 'payload': {'type': 'task_started', 'turn_id': 't1'}}])
         state = self.home / '.codex/state_5.sqlite'
@@ -704,6 +724,32 @@ class RemoteTests(unittest.TestCase):
         command = lambda n, code: {'payload': {'type': 'item_completed', 'item': {'type': 'CommandExecution', 'command': ['bash', '-c', f'make {n}'], 'exit_code': code}}}
         found = sessions.codex_health([command(n, 2) for n in range(4)] + [{'payload': {'type': 'token_count', 'info': {'last_token_usage': {'input_tokens': 10, 'cached_input_tokens': 5}}}}], 'busy', 0)
         self.assertEqual((found['activity'], found['context'], found['flag']['kind']), ('Running make 3', 15, 'failing'))
+
+    def test_last_error_is_the_newest_unanswered_failure(self):
+        api = {'type': 'assistant', 'isApiErrorMessage': True, 'error': 'invalid_request', 'timestamp': '2026-11-23T10:00:00Z',
+               'message': {'content': [{'type': 'text', 'text': 'Prompt is too long'}]}}
+        fine = {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'content': 'ok'}]}}
+        error = sessions.tail_facts([json.dumps(api)])[7]
+        self.assertEqual((error['text'], error['code']), ('Prompt is too long', 'invalid_request'))
+        self.assertIsNone(sessions.tail_facts([json.dumps(api), json.dumps(fine)])[7])
+        codex = sessions.codex_health([{'payload': {'type': 'error', 'message': 'Codex ran out of room in the model\'s context window.'}}], 'idle', 0)
+        self.assertIn('context window', codex['lastError']['text'])
+
+    def test_an_agent_that_got_past_an_error_or_a_failed_tool_has_none(self):
+        overloaded = {'type': 'assistant', 'isApiErrorMessage': True, 'error': 'server_error', 'timestamp': '2026-11-23T10:00:00Z',
+                      'message': {'content': [{'type': 'text', 'text': 'API Error: 529 Overloaded'}]}}
+        answered = {'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'Done: the tests pass.'}]}}
+        self.assertIsNone(sessions.tail_facts([json.dumps(overloaded), json.dumps(answered)])[7])
+        for stderr in ('curl: (56) upstream overloaded', 'cp: operation not permitted /x', 'ls: /Users/you/Desktop: Operation not permitted'):
+            bash = {'type': 'user', 'message': {'content': [{'type': 'tool_result', 'is_error': True, 'content': stderr}]}}
+            self.assertIsNone(sessions.tail_facts([json.dumps(bash)])[7], stderr)
+            self.assertIsNone(sessions.tail_facts([json.dumps(bash), json.dumps(answered)])[7], stderr)
+        dropped = {'payload': {'type': 'error', 'message': 'stream disconnected before completion'}}
+        for recovered in ({'payload': {'type': 'item_completed', 'item': {'type': 'AgentMessage'}}},
+                          {'payload': {'type': 'task_complete', 'last_agent_message': 'Done.'}}):
+            self.assertIsNone(sessions.codex_health([dropped, recovered], 'idle', 0).get('lastError'))
+        failed = sessions.codex_health([{'payload': {'type': 'task_complete', 'error': {'message': 'stream disconnected'}}}], 'idle', 0)
+        self.assertIn('stream disconnected', failed['lastError']['text'])
 
     def test_thumbnail_sweep(self):
         image = png(2, 2, 8)

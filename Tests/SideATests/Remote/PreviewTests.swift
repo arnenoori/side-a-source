@@ -46,9 +46,9 @@ import Testing
     }
     // Until the dev server is up the link stays unspent (502); its first page load spends it.
     var first: (Int, String, HTTPURLResponse)?
-    for _ in 0..<100 {
-        if let got = try? await get("/v1/preview/live/"), got.0 == 200 { first = got; break }
-        try await Task.sleep(for: .milliseconds(50))
+    await eventually {
+        if let got = try? await get("/v1/preview/live/"), got.0 == 200 { first = got; return true }
+        return false
     }
     let (status, body, response) = try #require(first)
     #expect(status == 200 && body == "<h1>Dev</h1>")
@@ -118,10 +118,9 @@ import Testing
     defer { dev.terminate() }
     let request = HTTPRequest(method: "GET", target: "/", path: [], query: [:], headers: HTTPHeaders([]), body: Data())
     var response = HTTPResponse(status: 0)
-    for _ in 0..<100 {
+    await eventually {
         response = await PreviewProxy.forward(request, port: port, target: "/announced", cookie: nil)
-        if response.status == 502, String(decoding: response.body, as: UTF8.self).contains("preview_too_large") { break }
-        try await Task.sleep(for: .milliseconds(50))
+        return response.status == 502 && String(decoding: response.body, as: UTF8.self).contains("preview_too_large")
     }
     #expect(String(decoding: response.body, as: UTF8.self).contains("preview_too_large"))
     let start = Date()

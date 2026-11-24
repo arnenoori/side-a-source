@@ -37,20 +37,32 @@ extension RemoteRoutes {
 enum RemoteOptions {
     typealias Option = AgentOptions.Option
 
+    /// What the main actor knows of the Mac before the slower reads start.
+    private struct Known: Sendable {
+        let claude: Bool
+        let codex: String?
+        let used: [String]
+        let homes: Homes
+        let signedIn: Set<AgentProvider>
+    }
+
     /// Each agent's models, efforts and commands: the phone's options and the Sessions window's New Session.
     static func agents(_ controller: RemoteController) async -> [AgentOptions]? {
-        let known = await MainActor.run { () -> (claude: Bool, codex: String?, used: [String], homes: RemoteOptions.Homes)? in
+        let known = await MainActor.run { () -> Known? in
             guard let store = controller.store else { return nil }
             let used = (store.report?.models ?? []).sorted { $0.total > $1.total }.compactMap(\.model)
             // A demo never runs the real Codex, and reads only its own folders.
             let codex = store.isInstalled(.codex) && !store.isDemo ? store.dependencies.agent(.codex).path : nil
-            return (store.isInstalled(.claude), codex, used, homes(store))
+            return Known(claude: store.isInstalled(.claude), codex: codex, used: used, homes: homes(store),
+                         signedIn: Set(AgentProvider.allCases.filter { SessionCommands.signedIn(store, $0) }))
         }
         guard let known else { return nil }
         let codexModels = await Self.codexModels(codex: known.codex, home: known.homes.codex)
         let commands = await Self.commands(known.homes, cache: controller.cache)
-        return [AgentOptions(agent: .claude, installed: known.claude, models: claudeModels(used: known.used), commands: commands.claude),
-                AgentOptions(agent: .codex, installed: known.codex != nil, models: codexModels, commands: commands.codex)]
+        return [AgentOptions(agent: .claude, installed: known.claude, models: claudeModels(used: known.used), commands: commands.claude,
+                             signedIn: known.signedIn.contains(.claude)),
+                AgentOptions(agent: .codex, installed: known.codex != nil, models: codexModels, commands: commands.codex,
+                             signedIn: known.signedIn.contains(.codex))]
     }
 
     /// Where each agent keeps its commands: the user's home, or a demo's own folder; Codex's CODEX_HOME when set.

@@ -79,6 +79,7 @@ public actor Paths {
     private var relayMisses = 0
     private var relayQuietUntil: Date?
     private var networkChangedAt: Date?
+    private var directMissed = false
     /// Debug builds launched with SIDEA_RELAY_ONLY=1: no direct address is raced or rechecked, so a test on the same
     /// Wi-Fi as the Mac still goes through the relay.
     private let relayOnly: Bool
@@ -325,6 +326,8 @@ public actor Paths {
         let start = ContinuousClock.now
         let (winner, failures) = await race(candidates)
         self.failures = failures
+        let direct = candidates.filter { !$0.isRelay }
+        if case .direct? = winner { directMissed = false } else if !direct.isEmpty, direct.allSatisfy({ failures[$0] != nil }) { directMissed = true }
         KitLog.log(.transport, "race \(candidates.map(\.description).joined(separator: ", ")): "
                    + (winner.map { "\($0) in \(KitLog.ms(since: start)) ms" } ?? "nothing answered after \(KitLog.ms(since: start)) ms"))
         return winner
@@ -333,6 +336,9 @@ public actor Paths {
     private func race(_ candidates: [Path]) async -> (Path?, [Path: Error]) {
         let relay = candidates.contains(.relay) ? await relayTransportReady() : nil
         let timing = timing
+        // No direct address answered last time (Tailscale stopped on the Mac, a LAN left behind): the relay doesn't
+        // wait for them again, unless the network just changed and one may answer now.
+        let patience = directMissed && !settling ? 0 : timing.preferDirect
         return await withTaskGroup(of: Outcome.self) { group -> (Path?, [Path: Error]) in
             for candidate in candidates {
                 group.addTask {
@@ -362,8 +368,12 @@ public actor Paths {
                 case .answered(.relay, nil):
                     relayAnswered = true
                     self.relayAnswered(true)
+                    if patience == 0 {
+                        group.cancelAll()
+                        return (.relay, [:])
+                    }
                     group.addTask {
-                        try? await Task.sleep(for: .seconds(timing.preferDirect))
+                        try? await Task.sleep(for: .seconds(patience))
                         return .patience
                     }
                 case .patience:
@@ -551,7 +561,11 @@ public actor Paths {
         if bridge?.current == .refused { return RelayRefused() }
         let resting = relayQuietUntil.map { $0 > .now } ?? false
         let why = Self.explain(failures, relay: bridge?.current, relayResting: resting)
-        return URLError(.cannotConnectToHost, userInfo: why.isEmpty ? [:] : [NSLocalizedDescriptionKey: why])
+        // Each way in and why it didn't answer is for the log and a disclosure; what the Mac's state means is what's read.
+        let plain = bridge?.current == .open(mac: false)
+            ? "Side A on \(endpoint.name) isn't reachable right now. It may be asleep or closed."
+            : "Can't reach \(endpoint.name) right now. It may be asleep, or Side A may be closed."
+        return URLError(.cannotConnectToHost, userInfo: [NSLocalizedDescriptionKey: plain, NSLocalizedFailureReasonErrorKey: why])
     }
 
     /// "Tailscale: no answer. Relay: the Mac isn't connected.": each way in and why it didn't answer, in place of a

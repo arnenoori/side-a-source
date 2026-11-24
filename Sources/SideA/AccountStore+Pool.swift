@@ -96,13 +96,22 @@ extension AccountStore: PoolDecisions {
             if case .starting = poolRun {} else { poolRun = .off }
             poolShareGeneration += 1
             poolShareState = .off
-            // The plan first: a helper that finds none leaves for good.
-            for file in [poolFiles.plan, poolFiles.app, poolFile] { try? FileManager.default.removeItem(at: file) }
+            // The plan first: a helper that finds none serves nothing.
+            for file in [poolFiles.plan, poolFile] { try? FileManager.default.removeItem(at: file) }
             lastPoolPlan = nil
-            if poolHelper.status != .notRegistered {
-                try? await poolHelper.unregister()
-                // Turned back on while it went: that start found it still registered and left it.
-                if config.pool == true { registerPoolHelper() }
+            if RemoteController.enabled, !isDemo {
+                // A phone reaches this Mac only while Side A runs, so the helper stays to reopen it after a crash.
+                claimApp()
+                registerPoolHelper()
+            } else {
+                try? FileManager.default.removeItem(at: poolFiles.app)
+                if poolHelper.status != .notRegistered {
+                    do { try await poolHelper.unregister() } catch {
+                        autopilotLog.note("pool helper", "Pool: the helper couldn't be removed: \(error.localizedDescription)")
+                    }
+                    // Turned back on while it went: that start found it still registered and left it.
+                    if config.pool == true || RemoteController.enabled { registerPoolHelper() }
+                }
             }
             await syncCodexPoolHomes()
             return
@@ -113,6 +122,8 @@ extension AccountStore: PoolDecisions {
         }
         do {
             let proxy = PoolProxy(key: try poolKey(), decisions: self)
+            // A Quit while the port is being taken must still take the claim away, or the helper reopens Side A.
+            watchQuit()
             // Claimed before the port: the helper lets it go within a second of seeing this process named here.
             try writePrivate(PoolFiles.claim(), to: poolFiles.app)
             let port: UInt16
@@ -121,29 +132,21 @@ extension AccountStore: PoolDecisions {
                 try? FileManager.default.removeItem(at: poolFiles.app)
                 throw error
             }
-            // Turned off while it started.
+            // Turned off while it started; turning it off already dealt with the claim.
             guard config.pool == true else { proxy.stop(); poolRun = .off; return }
             // Turning pool mode off and on while the port opened removed the claim.
-            try writePrivate(PoolFiles.claim(), to: poolFiles.app)
             // The file first: a pool with no file to find would serve nobody and block every retry.
             do {
+                try writePrivate(PoolFiles.claim(), to: poolFiles.app)
                 try writePrivate("http://127.0.0.1:\(port) \(proxy.key) \(ProcessInfo.processInfo.processIdentifier)\n", to: poolFile)
             } catch {
                 proxy.stop()
+                try? FileManager.default.removeItem(at: poolFiles.app)
                 throw error
             }
             poolRun = .running(proxy, port: port)
             poolFailures = 0
             poolRetryAt = nil
-            if poolQuitObserver == nil {
-                // The helper takes over once the claim is gone. Without one, no pool file is left for shells to find, so
-                // commands use logins again at once.
-                let files = poolFiles
-                poolQuitObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-                    try? FileManager.default.removeItem(at: files.app)
-                    if Self.poolHelper().status != .enabled { try? FileManager.default.removeItem(at: files.pool) }
-                }
-            }
             autopilotLog.write("Pool mode on, at 127.0.0.1:\(port).")
             writePoolPlan()
             registerPoolHelper()
@@ -188,6 +191,28 @@ extension AccountStore: PoolDecisions {
             lastPoolPlan = plan
         } catch {
             autopilotLog.note("pool plan", "Pool: the plan for while Side A is closed couldn't be saved: \(error.localizedDescription)")
+        }
+    }
+
+    /// Names this process as the running Side A, for the helper: it serves the pool while the claim's process is
+    /// gone, and reopens Side A when the claim outlives it.
+    func claimEarly() { claimApp() }
+
+    private func claimApp() {
+        watchQuit()
+        do { try writePrivate(PoolFiles.claim(), to: poolFiles.app) } catch {
+            autopilotLog.note("pool helper", "Side A couldn't note that it is running, so it won't be reopened after a crash: \(error.localizedDescription)")
+        }
+    }
+
+    /// A quit removes the claim: the helper takes the pool over and leaves Side A closed. Without a helper, no pool
+    /// file is left for shells to find, so commands use logins again at once.
+    private func watchQuit() {
+        guard poolQuitObserver == nil else { return }
+        let files = poolFiles
+        poolQuitObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            try? FileManager.default.removeItem(at: files.app)
+            if Self.poolHelper().status != .enabled { try? FileManager.default.removeItem(at: files.pool) }
         }
     }
 
@@ -276,8 +301,9 @@ extension AccountStore: PoolDecisions {
             poolBlocked[account] = Date().timeIntervalSince1970 + 600
             if health[account]?.takesWork != false { health[account] = .signIn() }
             warnSignIn(account, message, replaced: BridgeErrorKind.replacement(in: error) != nil)
-        } else {
-            // Busy or unreachable for a moment (Claude Code renewing it, the Keychain slow): not a dead login.
+        } else if Online.shared.value, !PoolProxy.networkAway(error) {
+            // Busy or unreachable for a moment (Claude Code renewing it, the Keychain slow): not a dead login. Offline,
+            // every account fails alike, and a block would outlast the network's return.
             poolBlocked[account] = Date().timeIntervalSince1970 + 120
         }
         autopilotLog.note("pool \(account)", "Pool: \(name)'s login couldn't be read: \(message)")

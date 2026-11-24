@@ -376,6 +376,7 @@ private let now = Date().timeIntervalSince1970
     let fileA = folder.appendingPathComponent("mac-a.json"), fileB = folder.appendingPathComponent("mac-b.json")
     let datesA = try FileManager.default.attributesOfItem(atPath: fileA.path)[.modificationDate] as? Date
     let datesB = try FileManager.default.attributesOfItem(atPath: fileB.path)[.modificationDate] as? Date
+    // swiftlint:disable:next sleep_as_sync_in_tests -- file timestamps must differ if a rewrite happened: a clock tick, not an event
     try await Task.sleep(for: .milliseconds(20))
     await b.mirror.sync()
     await a.mirror.sync()
@@ -390,9 +391,10 @@ private let now = Date().timeIntervalSince1970
     rig.mirror.load()
     rig.mirror.start()
     defer { rig.mirror.stop() }
+    // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- the file watcher has no "ready" signal, so the file is written after it has had time to arm
     try await Task.sleep(for: .milliseconds(500))
     try fileData(["soundVolume": ["value": 0.3, "at": now]]).write(to: folder.appendingPathComponent("mac-b.json"))
-    for _ in 0..<50 where rig.defaults.object(forKey: "soundVolume") == nil { try await Task.sleep(for: .milliseconds(100)) }
+    await eventually { rig.defaults.object(forKey: "soundVolume") != nil }
     #expect(rig.defaults.double(forKey: "soundVolume") == 0.3)
 }
 

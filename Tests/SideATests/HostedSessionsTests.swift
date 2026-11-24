@@ -201,17 +201,6 @@ struct HostedFixture {
 }
 
 @MainActor
-/// `seconds` is what a quiet machine needs; a loaded one gets six times as long, and a condition that holds ends the wait at once.
-private func waitFor(_ seconds: Double = 10, _ condition: () async -> Bool) async -> Bool {
-    let end = Date().addingTimeInterval(seconds * 6)
-    while Date() < end {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(100))
-    }
-    return false
-}
-
-@MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func repliesGoInAsOnePasteAndEnterIsPressedAgainOnlyForSideAsText() async throws {
     let fixture = try HostedFixture()
@@ -227,7 +216,7 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: nil)))
     #expect(name.hasPrefix("sa-app-"))
     #expect(hosted.sessions.map(\.name) == [name] && hosted.sessions.first?.agent == .claude)
-    #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+    #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
     // The mouse scrolls and selects, but no right-click menu can kill or swap a pane.
     let root = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "list-keys", "-T", "root"], timeout: 5).output
     #expect(root.contains("WheelUpPane") && !root.contains("MouseDown3"))
@@ -235,22 +224,22 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     // The first Enter is ignored; the verifier sees the reply still there, photo paths and all, and presses again at 2 s.
     let photos = ["/tmp/Side A/uploads/one.jpg", "/tmp/Side A/uploads/two.jpg"]
     try await hosted.reply(name, text: "What's in these photos?", images: photos)
-    #expect(await waitFor(5) { fixture.lines() == ["\"'\(photos[0])' '\(photos[1])' What's in these photos?\""] }, "\(fixture.lines())")
+    #expect(await eventually(5) { fixture.lines() == ["\"'\(photos[0])' '\(photos[1])' What's in these photos?\""] }, "\(fixture.lines())")
 
     try await hosted.reply(name, text: "Fix the build; then run the tests again")
-    #expect(await waitFor(5) { fixture.lines().last == "'Fix the build; then run the tests again'" })
+    #expect(await eventually(5) { fixture.lines().last == "'Fix the build; then run the tests again'" })
 
     // Long text shows as a placeholder and still arrives whole, trailing ';' and all.
     let long = (1...12).map { "line \($0) of the plan;" }.joined(separator: "\n")
     try await hosted.reply(name, text: long)
-    #expect(await waitFor(5) { fixture.lines().count == 3 })
+    #expect(await eventually(5) { fixture.lines().count == 3 })
     #expect(fixture.lines().last == String(reflecting: long).replacingOccurrences(of: "\"", with: "'"))
 
     // Two phones at once: each message goes in whole, one after the other, though the fake ignores each first Enter.
     async let first: Void = hosted.reply(name, text: "first from one phone")
     async let second: Void = hosted.reply(name, text: "second from another")
     _ = try await (first, second)
-    #expect(await waitFor(10) { fixture.lines().count == 5 })
+    #expect(await eventually(10) { fixture.lines().count == 5 })
     #expect(Set(fixture.lines().suffix(2)) == ["'first from one phone'", "'second from another'"])
 
     // Someone splits the window and the new pane is the active one: the reply still goes to the agent's pane.
@@ -262,13 +251,13 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     await hosted.refresh()
     #expect(hosted.sessions.map(\.name) == [name] && hosted.sessions.first?.pane != strayPane)
     try await hosted.reply(name, text: "after a split")
-    #expect(await waitFor(5) { fixture.lines().last == "'after a split'" })
+    #expect(await eventually(5) { fixture.lines().last == "'after a split'" })
     #expect(((try? String(contentsOf: stray, encoding: .utf8)) ?? "").isEmpty)
     _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "kill-pane", "-t", strayPane], timeout: 5)
 
     // A draft typed at the Mac is never sent by Side A.
     _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", hosted.sessions[0].pane, "-l", "my draft"], timeout: 5)
-    #expect(await waitFor { Hosting.composer(.claude, screen: await hosted.capture(name)) == .text("my draft") })
+    #expect(await eventually { Hosting.composer(.claude, screen: await hosted.capture(name)) == .text("my draft") })
     await #expect(throws: HostedError.self) { try await hosted.reply(name, text: "from the phone") }
     _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", "=\(name):", "C-u"], timeout: 5)
 
@@ -276,13 +265,13 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     await #expect(throws: HostedError.self) { try await hosted.keys(name, ["C-d"]) }
     await #expect(throws: HostedError.self) { try await hosted.interrupt(name, working: false) }
     try await hosted.interrupt(name, working: true)
-    #expect(await waitFor { fixture.lines().last == "ESC" })
+    #expect(await eventually { fixture.lines().last == "ESC" })
 
     // The agent exits: its last screen is kept and the session goes.
     try await hosted.reply(name, text: "/exit")
     // The list empties as soon as the pane is dead; the last screen is written just after.
     let saved = fixture.root.appendingPathComponent("runtime/hosted/\(name)/last.txt")
-    #expect(await waitFor(8) { await hosted.refresh(); return hosted.sessions.isEmpty && FileManager.default.fileExists(atPath: saved.path) })
+    #expect(await eventually(8) { await hosted.refresh(); return hosted.sessions.isEmpty && FileManager.default.fileExists(atPath: saved.path) })
     let last = try String(contentsOf: saved, encoding: .utf8)
     #expect(last.contains("Session ended (status 0)."))
 }
@@ -316,18 +305,18 @@ func worktreeSessionsCleanUpAfterThemselvesAndAmbiguityIsRaisedNotPressed() asyn
         let tree = real + "/.sidea-worktrees/\(name)"
         #expect(hosted.sessions.first?.worktree == tree)
         #expect(hosted.copiedFiles(name) == [".env"])
-        #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+        #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
 
         // The fake never takes this one; someone then types after it, so whose text it is is unclear.
         try await hosted.reply(name, text: "STICKY: hold on to this message for a while")
         _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", "=\(name):", "-l", " and more"], timeout: 5)
-        #expect(await waitFor(5) { attention.contains { $0.0 == name && $0.1.kind == "unsent" } })
+        #expect(await eventually(5) { attention.contains { $0.0 == name && $0.1.kind == "unsent" } })
         #expect(fixture.lines().isEmpty)
         _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", "=\(name):", "C-u"], timeout: 5)
 
         // The session ends: the unchanged .env copy goes, so the clean worktree and its branch go too.
         _ = try? await hosted.reply(name, text: "/exit")
-        #expect(await waitFor(8) { await hosted.refresh(); return hosted.sessions.isEmpty && !FileManager.default.fileExists(atPath: tree) })
+        #expect(await eventually(8) { await hosted.refresh(); return hosted.sessions.isEmpty && !FileManager.default.fileExists(atPath: tree) })
         let branches = await HostedSessions.process("/usr/bin/git", ["-C", fixture.project.path, "branch", "--list", "sidea/*"], timeout: 10)
         #expect(branches.output.isEmpty)
     } catch { Issue.record(error) }
@@ -347,15 +336,14 @@ func tmuxIsWatchedAgainAfterAnInstallThatFailed() async throws {
     failing = true
     await hosted.install()
     #expect(!hosted.available)
-    // The watcher sees tmux gone once its wait ends, within 5 s.
-    try await Task.sleep(for: .seconds(6))
+    // The failed install drops the watcher at once; the next install starts a new one.
     failing = false
     await hosted.install()
     #expect(hosted.available)
     let made = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "new-session", "-d", "-s", "by-hand", "sleep 60"],
                                             environment: fixture.environment, timeout: 5)
     #expect(made.status == 0)
-    #expect(await waitFor(15) { hosted.sessions.map(\.name) == ["by-hand"] }, "\(hosted.sessions.map(\.name))")
+    #expect(await eventually(15) { hosted.sessions.map(\.name) == ["by-hand"] }, "\(hosted.sessions.map(\.name))")
     hosted.stop()
     await fixture.cleanUp()
 }
@@ -371,14 +359,14 @@ func endStopsAnAgentThatOutlivesTheHangup() async throws {
     do {
         try #require(hosted.available)
         let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: "stubborn")))
-        #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+        #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
         let agent = try #require(pid_t(String(contentsOf: fixture.submitted.appendingPathExtension("pid"), encoding: .utf8)))
         // The hangup ends the pane's shell but not this agent; SIGTERM is ignored too, so it takes SIGKILL.
         let started = Date()
         try await hosted.end(name)
         #expect(Date().timeIntervalSince(started) > 3)
-        #expect(await waitFor(3) { kill(agent, 0) == -1 })
-        #expect(await waitFor(5) { await hosted.refresh(); return hosted.sessions.isEmpty })
+        #expect(await eventually(3) { kill(agent, 0) == -1 })
+        #expect(await eventually(5) { await hosted.refresh(); return hosted.sessions.isEmpty })
         #expect(ended == [name])
         await #expect(throws: HostedError.self) { try await hosted.end(name) }
     } catch { Issue.record(error) }
@@ -454,7 +442,7 @@ private final class ContinueScene {
         let command = "SIDE_A_PIN=work nohup /usr/bin/python3 \(Shell.quote(script.path)) \(Shell.quote(registry.path)) \(Shell.quote(transcript.path))"
             + (stubborn ? " stubborn" : "") + " >/dev/null 2>&1 & echo $!"
         let pid = try #require(Int(await HostedSessions.process("/bin/sh", ["-c", command], timeout: 5).output.trimmingCharacters(in: .whitespacesAndNewlines)))
-        #expect(await waitFor { FileManager.default.fileExists(atPath: self.registry.appendingPathComponent("\(pid).json").path) })
+        #expect(await eventually { FileManager.default.fileExists(atPath: self.registry.appendingPathComponent("\(pid).json").path) })
         mac = LiveSession(pid: pid, sessionID: "S1", name: nil, title: nil, cost: nil, cwd: fixture.project.path, status: "idle", waitingFor: nil, since: nil)
         mac.agent = "claude"; mac.kind = "interactive"
         mac.started = ProcessCheck.startTime(pid)?.rounded(.down)
@@ -527,7 +515,7 @@ func settingsGoThroughClaudesPickersForThisSessionOnly() async throws {
     do {
         try #require(hosted.available)
         let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: nil)))
-        #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+        #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
 
         // Model and effort in one pick, applied with s; never Enter, which saves the default.
         var done = try await hosted.change(name, model: "claude-sonnet-5-5", effort: "high", mode: nil)
@@ -544,7 +532,7 @@ func settingsGoThroughClaudesPickersForThisSessionOnly() async throws {
         // Once it has answered, a switch asks first; Yes for exactly that model is pressed. "opus" is the newest Opus,
         // though Opus 5 comes first going down from Sonnet.
         try await hosted.reply(name, text: "hello")
-        #expect(await waitFor(5) { fixture.lines().last == "'hello'" })
+        #expect(await eventually(5) { fixture.lines().last == "'hello'" })
         done = try await hosted.change(name, model: "opus", effort: nil, mode: nil)
         #expect(done.model == "opus" && fixture.lines().last == "MODEL Opus 5.5 max")
 
@@ -564,7 +552,7 @@ func settingsGoThroughClaudesPickersForThisSessionOnly() async throws {
         // /compact goes in once the list offers it, and the verifier presses again past the Enter the fake ignores;
         // nothing off the allowlist is typed.
         try await hosted.command(name, "/compact")
-        #expect(await waitFor(5) { fixture.lines().last == "'/compact'" }, "\(fixture.lines())")
+        #expect(await eventually(5) { fixture.lines().last == "'/compact'" }, "\(fixture.lines())")
         await #expect(throws: HostedError.self) { try await hosted.command(name, "/clear") }
 
         // A compaction that never shows raises attention; one that does, nothing.
@@ -572,7 +560,8 @@ func settingsGoThroughClaudesPickersForThisSessionOnly() async throws {
         hosted.onAttention = { _, attention in raised.append(attention.kind) }
         hosted.expectCompaction(name, within: 0.3, every: .milliseconds(50)) { true }
         hosted.expectCompaction(name, within: 0.3, every: .milliseconds(50)) { false }
-        #expect(await waitFor(3) { raised == ["screen"] })
+        #expect(await eventually(3) { raised == ["screen"] })
+        // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- proving the compaction that did show raises nothing: the check window is 0.3 s
         try await Task.sleep(for: .milliseconds(400))
         #expect(raised == ["screen"])
     } catch { Issue.record(error) }
@@ -588,9 +577,9 @@ func aHooksConfirmIsLeftForTheMac() async throws {
     do {
         try #require(hosted.available)
         let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: "hooked")))
-        #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+        #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
         try await hosted.reply(name, text: "hello")
-        #expect(await waitFor(5) { fixture.lines().last == "'hello'" })
+        #expect(await eventually(5) { fixture.lines().last == "'hello'" })
         do {
             _ = try await hosted.change(name, model: "claude-sonnet-5-5", effort: nil, mode: nil)
             Issue.record("A hook's confirm was answered")
@@ -598,7 +587,7 @@ func aHooksConfirmIsLeftForTheMac() async throws {
             #expect(message.contains("Confirm it on the Mac"))
         }
         // Esc twice: the confirm, then the picker it went back to.
-        #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+        #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
         #expect(fixture.lines() == ["'hello'"])
     } catch { Issue.record(error) }
     await fixture.cleanUp()
@@ -616,17 +605,17 @@ func trustAnswersOnlyThisFoldersQuestion() async throws {
         try #require(hosted.available)
         let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: "untrusted")))
         // The question raises attention for the phone's Trust and start.
-        #expect(await waitFor(5) { raised.first?.0 == "trust" })
+        #expect(await eventually(5) { raised.first?.0 == "trust" })
         #expect(raised.first?.1 == "Quick safety check: Is this a project you created or one you trust?")
         try await hosted.trust(name)
         #expect(fixture.lines() == ["TRUSTED"])
-        #expect(await waitFor { Hosting.ready(.claude, screen: await hosted.capture(name)) })
+        #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
         // Nothing to answer now: refused, nothing pressed.
         await #expect(throws: HostedError.self) { try await hosted.trust(name) }
 
         // A question for another folder gets no key at all: Esc or Enter there would end the session.
         let other = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: "elsewhere")))
-        #expect(await waitFor { Hosting.trust(.claude, screen: await hosted.capture(other)) != nil })
+        #expect(await eventually { Hosting.trust(.claude, screen: await hosted.capture(other)) != nil })
         await #expect(throws: HostedError.self) { try await hosted.trust(other) }
         let screen = await hosted.capture(other)
         #expect(Hosting.trust(.claude, screen: screen) == .otherSelected && fixture.lines() == ["TRUSTED"])

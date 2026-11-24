@@ -16,24 +16,42 @@ struct StatusGlyph: View {
     }
 
     @ViewBuilder private var state: some View {
-        switch phase {
-        case .needsYou:
-            Image(systemName: "circle.circle.fill")
+        if phase == .working, !reduceMotion {
+            Image(systemName: "progress.indicator")
+                .foregroundStyle(.secondary)
+                .symbolEffect(.rotate, options: .repeat(.continuous))
+        } else {
+            let colors = Self.colors(phase)
+            Image(systemName: Self.symbol(phase))
                 .symbolRenderingMode(.palette)
-                .foregroundStyle(Color.amber, Color.amber.opacity(0.3))
-        case .working:
-            if reduceMotion {
-                Image(systemName: "ellipsis.circle").foregroundStyle(.secondary)
-            } else {
-                Image(systemName: "progress.indicator")
-                    .foregroundStyle(.secondary)
-                    .symbolEffect(.rotate, options: .repeat(.continuous))
-            }
-        case .ready:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.white, Color.done)
-        case .idle:
-            Image(systemName: "circle").foregroundStyle(.tertiary)
+                .foregroundStyle(colors.primary, colors.secondary)
         }
+    }
+
+    /// The still form, the one Reduce Motion shows and a menu can draw.
+    static func symbol(_ phase: SessionPhase) -> String {
+        switch phase {
+        case .needsYou: "circle.circle.fill"
+        case .working: "ellipsis.circle"
+        case .ready: "checkmark.circle.fill"
+        case .idle: "circle"
+        }
+    }
+
+    static func colors(_ phase: SessionPhase) -> (primary: Color, secondary: Color) {
+        switch phase {
+        case .needsYou: (.amber, .amber.opacity(0.3))
+        case .working: (Color(.secondaryLabel), Color(.secondaryLabel))
+        case .ready: (.white, .done)
+        case .idle: (Color(.tertiaryLabel), Color(.tertiaryLabel))
+        }
+    }
+
+    /// For a menu row, which draws its icons as templates: the row's colours are baked into the image.
+    static func menuImage(_ phase: SessionPhase) -> UIImage {
+        let colors = Self.colors(phase)
+        let palette = UIImage.SymbolConfiguration(paletteColors: [UIColor(colors.primary), UIColor(colors.secondary)])
+        return UIImage(systemName: symbol(phase), withConfiguration: palette)?.withRenderingMode(.alwaysOriginal) ?? UIImage()
     }
 }
 

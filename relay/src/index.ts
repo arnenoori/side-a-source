@@ -108,6 +108,8 @@ function deviceInput(body: Json, env: Env): DeviceInput {
   const { appVersion, pushToStartToken } = body;
   const apns = apnsRoute(body, env);
   if (typeof appVersion !== 'string' || !VERSION.test(appVersion)) throw new Invalid('appVersion: a short version string');
+  const { notifyQuiet } = body;
+  if (notifyQuiet != null && typeof notifyQuiet !== 'boolean') throw new Invalid('notifyQuiet: a boolean');
   return {
     apnsToken: token(body.apnsToken, 'apnsToken'),
     bundle: apns.bundle ?? DEFAULT_BUNDLE,
@@ -115,6 +117,7 @@ function deviceInput(body: Json, env: Env): DeviceInput {
     secretHash: key32(body.secretHash, 'secretHash'),
     pushToStartToken: pushToStartToken == null ? undefined : token(pushToStartToken, 'pushToStartToken'),
     appVersion,
+    quiet: notifyQuiet ?? undefined,
   };
 }
 

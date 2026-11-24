@@ -171,6 +171,7 @@ private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"
     try await until("live again") { await sync.state.connection.isLive }
 
     old.serverClose(1006)
+    // swiftlint:disable:next sleep_literal_in_tests -- proving the old socket's late close leaves the new connection live
     try await Task.sleep(for: .milliseconds(100))
     #expect(await sync.state.connection.isLive)
     await sync.setViewing("watched")

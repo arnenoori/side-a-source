@@ -101,7 +101,7 @@ struct DemoData {
                           abilityReasons: Dictionary(uniqueKeysWithValues: [SessionAbility.settingsModel, .settingsEffort, .settingsMode].map {
                               ($0.rawValue, "Changing settings needs a session Side A hosts.")
                           }),
-                          settings: SessionSettings(model: "claude-opus-5-5", effort: .high, mode: .plan)),
+                          settings: SessionSettings(model: "claude-opus-5-5", effort: .high, mode: .plan)).queuing(["Then run the full check", "Open a PR once it's green, and say what changed in the description"]),
             RemoteSession(id: ID.lan, conversationID: ID.lan, agent: .codex, title: "Add LAN mode", cwd: "~/Coding/side-a",
                           project: "side-a", branch: "sidea/lan-mode", worktree: true, accountID: "team", accountName: "Team",
                           model: "gpt-5-codex", status: .working, statusAt: ago(3), step: "Running swift build",
@@ -145,7 +145,7 @@ struct DemoData {
         for index in live.indices where [ID.postgres, ID.spec].contains(live[index].id) {
             live[index].limit = SessionLimit(window: "five_hour", accountID: "studio", until: t + 40 * 60)
         }
-        sessions = live
+        sessions = Self.withNewRows(live, at: t)
 
         extras = [
             ID.syncTest: SessionExtras(startedAt: started(38), lastReply: "I found the race. The engine resumes before the snapshot lands."),
@@ -443,5 +443,19 @@ struct DemoData {
             ]))
         }
         return messages
+    }
+}
+
+extension DemoData {
+    /// What the demo's Mac offers an `@` word.
+    static let files = ["Sources/SideA/Island.swift", "Sources/SideA/IslandView.swift", "Sources/SideA/SettingsView.swift", "Sources/SideACore/Models.swift",
+                        "Packages/SideAProtocol/Sources/SideAProtocol/Sessions.swift", "README.md", "CHANGELOG.md", "scripts/check.sh", "docs/remote/protocol.md"]
+}
+
+private extension RemoteSession {
+    func queuing(_ texts: [String]) -> RemoteSession {
+        var copy = self
+        copy.queued = texts.enumerated().map { QueuedReply(id: "demo-\($0.offset)", text: $0.element) }
+        return copy
     }
 }

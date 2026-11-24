@@ -85,6 +85,8 @@ final class HostedSessions {
         /// "unsent": a reply may not have gone in.
         let kind: String
         let text: String
+        /// "unsent": the idempotency key of the reply it is about, so only that one's receipt changes.
+        var reply: String? = nil
     }
 
     /// protocol's ReplySubmit. Claude queues a message submitted mid-turn either way.
@@ -102,7 +104,7 @@ final class HostedSessions {
     private let bridge: @MainActor ([String]) async throws -> Data
     private let changed: @MainActor () async -> Void
     /// A fresh `sessions.py live`: every live process, idle ones included.
-    private let live: @MainActor () async -> [LiveSession]?
+    let live: @MainActor () async -> [LiveSession]?
     /// Raised for the phone (hosted.attention).
     @ObservationIgnored var onAttention: (@MainActor (String, Attention) -> Void)?
     /// After every reading of the server, for the phone's terminals (window size, copy mode).
@@ -215,12 +217,12 @@ final class HostedSessions {
             }
             return args
         } ?? []
-        let conversation: String? = switch request.mode { case .resume(let id), .fork(let id): id; case .new: nil }
+        let conversation: String? = switch request.mode { case .resume(let id, _), .fork(let id): id; case .new: nil }
         if let conversation { await lock(conversation) }
         defer { if let conversation { unlock(conversation) } }
         // A Codex fork of a live thread waits until `codex fork` is known never to write the parent's rollout (hosting.md).
         let checked: String? = switch (request.agent, request.mode) {
-        case (_, .resume(let id)), (.codex, .fork(let id)): id
+        case (_, .resume(let id, _)), (.codex, .fork(let id)): id
         default: nil
         }
         if let id = checked {
@@ -272,12 +274,12 @@ final class HostedSessions {
         return name
     }
 
-    private func lock(_ conversation: String) async {
+    func lock(_ conversation: String) async {
         if conversations[conversation] == nil { conversations[conversation] = []; return }
         await withCheckedContinuation { conversations[conversation, default: []].append($0) }
     }
 
-    private func unlock(_ conversation: String) {
+    func unlock(_ conversation: String) {
         guard var waiting = conversations[conversation], !waiting.isEmpty else { conversations[conversation] = nil; return }
         let next = waiting.removeFirst()
         conversations[conversation] = waiting
@@ -341,16 +343,6 @@ final class HostedSessions {
         throw HostedError.notResumed(name: name, command: command)
     }
 
-    /// Up to 5 s for the process to go, its registry file with it.
-    private static func exited(_ session: LiveSession, registry: URL) async -> Bool {
-        for _ in 0..<100 {
-            let gone = !ProcessCheck.maySignal(pid: session.pid, started: session.started)
-            if gone, !FileManager.default.fileExists(atPath: registry.path) { return true }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        return false
-    }
-
     /// Until the transcript's size holds for 300 ms, at most 3 s.
     private static func settled(_ transcript: URL) async {
         var last = -1, steady = 0
@@ -378,16 +370,17 @@ final class HostedSessions {
     /// that stays plain text still works; the agent reads the file.
     /// One at a time per pane, from looking at the composer to arming the verifier: two phones' replies would
     /// otherwise both find it empty and paste into each other.
-    func reply(_ name: String, text raw: String, images: [String] = [], submit: Submit = .queue, working: Bool = false, waitForComposer: Duration = .seconds(5)) async throws {
+    func reply(_ name: String, text raw: String, images: [String] = [], submit: Submit = .queue, working: Bool = false,
+               waitForComposer: Duration = .seconds(5), key: String? = nil) async throws {
         await lock(Self.composer(name))
         defer { unlock(Self.composer(name)) }
-        try await type(name, text: raw, images: images, submit: submit, working: working, waitForComposer: waitForComposer)
+        try await type(name, text: raw, images: images, submit: submit, working: working, waitForComposer: waitForComposer, key: key)
     }
 
     /// A pane's composer lock shares the conversation locks' table; conversation ids never start with "composer ".
-    private static func composer(_ name: String) -> String { "composer " + name }
+    static func composer(_ name: String) -> String { "composer " + name }
 
-    private func type(_ name: String, text raw: String, images: [String], submit: Submit, working: Bool, waitForComposer: Duration) async throws {
+    private func type(_ name: String, text raw: String, images: [String], submit: Submit, working: Bool, waitForComposer: Duration, key reply: String?) async throws {
         guard let agent = sessions.first(where: { $0.name == name })?.agent else { throw HostedError.notHosted }
         let text = Hosting.clean(raw)
         guard !text.isEmpty || !images.isEmpty else { return }
@@ -427,30 +420,35 @@ final class HostedSessions {
         var expected: String?
         for _ in 0..<8 {
             try? await Task.sleep(for: .milliseconds(60))
-            expected = Hosting.owned(sent: text, composer: Hosting.composer(agent, screen: await capture(name)))
+            expected = Hosting.owned(sent: text, agent: agent, screen: await capture(name))
             if expected != nil { break }
         }
         guard let expected else {
             // Its own text isn't what the composer shows, so neither Enter nor Tab: either could submit someone else's
             // words or answer a dialog that just opened.
-            onAttention?(name, Attention(kind: "unsent", text: "It's typed in but wasn't sent."))
+            onAttention?(name, Attention(kind: "unsent", text: "It's typed in but wasn't sent.", reply: reply))
             return
         }
         // Tab only queues during a turn; on an idle Codex composer Enter is what submits.
         let key = agent == .codex && working && submit == .queue ? "Tab" : "Enter"
         _ = await run(["send-keys", "-t", pane(name), key])
-        arm(name, agent: agent, expected: expected, activity: activity, key: key)
+        arm(name, agent: agent, expected: expected, activity: activity, key: key, reply: reply)
     }
 
     private func paste(_ text: String, into name: String) async throws {
         buffers += 1
         let buffer = "sidea-in-\(getpid())-\(buffers)"
-        // One invocation, the text on stdin: tmux's own argv parsing would drop a trailing ';'.
-        let pasted = await run(["load-buffer", "-b", buffer, "-", ";", "paste-buffer", "-p", "-d", "-b", buffer, "-t", pane(name)], input: Data(text.utf8))
+        let pasted = await run(Self.paste(buffer: buffer, into: pane(name)), input: Data(text.utf8))
         guard pasted.status == 0 else {
             _ = await run(["delete-buffer", "-b", buffer])
             throw HostedError.failed("The text could not be typed into that session.")
         }
+    }
+
+    /// tmux arguments that paste stdin into `pane` as one bracketed paste and drop the buffer. One invocation, the text
+    /// on stdin: tmux's own argv parsing would drop a trailing ';'.
+    nonisolated static func paste(buffer: String, into pane: String) -> [String] {
+        ["load-buffer", "-b", buffer, "-", ";", "paste-buffer", "-p", "-d", "-b", buffer, "-t", pane]
     }
 
     /// Allowlisted single keys, one `send-keys` each, for dialogs and mode cycling.
@@ -473,7 +471,11 @@ final class HostedSessions {
         if let last = interrupted[name], Date().timeIntervalSince(last) < 1.5 { return }
         interrupted[name] = Date()
         cancelVerifier(name)
-        _ = await run(["send-keys", "-t", pane(name), "Escape"])
+        // A send-keys that failed pressed nothing: what the Stop would take back is still with the agent.
+        guard await run(["send-keys", "-t", pane(name), "Escape"]).status == 0 else {
+            interrupted[name] = nil
+            throw HostedError.failed("Side A couldn't press Esc in that session.")
+        }
     }
 
     // MARK: Settings
@@ -784,7 +786,7 @@ final class HostedSessions {
     }
 
     /// The first non-nil reading of the screen within `seconds`.
-    private func waitFor<Shown>(_ name: String, seconds: Double = 2, _ read: (String) -> Shown?) async -> Shown? {
+    func waitFor<Shown>(_ name: String, seconds: Double = 2, _ read: (String) -> Shown?) async -> Shown? {
         let end = ContinuousClock.now + .seconds(seconds)
         while true {
             if let shown = read(await capture(name)) { return shown }
@@ -839,7 +841,7 @@ final class HostedSessions {
     /// exactly what was recorded after Side A's paste. It stops for good when the prompt is gone,
     /// when anyone else could have typed (a Mac tab, the phone's terminal, another send), and on
     /// anything ambiguous, which it raises as "unsent" for the user to decide.
-    private func arm(_ name: String, agent: Hosting.Agent, expected: String, activity: Double, key: String) {
+    private func arm(_ name: String, agent: Hosting.Agent, expected: String, activity: Double, key: String, reply: String? = nil) {
         verifiers[name] = Task { [weak self] in
             var elapsed = 0.0
             for at in Hosting.verifySchedule {
@@ -856,17 +858,17 @@ final class HostedSessions {
                 case .taken, .stop:
                     return
                 case .unsent:
-                    self.onAttention?(name, Attention(kind: "unsent", text: "It may not have been sent."))
+                    self.onAttention?(name, Attention(kind: "unsent", text: "It may not have been sent.", reply: reply))
                     return
                 }
             }
             guard !Task.isCancelled, let self else { return }
-            self.onAttention?(name, Attention(kind: "unsent", text: "It may not have been sent."))
+            self.onAttention?(name, Attention(kind: "unsent", text: "It may not have been sent.", reply: reply))
         }
     }
 
     /// Where typing for a session goes: its agent's pane, never whichever pane is active in it now.
-    private func pane(_ name: String) -> String {
+    func pane(_ name: String) -> String {
         sessions.first { $0.name == name }.map(\.pane).flatMap { $0.isEmpty ? nil : $0 } ?? "=\(name):"
     }
 
@@ -890,7 +892,7 @@ final class HostedSessions {
         }.sorted { $0.1.activity > $1.1.activity }
     }
 
-    private func macActivity(_ name: String) async -> Double {
+    func macActivity(_ name: String) async -> Double {
         await clients(name).filter { !$0.phone }.map(\.activity).max() ?? 0
     }
 
@@ -1037,7 +1039,7 @@ final class HostedSessions {
     /// -u: without a UTF-8 locale (an app started by launchd has none) tmux prints tabs in formats as '_'.
     private var server: [String] { ["-u"] + (environment["SIDE_A_TMUX_SOCKET"].map { ["-S", $0] } ?? ["-L", "sidea"]) }
 
-    private func run(_ args: [String], input: Data? = nil) async -> (status: Int32, output: String) {
+    func run(_ args: [String], input: Data? = nil) async -> (status: Int32, output: String) {
         guard let tmux else { return (-1, "") }
         let result = await Self.process(tmux, server + args, input: input, environment: environment, timeout: 10)
         return (result.status, result.output)

@@ -46,7 +46,9 @@ enum PushOpener {
         // One thread per project: the subtitle reads "side-a · Work".
         content.threadIdentifier = payload.subtitle?.components(separatedBy: " · ").first ?? payload.t
         content.relevanceScore = payload.kind.asks ? 1 : 0.3
-        let local = payload.kind == .request && cutOff(payload) || grouped(payload) ? PushCategory.open : category.local(for: payload)
+        var local = payload.kind == .request && cutOff(payload) || grouped(payload) ? PushCategory.open : category.local(for: payload)
+        if local == .finished, payload.faceID == true { local = .finishedFaceID }
+        if local == .question, !answersTyped(payload) { local = .questionOpen }
         // Anything hidden in it needs an unlock and a look at the escapes, never the Lock Screen's Allow.
         content.categoryIdentifier = (local == .requestSafe && !allowsLocked(payload) ? PushCategory.request : local).rawValue
         var info = content.userInfo
@@ -131,6 +133,11 @@ enum PushOpener {
         payload.full == false || (payload.kind == .request && !RequestText.fitsCard(payload.body ?? ""))
     }
 
+    /// One question, all of it in the push: a typed answer is the whole answer. A set takes one answer per question.
+    nonisolated static func answersTyped(_ payload: PushPayload) -> Bool {
+        payload.kind == .question && payload.full != false && payload.questions?.count == 1
+    }
+
     /// Ready for more than one session: no one turn to reply to, so Open only.
     nonisolated static func grouped(_ payload: PushPayload) -> Bool { payload.kind == .finished && payload.sid == nil }
 
@@ -147,9 +154,11 @@ enum PushOpener {
             if cutOff(payload) { return PushCategory.open.rawValue }
             if payload.gate == .biometric { return PushCategory.requestDestructive.rawValue }
             return (allowsLocked(payload) ? PushCategory.requestSafe : PushCategory.request).rawValue
-        case .question: return PushCategory.question.rawValue
+        case .question: return (answersTyped(payload) ? PushCategory.question : PushCategory.questionOpen).rawValue
         case .plan: return PushCategory.plan.rawValue
-        case .finished: return (grouped(payload) ? PushCategory.open : PushCategory.finished).rawValue
+        case .finished:
+            if grouped(payload) { return PushCategory.open.rawValue }
+            return (payload.faceID == true ? PushCategory.finishedFaceID : PushCategory.finished).rawValue
         case .limit: return PushCategory.limit.rawValue
         case .health: return PushCategory.health.rawValue
         case .rotation: return PushCategory.rotation.rawValue
@@ -162,7 +171,7 @@ enum PushOpener {
     static func generic(_ content: UNMutableNotificationContent, body: String?) {
         content.title = "Side A"
         content.subtitle = ""
-        content.body = body ?? "Open Side A Remote to see what your Mac sent."
+        content.body = body ?? "Open Side A Remote to see what \(PairedMac.all().map(\.endpoint.kind).shared.your()) sent."
         content.categoryIdentifier = "OPEN"
         content.userInfo.removeValue(forKey: "e")
     }

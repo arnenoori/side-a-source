@@ -16,12 +16,12 @@ struct TunnelClientTests {
         let listener: NWListener
         let queue = DispatchQueue(label: "TunnelClientTests.Relay")
         let clock: TimeInterval
-        let opened: TimeInterval
-        let known: Bool
+        let opened: TimeInterval, known: Bool
         private let lock = NSLock()
         private var live: [NWConnection] = []
         private var _answers: [Int] = []
         var answers: [Int] { lock.withLock { _answers } }
+        let (said, say) = AsyncStream<String>.makeStream()   // every text the Mac sends but its pings, in order
 
         init(clock: TimeInterval = 0, opened: TimeInterval = 0, known: Bool = true) throws {
             self.clock = clock; self.opened = opened; self.known = known
@@ -85,7 +85,7 @@ struct TunnelClientTests {
             var buffer = buffer
             while let (text, rest) = Self.frame(buffer) {
                 buffer = rest
-                if text == "ping" { connection.send(content: Data([0x81, 4]) + Data("pong".utf8), completion: .idempotent) }
+                if text == "ping" { connection.send(content: Data([0x81, 4]) + Data("pong".utf8), completion: .idempotent) } else { say.yield(text) }
             }
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [self] data, _, done, error in
                 guard !done, error == nil else { return }
@@ -131,11 +131,7 @@ struct TunnelClientTests {
         func registered() { lock.withLock { _registers += 1 } }
 
         func until(_ seconds: Double = 10, _ done: ([TunnelClient.Status]) -> Bool) async throws {
-            for _ in 0..<Int(seconds * 100) {
-                if done(statuses) { return }
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            Issue.record("still waiting after \(seconds) s: \(statuses)")
+            if !(await eventually(seconds) { done(statuses) }) { Issue.record("still waiting after \(seconds * 6) s: \(statuses)") }
         }
     }
 
@@ -164,6 +160,23 @@ struct TunnelClientTests {
         #expect(!seen.statuses.contains(Self.unknown))
         #expect(relay.answers == [101, 101])
         #expect(seen.registers == 1)
+    }
+
+    /// The relay watches a Mac only if the Mac says it can be, first of everything; and it doesn't call a Mac that said it
+    /// was leaving quiet.
+    @Test func aMacAsksToBeWatchedAndSaysWhyItLeaves() async throws {
+        let relay = try Relay()
+        let seen = Seen()
+        let tunnel = try await client(relay, seen)
+        defer { tunnel.stop() }
+        tunnel.start()
+        var said = relay.said.makeAsyncIterator()
+        #expect(await said.next() == #"{"type":"watch"}"#)
+        try await seen.until { $0.last == .connected }
+        tunnel.goodbye(TunnelControl.Goodbye.sleep)
+        #expect(await said.next() == #"{"reason":"sleep","type":"goodbye"}"#)
+        tunnel.stop(goodbye: TunnelControl.Goodbye.off)
+        #expect(await said.next() == #"{"reason":"off","type":"goodbye"}"#)
     }
 
     /// A Mac whose own clock is off is refused once, takes the relay's time from the refusal and connects straight away,

@@ -63,8 +63,9 @@ final class AppRoot {
 
     /// In the order they were paired; empty before pairing.
     private(set) var macs: [AppModel] { didSet { publishWidgets() } }
-    /// Sessions, Accounts and Search show this Mac only; nil shows every Mac. Only matters with more than one.
-    var shown: String?
+    /// Sessions, Accounts and Search show this Mac only; nil shows every Mac. Only matters with more than one. Kept
+    /// across launches, except while the demo stands in for the paired Macs.
+    var shown: String? { didSet { if shown != oldValue, !model.isDemo { ListPrefsStore.setShown(shown) } } }
     /// New Session's draft, kept between openings of the sheet.
     var newSession = NewSessionForm()
     /// Bumped when the app's whole state changes (paired the first Mac, left the demo, forgot the last Mac),
@@ -82,6 +83,8 @@ final class AppRoot {
 
     /// The Macs a screen shows: the one picked, or all of them.
     var visible: [AppModel] { shown.flatMap(model(for:)).map { [$0] } ?? macs }
+
+    var canStartSession: Bool { visible.contains { $0.tools.can(.hosted) } }
 
     func action(for url: URL) -> LinkAction { LinkAction.of(url, pairedMacs: macs.filter { !$0.isDemo }.count) }
 
@@ -152,10 +155,15 @@ final class AppRoot {
             #endif
         } else {
             macs = PairedMac.all().map(AppModel.live)
+            shown = Self.storedShown(in: macs)
         }
         WidgetPublisher.shared.sources = { [weak self] in self?.macs ?? [] }
         Launch.afterFirstFrame { [weak self] in self?.publishWidgets() }
         Launch.mark("models ready", "\(macs.count) Mac\(macs.count == 1 ? "" : "s")")
+    }
+
+    private static func storedShown(in macs: [AppModel]) -> String? {
+        ListPrefsStore.shown().flatMap { id in macs.contains { $0.macID == id } ? id : nil }
     }
 
     /// The demo fills the widgets with its own sessions; unpaired clears them; live Macs publish as their data arrives.
@@ -170,8 +178,18 @@ final class AppRoot {
     func setForeground(_ foreground: Bool) {
         if reviewing { if foreground { ReviewDemo.cancelRequest() } else { ReviewDemo.scheduleRequest() } }
         if foreground { relinkMacs() }
+        if foreground { takeNotificationDrafts() }
         for mac in macs { mac.link?.setForeground(foreground) }
         if foreground { Launch.afterFirstFrame { Task { await Revocations.run() } } }
+    }
+
+    /// What a notification couldn't send goes into its session's field, after anything already typed there.
+    func takeNotificationDrafts() {
+        for mac in macs where !mac.isDemo {
+            for (session, text) in NotificationDrafts.take(mac: mac.macID) {
+                mac.transcripts.drafts[session] = NotificationDrafts.joined(mac.transcripts.drafts[session], text)
+            }
+        }
     }
 
     /// A Mac whose outbox wouldn't open (a launch before the first unlock) stays connecting for good; now the app is
@@ -226,6 +244,7 @@ final class AppRoot {
         ReviewDemo.end()
         reviewing = false
         macs = PairedMac.all().map(AppModel.live)
+        shown = Self.storedShown(in: macs)
         epoch += 1
         for mac in macs { mac.link?.setForeground(true) }
     }
@@ -239,6 +258,7 @@ final class AppRoot {
         if macs.isEmpty { epoch += 1 }
         StateCache.remove(macID)
         NotificationPrefs.forget(macID: macID)
+        ListPrefsStore.forget(mac: macID)
         MacNicknames.set(nil, for: macID)
         guard let link = gone.link else { return }
         link.flights.forgetFlights()

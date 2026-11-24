@@ -19,18 +19,19 @@ struct AttachPanel: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let progress = inPopover ? 0 : drawer.progress
+            // Opened as Photos, the grid is fully there at the keyboard's height.
+            let progress = inPopover ? 0 : drawer.showsGrid && drawer.photosOnly ? 1 : drawer.progress
             let shooting = drawer.camera.shooting
             ZStack(alignment: .top) {
                 base(in: proxy.size)
                     .opacity(1 - min(progress / 0.45, 1))
-                    .allowsHitTesting(!drawer.isLarge && !shooting)
-                    .accessibilityHidden(drawer.isLarge || shooting)
+                    .allowsHitTesting(!drawer.showsGrid && !shooting)
+                    .accessibilityHidden(drawer.showsGrid || shooting)
                 if !inPopover {
                     LibraryGrid(drawer: drawer, size: proxy.size)
                         .opacity(max((progress - 0.15) / 0.55, 0))
-                        .allowsHitTesting(drawer.isLarge && !shooting)
-                        .accessibilityHidden(!drawer.isLarge || shooting)
+                        .allowsHitTesting(drawer.showsGrid && !shooting)
+                        .accessibilityHidden(!drawer.showsGrid || shooting)
                     if !shooting { grabber }
                 }
                 if drawer.camera.showsViewfinder { CameraViewfinder(drawer: drawer, size: proxy.size) }
@@ -144,7 +145,6 @@ struct AttachPanel: View {
             items.append(Item(id: "paste", title: drawer.pasteFailed ? "No Picture" : "Paste",
                               symbol: drawer.pasteFailed ? "exclamationmark.triangle" : "doc.on.clipboard", run: drawer.pasteFromClipboard))
         }
-        if drawer.rows.options { items.append(Item(id: "options", title: "Model & Commands", symbol: "slider.horizontal.3") { drawer.leaveFor { $0.options() } }) }
         return items
     }
 
@@ -367,7 +367,8 @@ private struct LibraryGrid: View {
         ZStack(alignment: .bottom) {
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(side), spacing: 0), count: columns), spacing: 0) {
-                    CameraTile(drawer: drawer)
+                    // Opened as Photos there is no strip, so this tile is the one the viewfinder grows from.
+                    CameraTile(drawer: drawer, reportsFrame: drawer.photosOnly)
                         .padding(.trailing, 1.5)
                         .padding(.bottom, 1.5)
                         .frame(width: side, height: side)
@@ -387,7 +388,7 @@ private struct LibraryGrid: View {
                 }
                 Color.clear.frame(height: 25 + 52 + 25)
             }
-            .scrollDisabled(!drawer.isLarge)
+            .scrollDisabled(!drawer.showsGrid)
             .scrollIndicators(.hidden)
             .onScrollGeometryChange(for: CGFloat.self) { max($0.contentOffset.y + $0.contentInsets.top, 0) } action: { _, new in
                 drawer.gridScrolled = new
@@ -399,6 +400,18 @@ private struct LibraryGrid: View {
     /// All Photos, or Add N Photos, floating over the grid's bottom edge.
     private var controls: some View {
         HStack(spacing: 10) {
+            // Opened as Photos the grid is all there is, so it has its own way back to the keyboard as well as the +'s ×.
+            if drawer.photosOnly {
+                Button { drawer.showKeyboard() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 52, height: 52)
+                        .contentShape(.circle)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel("Close Photos")
+            }
             if drawer.photos.access.canWiden {
                 Menu {
                     Button("Select More Photos", systemImage: "photo.badge.plus") { drawer.widenLibrary() }
@@ -429,7 +442,7 @@ private struct LibraryGrid: View {
             }
         }
         .padding(.bottom, 25)
-        .allowsHitTesting(drawer.isLarge)
+        .allowsHitTesting(drawer.showsGrid)
     }
 }
 

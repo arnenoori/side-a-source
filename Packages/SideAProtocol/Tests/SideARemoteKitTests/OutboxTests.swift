@@ -190,6 +190,7 @@ private func drainAll(_ outbox: Outbox, owner: String) async -> [String] {
     let (sync, _) = try await live(mac, outbox: outbox)
     let item = await sync.reply("s", RemoteReply(text: "go on"))
     try await until("unknown") { await sync.state.outcomes[item.id] == .unknown }
+    // swiftlint:disable:next sleep_literal_in_tests -- proving the unknown outcome is not sent again
     try await Task.sleep(for: .milliseconds(100))
     #expect(mac.calls.count == 1)
     #expect(await outbox.items(for: "mac1").isEmpty)

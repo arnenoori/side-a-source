@@ -43,10 +43,14 @@
 	<string>Side A Remote uses Face ID to unlock and to confirm what you allow or change on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Side A Remote connects to Side A on your Mac over this Wi-Fi when Tailscale isn't on.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Side A Remote uses the microphone when you dictate a message. The recording goes to your Mac to be turned into text, and isn't kept.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>To save images from a session.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Side A Remote shows your recent photos in the attach drawer so you can pick some for a prompt. Only the photos you pick are sent, to your Mac.</string>
+	<string>Side A Remote shows your recent photos when you add to a prompt, so you can pick some. Only the photos you pick are sent, to your Mac.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>When your Mac can't transcribe a dictated message, Side A Remote turns it into text on this device.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

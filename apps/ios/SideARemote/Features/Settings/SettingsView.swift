@@ -18,18 +18,19 @@ struct SettingsView: View {
                 ForEach(root.macs, id: \.macID) { mac in
                     NavigationLink(value: SettingsPage.mac(mac.macID)) { MacRow(mac: mac.mac, version: mac.link?.state.hello?.app) }
                 }
-                Button("Pair Another Mac", systemImage: "plus") { pairing = true }
+                Button("Pair Another \(root.macs.map(\.mac.kind).shared.titleNoun)", systemImage: "plus") { pairing = true }
                 if root.reviewing {
                     Button("Leave Demo", systemImage: "rectangle.portrait.and.arrow.right") { root.leaveDemo() }
                 }
             } header: {
-                Text("Macs")
+                Text(root.macs.map(\.mac.kind).shared.titlePlural)
             }
             Section("Appearance") {
                 VStack(alignment: .leading, spacing: Space.xxs) {
                     Text("Accent")
                     AccentPicker()
                 }
+                NavigationLink("App Icon") { AppIconPickerView() }
             }
             Section("Security") {
                 Toggle("Require \(Biometry.current.name)", isOn: $requireFaceID)
@@ -69,14 +70,14 @@ struct SettingsView: View {
             }
         }
         // Straight to the scanner, no welcome or Tailscale step.
-        .fullScreenCover(isPresented: $pairing) { ScannerScreen(title: "Pair Another Mac") }
+        .fullScreenCover(isPresented: $pairing) { ScannerScreen(title: "Pair Another \(root.macs.map(\.mac.kind).shared.titleNoun)") }
     }
 
     /// "1.0 (11) · Mac 1.0 (12) · protocol 1": this app, then each paired Mac its hello has described, by name when
     /// there are several.
     private var versionLine: String {
         let macs = root.macs.compactMap { mac in mac.link?.state.hello.map { (name: mac.mac.name, hello: $0) } }
-        let lines = macs.map { "\(macs.count == 1 ? "Mac" : $0.name) \($0.hello.versionLine)" }
+        let lines = macs.map { "\(macs.count == 1 ? $0.hello.mac.kind.titleNoun : $0.name) \($0.hello.versionLine)" }
         return ([Hello.version(ClientInfo.current.version, build: ClientInfo.current.build)] + lines).joined(separator: " · ")
     }
 }
@@ -96,7 +97,7 @@ enum Support {
 private struct PrivacyView: View {
     var body: some View {
         Form {
-            Text("Side A Remote collects nothing. Sessions go only between your \(ThisDevice.kind) and your Mac. The push relay sees device tokens and encrypted payloads.")
+            Text("Side A Remote collects nothing. Sessions go only between your \(ThisDevice.kind) and \(PairedMac.all().map(\.endpoint.kind).shared.your()). The push relay sees device tokens and encrypted payloads.")
             Section("Questions") {
                 Link(Support.address, destination: Support.mail)
             }
@@ -171,7 +172,7 @@ struct MacDetailView: View {
             }
             if link != nil {
                 Section {
-                    Button("Forget This Mac", role: .destructive) { confirmsForget = true }
+                    Button("Forget This \(model.mac.kind.titleNoun)", role: .destructive) { confirmsForget = true }
                 }
             }
         }
@@ -182,7 +183,7 @@ struct MacDetailView: View {
         .onDisappear { link?.reportPush() }
         .onChange(of: scenePhase) { if $1 != .active { link?.reportPush() } }
         .confirmationDialog("Forget \(model.mac.name)?", isPresented: $confirmsForget, titleVisibility: .visible) {
-            Button("Forget This Mac", role: .destructive) {
+            Button("Forget This \(model.mac.kind.titleNoun)", role: .destructive) {
                 // Back to the list first, so the row is seen leaving. No haptic: the dialog was the confirmation.
                 let macID = model.macID, animation = Motion.smooth(reduceMotion)
                 dismiss()
@@ -251,6 +252,7 @@ private struct MacNotificationSections: View {
             PrefToggle("Limit warnings", .limits, mac: macID)
             PrefToggle("Stuck sessions", .health, mac: macID)
             PrefToggle("Autopilot moves", .rotation, mac: macID)
+            PrefToggle("Mac goes quiet", .macQuiet, mac: macID)
             PrefToggle("Time Sensitive for requests", .timeSensitive, mac: macID)
         } header: {
             Text("Notifications")

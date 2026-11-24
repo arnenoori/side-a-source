@@ -1,4 +1,3 @@
-import LocalAuthentication
 import SideAProtocol
 import SideARemoteShared
 import SwiftUI
@@ -10,11 +9,15 @@ struct ApprovalSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.windowSize) private var windowSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: RemoteRequest
     @State private var current: RequestID?
     @State private var allows = 0
     @State private var denies = 0
     @State private var failures = 0
+    @State private var settled = 0
+    /// Which way the last page turned, for the way the next one slides in.
+    @State private var forward = true
     /// Answers this sheet already gave a haptic for, so the transcript behind it doesn't give a second.
     static var felt: Set<RequestID> = []
     @State private var feedback: String?
@@ -39,14 +42,41 @@ struct ApprovalSheet: View {
         return open.indices.contains(position + 1) ? open[position + 1].id : position > 0 ? open[position - 1].id : nil
     }
 
+    /// The request `offset` places from `id`, when there is one: paging stops at either end.
+    static func neighbor(of id: RequestID, by offset: Int, in open: [RemoteRequest]) -> RequestID? {
+        guard let position = open.firstIndex(where: { $0.id == id }), open.indices.contains(position + offset) else { return nil }
+        return open[position + offset].id
+    }
+
+    /// A drag that is mostly sideways and long enough turns the page: left for the next request, right for the one before.
+    static func pageOffset(for translation: CGSize) -> Int? {
+        guard abs(translation.width) > 60, abs(translation.width) > abs(translation.height) * 2 else { return nil }
+        return translation.width < 0 ? 1 : -1
+    }
+
+    private func swipe(_ drag: DragGesture.Value) {
+        guard let offset = Self.pageOffset(for: drag.translation), let shown,
+              let id = Self.neighbor(of: shown.id, by: offset, in: open) else { return }
+        page(to: id, forward: offset > 0)
+    }
+
+    private func page(to id: RequestID, forward: Bool) {
+        self.forward = forward
+        withAnimation(Motion.snappy(reduceMotion)) { current = id }
+    }
+
     var body: some View {
         Group {
             if let shown {
                 content(whole[shown.id] ?? shown)
+                    .id(shown.id)
+                    .transition(reduceMotion ? .opacity : .push(from: forward ? .trailing : .leading))
             } else {
                 answeredElsewhere
             }
         }
+        // Swiping sideways pages between requests, as the chevrons do.
+        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { swipe($0) })
         // As tall as the request, so Allow sits right under the command; large for a plan, or when it doesn't fit.
         .presentationDetents(detents, selection: $detent)
         .onChange(of: detents) { _, detents in if !detents.contains(detent), let first = detents.first { detent = first } }
@@ -56,6 +86,8 @@ struct ApprovalSheet: View {
         .sensoryFeedback(.success, trigger: allows)
         .sensoryFeedback(.impact(flexibility: .rigid), trigger: denies)
         .sensoryFeedback(.error, trigger: failures)
+        .sensoryFeedback(.success, trigger: settled)
+        .sensoryFeedback(.selection, trigger: current)
     }
 
     private var detents: Set<PresentationDetent> {
@@ -141,10 +173,10 @@ struct ApprovalSheet: View {
 
     private func pager(_ position: Int) -> some View {
         HStack(spacing: Space.xs) {
-            Button("Previous", systemImage: "chevron.left") { current = open[max(position - 1, 0)].id }
+            Button("Previous", systemImage: "chevron.left") { page(to: open[max(position - 1, 0)].id, forward: false) }
                 .disabled(position == 0)
             Text("\(position + 1) of \(open.count)").font(.footnote.monospacedDigit())
-            Button("Next", systemImage: "chevron.right") { current = open[min(position + 1, open.count - 1)].id }
+            Button("Next", systemImage: "chevron.right") { page(to: open[min(position + 1, open.count - 1)].id, forward: true) }
                 .disabled(position == open.count - 1)
         }
         .labelStyle(IconTarget(horizontal: 12, vertical: 12))
@@ -289,15 +321,20 @@ struct ApprovalSheet: View {
         }
     }
 
+    /// How long "Answered" shows when the request on screen was settled elsewhere, before the next one takes its place.
+    static let settleHold = Duration.milliseconds(250)
+
     private var answeredElsewhere: some View {
         VStack(spacing: Space.s) {
             Image(systemName: "checkmark.circle.fill").font(.largeTitle).foregroundStyle(Color.done)
             Text("Answered").font(.headline)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { settled += 1 }
         .task {
-            try? await Task.sleep(for: .seconds(1))
-            if let next = open.first { current = next.id } else { dismiss() }
+            try? await Task.sleep(for: Self.settleHold)
+            guard let next = open.first else { return dismiss() }
+            page(to: next.id, forward: true)
         }
     }
 
@@ -312,27 +349,12 @@ struct ApprovalSheet: View {
         if open.isEmpty { dismiss() }
     }
 
-    /// Destructive Allow needs the device owner: Face ID signs the answer with the confirm key, which the Mac checks.
-    /// A Face ID from the last few minutes in the app, its unlock included, signs it (`DeviceKeys.adopt`). A pairing from
-    /// before the keys falls back to asking here.
+    /// Destructive Allow needs the device owner: Face ID is the confirmation, then the answer goes.
     private func allowDestructive(_ request: RemoteRequest) async {
-        let allow = RemoteAnswer.allow(confirmDestructive: true)
-        // Face ID can't sign anything this Mac accepts; the answer's line says to pair again.
-        if model.tools.needsKeys { return answer(request, allow) }
-        if let mac = model.link?.mac, DeviceKeys.has(.confirm, for: mac.endpoint.macID),
-           let subject = try? ConfirmMessage.subject(requestID: request.id, answer: allow) {
-            guard let confirm = await mac.sign(.confirm, purpose: .allow, subject: subject, reason: "Allow \(RequestText.visible(request.detail))") else {
-                failures += 1
-                return
-            }
-            return answer(request, allow, confirm: confirm)
-        }
-        let context = LAContext()
-        do {
-            guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Allow \(RequestText.visible(request.detail))") else { return }
-            answer(request, allow)
-        } catch {
-            failures += 1
+        switch await FaceIDAllow.ask(for: request, on: model) {
+        case .granted(let confirm): answer(request, .allow(confirmDestructive: true), confirm: confirm)
+        case .cancelled: break
+        case .failed: failures += 1
         }
     }
 }

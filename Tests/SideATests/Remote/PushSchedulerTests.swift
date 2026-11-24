@@ -241,7 +241,8 @@ struct PushSchedulerTests {
         presence = away
         now = start + 300
         remote.push.tick()
-        try await Task.sleep(for: .milliseconds(100))
+        // swiftlint:disable:next sleep_as_sync_in_tests -- proving nothing is sent once the remote is torn down
+        try await Task.sleep(for: .milliseconds(50))
         #expect(sealed().isEmpty)
     }
 

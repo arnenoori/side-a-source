@@ -25,6 +25,7 @@ Mac's next answer does. The run loop is `greet` (`GET /v1/hello`), then `connect
 | C1 | any | no token in the credential store | unpaired, loop ends | `closeCodesSetTheConnection` |
 | C2 | live | welcome with `replay` and the same epoch | events apply at once | `aSkippedEventReconnectsWithLastSeq` |
 | C2 | live | welcome without `replay`, or another epoch | events held until a snapshot | `aWelcomeThatCannotReplayHoldsEventsUntilTheSnapshot`, `aNewEpochTakesTheSnapshotWholesale` |
+| C2 | live | welcome, then the snapshot or the last replayed event (`seq` reaches the welcome's) | `caughtUp` false from the welcome until then; held replies wait for it | not pinned yet |
 | C2 | live | welcome with `snapshotOverREST` | `GET /v1/state` applied before live events; a failure there is a backoff | `aLargeSnapshotComesOverREST` |
 | C3 | live | event with `seq <= stored`, or while a snapshot is awaited | ignored | `eventsBehindAreIgnoredAndEventsAheadReconnect` |
 | C3 | live | event with `seq > stored + 1` | socket closed 1000, reconnect at once with `lastSeq` | `aSkippedEventReconnectsWithLastSeq` |
@@ -46,8 +47,14 @@ Mac's next answer does. The run loop is `greet` (`GET /v1/hello`), then `connect
 | C12 | any | `stop()` | idle, socket closed 1000, state kept; no foreground or `reconnectNow()` starts it; `start()` begins a new run from the held `seq` | `stopClosesTheSocketKeepsTheStateAndEndsThePolling`, `aStoppedEngineStaysStopped` |
 | C12 | live | `stop()`, `start()`, the old socket closes late | the new socket is left alone | `aHaltedRunsLateCloseLeavesTheNewSocketAlone` |
 | C13 | live | background | presence `foreground: false`; socket, pings and state untouched | `backgroundingOnlyTellsTheMac` |
-| C13 | live | foreground | ping to prove the socket (a failed pong closes it 4008); presence | `theForegroundAsksALiveSocketToProveIt`, `aPongFailureFromAnEarlierSocketLeavesTheNewOneAlone` |
-| C14 | offline, waiting | foreground, `reconnectNow()` | the wait ends | `aForegroundDuringABackoffSkipsIt` |
+| C13 | live | foreground | ping to prove the socket within `foregroundPong` (4 s), or `resumePong` (1.5 s) after `longAway` (10 s) away; a failed or late pong closes it 4008; presence | `theForegroundAsksALiveSocketToProveIt`, `aPongFailureFromAnEarlierSocketLeavesTheNewOneAlone` |
+| C13 | live, nothing heard for `macForgets` (45 s) | foreground | closed 4008 at once, no ping | not pinned yet |
+| C13 | live, nothing heard for `provenFor` (25 s) | foreground | `connecting` while the ping is out, `live(since:)` again once it answers | not pinned yet |
+| C13 | live, ping out after `silentCheck` | `GET /v1/hello` answers and the socket hears nothing for `silentFor` (2.5 s) | closed 4008 | not pinned yet |
+| C13 | live | the heartbeat (every `ping`, 10 s) gets no pong within `pongWithin` (8 s) | closed 4008 | `aFailedPongClosesTheSocketAndReconnects` |
+| C14 | offline, waiting | foreground, `reconnectNow()` | the wait ends and the backoff starts over | `aForegroundDuringABackoffSkipsIt` |
+| C17 | live after `welcome` | first drop (attempt 0, no `bye`, no cause) | wait `firstLoss` (125 to 250 ms), attempt counted | not pinned yet |
+| C18 | waiting | `setNetwork(false)` | cause `noNetwork`; the wait is at least `noNetworkRecheck` (60 s); `setNetwork(true)` ends it | not pinned yet |
 | C15 | connecting | every address answers with another TLS key | keyChanged, loop ends (one address doing so only tries the next) | `aNewKeyOnEveryAddressMeansPairAgain`, `aNewKeyOnOneAddressFallsBackToTheNext`, `aNewKeyComesBackWithTheForeground` |
 | C16 | connecting | an address fails | the next address at once; the backoff only after all of them | `anUnreachableAddressFallsBackToTheNext` |
 
@@ -57,6 +64,8 @@ Mac's next answer does. The run loop is `greet` (`GET /v1/hello`), then `connect
 `relayRefused`. It is one value, so the two can't both be true, and no other state has one. The engine keeps the last
 `cause` it was told and puts it on every `offline` it publishes; while it is set, the loop leaves the `offline`
 connection in place instead of publishing `connecting`, so the phone keeps saying "asleep" through the attempts.
+`noNetwork` is the fourth: not kept as the engine's `cause` but put on an `offline` whose cause would otherwise be
+`unknown` while the path monitor (`setNetwork`) says the phone has no network.
 
 | Row | Event | Result | Test |
 | --- | --- | --- | --- |
@@ -103,10 +112,11 @@ The method and path of the four mutations (answer, reply, interrupt, take back) 
 | O3 | claimed | 401 `confirm_required`/`confirm_invalid` | removed, `failed`; still paired | `aSignedAnswerCarriesItsConfirmAndARefusedSignatureFailsOnlyThatAnswer` |
 | O3 | claimed | other non-retryable error | removed, `failed(error)` | `alreadyResolvedAndOtherRefusalsLeaveTheQueue`, `inProgressIsRetriedButAnUnmarkedServerErrorIsNot` |
 | O4 | claimed | retryable error or network error | `attempts + 1`, `lastError`, released; its target waits, others go; retry after `Retry-After` or backoff | `aFailedAttemptIsRecordedAndTheItemGivenBack`, `aRetryingItemHoldsBackOnlyItsOwnSession`, `inProgressIsRetriedButAnUnmarkedServerErrorIsNot` |
+| O5 | none | `enqueue` | `expiresAt` is 24 h for an answer, `Outbox.Item.replyLifetime` (60 s, was 12 h; the phone then holds the reply and sends it again, under the same Idempotency-Key, only if its session hasn't moved on, and a 12 h row an older build queued stops at 60 s too, `deadline`) for a reply, `stopLifetime` (2 min, was 10 min) for an interrupt, 10 min for Take Back | `theEnginesAnswerAndReplyAreTheSharedItems` (its reply lifetime updated with this change) |
 | O5 | queued or claimed | `expiresAt` passes, connected | claimed for settling, removed, `notDelivered` | `anExpiredItemIsNotDelivered` |
 | O5 | queued | `expiresAt` passes, not connected or loop ended | the same, by the engine's own timer | `anExpiredItemSettlesWhereverTheConnectionStopped`, `anItemThatNeverReachedTheMacExpiresAndRetries` |
 | O5 | claimed by another | `expiresAt` passes | looked at again every `expiryRecheck`; settles when the claim lapses; leaves `pending` when the other process finishes it | `anExpiredItemAnotherProcessHeldSettlesOnceItsClaimLapses`, `anExpiredItemAnotherProcessFinishedLeavesPending`, `claimExpiredTakesOnlyWhatNobodyHolds` |
-| O6 | settled `unknown` or `notDelivered` | `retry` | new key `<first>:r<n>`, same body and lifetime; `retries` links them | `aTappedRetrySendsANewKeyAndKeepsTheFirstAttempt`, `anItemThatNeverReachedTheMacExpiresAndRetries` |
+| O6 | settled `unknown` or `notDelivered` | `retry` | new item `<first>:r<n>`, same body and lifetime; `retries` links them. Its Idempotency-Key is the item id, except for a reply settled `notDelivered`, which keeps the first attempt's (`Item.key`), so the Mac replays that attempt if it landed (the key part not pinned yet) | `aTappedRetrySendsANewKeyAndKeepsTheFirstAttempt`, `anItemThatNeverReachedTheMacExpiresAndRetries` |
 | O7 | an answer's first key settled `failed`/`unknown`/`notDelivered` | the user answers again | a new key `<rid>:<kind>:a<clock>`; otherwise the same key | `aTapAfterARefusalGoesUnderItsOwnKeyAndSettlesAlone`, `aTapAfterAnUnknownOutcomeGetsItsOwnKeyAndADeliveredOneReplays` |
 | O8 | queued | `takeBack` | `DELETE /v1/sessions/<id>/mail`, queued behind that session's items, key `<session>:takeback:<clock>` | `aTakeBackRightAfterANoteGoesAfterIt` |
 | O9 | any | an item that no longer decodes | deleted, the next is tried | `anItemThatDoesNotDecodeDoesNotBlockTheOnesBehindIt` |

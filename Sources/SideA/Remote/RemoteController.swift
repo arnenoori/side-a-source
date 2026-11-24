@@ -52,6 +52,7 @@ final class RemoteController {
     /// Runs the bridge for Clean Up, which moves and deletes files; tests point it at a throwaway home.
     @ObservationIgnored var cleanupBridge: (@MainActor @Sendable ([String], TimeInterval) async throws -> Data)?
     @ObservationIgnored private(set) lazy var devices = DeviceStore(keychain: keychain)
+    @ObservationIgnored private(set) lazy var transcription = RemoteTranscription(keychain: keychain)
     nonisolated let cache = RemoteCache()
     @ObservationIgnored private let keychain: RemoteKeychain
     /// Set only by the test harness: serve exactly these addresses, with no Tailscale, from any process.
@@ -60,6 +61,8 @@ final class RemoteController {
     @ObservationIgnored var server: RemoteServer?
     @ObservationIgnored var hub: EventHub?
     @ObservationIgnored private(set) var terminals: TerminalHub?
+    @ObservationIgnored private(set) var screens: ScreenHub?
+    let screen = ScreenShare()
     @ObservationIgnored private(set) var transcripts: TranscriptStream?
     @ObservationIgnored private(set) var events: RemoteEvents?
     @ObservationIgnored private(set) var tunnel: TunnelClient?
@@ -73,6 +76,8 @@ final class RemoteController {
         .appendingPathComponent("remote/idempotency.sqlite")
     @ObservationIgnored lazy var approvals = ApprovalsLog(url: (store?.root ?? URL(fileURLWithPath: NSTemporaryDirectory()))
         .appendingPathComponent("remote/approvals.json"))
+    @ObservationIgnored lazy var snoozes = Snoozes(url: (store?.root ?? URL(fileURLWithPath: NSTemporaryDirectory())).appendingPathComponent("remote/snoozes.json")) { [weak self] in self?.events?.liveChanged() }
+    @ObservationIgnored lazy var pulls = PullRequests { [weak self] in self?.events?.liveChanged() }
     /// Sparkle's background check, set by the app: whether it could start one now. Nil (the demo, tests) never checks.
     @ObservationIgnored var checkForUpdates: (@MainActor () -> Bool)?
 
@@ -83,13 +88,14 @@ final class RemoteController {
         // The harness may use any port, so lanes testing side by side keep out of each other's way.
         let range = addresses != nil ? 1_024...65_535 : Int(Self.basePort)...Int(Self.basePort) + 9
         port = fixedPort ?? (range.contains(saved) ? UInt16(saved) : Self.basePort)
+        store.keepAwake.phoneConnected = { [weak self] in self?.connected.values.contains { $0 > 0 } == true }
     }
 
     /// Demo mode and `swift run` never serve: the demo's data is fictional, and outside an app there is no Keychain identity.
     var available: Bool { fixed != nil || (Bundle.main.bundleURL.pathExtension == "app" && store?.isDemo == false) }
 
     var mac: MacInfo {
-        MacInfo(id: Self.macID, name: Self.harness("SIDEA_HARNESS_NAME") ?? Self.macName(Host.current().localizedName ?? "Mac", release: AppCopies.isRelease))
+        MacInfo(id: Self.macID, name: Self.harness("SIDEA_HARNESS_NAME") ?? Self.macName(Host.current().localizedName ?? "Mac", release: AppCopies.isRelease), os: .macos)
     }
 
     /// Side A Dev says so, since a phone can pair with both copies on one Mac.
@@ -137,7 +143,11 @@ final class RemoteController {
             MainActor.assumeIsolated { self?.macWillSleep() }
         })
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { if self?.opened == true { self?.devices.flush() } }
+            MainActor.assumeIsolated {
+                if self?.opened == true { self?.devices.flush() }
+                // Quitting is the owner's doing: the relay says nothing to the phones about a Mac that said so.
+                self?.tunnel?.goodbye(TunnelControl.Goodbye.quit)
+            }
         })
         if on {
             open()
@@ -157,6 +167,9 @@ final class RemoteController {
                          + "\(Bundle.main.bundleIdentifier ?? "") at \(Bundle.main.bundlePath); port \(port), \(devices.devices.count) paired")
         hasDevices = !devices.devices.isEmpty
         if devices.unreadable != nil { error = devices.unreadable }
+        if let store { HandoffLinks.of(store).load(store) }
+        // Loading them arms the timer that wakes a timed snooze kept from before a restart.
+        _ = snoozes
     }
 
     func setEnabled(_ value: Bool) {
@@ -166,6 +179,8 @@ final class RemoteController {
         UserDefaults.standard.set(value, forKey: Self.enabledKey)
         // Remote serves hosted sessions, so Side A's tmux runs while it's on, or while terminal hosting is.
         Task { await store?.syncHosting() }
+        // The helper that reopens Side A after a crash stays for Remote, with pool mode on or off.
+        Task { await store?.syncPool() }
         if value {
             bringUp()
             refresh()
@@ -192,7 +207,7 @@ final class RemoteController {
     func handOff() { server?.goodbye("update") }
 
     /// Before the Mac sleeps: phones say so instead of guessing, and reconnect when it wakes.
-    func macWillSleep() { server?.goodbye(ServerEvent.byeSleep) }
+    func macWillSleep() { server?.goodbye(ServerEvent.byeSleep); tunnel?.goodbye(TunnelControl.Goodbye.sleep) }
 
     private func bringUp() {
         guard available else { return }
@@ -216,7 +231,13 @@ final class RemoteController {
                 Task { @MainActor in self?.listenersChanged(states) }
             }
             server.authenticated = { [weak self] id in
-                Task { @MainActor in self?.devices.seen(id) }
+                Task { @MainActor in
+                    self?.devices.seen(id)
+                    self?.store?.keepAwake.phoneSeen()
+                }
+            }
+            server.active = { [weak self] in
+                Task { @MainActor in self?.store?.keepAwake.phoneSeen() }
             }
             server.connectionClosed = { [weak self] id in
                 Task { @MainActor in self?.pairing?.dropped(connection: id) }
@@ -243,11 +264,21 @@ final class RemoteController {
                 terminals.queue.async { terminals.evaluateAll() }
             }
             store?.hosted.onEnded = { [weak terminals] name, status, reason in terminals?.ended(name, status: status, reason: reason) }
-            store?.hosted.onAttention = { [weak self] name, attention in self?.events?.hostedAttention(name, attention) }
-            server.opened = { [weak hub, weak terminals] peer in
+            store?.hosted.onAttention = { [weak self] name, attention in
+                if attention.kind == "unsent", let reply = attention.reply { self?.receipts.unsent(reply, reason: attention.text) }
+                self?.events?.hostedAttention(name, attention)
+            }
+            let screens = ScreenHub(queue: server.queue, share: screen) { [weak self] name in
+                guard let tab = await self?.store?.hosted.clients(name).first(where: { !$0.phone }) else { return nil }
+                return TerminalFocus.host(of: Int(tab.pid))?.pid
+            }
+            screen.hub = screens
+            screen.deviceName = { [weak self] id in self?.devices.devices.first { $0.id == id }?.name }
+            server.opened = { [weak hub, weak terminals, weak screens] peer in
                 switch peer.path {
                 case ["v1", "ws", "events"]: hub?.attach(peer)
                 case let path where path.count == 4 && path.starts(with: ["v1", "ws", "term"]): terminals?.attach(peer, name: path[3])
+                case let path where path.count == 4 && path.starts(with: ["v1", "ws", "screen"]): screens?.attach(peer, mode: path[3])
                 default: peer.close(4404, "no such socket")
                 }
             }
@@ -258,6 +289,7 @@ final class RemoteController {
             }
             self.hub = hub
             self.terminals = terminals
+            self.screens = screens
             server.macID = Self.macID
             self.server = server
             sweeper = Task { [weak self] in
@@ -303,7 +335,7 @@ final class RemoteController {
     }
 
     private func stopTunnel() {
-        tunnel?.stop()
+        tunnel?.stop(goodbye: TunnelControl.Goodbye.off)
         tunnel = nil
         server?.setTunnel(false)
         tunnelStatus = .off
@@ -342,6 +374,8 @@ final class RemoteController {
         transcripts?.stop()
         transcripts = nil
         terminals = nil
+        if let screens { screens.queue.sync { screens.stopAll() } }
+        screens = nil
         server?.stop()
         server = nil
         monitor?.cancel(); monitor = nil
@@ -371,7 +405,7 @@ final class RemoteController {
             reprobe?.cancel()
             reprobe = nil
             if on, [.stopped, .noAddress, .needsLogin].contains(status.state) {
-                let wait = reprobeAfter * min(1 << reprobes, 10)
+                let wait = reprobeAfter * min(1 << min(reprobes, 4), 10)
                 reprobe = Task { [weak self] in
                     try? await Task.sleep(for: wait)
                     guard !Task.isCancelled else { return }
@@ -463,6 +497,7 @@ final class RemoteController {
     @ObservationIgnored private(set) lazy var codex = CodexTerminals(store: store)
     /// Claude sessions started in a terminal, reached through their inbox hook (opt-in).
     @ObservationIgnored private(set) lazy var inbox = ClaudeInbox(store: store)
+    @ObservationIgnored private(set) lazy var receipts = ReplyReceipts(store: store)
     @ObservationIgnored let typer = TerminalTyper()
 
     /// SIDEA_RELAY_URL for a local relay; release builds use production, every other build staging. The demo (and the
@@ -671,8 +706,9 @@ final class RemoteController {
 
     static let capabilities: Set<Capability> = [.confirmSigned, .confirmActions, .events, .answersQuestions, .answersPlans, .answersMode, .replyFollowUp, .replyNote, .interrupt, .images, .diffs,
                                                 .uploads, .setup, .options, .push, .transcriptStream, .ports, .interruptNextStep,
-                                                .quit, .mac, .history, .search, .cleanup, .incidents, .autopilot, .autopilotToggle, .autopilotAnswers, .autopilotContinues,
-                                                .accountsUse, .worth, .rotation, .repliesDropped]
+                                                .quit, .mac, .history, .search, .cleanup, .incidents, .autopilot, .autopilotToggle, .autopilotAnswers, .autopilotContinues, .repliesQueue, .files, .fileRead,
+                                                .accountsUse, .worth, .rotation, .repliesDropped, .repliesReceipts, .transcribe,
+                                                .repliesSeen, .repliesPromote, .interruptResend, .screen, .pullRequests, .snooze, .failures]
 
     /// Remembers what a phone's `hello` said it can show; the keychain is written only when that changes.
     func noteCapabilities(_ device: String, _ capabilities: Set<Capability>) {
@@ -690,11 +726,12 @@ final class RemoteController {
     /// Hosting only while tmux is there to host.
     var capabilities: Set<Capability> {
         // Hosted Claude changes its settings through its own pickers.
-        var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .sessionSettings, .hostedTrust, .hostedShow])
+        var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .restartAgent, .restartAgentImages, .sessionSettings, .hostedTrust, .hostedShow])
             : Self.capabilities
         if checkForUpdates != nil { capabilities.insert(.updateCheck) }
         if codex.offered { capabilities.formUnion([.replyTerminal, .sessionSettings]) }
         if inbox.installed { capabilities.insert(.replyInbox) }
+        if screen.on { capabilities.insert(.screenOn) }
         return capabilities
     }
 

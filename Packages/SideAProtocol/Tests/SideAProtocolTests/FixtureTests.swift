@@ -29,6 +29,7 @@ private let wireTypes: [String: @Sendable (Data) throws -> Data] = {
         "ClientMessage": entry(ClientMessage.self),
         "APIError": entry(APIError.self), "ErrorBody": entry(ErrorBody.self),
         "InterruptRequest": entry(InterruptRequest.self), "Handoff": entry(Handoff.self), "RestartRequest": entry(RestartRequest.self),
+        "HandoffLink": entry(HandoffLink.self), "HandoffPrompt": entry(HandoffPrompt.self),
         "QuitIdleRequest": entry(QuitIdleRequest.self), "QuitIdleResult": entry(QuitIdleResult.self),
         "ListeningPort": entry(ListeningPort.self), "Preview": entry(Preview.self),
         "HistoryPage": entry(HistoryPage.self), "HistoryChange": entry(HistoryChange.self),
@@ -48,6 +49,7 @@ private let wireTypes: [String: @Sendable (Data) throws -> Data] = {
         "ConfirmVector": entry(ConfirmVector.self),
         "SessionSettings": entry(SessionSettings.self), "SettingsChange": entry(SettingsChange.self), "SettingsResult": entry(SettingsResult.self),
         "ModelList": entry(ModelList.self), "TurnPlan": entry(TurnPlan.self), "TurnDiff": entry(TurnDiff.self), "ReviewRequest": entry(ReviewRequest.self),
+        "PullRequest": entry(PullRequest.self), "SnoozeRequest": entry(SnoozeRequest.self), "SessionFailure": entry(SessionFailure.self),
     ]
 }()
 
@@ -194,4 +196,18 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     let hello = try JSONDecoder().decode(Hello.self, from: Fixtures.data("Hello.paired"))
     #expect(hello.versionLine == "0.6.0 (612) · protocol 1")
     #expect(Hello.version("1.0", build: 11) == "1.0 (11)")
+}
+
+@Test func hostKindIsOpenAndAbsentMeansMac() throws {
+    let decoder = JSONDecoder()
+    let old = try decoder.decode(MacInfo.self, from: Fixtures.data("MacInfo.basic"))
+    #expect(old.os == nil && old.headless == nil && old.kind == .macos)
+    let linux = try decoder.decode(MacInfo.self, from: Fixtures.data("MacInfo.linux-headless"))
+    #expect(linux.os == .linux && linux.kind == .linux && linux.headless == true)
+    let future = try decoder.decode(MacInfo.self, from: Data(#"{"id":"a","name":"Box","os":"haiku"}"#.utf8))
+    #expect(future.os == HostOS(rawValue: "haiku") && future.kind.rawValue == "haiku" && future.headless == nil)
+    #expect(try decoder.decode(MacInfo.self, from: encoder.encode(future)) == future)
+    // A host that sends nothing new writes nothing new.
+    #expect(!String(decoding: try encoder.encode(old), as: UTF8.self).contains("os"))
+    #expect(Set([HostOS.macos, .linux, .windows, .wsl].map(\.rawValue)) == ["macos", "linux", "windows", "wsl"])
 }

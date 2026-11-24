@@ -1,6 +1,7 @@
 import SideAProtocol
 import SideARemoteShared
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The page a tool row zooms into: content by tool.
 struct ToolStepPage: View {
@@ -189,8 +190,9 @@ struct GroupedMatches: View {
 }
 
 private struct EmptyOutput: View {
+    @Environment(AppModel.self) private var model
     var body: some View {
-        Text("The Mac didn't keep this step's output.")
+        Text("\(model.mac.kind.sentenceThe(model.mac.name)) didn't keep this step's output.")
             .font(.footnote)
             .foregroundStyle(.tertiary)
     }
@@ -199,6 +201,8 @@ private struct EmptyOutput: View {
 /// The full diff, with a Wrap toggle.
 struct DiffPage: View {
     let diff: FileDiff
+    var sessionID: SessionKey?
+    @Environment(AppModel.self) private var model
     @State private var wrap = false
 
     var body: some View {
@@ -216,6 +220,11 @@ struct DiffPage: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Toggle("Wrap", systemImage: "text.word.spacing", isOn: $wrap)
+            }
+            if let sessionID, diff.change != .deleted, model.tools.isLive, model.tools.can(.fileRead) {
+                ToolbarItem(placement: .bottomBar) {
+                    NavigationLink(value: Route.file(sessionID, nil, path: diff.path)) { Label("Open File", systemImage: "doc.text") }
+                }
             }
         }
     }
@@ -251,37 +260,125 @@ struct CodePage: View {
     }
 }
 
-/// A file the session wrote: Markdown rendered with the transcript's views, everything else as code.
+/// A file the session wrote or named, fetched from the Mac: Markdown rendered with the transcript's views, text as code,
+/// images in the photo viewer, anything else in Quick Look. The step's own text shows until the file arrives, and stays
+/// with the reason when it can't.
 struct FilePage: View {
     @Environment(AppModel.self) private var model
     let sessionID: SessionKey
-    let tool: TranscriptTool
+    let tool: TranscriptTool?
     let path: String
+    @State private var loaded: (url: URL, kind: FileKind)?
+    @State private var failure: String?
+    @State private var attempt = 0
 
-    private var content: String {
+    private var name: String { (path as NSString).lastPathComponent }
+    /// Where it lives, by its nearest two folders: enough to tell two README.md apart under the name.
+    private var folder: String {
+        (path as NSString).deletingLastPathComponent.split(separator: "/").suffix(2).joined(separator: "/")
+    }
+    private var sourceID: String { "file-\(tool?.id ?? path)" }
+    private var markdown: Bool { ["md", "markdown"].contains((path as NSString).pathExtension.lowercased()) }
+
+    private var inline: String? {
+        if model.isDemo, let text = DemoFiles.text(for: path) { return text }
+        guard let tool else { return nil }
         if case .write(_, let content) = tool.action { return content }
-        return tool.output ?? ""
+        return tool.output
+    }
+
+    private var showsImage: Bool { if case .image? = loaded?.kind { true } else { false } }
+
+    private var text: String? {
+        switch loaded?.kind {
+        case .markdown(let text)?, .text(let text)?: text
+        case .image?, .quickLook?: nil
+        case nil: inline
+        }
     }
 
     var body: some View {
-        ScrollView {
-            Group {
-                if path.hasSuffix(".md") {
-                    MarkdownView((model.isDemo ? DemoFiles.text(for: path) : nil) ?? content, sourceID: "file-\(tool.id)")
-                } else {
-                    Text(content).font(.callout.monospaced()).textSelection(.enabled)
+        content
+            .navigationTitle(name)
+            .navigationSubtitle(folder)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                // The image viewer brings its own Copy, Save and Share.
+                if !showsImage {
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        if let text { CopyAllButton(text: text) }
+                        Spacer()
+                        if let loaded {
+                            ShareLink(item: loaded.url) { Label("Share", systemImage: "square.and.arrow.up") }
+                        } else if let inline {
+                            ShareLink(item: inline) { Label("Share", systemImage: "square.and.arrow.up") }
+                        }
+                    }
                 }
             }
-            .padding(Space.m)
+            .fileLinks(sessionID)
+            .task(id: "\(path)#\(attempt)") { if loaded == nil { await load() } }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch loaded?.kind {
+        case .image(let ref)?: ImageViewer(images: [ref], start: ref.id, zooms: false)
+        case .quickLook?: if let url = loaded?.url { QuickLookView(url: url).ignoresSafeArea(edges: .bottom) }
+        case .markdown(let text)?: ScrollView { MarkdownView(text, sourceID: sourceID).padding(Space.m) }
+        case .text(let text)?: ScrollView { Text(text).font(.callout.monospaced()).textSelection(.enabled).padding(Space.m) }
+        case nil: placeholder
         }
-        .navigationTitle((path as NSString).lastPathComponent)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .bottomBar) {
-                CopyAllButton(text: content)
-                Spacer()
-                ShareLink(item: content) { Label("Share", systemImage: "square.and.arrow.up") }
+    }
+
+    @ViewBuilder private var placeholder: some View {
+        if let inline {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Space.s) {
+                    if let failure {
+                        Label(failure, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if markdown { MarkdownView(inline, sourceID: sourceID) } else { Text(inline).font(.callout.monospaced()).textSelection(.enabled) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Space.m)
             }
+        } else if let reason = failure {
+            ContentUnavailableView {
+                Label("Can't Open \(name)", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(reason)
+            } actions: {
+                if !model.isDemo { Button("Try Again", action: retry).buttonStyle(.glass) }
+            }
+        } else {
+            DelayedProgress()
+        }
+    }
+
+    private func retry() {
+        failure = nil
+        attempt += 1
+    }
+
+    private func load() async {
+        guard !model.isDemo else {
+            if inline == nil { failure = "The demo has no files to open." }
+            return
+        }
+        do {
+            // A subagent's chip names its parent's key and the agent's; the Mac knows the parent.
+            let url = try await model.tools.file(SubagentRef(key: sessionID)?.parent ?? sessionID, path: path)
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            let type = UTType(filenameExtension: (path as NSString).pathExtension)
+            if let type, type.conforms(to: .image), let ref = await model.images.keep(data, mime: type.preferredMIMEType ?? "image/png", name: name) {
+                loaded = (url, .image(ref))
+            } else {
+                loaded = (url, FileKind.of(data, path: path))
+            }
+        } catch {
+            if !Task.isCancelled { failure = MacTools.message(error) }
         }
     }
 }

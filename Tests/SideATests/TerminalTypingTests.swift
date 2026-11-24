@@ -18,12 +18,14 @@ private final class OwnTmux {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
         let started = await HostedSessions.process(tmux, ["-u", "-S", socket, "new-session", "-d", "-x", "100", "-y", "30", "exec \(fake.path) \(arguments)"], timeout: 10)
         try #require(started.status == 0, "tmux: \(started.errors)")
-        for _ in 0..<100 {
-            if let pid = (try? String(contentsOf: URL(fileURLWithPath: submitted.path + ".pid"), encoding: .utf8)).flatMap({ Int($0) }),
-               await drawn(screen()) { return pid }
-            try await Task.sleep(for: .milliseconds(50))
+        var pid: Int?
+        await eventually {
+            pid = (try? String(contentsOf: URL(fileURLWithPath: submitted.path + ".pid"), encoding: .utf8)).flatMap { Int($0) }
+            guard pid != nil else { return false }
+            return await drawn(screen())
         }
-        throw TerminalTyping.Failure(message: "the fake never drew its screen")
+        guard let pid else { throw TerminalTyping.Failure(message: "the fake never drew its screen") }
+        return pid
     }
 
     private func drawn(_ screen: String) -> Bool { Hosting.ready(.claude, screen: screen) || Hosting.dialog(.claude, screen: screen) }
@@ -51,7 +53,7 @@ private final class OwnTmux {
         #expect(pane.lines() == ["'Please continue'"])
 
         await pane.keys("half a thought")
-        for _ in 0..<100 where Hosting.composer(.claude, screen: await pane.screen()) != .text("half a thought") { try await Task.sleep(for: .milliseconds(20)) }
+        await eventually { Hosting.composer(.claude, screen: await pane.screen()) == .text("half a thought") }
         await #expect(throws: TerminalTyping.Failure(message: "The session's message field already holds a draft.")) {
             try await TerminalTyping.type("Please continue", into: pid, agent: .claude)
         }

@@ -403,6 +403,9 @@ final class AccountStore {
     private func loadIntegrations() async {
         // "live on" rewrites ~/.claude/settings.json to point at this root; a demo's root is a temporary folder.
         guard !isDemo else { return }
+        // Before the bridge calls below: a crash while they run should still get Side A reopened for the phone. With the
+        // pool on the claim waits for the port, or the helper would let go of it seconds before anyone serves.
+        if RemoteController.enabled, config.pool != true { claimEarly() }
         async let hook = loadIntegration("hook", "status")
         async let shell = loadIntegration("shell", "status")
         async let live = loadIntegration("live", config.liveLimits == false ? "status" : "on")
@@ -413,7 +416,9 @@ final class AccountStore {
         await syncHosting()
         await setIsland(nil, "sync")
         await syncPool()
+        noteCrashes()
     }
+
     /// nil when the bridge couldn't say, which is logged; the switch keeps what it showed.
     private func loadIntegration(_ command: String, _ state: String) async -> Bool? {
         do { return try await integration(command, state) } catch {
@@ -1052,8 +1057,6 @@ final class AccountStore {
         var backoff: [String: Date]?; var primed: [String: Date]?
         var active: [String: String]?; var failing: [String]?; var issues: [String: String]?; var readAt: [String: Date]?
     }
-    private var reportURL: URL { root.appendingPathComponent("runtime/report.json") }
-    private var usageCacheURL: URL { root.appendingPathComponent("runtime/usage-cache.json") }
     private func saveUsageCache() {
         do {
             try PrivateFile.write(UsageCache(usage: usage, at: saved(\.usageAt), backoff: saved(\.backoffUntil), primed: saved(\.primedAt),

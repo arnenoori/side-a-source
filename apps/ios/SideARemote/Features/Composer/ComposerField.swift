@@ -126,6 +126,8 @@ struct ComposerField: UIViewRepresentable {
         hint.text = placeholder
         hint.font = .preferredFont(forTextStyle: .body)
         hint.adjustsFontForContentSizeCategory = true
+        hint.adjustsFontSizeToFitWidth = true
+        hint.minimumScaleFactor = 0.85
         hint.textColor = .placeholderText
         hint.isAccessibilityElement = false
         hint.translatesAutoresizingMaskIntoConstraints = false
@@ -133,8 +135,12 @@ struct ComposerField: UIViewRepresentable {
         NSLayoutConstraint.activate([
             hint.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: insets.left),
             hint.topAnchor.constraint(equalTo: view.topAnchor, constant: insets.top),
-            hint.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor)
+            // The text view is a scroll view: its own edges are the content's, so the frame's width is what a long hint must fit.
+            hint.widthAnchor.constraint(lessThanOrEqualTo: view.frameLayoutGuide.widthAnchor, constant: -(insets.left + Space.xs))
         ])
+        hint.lineBreakMode = .byTruncatingTail
+        hint.numberOfLines = 1
+        hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         drawer?.field.view = view
         context.coordinator.view = view
         return view
@@ -359,7 +365,7 @@ final class PanelInputView: UIInputView, UIGestureRecognizerDelegate {
         guard abs(velocity.y) > abs(velocity.x), !drawer.camera.shooting else { return false }
         if let region = drawer.dragRegion, pan.location(in: self).y > region { return false }
         // Pulled up, only the top of the grid hands a downward drag to the panel; elsewhere the grid scrolls.
-        if drawer.isLarge { return velocity.y > 0 && drawer.gridScrolled <= 1 }
+        if drawer.showsGrid { return velocity.y > 0 && drawer.gridScrolled <= 1 }
         return true
     }
 

@@ -1,0 +1,21 @@
+{
+  "accountID": "c0dec0de-1111-4222-8333-444455556666",
+  "agent": "claude",
+  "attachments": [
+    "0123456789ab",
+    "ba9876543210"
+  ],
+  "handoff": {
+    "branch": "fix/island",
+    "cwd": "/Users/you/code/app",
+    "failed": "",
+    "fromAgent": "codex",
+    "goal": "Keep the island's height steady when a question arrives",
+    "lastMessages": "",
+    "next": "",
+    "project": "app"
+  },
+  "message": "Match the spacing in these two screenshots.",
+  "model": "claude-opus-5-5",
+  "permissionMode": "default"
+}

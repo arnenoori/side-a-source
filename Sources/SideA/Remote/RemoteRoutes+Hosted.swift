@@ -46,7 +46,7 @@ extension RemoteRoutes {
         }
         if let mode = body.permissionMode {
             guard Hosting.permissionArguments(body.agent == .codex ? .codex : .claude, mode: mode.rawValue) != nil else {
-                return RemoteServer.error(422, .invalidOption, "\(body.agent == .codex ? "Codex" : "Claude") can't start in that mode.")
+                return RemoteServer.error(422, .invalidOption, "\(body.agent.title) can't start in that mode.")
             }
         }
         // Signed over the whole start: an unlocked phone, or Face ID for a permissive mode or a shell prompt.
@@ -90,11 +90,12 @@ extension RemoteRoutes {
     }
 
     /// A session just started (201) or answered (200), as the phone gets it.
-    @MainActor static func hosted(_ name: String, store: AccountStore, status: Int = 201) -> HTTPResponse {
+    @MainActor static func hosted(_ name: String, store: AccountStore, status: Int = 201, handoff: HandoffLink? = nil) -> HTTPResponse {
         guard let session = store.hosted.sessions.first(where: { $0.name == name }),
-              let wire = WireBuilders.hosted(session, hosted: store.hosted, store: store, viewers: 0) else {
+              var wire = WireBuilders.hosted(session, hosted: store.hosted, store: store, viewers: 0) else {
             return RemoteServer.error(500, .internalError, "The session started but Side A lost track of it.")
         }
+        if let handoff { wire.handoffFrom = handoff }
         return json(status, wire)
     }
 

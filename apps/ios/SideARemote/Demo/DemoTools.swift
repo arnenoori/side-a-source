@@ -30,8 +30,8 @@ extension MacTools.Demo {
                              ("/review", "Review the current changes"), ("/status", "Show the session's settings and usage"),
                              ("/prompts:standup", "Summarize yesterday's commits"), ("$repo-lint", "Run the linters and fix what they find"),
                              ("$migrate", "Write and check a database migration")].map { AgentOptions.Option(id: $0.0, label: $0.1) }
-        return Self(options: OptionsList(agents: [AgentOptions(agent: .claude, installed: true, models: claude, commands: claudeCommands),
-                                                  AgentOptions(agent: .codex, installed: true, models: codex, commands: codexCommands)]),
+        return Self(options: OptionsList(agents: [AgentOptions(agent: .claude, installed: true, models: claude, commands: claudeCommands, signedIn: true),
+                                                  AgentOptions(agent: .codex, installed: true, models: codex, commands: codexCommands, signedIn: true)]),
                     projects: projects)
     }
 }

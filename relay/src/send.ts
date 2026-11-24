@@ -27,6 +27,12 @@ export const FALLBACK: Record<string, string> = {
   TEST: 'PUSH_TEST_FALLBACK',
 };
 export const ANSWERED = 'PUSH_ANSWERED';
+// The relay's own pushes about a Mac going quiet: no envelope, no mutable-content, words fixed here and in the app's
+// Localizable.strings. The Mac can't ask for any of them, so none is in FALLBACK.
+export const QUIET_CATEGORY = 'MAC_QUIET';
+export const QUIET_COLLAPSE = 'mac-quiet';
+export const QUIET = { quiet: 'PUSH_MAC_QUIET', asleep: 'PUSH_MAC_ASLEEP', back: 'PUSH_MAC_BACK' } as const;
+export type Quiet = keyof typeof QUIET;
 const LEVELS = ['passive', 'active', 'time-sensitive'];
 // A stuck session and setup's Test Connection are worth showing, never worth interrupting for.
 const PASSIVE = ['HEALTH', 'TEST'];
@@ -176,6 +182,20 @@ export function alertRequest(send: Alert | Dismiss, deviceId: string, now: numbe
   return {
     pushType: 'alert', topic: bundle, priority: send.priority, collapseId: send.collapseId,
     expiration: send.expiresIn ? now + send.expiresIn : 0, payload: JSON.stringify(body),
+  };
+}
+
+// A Mac went quiet, has slept a day, or is back (which takes the first one's place in Notification Center). `q` is the
+// same macID a Live Activity names, so the phone can open that Mac. Says nothing but what the loc-key says.
+export function quietRequest(kind: Quiet, macID: string, now: number, bundle = DEFAULT_BUNDLE): ApnsRequest {
+  const back = kind === 'back';
+  const aps = {
+    alert: { 'loc-key': QUIET[kind] }, category: QUIET_CATEGORY, 'thread-id': QUIET_COLLAPSE,
+    ...(back ? {} : { sound: 'default' }), 'interruption-level': back ? 'passive' : 'active',
+  };
+  return {
+    pushType: 'alert', topic: bundle, priority: back ? 5 : 10, collapseId: QUIET_COLLAPSE,
+    expiration: now + (back ? 3600 : 6 * 3600), payload: JSON.stringify({ aps, q: macID }),
   };
 }
 

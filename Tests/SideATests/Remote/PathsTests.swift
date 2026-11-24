@@ -33,11 +33,10 @@ struct PathsTests {
         var url: URL { URL(string: "https://127.0.0.1:\(port)")! }
 
         func listening() async throws {
-            for _ in 0..<200 {
-                if (try? await NWTransport(trust: PinnedTrust(.pinned(pin))).send(URLRequest(url: url.appendingPathComponent("v1/hello")), fresh: true)) != nil { return }
-                try await Task.sleep(for: .milliseconds(10))
+            let answered = await eventually {
+                (try? await NWTransport(trust: PinnedTrust(.pinned(pin))).send(URLRequest(url: url.appendingPathComponent("v1/hello")), fresh: true)) != nil
             }
-            Issue.record("the test Mac never answered")
+            if !answered { Issue.record("the test Mac never answered") }
         }
     }
 
@@ -112,11 +111,10 @@ struct PathsTests {
         func add(_ line: String) { lock.withLock { all.append(line) } }
         func count(_ matches: (String) -> Bool) -> Int { lock.withLock { all.count(where: matches) } }
         func first(_ matches: (String) -> Bool) async throws -> String {
-            for _ in 0..<200 {
-                if let line = lock.withLock({ all.first(where: matches) }) { return line }
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            throw CancellationError()
+            var found: String?
+            await eventually { found = lock.withLock { all.first(where: matches) }; return found != nil }
+            guard let found else { throw CancellationError() }
+            return found
         }
     }
 
@@ -177,8 +175,10 @@ struct PathsTests {
         let before = lines.count { $0.hasPrefix("race ") && $0.contains(", relay:") }
         await paths.foreground()
         #expect(lines.count { $0.hasPrefix("race ") && $0.contains(", relay:") } == before + 1)
-        // And what the phone says names each way in, not an error code.
-        let why = await paths.unreachable.localizedDescription
+        // What the phone says is what the Mac's state means; each way in and why it failed is the reason beside it.
+        let unreachable = await paths.unreachable as NSError
+        #expect(unreachable.localizedDescription == "Can't reach Mac right now. It may be asleep, or Side A may be closed.")
+        let why = unreachable.localizedFailureReason ?? ""
         #expect(why.contains("Local network: nothing listening") && why.contains("Relay: "))
     }
 

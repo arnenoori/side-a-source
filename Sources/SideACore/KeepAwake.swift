@@ -19,9 +19,13 @@ public struct KeepAwake: Equatable, Sendable {
 
     public static let grace: TimeInterval = 120
     public static let lowBattery = 20
+    /// How long after a paired phone was last heard from the Mac stays up for it: a Mac asleep can't be reached, and
+    /// whoever is away from it has no way to wake it.
+    public static let phoneGrace: TimeInterval = 1800
 
     public private(set) var working = 0
     public private(set) var lastWorking: Double?
+    public private(set) var lastPhone: Double?
 
     public init() {}
 
@@ -30,35 +34,44 @@ public struct KeepAwake: Equatable, Sendable {
         if self.working > 0 { lastWorking = now }
     }
 
+    public mutating func phone(now: Double) { lastPhone = now }
+
+    public func phoneNear(now: Double) -> Bool { lastPhone.map { now - $0 < Self.phoneGrace } == true }
+
     public func inGrace(now: Double) -> Bool {
         working == 0 && lastWorking.map { now - $0 < Self.grace } == true
     }
 
     public func holdsAssertion(_ settings: Settings, now: Double) -> Bool {
-        settings.enabled && (working > 0 || inGrace(now: now))
+        settings.enabled && (working > 0 || inGrace(now: now) || phoneNear(now: now))
     }
 
     /// A low battery always wins: a closed MacBook that never sleeps would run flat in a bag.
     public func disablesSleep(_ settings: Settings, power: Power, now: Double) -> Bool {
         guard settings.lidClosed, holdsAssertion(settings, now: now) else { return false }
         if power.onAC { return true }
+        // On battery only agents at work count: a phone used a moment ago mustn't keep a MacBook awake in a bag.
+        guard working > 0 || inGrace(now: now) else { return false }
         guard settings.onBattery, let battery = power.battery else { return false }
         return battery >= Self.lowBattery
     }
 
-    public var reason: String {
-        working > 0 ? "Side A: \(Self.agents(working)) working" : "Side A: agents paused"
+    public func reason(now: Double) -> String {
+        working > 0 ? "Side A: \(Self.agents(working)) working" : phoneNear(now: now) && !inGrace(now: now) ? "Side A: Side A Remote in use" : "Side A: agents paused"
     }
 
     public func line(_ settings: Settings, sleepDisabled: Bool, now: Double) -> String? {
         guard holdsAssertion(settings, now: now) else { return nil }
-        let base = working > 0 ? "Keeping awake · \(Self.agents(working)) working" : "Keeping awake · agents paused"
+        let base = working > 0 ? "Keeping awake · \(Self.agents(working)) working"
+            : phoneNear(now: now) && !inGrace(now: now) ? "Keeping awake · Side A Remote in use" : "Keeping awake · agents paused"
         return sleepDisabled ? base + " · lid closed OK" : base
     }
 
     public func accessibilityLine(_ settings: Settings, sleepDisabled: Bool, now: Double) -> String? {
         guard holdsAssertion(settings, now: now) else { return nil }
-        let base = working > 0 ? "Keeping the Mac awake while \(Self.agents(working)) work" : "Keeping the Mac awake for a short pause between agent steps"
+        let base = working > 0 ? "Keeping the Mac awake while \(Self.agents(working)) work"
+            : phoneNear(now: now) && !inGrace(now: now) ? "Keeping the Mac awake while Side A Remote is in use"
+            : "Keeping the Mac awake for a short pause between agent steps"
         return sleepDisabled ? base + ", also with the lid closed" : base
     }
 

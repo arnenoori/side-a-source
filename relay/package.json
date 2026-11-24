@@ -10,7 +10,7 @@
     "check": "wrangler deploy --dry-run --env='' --outdir dist && wrangler deploy --dry-run --env=staging --outdir dist",
     "pretest": "wrangler types",
     "prelint": "wrangler types",
-    "lint": "oxlint --type-aware --quiet --max-warnings 219",
+    "lint": "oxlint --type-aware --quiet --max-warnings 206",
     "lint:backlog": "oxlint --type-aware"
   },
   "devDependencies": {

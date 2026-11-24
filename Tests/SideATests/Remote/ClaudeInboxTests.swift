@@ -18,7 +18,7 @@ import Testing
     try "1".write(to: folder.appendingPathComponent("\(getpid()).watcher"), atomically: true, encoding: .utf8)
     #expect(!store.remote.inbox.watching(live))
     #expect(store.remote.inbox.leave("hello", to: live))
-    for _ in 0..<150 where store.remote.inbox.unsent(live) == nil { try await Task.sleep(for: .milliseconds(100)) }
+    await eventually { store.remote.inbox.unsent(live) != nil }
     #expect(store.remote.inbox.unsent(live) == "hello")
     #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("\(getpid()).json").path))
     #expect(WireBuilders.session(live, store: store, finished: []).flag?.kind == .unsent)

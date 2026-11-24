@@ -55,10 +55,10 @@ final class DrawerLogicTests: XCTestCase {
     func testTheMenuOffersWhatCanBeAttachedAndAlwaysTheOptions() {
         let all = DrawerRows.make(canUpload: true, room: 4, hasCamera: true, clipboardHasImage: true)
         XCTAssertEqual(all, DrawerRows(camera: true, photos: true, files: true, paste: true))
-        XCTAssertEqual(all.count, 5)
+        XCTAssertEqual(all.count, 4)
         let none = DrawerRows.make(canUpload: false, room: 4, hasCamera: true, clipboardHasImage: true)
         XCTAssertFalse(none.attaches)
-        XCTAssertEqual(none.count, 1)
+        XCTAssertEqual(none.count, 0)
         XCTAssertFalse(DrawerRows.make(canUpload: true, room: 0, hasCamera: true, clipboardHasImage: false).attaches)
         XCTAssertFalse(DrawerRows.make(canUpload: true, room: 2, hasCamera: false, clipboardHasImage: false).camera)
     }
@@ -198,6 +198,7 @@ final class DrawerAttachmentTests: XCTestCase {
         let id = attachments.reserve(preview: image(), in: "s1")!
         attachments.remove(id, from: "s1")
         attachments.supply(id, try XCTUnwrap(image().pngData()), in: "s1")
+        // swiftlint:disable:next sleep_literal_in_tests -- proving a removed reservation stays gone when its bytes arrive: there is no event for "nothing happened"
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(attachments.items("s1").isEmpty)
     }
@@ -282,7 +283,7 @@ final class ComposerFieldTests: XCTestCase {
 final class AttachDrawerTests: XCTestCase {
     private func hooks(room: Int = 4) -> DrawerHooks {
         DrawerHooks(room: { room }, reserve: { _, _ in UUID() }, supply: { _, _ in }, files: {}, picker: {},
-                    pasteImage: { false }, options: {})
+                    pasteImage: { false })
     }
 
     private func open(_ drawer: AttachDrawer) {

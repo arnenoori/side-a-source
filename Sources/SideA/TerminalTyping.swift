@@ -72,32 +72,32 @@ enum TerminalTyping {
         case .empty: break
         }
         let buffer = "sidea-type-\(getpid())-\(pid)"
-        let pasted = await run(["load-buffer", "-b", buffer, "-", ";", "paste-buffer", "-p", "-d", "-b", buffer, "-t", pane.pane], Data(text.utf8))
+        let pasted = await run(HostedSessions.paste(buffer: buffer, into: pane.pane), Data(text.utf8))
         guard pasted.status == 0 else {
             _ = await run(["delete-buffer", "-b", buffer], nil)
             throw Failure(message: "The text could not be typed into that session.")
         }
-        var owned = false
-        for _ in 0..<8 where !owned {
+        var owned: String?
+        for _ in 0..<8 where owned == nil {
             try? await Task.sleep(for: .milliseconds(60))
-            owned = Hosting.owned(sent: text, composer: Hosting.composer(agent, screen: await screen())) != nil
+            owned = Hosting.owned(sent: text, agent: agent, screen: await screen())
         }
         // Not its own text in the composer: Enter could send someone else's words or answer a dialog that just opened.
-        guard owned else { throw Failure(message: "It's typed in but wasn't sent.") }
+        guard let expected = owned else { throw Failure(message: "It's typed in but wasn't sent.") }
         // Claude Code can swallow an Enter that comes right after a paste: pressed again only while the composer
         // still shows exactly what was pasted, and never over a dialog.
         var waited = 0.0
         for at in [0.0, 0.7, 2, 5] {
             try? await Task.sleep(for: .seconds(at - waited))
             waited = at
-            switch at == 0 ? .pressEnter : Hosting.verdict(agent, expected: text, screen: await screen()) {
+            switch at == 0 ? .pressEnter : Hosting.verdict(agent, expected: expected, screen: await screen()) {
             case .taken, .stop: return
             case .unsent: throw Failure(message: "It may not have been sent.")
             case .pressEnter:
                 guard await run(["send-keys", "-t", pane.pane, "Enter"], nil).status == 0 else { throw Failure(message: "It's typed in but wasn't sent.") }
             }
         }
-        if Hosting.verdict(agent, expected: text, screen: await screen()) == .pressEnter { throw Failure(message: "It's typed in but wasn't sent.") }
+        if Hosting.verdict(agent, expected: expected, screen: await screen()) == .pressEnter { throw Failure(message: "It's typed in but wasn't sent.") }
     }
 
     // MARK: Ghostty

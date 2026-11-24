@@ -11,6 +11,7 @@ private actor Counter {
 @Test func remoteCacheSharesRunsAndExpires() async throws {
     let cache = RemoteCache(), counter = Counter()
     let make: @Sendable () async throws -> Int = {
+        // swiftlint:disable:next sleep_as_sync_in_tests -- the run has to be slow for the second request to arrive while it is in flight
         try await Task.sleep(for: .milliseconds(50))
         return await counter.next()
     }

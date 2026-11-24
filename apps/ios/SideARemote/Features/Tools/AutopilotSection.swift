@@ -221,7 +221,7 @@ struct IncidentBanner: View {
                     } label: {
                         Label {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("\(incident.provider == .claude ? "Claude" : "Codex") incident: \(incident.title)")
+                                Text("\(incident.provider.title) incident: \(incident.title)")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.primary)
                                 Text(incident.status.rawValue.capitalized).font(.footnote).foregroundStyle(.secondary)

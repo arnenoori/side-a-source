@@ -35,7 +35,7 @@ Status: built and shipping. Where this spec and the code disagree, the code wins
 - **Open enums.** Any enum that may grow is a `RawRepresentable` string struct (see `OpenEnum`
   below), so an older client keeps the unknown value instead of failing the whole decode. Closed
   enums (`AgentProvider`, `ReplyMode`) are ordinary enums and never gain cases within v1.
-- **Size caps.** JSON request bodies ≤ 1 MiB; uploads ≤ 20 MiB. Any single string in a list
+- **Size caps.** JSON request bodies ≤ 1 MiB; uploads ≤ 20 MiB; recordings for `/v1/transcribe` ≤ 4 MiB, refused from `Content-Length` before the body is read (413 `too_large`; a recording over 5 minutes is 413 `transcribe_too_long`). Any single string in a list
   response or an event is cut at 64 KiB; the object then carries `truncated: true` and a full fetch
   exists for it.
 - **Headers on every call.** `Authorization: Bearer <token>` (all but `GET /v1/hello` and the
@@ -305,11 +305,44 @@ public struct RemoteSession: Codable, Hashable, Sendable, Identifiable {
     public var headless: Bool                 // claude -p / SDK runs: listed, never offered Reply
     public var ports: [ListeningPort]?        // M3 (`ports`); nil from a Mac that doesn't report them
     public var memoryBytes: Int?              // M3
+    public var handoffFrom: HandoffLink?      // restart.agent: the conversation the other agent handed off to this one
     public var abilityReasons: [String: String]?  // why an ability the phone shows is off, keyed by its raw value
     public var settings: SessionSettings?     // capability `settings`
     public var turnID: String?                // the running turn, else the last: what .turnDiff reads
     public var plan: TurnPlan?                // the turn's live plan list
     public var backgroundTasks: Int?          // subagents and background shells still running
+    public var pullRequest: PullRequest?      // capability `sessions.pullRequest`
+    public var snooze: SessionSnooze?         // capability `sessions.snooze`; left out once it wakes
+    public var failure: SessionFailure?       // capability `sessions.failure`
+}
+
+public struct PullRequest: Codable, Hashable, Sendable {
+    public struct State: OpenEnum { public let rawValue: String }    // open, draft, merged, closed
+    public struct Checks: OpenEnum { public let rawValue: String }   // passing, failing, pending
+    public let url: String                    // the link Claude Code recorded for the conversation (`pr-link`)
+    public let number: Int?                   // from gh, else from the link's /pull/<n>
+    public let title: String?
+    public let state: State?                  // nil until gh has answered
+    public let checks: Checks?                // nil with no checks, or none read
+}
+
+public struct SessionSnooze: Codable, Hashable, Sendable {
+    public struct Choice: OpenEnum { public let rawValue: String }   // hour, threeHours, morning, needsMe
+    public let choice: Choice
+    public let until: Timestamp?              // nil for needsMe
+    public let at: Timestamp
+}
+
+public struct SessionFailure: Codable, Hashable, Sendable {
+    public struct Kind: OpenEnum { public let rawValue: String }
+    // contextFull, folderPermission, signedOut, gitAuth, transient
+    public struct Fix: OpenEnum { public let rawValue: String }      // compact, atMac, terminal, wait
+    public let kind: Kind
+    public let message: String                // one line a person can act on, in the Mac's words
+    public let retryable: Bool                // auto-continue never tries a failure again when false
+    public let fix: Fix?
+    public let at: Timestamp?
+    public var detail: String?                // the agent's own words, keys and tokens taken out, at most 200 characters
 }
 
 public struct PermissionMode: OpenEnum { public let rawValue: String }
@@ -324,7 +357,8 @@ public struct SessionSettings: Codable, Hashable, Sendable {   // nil fields: th
     public let fast: Bool?                    // Claude's fast mode; nil for Codex
 }
 
-public struct TurnPlan: Codable, Hashable, Sendable {   // Codex turn/plan/updated, Claude's todos
+public struct TurnPlan: Codable, Hashable, Sendable {   // Codex turn/plan/updated, Claude's newest TodoWrite
+    // Codex's goes at the next turn's start; Claude's stays across turns until it's all done, then goes at the next prompt.
     public let explanation: String?
     public let steps: [TranscriptTodo]
 }
@@ -362,6 +396,33 @@ public struct MailState: Codable, Hashable, Sendable {
   hooks' `permission_mode`. Codex: `ThreadSettings` (`thread/settings/updated`, `thread/read`).
   `model` and `effort` stay filled for older phones.
 - The pid is not on the wire. The phone acts on sessions only through these paths.
+- **`pullRequest`** (capability `sessions.pullRequest`) is the pull request Claude Code recorded for
+  the conversation, only an `https://github.com/<owner>/<repo>/pull/<n>` link (no user, password or
+  port); any other host is neither run through `gh` nor sent. The link goes at once; `state`, `checks`, `number` and `title` come from
+  `gh pr view <url> --json number,title,state,isDraft,statusCheckRollup`, run detached at most once a
+  minute per pull request and only when `gh` is in /opt/homebrew/bin, /usr/local/bin or /usr/bin. A `gh`
+  that exits 4 or asks for `gh auth login` is left alone for ten minutes; nothing waits on it and
+  nothing fails for it. Checks read failing when any check run or status failed, pending while any runs.
+  A read that changes what the row shows sends a `session.upsert`.
+- **`snooze`** (capability `sessions.snooze`) is kept on the Mac in `remote/snoozes.json`, beside the
+  pins and archive the Mac also keeps, so every phone shows the same list. It is set with
+  `POST /v1/sessions/{id}/snooze` and leaves the row as soon as anything wakes it: an open request or
+  `waiting`, a `failure` or a `failing` or `stuck` flag, its `until` passing, a new turn (someone sent it
+  a message, from anywhere), a reply from a phone, or, for `needsMe`, the session going from working to
+  idle or finished. While it sleeps, a finished turn's push and a new health flag's push are not sent;
+  pushes for what wakes it go as usual. A snooze past its `until` keeps nothing quiet, even before the
+  row says it woke. The wake timer is armed from the saved snoozes when Remote starts, and sends the
+  rows again when it fires. A snooze whose session has been gone for a week is forgotten. A Codex session outside
+  Codex's shared server has no `turnID`; there a message typed at its own terminal wakes it when the
+  bridge reads a `user_message` in its rollout stamped after the snooze was set (`promptAt`, Mac-side
+  only), so an old message never wakes it after a restart.
+- **`failure`** (capability `sessions.failure`) names a failure the Mac recognises in the session's last
+  API error reply (Claude's `isApiErrorMessage`, Codex's `error` event or a `task_complete` with an
+  `error`), never a failed tool's output, cleared by a new prompt, a later reply from the agent or a
+  tool result that succeeds. `folderPermission` needs a folder Files and Folders can grant named on
+  the refused line. `transient` shows only once the session has
+  stopped on it. `AgentFailure` in SideACore classifies; `Redact.secrets` takes keys and tokens out of
+  `detail`, and out of `hosted.attention` screen lines, before they leave the Mac.
 
 ### FinishedSession
 
@@ -534,11 +595,16 @@ public struct RemoteReply: Codable, Hashable, Sendable {
     public let submit: ReplySubmit?  // hosted and replyTerminal sessions; missing means steer (Claude Code queues either way); `followUp` always queues
     public let attachments: [String] // Upload ids (Upload.id), never paths
     public let turnID: String?       // required when the session is finished: FinishedSession.turnID
+    public var replaces: String?     // replies.queue: the QueuedReply.id this takes the place of
+    public var seen: String?         // replies.seen: ReplyMark.marks(session, finished).first when Send was pressed
+    public var promotes: String?     // replies.promote: the QueuedReply.id this sends now
 }
 
 public struct InterruptRequest: Codable, Hashable, Sendable {
     public struct When: OpenEnum { public let rawValue: String }   // .now, .nextStep
     public let when: When            // body optional; absent means .now
+    public var send: Bool?           // Interrupt and Send: a reply follows; absent or false is a plain Stop
+    public var resend: Bool?         // interrupt.resend: no reply follows; what the stop takes back goes again by itself
 }
 
 public struct ReplyResult: Codable, Hashable, Sendable {
@@ -589,6 +655,27 @@ differ. Every cell is a `ReplyResult.delivery` or an error.
   hook that waits, which only Claude's does. The queue survives a relaunch. If the session ends or
   its turn ends with a hook that can't wait, the text is lost: `finished.resolve` with reason
   `queueDropped`, and a `health` push quoting it. An older phone only drops the session's finished row.
+  With capability `replies.queue`, `RemoteSession.queued` lists what waits, in order, as `[{id, text}]` (left out
+  when empty; a change sends the session again). `DELETE /v1/sessions/{id}/queue/{qid}` takes one out with no more
+  than the pairing, as Take Back does. A reply with `replaces: <qid>` puts its text in that reply's place and is
+  signed and judged as any reply. An id names a reply's words, so either is 409 `queue_changed` once the reply
+  has gone or changed. With capability `replies.promote`, a reply with `promotes: <qid>` (Send Now) takes that reply
+  out of the queue and delivers it in the same main-actor step the Stop hook's delivery runs in, by the table above as
+  the session stands then (a finished turn waiting is followed up without `turnID`); one already gone is 409
+  `queue_changed` and nothing is delivered; any other refusal, before or while typing, leaves it queued where it was,
+  as does a delivery that never starts (put back after 30 s).
+  `GET /v1/sessions/{id}/files?q=` (capability `files`) answers an `@` mention: up to 40 paths
+  under the session's folder, relative to it, best match first; git lists them where it can, so ignored files stay out.
+  `GET /v1/sessions/{id}/file?path=` (capability `files.read`) sends one file for the phone's viewer, with the
+  pairing alone, as the transcript and its diffs go. Symlinks are followed and the real file must sit inside the
+  folder's real path (403 `outside`); it is a regular file of at most 20 MiB (413) with no other hard link (403
+  `linked`: a link inside the folder can be any file on the Mac), and not `.env*`, `*.pem`, `*.p12`, `*.pfx`, `id_rsa*` and the other SSH key names, `.netrc`,
+  `.npmrc`, `.pypirc`, `.git-credentials`, or anything under a folder named `.git`, `.ssh`, `.aws`, `.gnupg`, `.docker`,
+  `.kube`, `.codex`, `.azure`, `.gcloud` or `.terraform` (403 `secret`); `FileReads` in `FileMentions.swift` holds the
+  whole list (other key and credential names, `*.key`, `*.p8`, `*.tfstate`, `auth.json`, …). Nothing under `~/Library`,
+  `~/.claude`, `~/.config`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.docker`, `~/.kube` or `~/.codex` is sent, whatever the
+  session's folder; and when that folder is the home folder, above it, or inside one of those, nothing whose path has a
+  hidden part.
   With capability `replies.dropped`, `StateSnapshot.droppedReplies` keeps each such reply for 3 days
   (at most 20, on disk, across relaunches): `{id, sessionID, text?, at, device?, reason}`. `text` and
   `device` go only to the device that sent the reply, which takes the text back into the field once,
@@ -597,7 +684,18 @@ differ. Every cell is a `ReplyResult.delivery` or an error.
   that session from before `at`. Hearing
   `finished.resolve` with `queueDropped`, a phone fetches `GET /v1/state` to learn which reply it was.
 - `.followUp` and `.queued`-then-delivered both need `turnID` when the session is finished
-  (missing: 422 `invalid_reply`; stale: 409 `turn_changed`).
+  (missing: 422 `invalid_reply`; stale: 409 `turn_changed`), unless the reply carries `seen` or `promotes`, which
+  follow up the turn that is finished now.
+- With capability `replies.seen` the phone sends `seen` on every reply: the first of `ReplyMark.marks` for the
+  session's row and finished turn when Send was pressed (running turn id, else finished turn id, else
+  `status <statusAt>`). The Mac builds the same marks at delivery and answers 409 `session_moved_on` when `seen` is not
+  among them, except: a reply from the same device carrying the same `seen` was delivered before and the session's
+  newest turn in its own record (Claude's transcript, Codex's rollout, read then) is the one that reply started or
+  joined: within 30 s of it, a turn begun after it whose prompt has its words, and from then on that turn's id, for
+  an hour, while it is still the newest. Another turn since, someone at the Mac's say, or a record that can't be
+  read refuses; a `status` mark, while the session isn't working; no turn
+  named now (nothing to judge by); a retry whose first attempt is still followed (`ReplyReceipts`). The idempotency
+  record replays an attempt under the same key before any of this runs. Not for `keys`.
 - `keys` delivery is `ReplyResult.delivery = .typed`.
 - For `replyTerminal` sessions `submit` applies too: a missing `submit` steers, and
   `submit: "queue"` behaves as `followUp`. While working they also list `.interrupt`
@@ -608,6 +706,48 @@ differ. Every cell is a `ReplyResult.delivery` or an error.
   For `replyInbox`, no hook took it from the inbox within 5 s, so the Mac took it back: «Didn't
   reach Claude: "…"». The next message that goes through clears it. It arrives in
   `session.upsert`; there is no separate event.
+- With capability `replies.receipts`, a reply `.typed` into a Claude session (hosted, or its own terminal tab)
+  is followed in Claude's transcript, and `RemoteSession.receipts` lists `[{id, stage, at, reason?}]` for each one
+  (left out when there are none; a change sends the session again). `id` is the reply's `Idempotency-Key`; a
+  retry `<key>:r<n>` reports under `<key>`. `stage`: `typed` (in Claude's composer, Enter pressed), `held`
+  (Claude's `queue-operation` `enqueue`: it reads it once its current step ends), `read` (`remove` with reason
+  `absorbed_mid_turn` or `delivered_to_agent`, a `queued_command` attachment, or a `user` line with the text),
+  `unsent` (the pane's check found this reply wasn't submitted, Claude let go of it unread, a Stop took it back
+  or left it in the prompt, or the session ended first; `reason` says which). Only `remove` reasons
+  `absorbed_mid_turn` and `delivered_to_agent` count as read; any other says nothing. Each transcript line settles
+  at most one reply, the oldest unsettled one it fits (the same text before only the same start), so two
+  identical replies need two lines. A reply typed into a hosted pane whose session isn't listed yet (just started or
+  continued) is followed by the pane's name, for retries and a Stop, and joins that session's `receipts` once it is
+  listed; its transcript is read from then. A reply with no word for an hour is no longer followed and leaves `receipts`,
+  so the phone keeps what it last knew. A settled receipt
+  stays 5 minutes. A retry whose `<key>` the Mac typed and didn't give back, with the same words, is answered from that attempt, with
+  the delivery it had (`.typed` or `.queued`), and not sent again. A plain Stop (`InterruptRequest.send` absent)
+  in a hosted pane takes back the phone's replies the agent hasn't read (`typed` or `held`, not Codex's Tab
+  queue): after Esc, once the prompt shows them and nothing else, and no one typed at the Mac meanwhile, the Mac
+  clears it and they become `unsent` with reason "Stopped before Claude read it.", before answering. A prompt it
+  can't tell for the phone's alone is left as it is and the replies become `unsent` with reason "The stop put it
+  back in Claude's prompt on the Mac, unsent."; nothing showing within 2 s leaves them to the transcript. With
+  `send: true` (Interrupt and Send) the cleared replies wait up to 30 s for the reply that follows, which the Mac
+  types after them, oldest first and one per line, as one prompt; each receipt then moves on from that prompt.
+  No reply in 30 s, or one that can't be typed, gives them back as a plain Stop does. With capability
+  `interrupt.resend`, `resend: true` (the overdue bubble's one-tap Interrupt and Send) carries them the same way but
+  no reply follows: the Mac types them as that one prompt as soon as the prompt is clear (hosted), or starts the next
+  turn with them as soon as the interrupted turn has ended (Codex's shared server); a prompt that can't be typed, or
+  a turn that doesn't end within 30 s, gives them back as a plain Stop does. An older Mac gets a plain Stop and the
+  phone sends what comes back. The phone's
+  states for a reply, and every transition, are in [reply-progress.md](reply-progress.md).
+- Codex replies report under the same capability and stages. Typed into a hosted Codex (or its own tab), the
+  rollout is the record, and it keeps no queue: `typed` until a `response_item` user `message` with the text
+  (`read`); `unsent` when a turn ended without it (`task_complete`, or `turn_aborted` after an interrupt) and
+  none started within 30 s, or the pane's check found it wasn't submitted. There is no `held`: nothing shows a
+  steer waiting behind a running step. On the app server (`replyTerminal`), by `clientUserMessageId`: `held` once
+  `turn/steer` answers (the running turn holds it until its step ends), `read` at the `userMessage` item with
+  that `clientId` (or, after Codex's queue, the text), `unsent` as the flag above. A `.queued` reply (Tab, or
+  `thread/queue/add`) is left out of `receipts` until it is `read` or `unsent`, so the phone keeps "After this
+  turn". A plain Stop of an app-server session drops the steers it hasn't read, and they become `unsent` with
+  reason "Stopped before Codex read it.". With `send: true` they wait up to 30 s for the reply that follows and go
+  with it, ahead of it, as one `turn/start`; no reply in time, or a `turn/start` that fails, gives them back the
+  same way. A reply that arrives before the interrupted turn has ended waits up to 5 s for it.
 - Attachments: hosted sessions get each upload's Mac path pasted single-quoted (hosting, Images);
   everywhere else the paths are appended to the text, one per line.
 
@@ -821,9 +961,9 @@ public struct Capability: OpenEnum { public let rawValue: String }
 // Mac: "events", "transcript.stream", "images", "diffs", "answers.questions", "answers.plans",
 //      "reply.note", "reply.followUp", "interrupt", "interrupt.nextStep", "uploads", "hosted",
 //      "terminal", "continueOnPhone", "push", "liveActivity", "search", "options",
-//      "history", "restart", "ports", "quit", "mac", "cleanup", "autopilot", "worth", "incidents",
+//      "history", "restart", "restart.agent", "restart.agent.images", "ports", "quit", "mac", "cleanup", "autopilot", "worth", "incidents",
 //      "autopilot.toggle", "autopilot.answers", "accounts.use", "rotation", "update.check", "lan", "setup", "reply.terminal",
-//      "reply.inbox"
+//      "reply.inbox", "screen", "screen.on", "transcribe"
 // Phone: the same names for what it can render or use.
 // With "reply.terminal", a Codex session that isn't hosted and lacks .replyTerminal was started
 // outside Codex's shared server (--no-daemon, --profile, -c); the phone says "Started outside
@@ -835,7 +975,19 @@ public struct Capability: OpenEnum { public let rawValue: String }
 public struct MacInfo: Codable, Hashable, Sendable {
     public let id: String                    // SHA-256 of machine-id, hex, first 16; the phone's key for this Mac
     public let name: String
+    public let os: HostOS?                   // what kind of computer: absent means macos (a Mac that predates the field)
+    public let headless: Bool?               // no screen or windows of its own (a Linux daemon); absent means false
 }
+
+/// Open: a value this phone doesn't know decodes and is kept, and reads as a computer that isn't a Mac.
+public struct HostOS: OpenEnum {             // "macos", "linux", "windows", "wsl" (a Linux daemon on a Windows machine)
+    public let rawValue: String
+}
+// A Mac sends os: "macos". The phone keeps it with the paired host's name (so it is known while disconnected) and
+// updates it from every trusted hello; a hello that sends none changes nothing. It words the phone's copy: "Mac" for
+// macos, the host's name or "your computer" for anything else; the screen key bar offers Ctrl, Alt, Super or Win and
+// Shift in place of ⌘ ⌥ ⌃ ⇧, and the wire `ScreenKey` modifier names (`command`, `option`, `control`, `shift`) stay.
+// The host sends its own words in `ScreenRefused.message`; the phone shows them as received.
 
 public struct Hello: Codable, Hashable, Sendable {
     public let protocolVersion: Int          // 1
@@ -928,6 +1080,7 @@ public struct NotificationPrefs: Codable, Hashable, Sendable {
     public let timeSensitiveRequests: Bool
     public let liveActivity: Bool
     public let suppressWhileWatching: Bool   // "Don't notify while I'm watching the session"
+    public let macQuiet: Bool?               // "Mac goes quiet": nil from a phone that predates it, which gets none
 }
 ```
 
@@ -1004,6 +1157,7 @@ field may hold a newline, and request and session ids may not hold `:`.
 | `allow` (switching mode) | the same, with `AnswerBody.mode` | `<rid>:allowMode:<mode>` |
 | `settings` | `POST /v1/sessions/{id}/settings`, always; `POST /v1/hosted` when `permissionMode` raises | `<sessionID>:<base64url SHA-256 of the SettingsChange as sorted-key JSON>`; for a start, `start:<base64url SHA-256 of the StartHosted as sorted-key JSON>` (the Mac hashes what it decoded) |
 | `terminal` | the `/v1/ws/term` upgrade | the session's terminal name |
+| `screen` | the `/v1/ws/screen` upgrade, always, and only by the confirm key | the mode, `view` or `control` |
 | `trust` | `POST /v1/hosted/{name}/trust`, always, and only by the confirm key (trusting a folder grants the agent access) | `<name>:<base64url SHA-256 of the hosted session's cwd>` |
 | `account` | `POST /v1/accounts/{id}/use`, always, and only by the confirm key (the Mac-wide login moves every new session) | `<accountID>:use` |
 | `autopilot` | `POST /v1/autopilot`, always, and only by the confirm key, on or off | `enabled:true` or `enabled:false`, from the `AutopilotChange` the Mac decoded |
@@ -1019,7 +1173,7 @@ field may hold a newline, and request and session ids may not hold `:`.
 | action | call | target | key |
 |---|---|---|---|
 | `reply` | `POST /v1/sessions/{id}/reply` (text) | session id | `ConfirmPolicy.reply`: unlock; confirm if the session's mode raises or is unknown, or the text starts with `!` |
-| `restart`, `continue` | `POST /v1/sessions/{id}/restart`, `/continue` | session id | `ConfirmPolicy.session` |
+| `restart`, `continue` | `POST /v1/sessions/{id}/restart`, `/continue` | session id | `ConfirmPolicy.session`; a restart also `ConfirmPolicy.restart`: confirm if its `permissionMode` raises or its `message` starts with `!` |
 | `quit`, `compact`, `review` | `POST /v1/sessions/{id}/quit`, `/compact`, `/review` | session id | unlock |
 | `quitIdle` | `POST /v1/sessions/quit-idle` | empty | unlock |
 | `endHosted` | `DELETE /v1/hosted/{name}` | name | unlock |
@@ -1080,13 +1234,15 @@ routes and the hosting endpoints return it too.
 | 408 | `confirm_timeout` (nobody clicked Pair within 60 s) |
 | 409 | `already_resolved` (`details.by`, `details.answer`), `session_waiting`, `cannot_deliver` (`details.hint`), `not_hosted`, `in_progress`, `turn_changed`, `code_busy`, `outcome_unknown` (see Idempotency), `worktree_kept`, `nothing_to_move`, `account_not_ready` (the account is signed out or its login expired), `request_pending` (keys refused while a destructive request is open on the session), `gate_changed` (the gate rose between showing and answering; refetch and review) |
 | 410 | `cursor_expired` (`messages/{seq}` with a stale generation), `code_expired` |
-| 413 | `too_large` |
+| 413 | `too_large`, `transcribe_too_long` |
 | 415 | `unsupported_media` |
 | 421 | `bad_host` |
 | 422 | `invalid_answer` (`details.reason`: `not_allowed`, `needs_confirm`, `unknown_suggestion`, `unknown_option`, `incomplete`, `too_long`), `idempotency_mismatch`, `invalid_reply` |
 | 426 | `upgrade_client`, `upgrade_mac` |
-| 429 | `rate_limited` (`Retry-After` header) |
-| 503 | `remote_off`, `not_ready` (bridge starting), `tmux_missing` |
+| 429 | `rate_limited` (`Retry-After` header), `transcribe_limited` (dictation's per-phone spend limit, `Retry-After`) |
+| 502 | `transcribe_key_refused` (the provider refused the Mac's key), `transcribe_failed` (the provider's own error, in `message`) |
+| 503 | `remote_off`, `not_ready` (bridge starting), `tmux_missing`, `transcribe_no_key` (no speech-to-text key on the Mac) |
+| 504 | `transcribe_unreachable` (the Mac couldn't reach the provider, or it didn't answer in 90 s) |
 
 `retryable` is true only for 429, 503 and `in_progress`; clients retry exactly those (and network
 failures) and nothing else.
@@ -1100,7 +1256,8 @@ failures) and nothing else.
   hint of which. Revoking a device also closes its sockets with 4401.
 - **Idempotency.** Every `POST` and `DELETE` (the server allows only GET, POST and DELETE) except the `/v1/pair` routes (including `DELETE /v1/pair/{attemptID}`) requires
   `Idempotency-Key` (≤ 128 characters; the client sends a UUID from its outbox; missing is 400
-  `missing_idempotency_key`). The server keeps one record per `(deviceID, key)`:
+  `missing_idempotency_key`). `POST /v1/transcribe` is the other exception: it changes nothing, and
+  a record would keep the words it answers on disk. The server keeps one record per `(deviceID, key)`:
   `{method, path, body SHA-256, state, status, response, createdAt}`, for 24 hours, at most 1,000
   per device, **persisted** in `~/Library/Application Support/SideA/remote/idempotency.sqlite`
   (WAL, 0600; outside `runtime/`), not in memory, so it survives a relaunch while tmux sessions
@@ -1150,6 +1307,9 @@ Core endpoints. The "Only in Side A" endpoints are in [their own section](#only-
 | `POST /v1/sessions/{id}/reply` | `RemoteReply` | 200 `ReplyResult` | 404, 409, 422 |
 | `POST /v1/sessions/{id}/interrupt` | `InterruptRequest` (optional) | 200 `InterruptResult` | 404, 409 `cannot_deliver` |
 | `DELETE /v1/sessions/{id}/mail` | | 204 | 404 |
+| `DELETE /v1/sessions/{id}/queue/{qid}` | capability `replies.queue` | 204 | 404, 409 `queue_changed` |
+| `GET /v1/sessions/{id}/files` | `?q=`; capability `files` | 200 `FileMatches` `{files: [String]}` | 404 |
+| `GET /v1/sessions/{id}/file` | `?path=` (relative to the session's folder, absolute, or `~/…`); capability `files.read` | 200 the file's bytes, `Content-Type` from its extension, `Cache-Control: private, no-store` | 400, 403 `file_refused` (`details.reason`: `outside`, `secret`, `linked`; `message` words each, and a phone shows it), 404 `file_not_found`, 413 `too_large` (over 20 MiB) |
 | `POST /v1/sessions/{id}/continue` | | 200 `HostedSession` | 409 `cannot_deliver` (working or unknown); 502 `not_resumed` `{hosted, command, hint}` (agent not back within 20 s) |
 | `GET /v1/requests` | | 200 `{requests: [RemoteRequest], seq}` | |
 | `GET /v1/requests/{rid}` | | 200 `RemoteRequest` uncut | 404 (also once resolved) |
@@ -1157,6 +1317,7 @@ Core endpoints. The "Only in Side A" endpoints are in [their own section](#only-
 | `GET /v1/images/{sha1}` | | 200 bytes | 404 |
 | `GET /v1/images/{sha1}/thumb` | | 200 `image/jpeg`, 640 px on the long side | 404 |
 | `POST /v1/uploads` | raw bytes, `Content-Type: image/*` | 201 `Upload` | 413, 415 |
+| `POST /v1/transcribe` | raw recording, `Content-Type: audio/mp4` (AAC in M4A) or `audio/wav`; `?session=&language=&hint=&seconds=` (`TranscribeAsk`); no `Idempotency-Key`; capability `transcribe` | 200 `TranscribeResult` `{text}` | 413 `too_large` (over 4 MiB), `transcribe_too_long` (over 5 minutes), 415, 429 `transcribe_limited` (one in flight per phone, 120 an hour; `Retry-After`), 502 `transcribe_key_refused` / `transcribe_failed`, 503 `transcribe_no_key`, 504 `transcribe_unreachable` |
 | `GET /v1/projects` | | 200 `{projects: [RemoteProject]}` | |
 | `GET /v1/hosted` | | 200 `{hosted: [HostedSession], seq}` | 503 `tmux_missing` |
 | `POST /v1/hosted` | `StartHosted` | 201 `HostedSession` | 404 (no such folder), 409 `cannot_deliver` (`details.hint = "alreadyLive"`), 503 |
@@ -1201,6 +1362,7 @@ public struct AgentOptions: Codable, Hashable, Sendable {   // capability "optio
     public let models: [Option]              // what Side A's model menu offers for this agent
     public let efforts: [Option]             // low, medium, high, max (Claude); Codex reasoning efforts
     public let commands: [Option]            // slash commands, including the user's custom ones
+    public var signedIn: Bool?               // restart.agent: the Mac has a login for it, so a handoff to it can start
 }
 ```
 
@@ -1254,6 +1416,24 @@ Notes per endpoint:
   `runtime/uploads/` (0600) and deleted after 7 days. MIME is sniffed from the bytes (HEIC, JPEG,
   PNG, GIF, WebP), not trusted from the header. The response is always an `Upload`; replies and
   `StartHosted` refer to it by `id`, and the Mac resolves ids to paths.
+- **Transcribe** is the phone's dictation. The pairing is enough, as for a file read; no Face ID,
+  since nothing on the Mac changes. The Mac sends the recording to the speech-to-text provider set
+  in Settings > iPhone > Dictation (OpenAI's `POST /v1/audio/transcriptions`, model
+  `gpt-4o-transcribe` by default and editable), with a `prompt` of words to listen for: the
+  session's project, the names of the files nearest the top of its folder as `git ls-files` lists
+  them (none when git doesn't answer for the folder or the folder is the home folder or above; the
+  folder is never walked; a path the file route would refuse by any of its parts, under `.aws/` say, is left
+  out), the phone's `hint` (the project and the session's title), the agents'
+  names and common programming terms. `language` goes as the phone sent it: the phone sends its
+  ISO 639-1 code only when every preferred language is the same one and it is among Whisper's
+  supported languages. Each phone has at most one request in flight and 120 an hour; beyond that
+  429 `transcribe_limited`. The key is in Remote's Keychain service
+  and never leaves the Mac. Nothing is stored: the audio and the words are held in memory for the
+  one request, the provider call uses an ephemeral session, and remote.log has only the length,
+  size, model, time taken and outcome. The capability is listed whether or not a key is set, so
+  the phone can say why it transcribed on its own. The phone falls back to Apple's on-device
+  speech (SpeechAnalyzer) when the Mac isn't connected, lacks the capability, answers any error
+  or doesn't answer, and then says which ("· no key on <Mac>", "· <Mac> couldn't transcribe").
 - **`/options`** lists what the composer's Model, Effort and Commands rows offer, per agent, so
   the phone never hard-codes a model list.
 
@@ -1312,7 +1492,7 @@ answer).
 | Feature | Milestone | Capability | Method and path | Body | 2xx | Errors |
 |---|---|---|---|---|---|---|
 | Notes, Take Back, Interrupt | M1 | `reply.note`, `interrupt` | `reply` with `mode: note`; `DELETE …/mail`; `POST …/interrupt` | | as above | as above |
-| Stop Before Next Step | M1 | `interrupt.nextStep` | `POST /v1/sessions/{id}/interrupt` | optional `{when: "now" \| "nextStep"}` | 200 `InterruptResult` | 409 `cannot_deliver` |
+| Stop Before Next Step | M1 | `interrupt.nextStep` | `POST /v1/sessions/{id}/interrupt` | optional `{when: "now" \| "nextStep", send?: true}` | 200 `InterruptResult` | 409 `cannot_deliver` |
 | Health flags on rows | M1 | (core) | `RemoteSession.flag` | | | |
 | Model and effort options | M1 | `options` | `GET /v1/options` | | `{agents: [AgentOptions]}` | |
 | Session settings | M5 | `settings` | `POST /v1/sessions/{id}/settings` | `SettingsChange {model?, effort?, mode?, fast?}` + `X-SideA-Confirm` (`settings`) | 200 `SettingsResult {settings, nextTurn}` | 401 `confirm_required` / `confirm_invalid`, 404, 409 `cannot_deliver` (the session can't take it now; the message says why), 422 (a field its `settings.*` ability lacks, an effort the model doesn't take) |
@@ -1325,10 +1505,15 @@ answer).
 | Search | M3 | `search` | `GET /v1/search` | | as above | |
 | History browse | M3 | `history` | `GET /v1/history?archived=&project=&cursor=` | | 200 `HistoryPage` | |
 | Pin, rename, archive | M3 | `history` | `POST /v1/history/{id}` | `HistoryChange` | 200 `PastSession` | 404 |
+| Snooze, wake | M5 | `sessions.snooze` | `POST /v1/sessions/{id}/snooze`, unsigned as a pin is | `SnoozeRequest {choice?, until?}`: a nil `choice` wakes it; the phone works out `until` in its own time zone (Tomorrow Morning is 9:00 there) | 200 `RemoteSession` | 400 (a timed choice without a future `until`), 404, 409 `session_waiting` (an open request), 409 `cannot_deliver` (a `failure` or a `failing` or `stuck` flag, which would wake it at once) |
+| Pull request on the row | M5 | `sessions.pullRequest` | `RemoteSession.pullRequest` | | | |
+| What a failure needs | M5 | `sessions.failure` | `RemoteSession.failure` | | | |
 | Past conversation transcript | M3 | `history` | `GET /v1/sessions/{conversationID}/transcript`, the same route, for any indexed conversation, live or not | | `TranscriptPage` | 404 |
 | Resume, Fork hosted | M3 | `hosted` | `POST /v1/hosted` with `resume`, `fork` | | `HostedSession` | 409 `alreadyLive` |
 | Restart Fresh: draft | M3 | `restart` | `POST /v1/sessions/{id}/handoff` | | 200 `Handoff` (a draft; changes nothing) | 404 |
 | Restart Fresh: run | M3 | `restart` | `POST /v1/sessions/{id}/restart` | `{handoff: Handoff, accountID?, model?}` | 201 `HostedSession`; idempotent | 404, 409 |
+| Hand off to the other agent | M5 | `restart.agent` | `POST /v1/sessions/{id}/restart` | `RestartRequest` with `agent`, `effort?`, `permissionMode?`, `message?` | 201 `HostedSession` with `handoffFrom`; idempotent | 404; 409 `cannot_deliver` (agent not installed or not signed in, `details.agent`; an open request; another folder); 422 `too_long` (the message alone over 20,000 characters) |
+| A handoff's prompt | M5 | `restart.agent` | `GET /v1/handoffs/{id}` | | 200 `HandoffPrompt` | 404 (an id the Mac didn't record, or past its 30 days) |
 | Ports and memory per session | M3 | `ports` | `RemoteSession.ports`, `.memoryBytes` | | | |
 | Stop Server | M3 | `ports` | `POST /v1/sessions/{id}/ports/{port}/stop` | | 204 | 404 `port_not_found` |
 | Preview a dev server | M3 | `ports` | `POST` / `DELETE /v1/sessions/{id}/ports/{port}/preview` | | 200 `{url}` / 204 | 404 `port_not_found` |
@@ -1373,7 +1558,30 @@ public struct Handoff: Codable, Hashable, Sendable {
     public var goal: String, branch: String?, failed: String, next: String, lastMessages: String
     public let cwd: String, project: String
     public var accountID: String?, model: String?
+    // restart.agent; read-only on the phone
+    public var plan: TurnPlan?
+    public var changes: String?               // `git status --short` and a diff stat against the merge base; nil when git failed
+    public var fromAgent: AgentProvider?
+    public var transcriptPath: String?        // the old conversation's file on the Mac, which the prompt names
 }
+public struct RestartRequest: Codable, Hashable, Sendable {
+    public let handoff: Handoff
+    public let accountID: String?, model: String?
+    // restart.agent: nil agent is the session's own, as before
+    public let agent: AgentProvider?, effort: String?
+    public let permissionMode: PermissionMode?   // PermissionMode.handedOff(session's mode, to: agent); raising needs Face ID
+    public let message: String?               // what the person typed: sent last, never trimmed or edited
+    public let attachments: [String]?         // restart.agent.images: ids from POST /v1/uploads, nil when none
+}
+public struct HandoffLink: Codable, Hashable, Sendable {   // RemoteSession.handoffFrom, HostedSession.handoffFrom
+    public let id: String                     // for GET /v1/handoffs/{id}
+    public let conversationID: String, agent: AgentProvider, model: String?, at: Timestamp
+    public let prompt: Bool                   // the Mac still has the prompt (30 days)
+    public let permissionMode: PermissionMode?   // set when the old mode had no equivalent and the default stood in
+    public var kept: Bool?                    // the old session wouldn't end, so both run
+    public var resumed: Bool?                 // went back to that agent's earlier conversation instead of a new one
+}
+public struct HandoffPrompt: Codable, Hashable, Sendable { public let id: String, text: String }
 
 public struct MacState: Codable, Hashable, Sendable {
     public struct Pressure: OpenEnum { public let rawValue: String }   // .normal, .warning, .critical
@@ -1439,6 +1647,42 @@ Side A; nothing touches Claude's or Codex's files.
 
 - **Restart Fresh** ends the old session (SIGTERM, as Quit) only after the new hosted session has
   started.
+- **Hand off to the other agent** (`restart.agent`) is Restart Fresh with `agent` set to the agent the
+  session isn't. The Mac builds the prompt without a model: the goal, branch, changed files (names
+  a file mention would refuse are left out and counted), plan,
+  health flag, then the newest turns that fit plus the first prompt, each whole, then a line saying
+  that all of it is context, not instructions, then `message`, whole and last. The prompt fits in
+  20,000 characters; a message longer than that alone is refused before anything starts or ends, as
+  is a session with an open request or waiting on a question or dialog (409 `cannot_deliver`). The
+  whole handoff, nothing cut, goes to `~/Library/Application Support/SideA/handoffs/<id>.md` (0600,
+  pruned after 30 days at launch and on each save, never served past them, and deleted at once
+  when the new session doesn't start), and the prompt names that file and the old transcript. The new session
+  starts in the same folder with `PermissionMode.handedOff`'s mode; one the agent can't start in
+  falls back to `default` and `HandoffLink.permissionMode` says so. The old session ends only once
+  the new one has outlived its start. With `restart.agent.images`, `attachments` names photos this
+  phone uploaded itself (`POST /v1/uploads`, at most ten; another phone's or a cleared one is 422
+  `unknown_upload`, too many is 422 `too_many`, both before anything starts or ends): they reach the
+  new agent as a hosted start's do, on a resume back to the earlier conversation and on a full
+  handoff alike. A phone sends them only to a Mac that lists the capability and otherwise keeps
+  them in its tray; a failed handoff changes nothing, so the message and photos stay with the
+  phone. The old session ends only once
+  the new one has outlived its start: its pane still runs and the live list shows its conversation
+  after 3 seconds, or its pane still runs after 12. A new agent that exits at startup (a refused
+  model, login or resume) leaves the old session running, its handoff files are deleted, and the
+  answer is 409 `cannot_deliver` with the agent's last line. If the old one won't end, both run and
+  `HandoffLink.kept` is true. The link goes into the
+  bridge's index (`handoffs` table) once the new conversation has an id, and until then on its tmux
+  session (`@sidea_handoff`), so rows and History show it after a restart of Side A. A hand-back
+  (a resume) stays out of the index and is kept by its record file instead. Side A loads the links
+  when Remote starts and sends the rows again once they are in; `GET /v1/handoffs/{id}` and a
+  handoff wait for that load. History nests
+  the new conversation under the old as it does a fork (`PastSession.parentID`). Going back to an
+  agent whose conversation in the chain still exists resumes it on the chosen model with only the
+  turns it hasn't seen; if that resume fails it starts afresh with a full handoff of every turn. A handoff never waits in the outbox:
+  the phone sends it only while connected. `AgentOptions.signedIn` says which agents the Mac can
+  start; the phone offers the other agent only when it is installed and signed in.
+- **`GET /v1/handoffs/{id}`** serves only ids the Mac recorded, read from the file it named; the
+  phone never sends a path. Pairing auth, like a transcript: it is the new session's own first prompt.
 - **Preview.** The returned `url` must be served by Side A's own pinned listener (a proxy at
   `/v1/preview/{port}/…` on the same port), with the WebView's navigation delegate pinning the
   Mac's key and a short-lived preview credential in the URL or a cookie. It must not be a
@@ -1561,8 +1805,16 @@ Like every tagged union here, a client message is `{"type": "subscribe", "data":
 
 ### Keepalive and backpressure
 
-- The client sends WebSocket pings every 15 seconds (`sendPing`); the server closes a socket
-  silent for 45 seconds. The server pings too, with the same timeout.
+- The client sends WebSocket pings every 10 seconds (`sendPing`) and takes a socket whose pong
+  doesn't come within 8 seconds for dead (close 4008, reconnect at once); the server closes a
+  socket silent for 45 seconds. The server pings every 15 seconds too, with the same timeout.
+  Nothing new is needed from the Mac: RFC 6455 pings are all the phone uses.
+- Every frame and pong is proof the Mac is there. Back in the foreground, a socket with none for
+  45 s (the server has closed it) is replaced at once; one with none for 25 s reads as not live
+  until its ping answers. The ping gets 1.5 s after more than 10 s in the background, else 4 s.
+  If the ping is still out after 0.5 s, a plain `GET /v1/hello` asks the Mac; if that answers
+  and the socket stays silent for 2.5 s, the socket is replaced (iOS can kill a suspended app's
+  socket without a close).
 - Each connection has an outbound queue of at most 1 MiB. `usage.update` is coalesced to one per
   5 seconds, `session.upsert` per session to one per 250 ms (latest wins), transcript deltas per
   60 ms. `account.remove` goes out with the same coalesced `usage.update` pass; a phone from before it
@@ -1583,8 +1835,11 @@ Like every tagged union here, a client message is `{"type": "subscribe", "data":
 | 4429 | too many connections (4 per device) | reconnect after 10 s |
 | 4500 | internal error | reconnect with backoff |
 
-Backoff: 0.5 s doubling to 30 s, with ±20 % jitter; reset after 60 s connected. Immediate retry on
-network path change and app foreground.
+Backoff: 0.5 s doubling to 30 s, with ±20 % jitter; reset after 30 s connected, on app foreground
+and on network path change, which also end the wait. The first drop of a socket that reached
+`welcome` (not after a `bye`) waits 125 to 250 ms instead; it still counts, so a Mac that keeps
+dropping backs off. With no network at all the client waits for the path monitor (checking
+anyway every 60 s) and reports cause `noNetwork`.
 
 ## WebSocket: /v1/ws/term/{name}
 
@@ -1667,6 +1922,91 @@ slow client can't take and redraws when it catches up. Keepalive as for events.
 | 4422 | input sequence gap |
 | 4426 | protocol unsupported |
 
+## WebSocket: /v1/ws/screen/{mode}
+
+The Mac's screen as H.264 video, and with `mode` `control`, clicks, scrolls and keys back. Capability `screen` says the
+Mac serves it; `screen.on` that its switch (Settings › iPhone › Screen, off by default) is on now. The upgrade needs a
+`screen` signature by the confirm key whose subject is the mode (`view` or `control`), every time; a phone opens in
+`view` and reopens in `control` only after its owner confirms. One viewer at a time: a new socket replaces the old,
+which is told `refused{replaced}` and closed 4409. Types: SideAProtocol's `Screen.swift`. Version 1 (`ScreenHello.version`).
+
+### Flow
+
+1. Client: `hello{version, maxWidth, maxHeight, codecs: ["h264"]}`. Nothing else is accepted first (4426).
+2. Server: `ready{version, route, displays, windows, control, limits}`. `route` is `relay` when the socket came through
+   the tunnel, else `direct`; `limits` is the ceiling for that route. `control{allowed, reason}`: reasons `view`
+   (opened to watch), `off` (Control switch off), `accessibility` (Side A not allowed in Accessibility), `locked`.
+3. Client: `start{target?, fps?, session?}`. `target` is `{"display": id}` or `{"window": id}`; without one the Mac
+   shows the frontmost window of the terminal app holding `session`'s Mac tab, else the main display. Sent again to switch.
+4. Server: `started{target, width, height, fps, codec}`, then `quality{fps, bitrate, width, height, reduced}` whenever
+   the rate changes, and binary frames.
+5. Client, every second: `feedback{fps, dropped, rtt}` and `ping{t}`; the server answers `pong{t}` behind every frame
+   already queued, so the round trip includes the wait. Six seconds without a message: `refused{timeout}`, 4408.
+6. Client: `keyframe` after a decode failure or a gap; `bye` before it closes (backgrounding, leaving the view).
+
+Input, client → server, only with `control.allowed`; anything else is dropped, at most 30 events a second (burst 60):
+`pointer{kind: click | rightClick | doubleClick, x, y}`, `scroll{x, y, dx, dy}`, `key{key, modifiers}`, `text{text}`
+(≤ 256 characters). Positions are 0 to 1 across the picture, top left first; scroll deltas are fractions of the
+picture the content follows. `key` is a named key (`return`, `escape`, `tab`, `space`, `delete`, `forwardDelete`, the
+arrows, `home`, `end`, `pageUp`, `pageDown`) or one lowercase character for shortcuts, with `command`, `option`,
+`control`, `shift`; characters map to US-layout key positions. `text` is typed as Unicode, layout-independent.
+
+### Frames (server → client, big-endian)
+
+| Tag | Layout |
+|---|---|
+| `0x21` config | codec (1 = H.264), u16 width, u16 height, u8 count, each parameter set as u16 length + bytes. Before every keyframe |
+| `0x22` video | flags (bit 0 keyframe), u32 seq, u64 µs since the stream started, AVCC NAL units (4-byte lengths). ≤ 900 KiB |
+
+H.264 Constrained High, real time, no B-frames, VideoToolbox's low-latency rate control (H.264 only, so no HEVC in v1).
+Keyframes come on request, on a new encoder, after any frame the Mac drops, and at least every 20 s.
+
+### Pacing
+
+The Mac encodes only when its socket has room (128 KiB queued over the relay, 256 KiB direct). The newest capture
+replaces one not yet encoded, so a slow link drops whole captures before encoding and never queues stale frames;
+an encoded frame is never dropped except one that wouldn't fit under the 1 MiB socket limit, which forces a keyframe.
+Every second the bitrate goes down a quarter when captures were skipped, the queue sat at the gate, the phone dropped
+frames or the round trip passed 700 ms (relay) or 300 ms (direct); it goes up 15 % after two clean seconds of sending.
+Frame rate follows bitrate: the route's ceiling at ≥ 50 % of its bitrate, two thirds at ≥ 20 %, a third (at least 5) below.
+
+| Route | fps | long edge | bitrate | floor | start |
+|---|---|---|---|---|---|
+| direct (LAN, tailnet) | 30 | 1600 px | 8 Mbit/s | 0.4 Mbit/s | 3.2 Mbit/s |
+| relay | 15 | 1280 px | 1.5 Mbit/s | 0.15 Mbit/s | 0.9 Mbit/s |
+
+### Screen budget
+
+The relay's limits allow video: one Mac socket carries 16 MiB/s (64 MiB burst) and 4,000 frames/s, and a stream's
+256 KiB credit window gives at most 256 KiB per round trip, about 2.6 MB/s (21 Mbit/s) at 100 ms and 0.85 MB/s
+(7 Mbit/s) at 300 ms. The ceiling of 1.5 Mbit/s (about 190 KB/s) is set by what else that socket and the install's
+day carry, not by bandwidth: 64 GiB per install per UTC day in both directions closes every socket until midnight when
+spent, and an hour at 1.5 Mbit/s is about 0.7 GB (an hour at 8 Mbit/s would be 3.6 GB). It is about 6 to 24 tunnel
+frames a second, roughly 4,000 billed Durable Object requests an hour at most. Bytes waiting in the tunnel and the
+loopback splice are invisible to the Mac's socket queue, hence the phone's round trip in `feedback`. So the relay gets
+the same video at 15 fps and 1280 px, adapting down to 0.15 Mbit/s and 5 fps, and the phone says "Reduced quality over
+relay"; there is no separate still-image mode, since H.264 at 5 fps carries a still screen in less than a JPEG a second.
+
+### Close codes
+
+| Code | Meaning |
+|---|---|
+| 1000 | client closed, or `bye` |
+| 1001 | server going away (sleep, quit, Remote off) |
+| 4401 | unauthorized or revoked |
+| 4403 | the Screen switch is off (`refused{off}` first) |
+| 4408 | no feedback for 6 s (`refused{timeout}`) |
+| 4409 | another device started watching (`refused{replaced}`) |
+| 4410 | ended on the Mac (`refused{ended}`) |
+| 4412 | Side A isn't allowed in Screen Recording (`refused{permission}`) |
+| 4426 | no `hello`, an unknown mode or version, or a binary frame from the client |
+| 4500 | capture failed (`refused{failed}`) |
+
+The client reconnects with backoff (0.5 s doubling to 10 s, with a fresh signature each; one Face ID holds 5 minutes)
+on 1001, 1006 and any code not listed here, and stops with a state of its own on the rest, 4408 included, whether
+or not the `refused` before it arrived. The table is `ScreenClose` in the protocol package, with each refusal's
+code and words on `ScreenRefusal`, which the Mac and the phone both read.
+
 ## Push payloads
 
 What the Mac puts inside a push and what the phone reads out of it. The relay's own API (signed
@@ -1703,6 +2043,7 @@ and `Envelope.*.bin` with a known key (v2 is current; the v1 vector stays to che
 | `ROTATION` | `PUSH_ROTATION_FALLBACK` | `rotation` (`title` "Now on Personal", "All out", "Fable out" or "Work is full"; `body` a reason, or `account` and `resetsAt` for who is back. Account names and a limit's numbers only) |
 | `TEST` | `PUSH_TEST_FALLBACK` | `test` (Test Connection; no actions) |
 | `ANSWERED` (relay `kind: "dismiss"` only) | `PUSH_ANSWERED` | none: no envelope, replaces the collapse id |
+| `MAC_QUIET` (the relay's own; the Mac can't send it) | `PUSH_MAC_QUIET` ("Your Mac has gone quiet"), `PUSH_MAC_ASLEEP` ("Your Mac has been asleep for a day"), `PUSH_MAC_BACK` ("Your Mac is back") | none: no envelope, no `mutable-content`, so the Service Extension never runs. `q` = the Mac's `macID` (the Live Activity's), which the phone matches to a paired Mac and opens. Collapse id `mac-quiet`, so the all-clear replaces the alert |
 
 - The phone registers local categories with the same names, plus two that never travel.
   `REQUEST_SAFE`: the Service Extension switches a `REQUEST` to it only when the decrypted,
@@ -1751,7 +2092,14 @@ public struct PushPayload: Codable, Sendable {   // tagged by "t"
   `questions`/`plan`: the notification says "Claude has a question · Open to answer", and the
   Content Extension shows Open instead of partial options, so nobody answers a question they
   couldn't see in full.
-- `finished` carries `turnID`, which the Reply action sends back as `RemoteReply.turnID`.
+- `finished` carries `turnID`, which the Reply action sends back as `RemoteReply.turnID`, and
+  `faceID: true` when a reply to the session takes Face ID now (`ConfirmPolicy.session` of its mode,
+  as the reply route judges it). The phone then offers a Reply that opens the app instead of one the
+  Mac would refuse; a Mac that never says gets the background Reply, whose refusal puts the words
+  in the app's field.
+- When a turn leaves Ready, the Mac re-sends Ready with the turns left (`quiet`, level `passive`)
+  to the phones it showed on, or sends the relay's dismiss for Ready's collapse id once none are
+  left; a turn pushed on its own is dismissed under its own collapse id.
 
 ### Live Activity content state
 
@@ -1953,7 +2301,7 @@ public actor Outbox {
         public let createdAt: Timestamp
         public var attempts: Int
         public var lastError: APIError?
-        public let expiresAt: Timestamp      // answers: 24 h; replies and interrupts: 10 min
+        public let expiresAt: Timestamp      // answers: 24 h; replies: 12 h; interrupts: 2 min; Take Back: 10 min
     }
     public init(file: URL) throws            // the App Group SQLite database, shared by the app, extensions and App Intents
     public func enqueue(_ item: Item) async
@@ -1972,7 +2320,9 @@ public actor Outbox {
   once; a claim older than 30 s is free again. The widget snapshot and the decrypted request
   cache live in the same database under the same rule.
 - A notification action or App Intent that can't reach the Mac within 10 seconds leaves its item
-  for the app.
+  for the app. A reply is the exception: its signature lasts two minutes, so its item goes and its
+  `ReplyFlight` stays as `waiting`, unsigned, for the app to sign and send once it reaches the
+  Mac. A typed question answer goes into the session's field instead.
 - Drained in order per Mac while connected; answers first. Backoff as for sockets.
 - 2xx or an `Idempotent-Replay`: done. 409 `already_resolved`: done, shown as answered elsewhere.
   An error with `retryable: true` (429, 503, `in_progress`) or a network error: retried with
@@ -1981,6 +2331,12 @@ public actor Outbox {
   error: dropped, shown on the row it came from. 401: stop draining, show "Pair again".
 - Items are applied optimistically: an answered request is hidden from `requests` while its item
   is pending and comes back with an error if the item fails.
+- A reply keeps one key for its 12 hours, inside the Mac's 24 h idempotency record, so any resend
+  of one that landed is a replay. Its signature (±120 s) may run out in the queue: the Mac refuses
+  that before running anything (401 `confirm_invalid`), and the app signs it again under a new key.
+  A reply typed while the Mac is out of reach isn't queued at all until the link is back (ios-app,
+  Composer); it then goes signed, unless its session ended (404 `session_not_found` would say the
+  same) or moved to another turn.
 
 ## Test plan
 

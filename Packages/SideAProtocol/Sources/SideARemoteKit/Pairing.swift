@@ -252,7 +252,8 @@ public struct PairingClient: Sendable {
             URL(string: relay.url).flatMap { RelayRoute.allowed($0) ? RelayRoute(url: $0, installID: relay.installID, deviceID: response.deviceID) : nil }
         }
             ?? invitation.relay.map { RelayRoute(url: $0.url, installID: $0.installID, deviceID: response.deviceID) }
-        let endpoint = Endpoint(macID: response.mac.id, baseURL: base, serverKeyHash: attempt.serverKeyHash, name: response.mac.name, relay: relayInfo)
+        let endpoint = Endpoint(macID: response.mac.id, baseURL: base, serverKeyHash: attempt.serverKeyHash, name: response.mac.name, relay: relayInfo,
+                            os: response.mac.os)
             .updated(with: response.hello.endpoints)
         return Paired(endpoint: endpoint, response: response, deviceSecret: attempt.deviceSecret, pushKey: pushKey)
     }

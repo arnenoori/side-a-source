@@ -77,7 +77,22 @@ final class TunnelClient: @unchecked Sendable {
         }
     }
 
-    func stop() {
+    /// Leaving on purpose: the relay is told why before the socket goes, so it doesn't call the Mac quiet to the phones. A
+    /// sleeping Mac says `sleep` and keeps its socket; the system takes it. Waits a moment for the word to leave this Mac, never
+    /// longer than `goodbyeWait`.
+    func goodbye(_ reason: String) {
+        queue.sync {
+            guard let task = socket else { return }
+            let sent = DispatchSemaphore(value: 0)
+            task.send(.string(TunnelControl.goodbye(reason).text)) { _ in sent.signal() }
+            _ = sent.wait(timeout: .now() + Self.goodbyeWait)
+        }
+    }
+
+    static let goodbyeWait: TimeInterval = 1
+
+    func stop(goodbye reason: String? = nil) {
+        if let reason { goodbye(reason) }
         queue.sync {
             running = false
             retry?.cancel()
@@ -183,6 +198,8 @@ final class TunnelClient: @unchecked Sendable {
         task.maximumMessageSize = TunnelFrame.header + TunnelFrame.maxPayload + 1024
         socket = task
         task.resume()
+        // First, so the relay may tell the phones if this Mac goes quiet; an older Mac never says it, and is never told on.
+        send(.string(TunnelControl.watch.text))
         // Queued behind the upgrade, so the relay has the device list before any phone it lets in reaches the Mac.
         if let devices { send(.string(TunnelControl(type: "devices", devices: devices).text)) }
         if ticket != nil { send(.string(pairing.text)) }

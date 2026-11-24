@@ -1,0 +1,20 @@
+{
+  "agent": "codex",
+  "commands": [],
+  "installed": true,
+  "models": [
+    {
+      "agent": "codex",
+      "defaultEffort": "medium",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "id": "gpt-5.5",
+      "title": "GPT-5.5"
+    }
+  ],
+  "signedIn": true
+}

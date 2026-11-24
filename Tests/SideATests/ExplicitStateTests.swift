@@ -76,7 +76,7 @@ private func tailnet(login: String? = "me@example.com") -> TailscaleStatus {
     let quiet = Task { await store.verify(id, reportError: false) }
     try await until(await slow.waiting == 1)
     let asked = Task { await store.verify(id) }
-    try await Task.sleep(for: .milliseconds(20))
+    for _ in 0..<20 { await Task.yield() }  // lets `asked` start and join the check that is waiting
     await slow.release()
     #expect(await quiet.value == false)
     #expect(await asked.value == false)
@@ -408,6 +408,7 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     presence = UserPresence(idle: 1, locked: true)
     #expect(updates.hold == .waiting(1))
     updates.installIfQuiet()
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that nothing installs while someone is away-but-locked
     try await Task.sleep(for: .milliseconds(50))
     #expect(installs == 0)
     activity = QuietInstall.Activity()
@@ -450,6 +451,7 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     var asked: [String] = [], answer = false
     updates.confirmInstall = { asked.append($0); return answer }
     updates.check()
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that declining the prompt installs nothing
     try await Task.sleep(for: .milliseconds(50))
     #expect(installs == 0)
     #expect(asked == [updates.staged?.version ?? "?"])
@@ -475,6 +477,7 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     updates.install()
     updates.installIfQuiet()
     updates.check()
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that a second install never starts
     try await Task.sleep(for: .milliseconds(50))
     #expect(installs == 1)
 }
@@ -578,7 +581,8 @@ private final class Signatures: @unchecked Sendable {
     remote.makeNewKey()
     try await until(signatures.started == 2)
     signatures.finish(0)
-    try await Task.sleep(for: .milliseconds(100))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that the superseded key's signature starts no server
+    try await Task.sleep(for: .milliseconds(50))
     #expect(remote.server == nil)
     signatures.finish(1)
     try await until(remote.server != nil)
@@ -680,13 +684,15 @@ private final class Answers: @unchecked Sendable {
     store.config.pool = true
     store.poolRun = .failed("busy")
     store.retryPoolIfDue()
-    try await Task.sleep(for: .milliseconds(100))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that no retry starts
+    try await Task.sleep(for: .milliseconds(50))
     guard case .failed = store.poolRun else { Issue.record("retried with no back-off set"); return }
 
     let now = Date()
     store.poolRetryAt = now + 60
     store.retryPoolIfDue(now: now)
-    try await Task.sleep(for: .milliseconds(100))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that no retry starts before its time
+    try await Task.sleep(for: .milliseconds(50))
     guard case .failed = store.poolRun else { Issue.record("retried before its time"); return }
 
     store.retryPoolIfDue(now: now + 61)

@@ -56,6 +56,7 @@ private let shots = ProcessInfo.processInfo.environment["SIDEA_PAIR_SHOTS"].map 
         window.contentView = host
         window.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
         window.orderFrontRegardless()
+        // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- a screenshot, not an assertion: AppKit gives no signal that the window has drawn
         try await Task.sleep(for: .milliseconds(900))
         host.layoutSubtreeIfNeeded()
         let rep = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))

@@ -27,6 +27,7 @@
 			<key>UNNotificationExtensionCategory</key>
 			<array>
 				<string>QUESTION</string>
+				<string>QUESTION_OPEN</string>
 				<string>PLAN</string>
 				<string>REQUEST_SAFE</string>
 				<string>REQUEST</string>

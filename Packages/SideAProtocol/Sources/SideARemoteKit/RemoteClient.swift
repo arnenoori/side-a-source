@@ -12,9 +12,20 @@ public struct Endpoint: Sendable, Hashable, Codable {
     public let name: String
     /// The Mac's relay tunnel, the path when no address answers (docs/remote/tunnel.md).
     public let relay: RelayRoute?
-    public init(macID: String, baseURL: URL, alternates: [URL] = [], serverKeyHash: String, name: String, relay: RelayRoute? = nil) {
+    /// What kind of computer this is, from its hello; nil for a pairing saved before hosts said, which is a Mac (`kind`).
+    public let os: HostOS?
+    public init(macID: String, baseURL: URL, alternates: [URL] = [], serverKeyHash: String, name: String, relay: RelayRoute? = nil,
+                os: HostOS? = nil) {
         self.macID = macID; self.baseURL = baseURL; self.alternates = alternates; self.serverKeyHash = serverKeyHash; self.name = name
-        self.relay = relay
+        self.relay = relay; self.os = os
+    }
+
+    /// The host's kind, a Mac when it never said.
+    public var kind: HostOS { os ?? .macos }
+
+    /// The same host with the kind its latest hello reported; a hello that names none changes nothing.
+    public func updated(os: HostOS?) -> Endpoint {
+        Endpoint(macID: macID, baseURL: baseURL, alternates: alternates, serverKeyHash: serverKeyHash, name: name, relay: relay, os: os ?? self.os)
     }
 
     /// Every address, the primary first.
@@ -28,7 +39,7 @@ public struct Endpoint: Sendable, Hashable, Codable {
         guard !reported.isEmpty else { return self }
         var seen: Set<URL> = [baseURL]
         return Endpoint(macID: macID, baseURL: baseURL, alternates: reported.filter { seen.insert($0).inserted }, serverKeyHash: serverKeyHash, name: name,
-                        relay: relay)
+                        relay: relay, os: os)
     }
 }
 
@@ -121,7 +132,11 @@ public struct RemoteClient: Sendable {
         components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + path
         components.percentEncodedPath = components.path.split(separator: "/", omittingEmptySubsequences: false)
             .map { Self.segment(String($0)) }.joined(separator: "/")
-        if !query.isEmpty { components.queryItems = query }
+        if !query.isEmpty {
+            components.queryItems = query
+            // URLComponents leaves "+" as it is, and the Mac reads one in a query as a space.
+            components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        }
         var request = URLRequest(url: components.url!)
         request.httpMethod = method
         request.timeoutInterval = 30
@@ -195,6 +210,25 @@ public struct RemoteClient: Sendable {
         return transport.socket(request)
     }
 
+    /// The Mac's tunnel to the relay drops and is back within a second or two, and a race that just found nothing holds
+    /// off the next: a call someone waits on races every path again until `budget` runs out, rather than failing on its first miss.
+    public func reaching<T>(for budget: Double = 4, isolation: isolated (any Actor)? = #isolation, missed: () -> Void = {},
+                            _ call: () async throws -> T) async throws -> T {
+        let start = ContinuousClock.now
+        var wait = 0.6
+        while true {
+            do { return try await call() } catch {
+                if error is RemoteFailure || error is ServerKeyChanged || error is RelayRefused || error is LocalNetworkDenied
+                    || error is CancellationError || Task.isCancelled { throw error }
+                guard ContinuousClock.now - start + .seconds(wait) < .seconds(budget) else { throw error }
+                missed()
+                try await Task.sleep(for: .seconds(wait))
+                wait = min(wait * 2, 8)
+                if let routed = transport as? RoutedTransport { _ = await routed.paths.retest() }
+            }
+        }
+    }
+
     // Reads the phone makes outside the sync engine.
 
     public func hello() async throws -> Hello { try await get("/v1/hello") }
@@ -254,6 +288,19 @@ public struct RemoteClient: Sendable {
 
     // Only in Side A. Each needs its capability in `Hello`.
 
+    /// Takes a reply out of the session's queue. 409 `queue_changed` when it has gone or changed.
+    public func removeQueued(_ session: SessionKey, _ reply: String) async throws {
+        _ = try await send(try await request("DELETE", "/v1/sessions/\(session)/queue/\(reply)", idempotencyKey: UUID().uuidString.lowercased()))
+    }
+    /// Files under the session's folder matching `query`, for an `@` mention.
+    public func files(_ session: SessionKey, matching query: String) async throws -> FileMatches {
+        try await get("/v1/sessions/\(session)/files", query: [URLQueryItem(name: "q", value: query)])
+    }
+    /// A file's bytes, `path` as the session wrote it. 403 `file_refused`, 404 `file_not_found`, 413 `too_large`.
+    public func file(_ session: SessionKey, path: String) async throws -> Data {
+        try await send(try await request("GET", "/v1/sessions/\(session)/file", query: [URLQueryItem(name: "path", value: path)])).0
+    }
+
     public func history(archived: Bool = false, project: String? = nil, cursor: Cursor? = nil) async throws -> HistoryPage {
         try await get("/v1/history", query: [URLQueryItem(name: "archived", value: archived ? "1" : "0")]
                       + (project.map { [URLQueryItem(name: "project", value: $0)] } ?? []) + (cursor.map { [URLQueryItem(name: "cursor", value: $0.raw)] } ?? []))
@@ -266,6 +313,9 @@ public struct RemoteClient: Sendable {
     }
     public func restart(_ session: SessionKey, _ restart: RestartRequest, idempotencyKey: String = UUID().uuidString.lowercased(), confirm: String? = nil) async throws -> HostedSession {
         try await post("/v1/sessions/\(session)/restart", json: restart, idempotencyKey: idempotencyKey, confirm: confirm)
+    }
+    public func handoffPrompt(_ id: String) async throws -> HandoffPrompt {
+        try await get("/v1/handoffs/\(id)")
     }
     public func quit(_ session: SessionKey, confirm: String? = nil) async throws {
         try await signedSend("POST", "/v1/sessions/\(session)/quit", confirm: confirm)

@@ -37,15 +37,16 @@ public enum MarkdownParser {
         init(_ blocks: [MarkdownBlock]) { self.blocks = blocks }
     }
 
-    public static func blocks(_ markdown: String) -> [MarkdownBlock] {
-        let key = markdown as NSString
+    /// `files`: local paths become `FileLink`s, for a view that opens them in the app.
+    public static func blocks(_ markdown: String, files: Bool = false) -> [MarkdownBlock] {
+        let key = ((files ? "f" : "-") + markdown) as NSString
         if let hit = cache.object(forKey: key) { return hit.blocks }
-        let blocks = parse(markdown)
+        let blocks = parse(markdown, files: files)
         cache.setObject(Parsed(blocks), forKey: key)
         return blocks
     }
 
-    private static func parse(_ markdown: String) -> [MarkdownBlock] {
+    private static func parse(_ markdown: String, files: Bool) -> [MarkdownBlock] {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full, failurePolicy: .returnPartiallyParsedIfPossible)
         guard let parsed = try? AttributedString(markdown: markdown, options: options) else {
             return [MarkdownBlock(id: 0, kind: .paragraph, text: AttributedString(markdown))]
@@ -66,7 +67,7 @@ public enum MarkdownParser {
         }
 
         for (intent, range) in parsed.runs[\.presentationIntent] {
-            let text = styled(AttributedString(parsed[range]))
+            let text = styled(AttributedString(parsed[range]), files: files)
             guard let intent else {
                 keys.append(-1)
                 blocks.append(MarkdownBlock(id: blocks.count, kind: .paragraph, text: text))
@@ -120,24 +121,85 @@ public enum MarkdownParser {
     }
 
     /// Inline code on a quiet fill, links in the label colour and underlined, local paths in mono. Only
-    /// web links stay tappable (`AgentLink`): agent output must not open a pairing link or another app.
-    private static func styled(_ text: AttributedString) -> AttributedString {
+    /// web links stay tappable (`AgentLink`): agent output must not open a pairing link or another app. With `files`,
+    /// local paths are links too, to the app's own viewer (`FileLink`), never the system.
+    private static func styled(_ text: AttributedString, files: Bool) -> AttributedString {
         var text = text
         for run in text.runs {
+            var file: String?
             if let inline = run.inlinePresentationIntent, inline.contains(.code) {
                 text[run.range].font = .callout.monospaced()
                 text[run.range].backgroundColor = Color(.tertiarySystemFill)
+                if files, run.link == nil { file = FileLink.path(code: String(text[run.range].characters)) }
             }
             if let link = run.link {
-                guard AgentLink.opens(link) else {
+                if files, let path = FileLink.local(link) {
+                    file = path
+                } else if !AgentLink.opens(link) {
                     text[run.range].link = nil
                     continue
                 }
-                text[run.range].foregroundColor = .primary
-                text[run.range].underlineStyle = .single
             }
+            if let file { text[run.range].link = FileLink.url(file) }
+            guard text[run.range].link != nil else { continue }
+            text[run.range].foregroundColor = .primary
+            text[run.range].underlineStyle = .single
         }
         return text
+    }
+}
+
+/// A local file named in agent prose: a Markdown link with no scheme or `file:`, or inline code that looks like a
+/// path. It travels as a `sidea-file:` link that only the app's own views act on; one the agent wrote itself has a
+/// scheme of its own, so it's dropped with the other links that aren't web pages.
+public enum FileLink {
+    static let scheme = "sidea-file"
+
+    public static func url(_ path: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.path = path
+        return components.url
+    }
+
+    public static func path(_ url: URL) -> String? {
+        guard url.scheme == scheme, let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path, !path.isEmpty else { return nil }
+        return path
+    }
+
+    /// Without the destination's `#fragment`, `?query` or `:line`.
+    static func local(_ link: URL) -> String? {
+        let scheme = link.scheme?.lowercased()
+        guard scheme == nil || scheme == "file", let components = URLComponents(url: link, resolvingAgainstBaseURL: false),
+              scheme == nil || [nil, "", "localhost"].contains(components.host) else { return nil }
+        let path = withoutLine(components.path)
+        return path.isEmpty ? nil : path
+    }
+
+    /// Extensions inline code can carry without a folder and still be a file: `README.md` is one, `self.view` isn't.
+    static let known: Set<String> = [
+        "md", "markdown", "txt", "rtf", "pdf", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml", "xml", "plist", "html", "htm", "css",
+        "js", "mjs", "cjs", "ts", "tsx", "jsx", "swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "rs", "go", "py", "rb", "java", "kt",
+        "sh", "zsh", "bash", "sql", "png", "jpg", "jpeg", "gif", "heic", "webp", "svg", "docx", "doc", "xlsx", "xls", "pptx", "ppt",
+        "key", "pages", "numbers", "log", "ipynb", "lock", "xcconfig", "entitlements", "proto", "graphql", "vue", "svelte", "lua", "php",
+    ]
+
+    /// `docs/plan.md`, `src/a.swift:42` or `README.md`: one word of path characters ending in an extension, which needs
+    /// a folder in front unless it's a known one. Nil for anything else.
+    static func path(code: String) -> String? {
+        let path = withoutLine(code)
+        guard path.count <= 300, !path.hasPrefix("-"), !path.contains("//"),
+              path.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || "._-/~@+".unicodeScalars.contains($0) }) else { return nil }
+        let name = (path as NSString).lastPathComponent, ext = (name as NSString).pathExtension.lowercased()
+        guard !ext.isEmpty, ext.count <= 12, ext.contains(where: \.isLetter), name.count > ext.count + 1 else { return nil }
+        return path.contains("/") || known.contains(ext) ? path : nil
+    }
+
+    /// `a.swift:42` and `a.swift:42:7` as `a.swift`.
+    static func withoutLine(_ path: String) -> String {
+        var parts = path.split(separator: ":", omittingEmptySubsequences: false)
+        while parts.count > 1, let last = parts.last, !last.isEmpty, last.allSatisfy(\.isNumber) { parts.removeLast() }
+        return parts.joined(separator: ":")
     }
 }
 

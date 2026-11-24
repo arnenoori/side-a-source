@@ -26,6 +26,8 @@ struct RemoteSettings: View {
             if remote.on {
                 phones
                 onPhone
+                ScreenShareSection(share: remote.screen)
+                TranscriptionSection(transcription: remote.transcription)
                 connection
                 tools
             }

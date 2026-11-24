@@ -31,19 +31,19 @@ final class ConnectionTest {
     init(mac: PairedMac) {
         self.mac = mac
         name = mac.displayName
-        steps = Self.titles
+        steps = Self.titles(mac.endpoint.kind)
     }
 
     private init(demo name: String) {
         mac = nil
         self.name = name
-        steps = Self.titles
+        steps = Self.titles()
     }
 
     static func demo(_ name: String) -> ConnectionTest { ConnectionTest(demo: name) }
 
-    private static var titles: [Step] {
-        ["Reaching the Mac", "Relay", "Paired and live", "Notifications"].enumerated().map { Step(id: $0.offset + 1, title: $0.element) }
+    private static func titles(_ kind: HostOS = .macos) -> [Step] {
+        ["Reaching \(kind.the())", "Relay", "Paired and live", "Notifications"].enumerated().map { Step(id: $0.offset + 1, title: $0.element) }
     }
 
     func run(engine: SyncEngine?) async {
@@ -70,13 +70,13 @@ final class ConnectionTest {
             let tailnet = mac.endpoint.addresses.contains { Tailscale.isTailnet($0.host() ?? "") }
             let vpnUp = await Tailscale.vpnUp()
             let tailscaleOff = tailnet && !vpnUp
-            steps[Self.reaching].outcome = Self.unreachable(error, mac: name, tailscaleOff: tailscaleOff, hasRelay: mac.endpoint.relay != nil)
+            steps[Self.reaching].outcome = Self.unreachable(error, mac: name, tailscaleOff: tailscaleOff, hasRelay: mac.endpoint.relay != nil, kind: mac.endpoint.kind)
         }
-        steps[Self.relay].outcome = Self.relayOutcome(await relay, mac: name)
+        steps[Self.relay].outcome = Self.relayOutcome(await relay, mac: name, kind: mac.endpoint.kind)
 
         var live = false
         if path == nil {
-            steps[Self.paired].outcome = .notChecked("Needs the Mac reached first")
+            steps[Self.paired].outcome = .notChecked("Needs \(mac.endpoint.kind.the()) reached first")
         } else {
             live = await checkPaired(hello, client: client, engine: engine)
         }
@@ -142,7 +142,7 @@ final class ConnectionTest {
         }
     }
 
-    static func unreachable(_ error: Error?, mac: String, tailscaleOff: Bool, hasRelay: Bool) -> Outcome {
+    static func unreachable(_ error: Error?, mac: String, tailscaleOff: Bool, hasRelay: Bool, kind: HostOS = .macos) -> Outcome {
         switch error {
         case is ServerKeyChanged:
             .failed("\(mac) has a new security key, so this \(ThisDevice.kind) has to pair again.", detail: nil)
@@ -152,16 +152,16 @@ final class ConnectionTest {
             .failed(RelayRefused().localizedDescription, detail: nil)
         default:
             .failed("Couldn't reach \(mac).", detail: tailscaleOff ? "Tailscale looks off on this \(ThisDevice.kind)."
-                : hasRelay ? "No address answered, nor did the relay. Is the Mac awake, with Side A open?"
-                : "No address answered. Is the Mac awake, with Side A open?")
+                : hasRelay ? "No address answered, nor did the relay. Is \(kind.the(mac)) awake, with Side A open?"
+                : "No address answered. Is \(kind.the(mac)) awake, with Side A open?")
         }
     }
 
-    static func relayOutcome(_ check: Paths.RelayCheck, mac: String) -> Outcome {
+    static func relayOutcome(_ check: Paths.RelayCheck, mac: String, kind: HostOS = .macos) -> Outcome {
         switch check {
         case .notSetUp: .notChecked("Not set up")
         case .answered: .passed("The relay works: \(mac) is online on it")
-        case .macOffline: .failed("\(mac) isn't on the relay.", detail: "Open Side A on the Mac and check that Remote is on.")
+        case .macOffline: .failed("\(mac) isn't on the relay.", detail: "Open Side A on \(kind.the(mac)) and check that Remote is on.")
         case .refused: .failed(RelayRefused().localizedDescription, detail: nil)
         case .failed(let why): .failed("The relay couldn't reach \(mac).", detail: why)
         }

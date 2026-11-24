@@ -20,6 +20,8 @@ struct Reconciler {
     private var resolvedOrder: [RequestID] = []
     /// A welcome that can't replay came: events wait for the snapshot that follows it.
     var awaitingSnapshot = false
+    /// The Mac's `seq` at a welcome that replays: `state.caughtUp` once events reach it.
+    private var replayTo: Int?
 
     /// What an event that came on the socket did.
     enum Receipt: Equatable {
@@ -36,6 +38,8 @@ struct Reconciler {
     mutating func welcomed(_ welcome: Welcome) {
         state.hello = welcome.hello
         awaitingSnapshot = !welcome.replay || welcome.epoch != state.epoch
+        replayTo = awaitingSnapshot ? nil : welcome.seq
+        state.caughtUp = !awaitingSnapshot && state.seq >= welcome.seq
     }
 
     /// An event with its place in the sequence. The global `seq` advances only here, one event at a time, and in `apply(snapshot)`.
@@ -44,6 +48,10 @@ struct Reconciler {
         guard !awaitingSnapshot, seq > state.seq else { return .ignored }
         guard seq == state.seq + 1 else { return .gap }
         state.seq = seq
+        if let replayTo, seq >= replayTo {
+            state.caughtUp = true
+            self.replayTo = nil
+        }
         // A slice refreshed over REST already reflects events up to its seq.
         if let slice = Self.slice(of: event), seq <= state.sliceSeq[slice] ?? -1 { return .reflected }
         return .applied(apply(event))
@@ -111,6 +119,8 @@ struct Reconciler {
 
     mutating func apply(_ snapshot: StateSnapshot) {
         awaitingSnapshot = false
+        replayTo = nil
+        state.caughtUp = true
         state.seq = snapshot.seq
         state.epoch = snapshot.epoch
         state.sliceSeq = [:]

@@ -16,6 +16,8 @@ public enum Connection: Sendable, Equatable {
         case macAsleep
         /// Round after round no direct path answered and the relay turned this phone away.
         case relayRefused
+        /// The phone itself has no network: the loop waits for the path monitor rather than its backoff.
+        case noNetwork
     }
 
     public var isLive: Bool { if case .live = self { true } else { false } }
@@ -52,9 +54,14 @@ public enum Slice: String, Sendable, Codable { case requests, accounts }
 /// Everything the UI shows for one Mac, value-typed so it crosses actors freely.
 public struct RemoteState: Sendable, Equatable {
     public var hello: Hello?
+    /// By the latest hello, so code that moves on this state reads it here rather than from `MacTools.can`.
+    public func macCan(_ capability: Capability) -> Bool { hello?.capabilities.contains(capability) == true }
     public var connection: Connection = .idle
     public var epoch: String?
     public var seq: Int = 0
+    /// The snapshot, or every event the replay promised, has landed since the latest welcome. Until then the sessions are
+    /// still as they were before the drop.
+    public var caughtUp = false
     public var sessions: [SessionKey: RemoteSession] = [:]
     public var finished: [SessionKey: FinishedSession] = [:]
     /// How many times the Mac gave up on each session's queued follow-ups.
@@ -98,8 +105,22 @@ public struct SyncTiming: Sendable {
     public var backoffCap: Double = 30
     public var jitter: Double = 0.2
     /// Connected this long, the next drop starts the backoff over.
-    public var resetAfter: Double = 60
-    public var ping: Double = 15
+    public var resetAfter: Double = 30
+    public var firstLoss: Double = 0.25
+    public var ping: Double = 10
+    public var pongWithin: Double = 8
+    public var foregroundPong: Double = 4
+    public var resumePong: Double = 1.5
+    public var longAway: Double = 10
+    public var provenFor: Double = 25
+    /// The Mac closes a socket this silent.
+    public var macForgets: Double = SocketTiming.silentFor
+    /// Off the LAN one lost packet can stall a live socket for a second or two, so it must stay silent this long while
+    /// the Mac answers a fresh hello before it counts as dead.
+    public var silentCheck: Double = 0.5
+    public var silentFor: Double = 2.5
+    /// The path monitor can be wrong about there being no network.
+    public var noNetworkRecheck: Double = 60
     public var presence: Double = 30
     public var coalesce: Double = 0.016
     /// How often to ask a Mac that was too old whether it has updated. Nothing tells the phone when it does.
@@ -127,14 +148,14 @@ public actor SyncEngine {
 
     private let outbox: Outbox
     private let info: ClientInfo
-    private let timing: SyncTiming
-    private let now: @Sendable () -> Timestamp
+    let timing: SyncTiming
+    let now: @Sendable () -> Timestamp
     private let owner = UUID().uuidString.lowercased()
     private let continuation: AsyncStream<RemoteState>.Continuation
 
     /// What the Mac has said, merged; `stored` is its state, with the connection and the outbox's items kept beside it.
-    private var recon = Reconciler()
-    private var stored: RemoteState {
+    var recon = Reconciler()
+    var stored: RemoteState {
         get { recon.state }
         _modify { yield &recon.state }
     }
@@ -148,7 +169,7 @@ public actor SyncEngine {
     /// How many screens `watch` each session.
     private var watchers: [SessionKey: Int] = [:]
     private var run: Task<Void, Never>?
-    private var socket: (any SocketConnection)?
+    var socket: (any SocketConnection)?
     private var waiting: Task<Void, Never>?
     private var addressIndex = 0
     private var bye: String?
@@ -168,11 +189,20 @@ public actor SyncEngine {
     /// Started and not stopped by its owner: a loop that ended on its own comes back with the foreground.
     private var started = false
     /// Which connection `socket` is; a late pong failure from an earlier one changes nothing.
-    private var socketGeneration = 0
+    var socketGeneration = 0
     private var relayRefusals = 0
     /// What the Mac or the relay last said about why it can't be reached, until the Mac next answers. It is shown by the
     /// `offline` connection, which keeps it through the attempts in between instead of reading `connecting`.
-    private var cause: Connection.Cause = .unknown
+    var cause: Connection.Cause = .unknown
+    /// A frame or a pong: the last proof that the Mac is there, and how many there have been.
+    var heardAt: Timestamp = 0
+    var heard = 0
+    private var welcomed = false
+    var liveSince: Timestamp = 0
+    private var backgroundedAt: Timestamp?
+    private var networkUp = true
+    private var resetLadder = false
+    var probe: Task<Void, Never>?
 
     /// Without a transport, one that pins `endpoint.serverKeyHash` on every connection.
     public init(endpoint: Endpoint, credentials: any CredentialStore, outbox: Outbox, transport: (any Transport)? = nil,
@@ -200,6 +230,7 @@ public actor SyncEngine {
         run?.cancel()
         run = nil
         waiting?.cancel()
+        probe?.cancel()
         socketGeneration += 1
         socket?.close(code: 1000, reason: nil)
         socket = nil
@@ -209,21 +240,32 @@ public actor SyncEngine {
         set(.idle)
     }
 
-    /// Skips the wait before the next attempt: the app came forward or the network changed.
+    /// Skips the wait before the next attempt and starts the backoff over: the app came forward or the network changed.
     public func reconnectNow() {
+        resetLadder = true
         // A loop that ended on a terminal state has no wait to skip: only starting it again asks the Mac.
         if run == nil { if started { start() } } else { waiting?.cancel() }
+    }
+
+    /// From the path monitor. With no network the loop waits for one instead of spending its backoff on it.
+    public func setNetwork(_ up: Bool) {
+        guard up != networkUp else { return }
+        networkUp = up
+        if up { return reconnectNow() }
+        if case .offline(let retryAt, let reason, .unknown) = stored.connection { set(.offline(retryAt: retryAt, reason: reason, cause: .noNetwork)) }
     }
 
     // MARK: Presence
 
     public func setForeground(_ foreground: Bool) async {
         self.foreground = foreground
+        let away = backgroundedAt.map { now() - $0 } ?? 0
+        backgroundedAt = foreground ? nil : now()
         if foreground {
             if run == nil {
                 if started { start() }
             } else if stored.connection.isLive {
-                checkSocket()
+                checkSocket(away: away)
             } else {
                 reconnectNow()
             }
@@ -311,17 +353,22 @@ public actor SyncEngine {
 
     /// A reply to a finished session needs its `FinishedSession.turnID`.
     /// `confirm` signs it (`ConfirmPolicy.reply`), so an item queued past the signature's two minutes is refused and signed again.
-    /// `id` is the Idempotency-Key, for a caller that recorded it first.
+    /// `id` is the Idempotency-Key, for a caller that recorded it first; `key` sends it under an earlier attempt's instead
+    /// (`Outbox.Item.key`), with that attempt's very body, which the Mac's record checks.
     @discardableResult public func reply(_ session: SessionKey, _ reply: RemoteReply, confirm: String? = nil,
-                                         id: String = UUID().uuidString.lowercased()) async -> Outbox.Item {
-        await enqueue(.reply(session, reply, id: id, macID: endpoint.macID, now: now(), confirm: confirm))
+                                         id: String = UUID().uuidString.lowercased(), key: String? = nil) async -> Outbox.Item {
+        await enqueue(.reply(session, reply, id: id, macID: endpoint.macID, now: now(), confirm: confirm, key: key))
     }
 
     /// `.nextStep` is Stop Before Next Step: stop mail, hosted or not.
-    @discardableResult public func interrupt(_ session: SessionKey, when: InterruptRequest.When = .now) async -> Outbox.Item {
-        let body = when == .now ? Data() : (try? RemoteClient.encoder.encode(InterruptRequest(when: when))) ?? Data()
+    /// `send`: a reply follows (Interrupt and Send), so the Mac keeps what the stop takes back to go with it.
+    /// `resend`: none follows, and the Mac sends what the stop takes back again by itself.
+    @discardableResult public func interrupt(_ session: SessionKey, when: InterruptRequest.When = .now, send: Bool = false,
+                                             resend: Bool = false) async -> Outbox.Item {
+        let plain = when == .now && !send && !resend
+        let body = plain ? Data() : (try? RemoteClient.encoder.encode(InterruptRequest(when: when, send: send ? true : nil, resend: resend ? true : nil))) ?? Data()
         return await enqueue(Outbox.Item(macID: endpoint.macID, method: QueuedRoutes.interrupt.method, path: QueuedRoutes.interrupt.path(session),
-                                         body: body, createdAt: now(), expiresAt: now() + 600))
+                                         body: body, createdAt: now(), expiresAt: now() + Outbox.Item.stopLifetime))
     }
 
     /// Take Back: `DELETE /v1/sessions/{id}/mail`, withdrawing what the composer queued. Queued behind that
@@ -339,15 +386,19 @@ public actor SyncEngine {
     }
 
     /// Retry, from the user's tap only and never on its own: the item settled as `.unknown` or `.notDelivered`
-    /// goes again under a new key, `<first id>:r<n>`. The first attempt and its outcome stay; `state.retries`
+    /// goes again as `<first id>:r<n>`, under a new key. The first attempt and its outcome stay; `state.retries`
     /// links them. For an answer this is harmless: if the first one landed, the retry gets `.answeredElsewhere`
-    /// and the row reads Answered. Nil when the item didn't settle that way, or has aged out of `outcomes`.
+    /// and the row reads Answered. A reply that ran out of time may have been typed with nobody hearing so, and nothing
+    /// on the Mac would tell a new key from a new message: it goes under its own key, which the Mac's record replays.
+    /// (`.unknown` is that record saying it doesn't know, so the same key would only say so again.)
+    /// Nil when the item didn't settle that way, or has aged out of `outcomes`.
     /// `confirm` is a fresh `X-SideA-Confirm` for an item that carried one: a signature lasts two minutes, so the tap
     /// that retries signs again.
     @discardableResult public func retry(itemID: String, confirm: String? = nil) async -> Outbox.Item? {
         guard let item = settled[itemID], [.unknown, .notDelivered].contains(stored.outcomes[itemID]) else { return nil }
         let first = item.retryOf ?? item.id
-        let again = item.retried((stored.retries[first]?.count ?? 0) + 1, now: now(), confirm: confirm)
+        let sameKey = stored.outcomes[itemID] == .notDelivered && QueuedRoutes.reply.id(inPath: item.path) != nil
+        let again = item.retried((stored.retries[first]?.count ?? 0) + 1, now: now(), confirm: confirm, sameKey: sameKey)
         stored.retries[first, default: []].append(again.id)
         return await enqueue(again)
     }
@@ -456,6 +507,9 @@ public actor SyncEngine {
                 attempt = 0
                 immediate = 0
             }
+            // It still counts toward the backoff, so a Mac that keeps dropping backs off. A goodbye says why it went.
+            let dropped = welcomed && attempt == 0 && bye == nil && cause == .unknown
+            welcomed = false
             let delay: Double
             switch next! {
             case .stop(.needsUpdate(mac: true)):
@@ -491,13 +545,20 @@ public actor SyncEngine {
                 offline(retryAt: now() + delay, reason: reason)
             case .after(let seconds, let reason): delay = seconds; offline(retryAt: now() + seconds, reason: reason)
             case .backoff(let reason):
-                delay = timing.backoff(attempt)
+                delay = dropped ? timing.firstLoss * Double.random(in: 0.5...1) : timing.backoff(attempt)
                 attempt += 1
                 offline(retryAt: now() + delay, reason: reason)
             }
-            let wait = Task { _ = try? await Task.sleep(for: .seconds(delay)) }
+            // With no network the path monitor's next change ends the wait, not the backoff.
+            let seconds = networkUp ? delay : max(delay, timing.noNetworkRecheck)
+            resetLadder = false
+            let wait = Task { _ = try? await Task.sleep(for: .seconds(seconds)) }
             waiting = wait
             await wait.value
+            if resetLadder {
+                resetLadder = false
+                attempt = 0
+            }
         }
     }
 
@@ -513,8 +574,8 @@ public actor SyncEngine {
         if case .offline(let retryAt, let reason, _) = stored.connection { set(.offline(retryAt: retryAt, reason: reason)) }
     }
 
-    private func offline(retryAt: Timestamp, reason: String) {
-        if !stored.connection.isTerminal { set(.offline(retryAt: retryAt, reason: reason, cause: cause)) }
+    func offline(retryAt: Timestamp, reason: String) {
+        if !stored.connection.isTerminal { set(.offline(retryAt: retryAt, reason: reason, cause: cause == .unknown && !networkUp ? .noNetwork : cause)) }
     }
 
     /// `GET /v1/hello` first: is the Mac there, can we talk, are we still paired.
@@ -566,6 +627,7 @@ public actor SyncEngine {
         let keepalive = Task { await self.keepalive(socket, generation) }
         defer {
             keepalive.cancel()
+            probe?.cancel()
             if !Task.isCancelled { socketGeneration += 1 }
         }
         do {
@@ -574,6 +636,7 @@ public actor SyncEngine {
             while !Task.isCancelled {
                 let message = try await socket.receive()
                 guard !Task.isCancelled else { return .stop(.idle) }
+                proven()
                 guard case .text(let text) = message else { continue }
                 guard let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: Data(text.utf8)) else {
                     await skipped(Data(text.utf8))
@@ -592,17 +655,6 @@ public actor SyncEngine {
         }
     }
 
-    /// A frame that doesn't decode still took its place in the sequence: without its seq the next frame reads as a gap,
-    /// and the Mac replays this one again. Its change is lost, so the state is read afresh over REST.
-    private func skipped(_ data: Data) async {
-        struct Sequence: Decodable { var seq: Int? }
-        guard let seq = (try? JSONDecoder().decode(Sequence.self, from: data))?.seq, recon.undecodable(seq: seq) else { return }
-        KitLog.log(.sync, "event \(seq) did not decode; refreshing state")
-        do { try await refresh() } catch {
-            KitLog.log(.sync, "refresh after event \(seq) failed: \(error)")
-        }
-    }
-
     static func next(after closed: SocketClosed, bye: String?) -> Next {
         switch closed.code {
         case 1000: .stop(.idle)
@@ -615,37 +667,6 @@ public actor SyncEngine {
         }
     }
 
-    private func keepalive(_ socket: any SocketConnection, _ generation: Int) async {
-        var sincePresence = 0.0
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(timing.ping))
-            guard !Task.isCancelled else { return }
-            do { try await socket.sendPing() } catch { return lost(socket, generation) }
-            sincePresence += timing.ping
-            if sincePresence >= timing.presence {
-                sincePresence = 0
-                await sendPresence()
-            }
-        }
-    }
-
-    /// Back in front while "live": the socket may have died with the app suspended, so it answers a ping now.
-    private func checkSocket() {
-        guard let socket else { return }
-        let generation = socketGeneration
-        Task {
-            do { try await socket.sendPing() } catch { self.lost(socket, generation) }
-        }
-    }
-
-    /// No pong: a half-open socket never ends by itself, so it's closed here and the loop connects again.
-    private func lost(_ socket: any SocketConnection, _ generation: Int) {
-        guard generation == socketGeneration else { return }
-        // A goodbye for sleep came before the pong failed: it is still why the Mac can't be reached.
-        set(cause == .unknown ? .connecting : .offline(retryAt: now(), reason: "No answer from the Mac", cause: cause))
-        socket.close(code: 4008, reason: "no pong")
-    }
-
     /// Applies one frame; returns what to do when the socket must be dropped.
     private func handle(_ envelope: EventEnvelope) async -> Next? {
         let event = envelope.event
@@ -653,7 +674,9 @@ public actor SyncEngine {
         case .welcome(let welcome):
             recon.welcomed(welcome)
             cause = .unknown
-            set(.live(since: now()))
+            welcomed = true
+            liveSince = now()
+            set(.live(since: liveSince))
             if welcome.snapshotOverREST {
                 do {
                     let snapshot = try await client.get("/v1/state", as: StateSnapshot.self)
@@ -751,12 +774,12 @@ public actor SyncEngine {
                 drainAgain = false
                 continue
             }
-            if item.expiresAt <= now() {
+            if item.deadline <= now() {
                 await finish(item, .notDelivered)
                 continue
             }
             do {
-                var request = try await client.request(item.method, item.path, body: item.body.isEmpty ? nil : item.body, idempotencyKey: item.id)
+                var request = try await client.request(item.method, item.path, body: item.body.isEmpty ? nil : item.body, idempotencyKey: item.idempotencyKey)
                 if let confirm = item.confirm { request.setValue(confirm, forHTTPHeaderField: ConfirmSignature.header) }
                 await finish(item, .delivered(try await client.send(request).0))
                 drainAttempt = 0
@@ -846,7 +869,7 @@ public actor SyncEngine {
     /// drains, and the screens wait for an outcome.
     private func watchExpiry() {
         expiry?.cancel()
-        guard let soonest = stored.pending.map(\.expiresAt).min() else { return expiry = nil }
+        guard let soonest = stored.pending.map(\.deadline).min() else { return expiry = nil }
         let wait = max(timing.expiryRecheck, soonest - now())
         expiry = Task {
             try? await Task.sleep(for: .seconds(wait))
@@ -867,7 +890,7 @@ public actor SyncEngine {
 
     // MARK: Plumbing
 
-    private func sendPresence() async {
+    func sendPresence() async {
         guard stored.connection.isLive else { return }
         await send(.presence(foreground: foreground, viewing: viewing))
     }
@@ -882,7 +905,7 @@ public actor SyncEngine {
         String(decoding: (try? RemoteClient.encoder.encode(message)) ?? Data(), as: UTF8.self)
     }
 
-    private func set(_ connection: Connection) {
+    func set(_ connection: Connection) {
         guard stored.connection != connection else { return }
         stored.connection = connection
         publish()

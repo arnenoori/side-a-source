@@ -23,13 +23,12 @@ struct TranscriptView: View {
     /// Continued or resumed from the composer: the hosted session takes this page's place, so it follows the session
     /// whatever key it comes back under.
     @State private var replaced: HostedSession?
-    /// Continue or Resume in flight from the composer.
-    @State private var bringingBack = false
-    @AppStorage("newSession.openOnMac") private var openOnMac = true
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var atBottom = true
     @State private var showsInfo = false
+    @State private var choosingModel = false
+    @State private var reviewingHandoff = false
     @State private var seenCount = 0
     @State private var landed = false
     /// Try Again on a page that wouldn't load: a new value restarts the feed.
@@ -43,7 +42,6 @@ struct TranscriptView: View {
     private var session: RemoteSession? { model.sessions.session(sessionID) }
     private var openRequests: [RemoteRequest] { session?.openRequests.compactMap(model.requests.request) ?? [] }
     private var answered: [TranscriptStore.AnsweredRequest] { model.transcripts.answered[sessionID] ?? [] }
-    private var draft: String { model.transcripts.drafts[sessionID] ?? "" }
     private var draftBinding: Binding<String> {
         Binding { model.transcripts.drafts[sessionID] ?? "" } set: { model.transcripts.drafts[sessionID] = $0 }
     }
@@ -57,11 +55,15 @@ struct TranscriptView: View {
     }
 
     var body: some View {
-        if let replaced {
-            StartingSessionView(started: replaced, giveBackTo: sessionID)
-        } else {
-            transcript
+        Group {
+            if let replaced {
+                StartingSessionView(started: replaced, giveBackTo: sessionID)
+            } else {
+                transcript
+            }
         }
+        // The agent handed off to ended before it started: this page, its words and its draft are back.
+        .onChange(of: model.handoffs[sessionID] != nil) { _, back in if back, replaced != nil { replaced = nil } }
     }
 
     @ViewBuilder private var transcript: some View {
@@ -69,6 +71,12 @@ struct TranscriptView: View {
         let ended = items.endedTurns
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                // A hand-back carries on the earlier conversation, so its line sits at the handoff turn instead.
+                if let session, let link = model.handoffs.link(for: session), link.resumed != true, (model.transcripts.earlier[sessionID] ?? 0) == 0,
+                   model.transcripts.messages[sessionID] != nil {
+                    HandoffHeader(session: session, link: link)
+                        .padding(.bottom, Space.s)
+                }
                 ForEach(TranscriptLayout.rows(items)) { lazyRow in
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(lazyRow.items) { item in
@@ -115,9 +123,8 @@ struct TranscriptView: View {
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
-        .defaultScrollAnchor(.bottom, for: .alignment)
         // The bar under the title has its own material; the edge fade would dim the row below it as well.
-        .scrollEdgeEffectHidden(usage != nil, for: .top)
+        .scrollEdgeEffectHidden(usage != nil || working != nil, for: .top)
         .scrollDismissesKeyboard(.interactively)
         // A tap anywhere drops a text selection; a tap inside one still moves it, after this clears the rest.
         .simultaneousGesture(TapGesture().onEnded { SelectableText.clearSelection() })
@@ -130,19 +137,33 @@ struct TranscriptView: View {
             if isAtBottom { seenCount = items.count }
         }
         .safeAreaBar(edge: .top) {
-            if let usage {
-                Text(usage)
+            // One line, not one per fact: a turn starting or ending swaps its words and leaves the transcript where it is.
+            // The stack stays when the line goes, so its fade has an animation to run in.
+            VStack(spacing: 0) {
+                if working != nil || usage != nil {
+                    Group {
+                        if let working {
+                            WorkingLine(since: working.since, step: working.step, asOf: model.mac.shown == .live ? nil : model.mac.lastSeen)
+                        } else if let usage {
+                            Text(usage)
+                                .contentTransition(.numericText())
+                                .animation(Motion.smooth(reduceMotion), value: usage)
+                        }
+                    }
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
+                    .padding(.horizontal, Space.m)
                     .padding(.bottom, Space.xs)
-                    .contentTransition(.numericText())
-                    .animation(Motion.smooth(reduceMotion), value: usage)
                     // One bar from the top of the window down past this line, so code and tables scrolled under
-                    // the title don't read through it or run into the line.
+                    // the title don't read through it or run into it.
                     .background(Rectangle().fill(.bar).ignoresSafeArea(edges: .top))
+                    .transition(.opacity)
+                }
             }
+            .animation(Motion.smooth(reduceMotion), value: working == nil)
+            .animation(Motion.smooth(reduceMotion), value: working == nil && usage == nil)
         }
         .safeAreaBar(edge: .bottom) { bottomBar(count: items.count).readableWidth() }
         .navigationTitle(title)
@@ -161,6 +182,7 @@ struct TranscriptView: View {
         }
         .toolbar { if past == nil, subagent == nil { toolbarContent } }
         .hidesTabBar()
+        .fileLinks(sessionID)
         .sheet(isPresented: $showsInfo) {
             if let session { SessionInfoSheet(session: session) }
         }
@@ -197,6 +219,17 @@ struct TranscriptView: View {
         .task(id: match) { await reveal() }
         .onChange(of: session?.title, initial: true) { _, title in if let title { lastTitle = title } }
         .onChange(of: session, initial: true) { _, session in if let session { lastSession = session } }
+        .sheet(isPresented: $choosingModel) {
+            if let session {
+                LiveModelSheet(session: session, models: model.tools.models(for: session), settings: model.tools.settings(of: session),
+                               draft: model.handoffs[session.id])
+            }
+        }
+        .sheet(isPresented: $reviewingHandoff) {
+            if let session, let draft = model.handoffs[session.id] {
+                RestartSheet(session: session, review: draft, message: model.transcripts.drafts[sessionID] ?? "") { _ in }
+            }
+        }
         .sessionActions()
     }
 
@@ -224,21 +257,27 @@ struct TranscriptView: View {
                         .transition(.opacity)
                 }
                 composer(count: count)
+                if let session, let draft = model.handoffs[session.id] {
+                    HandoffPendingLine(session: session, draft: draft) { reviewingHandoff = true }
+                        .transition(.opacity)
+                }
             }
+            .animation(Motion.smooth(reduceMotion), value: model.handoffs[sessionID])
             .animation(Motion.smooth(reduceMotion), value: session.flatMap(model.tools.attention(for:)))
             .animation(Motion.smooth(reduceMotion), value: session?.plan == nil)
         }
     }
 
     private func composer(count: Int) -> some View {
-        Composer(text: draftBinding, placeholder: placeholder, canInterrupt: canInterrupt, showsFollow: !atBottom, follow: followBadge(count: count),
-                 focused: $composerFocused, onSend: { send() }, onInterrupt: { model.interrupt(sessionID) },
-                 onFollow: { scrollToBottom(count: count) },
-                 session: session, steers: Steer.available(for: session), onSteer: steer, disabledReason: disabledReason,
-                 unsent: model.transcripts.unsent[sessionID], onRetry: { model.retryUnsent(sessionID) },
-                 notice: model.transcripts.notices[sessionID] ?? standingNotice,
-                 deliveries: model.deliveries(sessionID), onDeliver: { send(as: $0) },
-                 dropped: dropped == nil ? nil : session?.flag?.text, onRetryDropped: retryDropped)
+        SessionComposer(sessionID: sessionID, focused: $composerFocused, showsFollow: !atBottom, follow: followBadge(count: count),
+                        onFollow: { scrollToBottom(count: count) }, lastTitle: lastTitle, lastSession: lastSession, replaced: $replaced,
+                        onNote: { presenter.note = NoteTarget(session: sessionID) }, choosingModel: $choosingModel) {
+            // After the new turn is laid out, or the scroll stops short of it.
+            Task { @MainActor in
+                await Task.yield()
+                scrollToBottom(count: layout().count)
+            }
+        }
     }
 
     /// The loaded conversation as Markdown: each turn under who said it, tools left out.
@@ -309,7 +348,17 @@ struct TranscriptView: View {
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity)
         case .user(let message):
-            UserBubble(sessionID: sessionID, message: message)
+            if let session, let link = model.handoffs.link(for: session), HandoffMessage.isHandoff(message.text) {
+                VStack(alignment: .leading, spacing: Space.m) {
+                    if link.resumed == true,
+                       model.transcripts.messages[sessionID]?.last(where: { $0.role == .user && HandoffMessage.isHandoff($0.text) })?.seq == message.seq {
+                        HandoffHeader(session: session, link: link)
+                    }
+                    if let personal = HandoffMessage.personal(message.text) { HandoffFirstTurn(message: personal) }
+                }
+            } else {
+                UserBubble(sessionID: sessionID, message: message)
+            }
         case .assistant(let message):
             // Long-press selects text; the whole message's actions sit under the latest reply, once it's written.
             if message.seq == streamingSeq {
@@ -334,7 +383,7 @@ struct TranscriptView: View {
         case .group(let group):
             StepGroupRow(sessionID: sessionID, group: group)
         case .diff(let tool, let diff):
-            DiffCard(tool: tool, diff: diff)
+            DiffCard(tool: tool, diff: diff, sessionID: sessionID)
         case .file(let tool, let path, let bytes):
             FileChip(sessionID: sessionID, tool: tool, path: path, bytes: bytes)
         case .images(let tool):
@@ -382,57 +431,8 @@ struct TranscriptView: View {
         }
     }
 
-    // MARK: Composer
-
-    private var placeholder: String {
-        guard let session else { return resumable ? "Reply to resume it…" : "Reply…" }
-        if openRequests.contains(where: \.isQuestion) { return "Or type your own answer…" }
-        // Through the inbox or a Stop hook, Claude reads it as a note, never as the user's own consent.
-        if model.arrivesAsNote(sessionID) { return "Reply · arrives as a note" }
-        if model.needsContinue(sessionID) { return "Reply · picks it up in Side A" }
-        switch SessionPhase(session) {
-        case .working, .needsYou: return "Message…"
-        default: return "Reply…"
-        }
-    }
-
-    /// Under the field while nothing else is: where this session's replies go when that isn't the usual.
-    private var standingNotice: String? {
-        if bringingBack { return session == nil ? "Resuming it on \(model.mac.name)…" : "Moving it into Side A on \(model.mac.name)…" }
-        if model.needsContinue(sessionID) { return "It's idle in a terminal Side A can't type into. Sending moves it into Side A first." }
-        return model.outsideSharedServer(sessionID) ? "Started outside Codex's shared server: replies arrive only after it finishes." : nil
-    }
-
-    /// Ended, with what Resume needs kept from its row.
-    private var resumable: Bool {
-        session == nil && past == nil && model.tools.can(.hosted) && lastSession?.conversationID != nil && lastSession?.cwd != nil
-    }
-
-    /// What Codex or Claude dropped, to send again.
-    private var dropped: String? { model.droppedReply(sessionID)?.text }
-
-    private func retryDropped() {
-        withAnimation(Motion.smooth(reduceMotion)) { model.retryDropped(sessionID) }
-    }
-
-    private var canInterrupt: Bool {
-        guard let session else { return false }
-        return SessionPhase(session) == .working && session.abilities.contains(.interrupt)
-    }
-
-    /// Status `unknown` authorizes nothing, so the field says why it's off.
-    private var disabledReason: String? {
-        if bringingBack { return nil }
-        if session == nil, lastTitle != nil, !resumable { return "This session has ended." }
-        return session?.status == .unknown ? "\(model.mac.name) can't tell what this session is doing." : nil
-    }
-
     private func steer(_ steer: Steer) {
-        switch steer {
-        case .interruptNow: model.interrupt(sessionID)
-        case .stopBeforeNextStep: model.interrupt(sessionID, when: .nextStep)
-        case .note: presenter.note = NoteTarget(session: sessionID)
-        }
+        model.steer(steer, sessionID) { presenter.note = NoteTarget(session: sessionID) }
     }
 
     private func followBadge(count: Int) -> FollowBadge {
@@ -453,78 +453,19 @@ struct TranscriptView: View {
         return [session.project, name, mode].compactMap { $0 }.joined(separator: " · ")
     }
 
+    /// Since when a working session has been at it and its current step, for the line under the title. The list has
+    /// both on its row; here they say a turn is under way while a reply waits to be read.
+    private var working: (since: Date?, step: String?)? {
+        guard past == nil, let session, SessionPhase(session) == .working else { return nil }
+        return (session.statusAt.map { Date(timeIntervalSince1970: $0) }, session.step)
+    }
+
     /// "42% context · 2 running", under the title; nil when the Mac reads neither.
     private var usage: String? {
         guard past == nil, let session else { return nil }
         let parts = [session.contextPercent.map { "\(Int($0.rounded()))% context" },
                      session.backgroundTasks.flatMap { $0 > 0 ? "\($0) running" : nil }].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    /// `delivery`: picked from Send's long-press; nil is the plain tap, which the Mac's delivery table decides.
-    private func send(as delivery: Delivery? = nil) {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !bringingBack else { return }
-        model.transcripts.drafts[sessionID] = ""
-        // A waiting question takes the text as its "write your own" answer; a reply would get 409.
-        if let question = openRequests.first(where: \.isQuestion), case .question(let questions) = question.action, questions.count == 1 {
-            withAnimation(Motion.smooth(reduceMotion)) {
-                model.requests.answer(question.id, .answers([QuestionAnswer(question: questions[0].question, picked: [], other: text)]))
-            }
-            return
-        }
-        if model.needsContinue(sessionID) { return continueThenSend(text) }
-        if session == nil, resumable, let last = lastSession { return resume(last, with: text) }
-        withAnimation(Motion.smooth(reduceMotion)) {
-            if let delivery { model.send(text, to: sessionID, as: delivery) } else { model.reply(text, to: sessionID) }
-            // The live link took the photos with the reply; the demo has nowhere to send them. Interrupt and Send
-            // takes them once its reply goes, after the interrupt.
-            if delivery != .interrupt { _ = model.tools.attachments.take(sessionID, for: model.transcripts.outgoing[sessionID]?.last?.id) }
-        }
-        // After the new turn is laid out, or the scroll stops short of it.
-        Task { @MainActor in
-            await Task.yield()
-            scrollToBottom(count: layout().count)
-        }
-    }
-
-    /// Continue on iPhone, then the reply, typed once the session is back in Side A's tmux. With the Mac tab setting on
-    /// (New Session's), it gets a tab on the Mac again too.
-    private func continueThenSend(_ text: String) {
-        let turn = model.transcripts.send(text, to: sessionID)
-        bringingBack = true
-        Task {
-            defer { bringingBack = false }
-            do {
-                let hosted = try await model.tools.continueOnPhone(sessionID)
-                model.transcripts.discard(turn.id, in: sessionID)
-                model.transcripts.wait(text, for: hosted.name, at: turn.at)
-                if openOnMac, model.tools.can(.hostedShow) { try? await model.tools.showOnMac(hosted.name) }
-                replaced = hosted
-            } catch {
-                model.transcripts.fail(turn.id, in: sessionID, reason: MacTools.message(error), item: nil)
-            }
-        }
-    }
-
-    /// Resume the ended conversation hosted, with the reply as its prompt.
-    private func resume(_ last: RemoteSession, with text: String) {
-        guard let conversation = last.conversationID, let cwd = last.cwd else { return }
-        let turn = model.transcripts.send(text, to: sessionID)
-        bringingBack = true
-        let start = StartHosted(cwd: cwd, agent: last.agent, prompt: text, resume: conversation,
-                                openOnMac: openOnMac && model.tools.can(.hostedShow) ? true : nil)
-        Task {
-            defer { bringingBack = false }
-            do {
-                let hosted = try await model.tools.start(start, key: UUID().uuidString.lowercased())
-                model.transcripts.discard(turn.id, in: sessionID)
-                model.transcripts.started(hosted.name, prompt: text, at: turn.at)
-                replaced = hosted
-            } catch {
-                model.transcripts.fail(turn.id, in: sessionID, reason: MacTools.message(error), item: nil)
-            }
-        }
     }
 
     private func scrollToBottom(count: Int) {
@@ -540,6 +481,9 @@ struct TranscriptView: View {
                 TerminalButton(session: session)
             }
         }
+        if model.tools.can(.screen) {
+            ToolbarItem(placement: .topBarTrailing) { ScreenButton(hosted: session?.hosted) }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Menu("More", systemImage: "ellipsis") {
                 let steers = Steer.available(for: session)
@@ -553,7 +497,7 @@ struct TranscriptView: View {
                         }
                     }
                 }
-                SettingsMenu(session: session)
+                SettingsMenu(session: session) { choosingModel = true }
                 Section {
                     if let session, let turn = session.turnID, session.abilities.contains(.turnDiff) {
                         NavigationLink(value: Route.turnDiff(session.id, turn: turn)) {
@@ -616,8 +560,15 @@ struct SessionInfoSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let failure = session.failure { FailureSection(session: session, failure: failure) }
                 if let flag = session.flag {
                     Section { Label(flag.text, systemImage: "exclamationmark.triangle") }
+                }
+                if let pull = session.pullRequest {
+                    Section("Pull Request") {
+                        PullRequestChip(pull: pull)
+                        if let title = pull.title { Text(title).font(.subheadline).foregroundStyle(.secondary) }
+                    }
                 }
                 Section {
                     LabeledContent("Status", value: SessionPhase(session).title)
@@ -672,7 +623,7 @@ private struct MessageActions: View {
 }
 
 /// A spinner for a page with nothing to show yet, only once the wait is long enough to notice: a quick load shows no flash.
-private struct DelayedProgress: View {
+struct DelayedProgress: View {
     @State private var shown = false
 
     var body: some View {
@@ -683,5 +634,31 @@ private struct DelayedProgress: View {
                 try? await Task.sleep(for: .milliseconds(400))
                 shown = true
             }
+    }
+}
+
+/// "Working · 1m 12s · Running tests", counted by the second. Away from the Mac nothing says it still is, so the clock
+/// stops at the last word from it: "Working · 3h 12m · as of 2:14 PM".
+private struct WorkingLine: View {
+    let since: Date?
+    let step: String?
+    let asOf: Date?
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        if let asOf {
+            line(at: asOf, asOf: " · as of " + asOf.formatted(date: .omitted, time: .shortened))
+        } else {
+            TimelineView(.periodic(from: since ?? .now, by: 1)) { context in line(at: context.date) }
+                .accessibilityAddTraits(.updatesFrequently)
+        }
+    }
+
+    private func line(at date: Date, asOf: String = "") -> some View {
+        let time = since.flatMap { Formatting.duration(max(date.timeIntervalSince($0), 0).rounded(.down)) }
+        return Text((["Working"] + [time, step].compactMap { $0 }).joined(separator: " · ") + asOf)
+            .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+            .truncationMode(.tail)
+            .multilineTextAlignment(.center)
     }
 }

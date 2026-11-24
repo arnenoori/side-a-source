@@ -1,7 +1,8 @@
 import SideAProtocol
 import SwiftUI
 
-/// The folder list: searchable, recent first, then every folder the Mac offers.
+/// The folder list: searchable, recent first, then every folder the Mac offers. Pushed inside New Session's own stack;
+/// choosing one pops back.
 struct ProjectPicker: View {
     @Binding var selection: RemoteProject?
     @Environment(AppModel.self) private var model
@@ -19,26 +20,20 @@ struct ProjectPicker: View {
     }
 
     var body: some View {
-        NavigationStack {
-            List {
-                if !recent.isEmpty {
-                    Section("Recent") { ForEach(recent) { row($0) } }
-                }
-                Section(recent.isEmpty ? "" : "All Folders") {
-                    ForEach(matching.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { row($0) }
-                }
+        List {
+            if !recent.isEmpty {
+                Section("Recent") { ForEach(recent) { row($0) } }
             }
-            .overlay {
-                if matching.isEmpty { ContentUnavailableView.search(text: query) }
-            }
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Folders")
-            .navigationTitle("Folder")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel", systemImage: "xmark") { dismiss() }.keyboardShortcut(.cancelAction) }
+            Section(recent.isEmpty ? "" : "All Folders") {
+                ForEach(matching.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }) { row($0) }
             }
         }
-        .presentationDetents([.large])
+        .overlay {
+            if matching.isEmpty { ContentUnavailableView.search(text: query) }
+        }
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Folders")
+        .navigationTitle("Folder")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func row(_ project: RemoteProject) -> some View {
@@ -80,7 +75,7 @@ struct ProjectRow: View {
                     }
                 }
                 Text(project.path.abbreviatingHome)
-                    .font(.caption.monospaced())
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.head)

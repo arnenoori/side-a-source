@@ -24,6 +24,8 @@ let package = Package(
                           linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
         .testTarget(name: "SideACoreTests", dependencies: ["SideACore", "SideAKeepAwakeCore"]),
         .testTarget(name: "SideATests", dependencies: ["SideA", .product(name: "SideAProtocolFixtures", package: "SideAProtocol"),
-                                                      .product(name: "SideARemoteKit", package: "SideAProtocol")])
+                                                      .product(name: "SideARemoteKit", package: "SideAProtocol")],
+                    // Scripts the tests copy into a tmux pane; read by path, not bundled.
+                    exclude: ["Fixtures"])
     ]
 )

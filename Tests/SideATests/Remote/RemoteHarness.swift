@@ -127,6 +127,7 @@ func remoteHarness() async throws {
     var unlocked = Date()
     let answerAfter = env["SIDEA_HARNESS_ANSWER_AFTER"].flatMap(TimeInterval.init)
     while Date() < end {
+        // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- the tick of the manual harness's own loop, not a wait inside a test
         try await Task.sleep(for: .milliseconds(200))
         if Date().timeIntervalSince(unlocked) > 30 {
             keychain.unlock()

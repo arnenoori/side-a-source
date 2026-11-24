@@ -15,7 +15,13 @@ struct DrawerHooks {
     var picker: () -> Void
     /// Takes the clipboard's picture into the tray; false when there is none to take.
     var pasteImage: () -> Bool
-    var options: () -> Void
+
+    /// One library photo into the tray: its tile shows now and the full photo loads behind it. False when the tray is full.
+    @MainActor func add(_ asset: PHAsset, thumbnail: UIImage) -> Bool {
+        guard let id = reserve(thumbnail, { await RecentPhotos.data(for: asset) }) else { return false }
+        Task { @MainActor in supply(id, await RecentPhotos.data(for: asset)) }
+        return true
+    }
 }
 
 /// The text field the drawer sits under: its focus and its keyboard are what the panel replaces.
@@ -46,6 +52,9 @@ final class AttachDrawer {
     /// Set for the animation a height change takes; false while a finger is dragging it.
     private(set) var animatesHeight = false
     private(set) var rows = DrawerRows(camera: false, photos: false, files: false, paste: false)
+    /// Opened from the + menu's Photos or Camera: the grid fills the panel at the keyboard's height, since the menu has
+    /// already offered the actions the panel would list.
+    private(set) var photosOnly = false
 
     /// Photos picked, in the order they were tapped.
     private(set) var selected: [String] = []
@@ -72,6 +81,10 @@ final class AttachDrawer {
     @ObservationIgnored var dragRegion: CGFloat?
 
     var isLarge: Bool { height > detents.base + (detents.large - detents.base) * 0.5 }
+    /// The grid is what the panel shows and scrolls: pulled up, or opened as Photos.
+    var showsGrid: Bool { isLarge || (photosOnly && presentation == .keyboardArea) }
+    /// Not `showsGrid`, which flips while a finger drags the panel past half way.
+    var showsInlineGrid: Bool { isOpen && photosOnly && presentation == .keyboardArea }
     /// 0 at the keyboard's height, 1 fully open.
     var progress: CGFloat {
         let span = detents.large - detents.base
@@ -84,11 +97,12 @@ final class AttachDrawer {
     // MARK: Open and close
 
     /// The + button's tap: opens the panel, or swaps back to the keyboard.
-    func toggle(rows: DrawerRows, hooks: DrawerHooks, reduceMotion: Bool) {
+    func toggle(rows: DrawerRows, hooks: DrawerHooks, reduceMotion: Bool, photosOnly: Bool = false) {
         if isOpen { return showKeyboard() }
         self.reduceMotion = reduceMotion
         self.hooks = hooks
         self.rows = rows
+        self.photosOnly = photosOnly
         presentation = KeyboardMetrics.shared.presentation
         let size = window?.bounds.size ?? CGSize(width: 393, height: 852)
         let isPad = UIDevice.current.userInterfaceIdiom == .pad
@@ -103,7 +117,7 @@ final class AttachDrawer {
         openings += 1
         KeyboardMetrics.shared.panelIsShowing = presentation == .keyboardArea
         isOpen = true
-        DrawerFeedback.light()
+        // No tap here: the drawer opens from a menu row now, and haptics are kept for picking and attaching.
         camera.start()
         Task { @MainActor [weak self] in await self?.photos.open() }
     }
@@ -203,9 +217,7 @@ final class AttachDrawer {
         let picked = selected.compactMap { id in photos.assets.first { $0.localIdentifier == id } }
         DrawerFeedback.medium()
         for asset in picked {
-            let thumbnail = pickedImages[asset.localIdentifier] ?? UIImage()
-            guard let id = hooks.reserve(thumbnail, { await RecentPhotos.data(for: asset) }) else { break }
-            Task { @MainActor in hooks.supply(id, await RecentPhotos.data(for: asset)) }
+            guard hooks.add(asset, thumbnail: pickedImages[asset.localIdentifier] ?? UIImage()) else { break }
         }
         showKeyboard()
     }
@@ -251,8 +263,6 @@ final class AttachDrawer {
     }
 
     // MARK: Height
-
-    private var spring: Animation { reduceMotion ? .easeOut(duration: 0.2) : .spring(duration: 0.4, bounce: 0.1) }
 
     func toggleDetent() {
         settle(to: isLarge ? detents.base : detents.large)

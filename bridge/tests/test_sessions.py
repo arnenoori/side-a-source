@@ -49,6 +49,31 @@ class SessionTests(unittest.TestCase):
             for entry in entries:
                 stream.write(json.dumps(entry) + '\n')
 
+    def test_a_handoff_link_survives_and_nests_the_conversation_it_started(self):
+        self.write('claude-one', [user('u1', 'Fix the island height', '2026-10-01T10:00:00Z'), reply('a1', 'Looking.', '2026-10-01T10:01:00Z')])
+        self.write('codex-two', [user('u2', 'This continues work Claude started', '2026-10-01T11:00:00Z'), reply('a2', 'On it.', '2026-10-01T11:01:00Z')])
+        sessions.index(self.root)
+        link = {'id': '3a0c9d2e-7b1f-4e5a-9c8d-1e2f3a4b5c6d', 'from_conversation': 'claude-one', 'to_conversation': 'codex-two',
+                'from_agent': 'claude', 'to_agent': 'codex', 'from_model': 'claude-opus-5-5', 'to_model': 'gpt-5.5', 'at': 1791559411.9,
+                'prompt_path': str(self.root / 'handoffs' / '3a0c9d2e-7b1f-4e5a-9c8d-1e2f3a4b5c6d.md'), 'mode': None}
+        self.assertEqual(sessions.record_handoff(self.root, link), {'recorded': link['id']})
+        self.assertEqual(sessions.handoffs(self.root)['handoffs'], [link])
+        listed = {s['id']: s for s in sessions.recent(self.root)['sessions']}
+        self.assertEqual(listed['codex-two']['handed_from'], 'claude-one')
+        self.assertNotIn('handed_from', listed['claude-one'])
+        self.assertEqual(sessions.show(self.root, 'codex-two')['session']['handed_from'], 'claude-one')
+        self.assertEqual(sessions.search(self.root, 'continues work')['sessions'][0]['handed_from'], 'claude-one')
+        # The view's cache starting over in a new index version keeps the links.
+        db = sessions.connect(self.root); db.execute('PRAGMA user_version=2'); db.commit(); db.close()
+        self.assertEqual(len(sessions.handoffs(self.root)['handoffs']), 1)
+
+    def test_a_handoff_link_takes_only_ids_it_recognises(self):
+        for bad in [{'id': '../x', 'from_conversation': 'a', 'to_conversation': 'b'},
+                    {'id': '3a0c9d2e-7b1f-4e5a-9c8d-1e2f3a4b5c6d', 'from_conversation': 'a/../b', 'to_conversation': 'b'},
+                    {'id': '3a0c9d2e-7b1f-4e5a-9c8d-1e2f3a4b5c6d', 'from_conversation': 'a'}, 'not a record']:
+            with self.assertRaises(ValueError):
+                sessions.record_handoff(self.root, bad)
+
     def test_indexes_once_titles_by_priority_and_forks_point_at_their_parent(self):
         parent = [user('u1', 'Make the menu bar gauge show Fable limits', '2026-10-01T10:00:00Z'),
                   reply('a1', 'Reading the Keychain trade code first.', '2026-10-01T10:01:00Z', [('Bash', {'command': 'git log --oneline'})]),
@@ -248,6 +273,66 @@ class SessionTests(unittest.TestCase):
             777: [{'port': 8000, 'pid': 777, 'command': 'python3'}]})
         self.assertEqual(sessions.parse_listening(''), {})
         self.assertEqual(sessions.descendants(10, {10: 1.0, 11: 1.0, 12: 1.0}, {10: [11]}), {10, 11})
+
+    def test_the_plan_follows_the_task_tools_and_todowrite_whichever_came_last(self):
+        def call(uuid, tool, name, value, side=False):
+            return {'type': 'assistant', 'uuid': uuid, 'isSidechain': side, 'message': {'content': [{'type': 'tool_use', 'id': tool, 'name': name, 'input': value}]}}
+        def done(uuid, tool, text, result=None, error=False, side=False):
+            entry = {'type': 'user', 'uuid': uuid, 'isSidechain': side, 'message': {'content': [{'type': 'tool_result', 'tool_use_id': tool, 'content': text, 'is_error': error}]}}
+            return {**entry, 'toolUseResult': result} if result is not None else entry
+        def create(n, subject, side=False, structured=True):
+            task = {'id': str(n), 'subject': subject, 'description': 'd'}
+            return [call(f'c{n}', f't{n}', 'TaskCreate', {'subject': subject, 'description': 'd', 'activeForm': f'Doing {subject}'}, side),
+                    done(f'r{n}', f't{n}', f'Task #{n} created successfully: {subject}', {'task': task} if structured else None, side=side)]
+        def update(n, **fields):
+            key = f'{n}{sorted(fields.items())}'
+            return [call('uc' + key, 'ut' + key, 'TaskUpdate', {'taskId': str(n), **fields}),
+                    done('ur' + key, 'ut' + key, f'Updated task #{n} status', {'success': True, 'taskId': str(n), 'updatedFields': ['status']})]
+        def plan(lines, **carry):
+            facts = sessions.tail_facts([json.dumps(entry) for entry in lines], **carry)
+            return facts[8], facts[9]
+        def steps(shown):
+            return [(step['text'], step['status'], step['activeForm']) for step in shown['steps']] if shown else None
+        def pairs(shown):
+            return [step[:2] for step in steps(shown)]
+        # Ids come back in the result, plain text or structured, and the list keeps its creation order.
+        lines = create(1, 'Read', structured=False) + create(2, 'Fix') + create(3, 'Ship') + update(1, status='completed') + update(2, status='in_progress')
+        shown, board = plan(lines)
+        self.assertEqual(steps(shown), [('Read', 'completed', 'Doing Read'), ('Fix', 'inProgress', 'Doing Fix'), ('Ship', 'pending', 'Doing Ship')])
+        # A delete drops the task; an update of one it never saw, a failed one and a failed create change nothing.
+        more = update(3, status='deleted') + update(9, status='completed') + [
+            call('x', 'tx', 'TaskUpdate', {'taskId': '2', 'status': 'completed'}),
+            done('xr', 'tx', 'Task #2 not found', {'success': False, 'taskId': '2', 'updatedFields': []}),
+            call('y', 'ty', 'TaskCreate', {'subject': 'Nope'}), done('yr', 'ty', 'Error', error=True)]
+        shown, board = plan(more, plan=shown, board=board)
+        self.assertEqual(pairs(shown), [('Read', 'completed'), ('Fix', 'inProgress')])
+        # A later tail finds the list in the carried board, past a compaction that took the creates out of it.
+        boundary = {'type': 'system', 'subtype': 'compact_boundary', 'timestamp': '2026-10-01T10:00:00Z'}
+        shown, board = plan([boundary] + update(2, status='completed', activeForm='Fixing'), plan=shown, board=board)
+        self.assertEqual(pairs(shown), [('Read', 'completed'), ('Fix', 'completed')])
+        # Subagent calls never reach the plan.
+        side, _ = plan(create(7, 'Sidequest', side=True), plan=shown, board=board)
+        self.assertEqual(pairs(side), [('Read', 'completed'), ('Fix', 'completed')])
+        # TaskList is the whole truth: structured or text, it replaces the list and keeps what it doesn't say.
+        listing = [call('l', 'tl', 'TaskList', {}), done('lr', 'tl', '#1 [completed] Read\n#4 [in_progress] Test [blocked by #2]')]
+        listed, listed_board = plan(listing, plan=shown, board=board)
+        self.assertEqual(steps(listed), [('Read', 'completed', 'Doing Read'), ('Test', 'inProgress', None)])
+        structured = [call('l', 'tl', 'TaskList', {}), done('lr', 'tl', 'x', {'tasks': [{'id': '5', 'subject': 'Only', 'status': 'pending', 'blockedBy': []}]})]
+        self.assertEqual(steps(plan(structured, plan=listed, board=listed_board)[0]), [('Only', 'pending', None)])
+        self.assertIsNone(plan([call('l', 'tl', 'TaskList', {}), done('lr', 'tl', 'No tasks found', {'tasks': []})], plan=listed, board=listed_board)[0])
+        get = [call('g', 'tg', 'TaskGet', {'taskId': '4'}),
+               done('gr', 'tg', 'Task #4: Test', {'task': {'id': '4', 'subject': 'Test it', 'status': 'completed', 'blocks': [], 'blockedBy': []}})]
+        self.assertEqual(steps(plan(get, plan=listed, board=listed_board)[0])[1], ('Test it', 'completed', None))
+        # TodoWrite and the task tools share the card; the one written last shows, and the tasks wait underneath.
+        todo = call('w', 'tw', 'TodoWrite', {'todos': [{'content': 'Old way', 'status': 'pending', 'activeForm': 'Old'}]})
+        written, board = plan([todo], plan=shown, board=board)
+        self.assertEqual(steps(written), [('Old way', 'pending', 'Old')])
+        back, board = plan(update(1, status='in_progress'), plan=written, board=board)
+        self.assertEqual(pairs(back), [('Read', 'inProgress'), ('Fix', 'completed')])
+        # A finished list goes at the next prompt, and its tasks with it.
+        finished, board = plan(update(1, status='completed'), plan=back, board=board)
+        gone, board = plan([{'type': 'user', 'uuid': 'p', 'message': {'content': 'Next thing'}}] + create(5, 'Fresh'), plan=finished, board=board)
+        self.assertEqual(steps(gone), [('Fresh', 'pending', 'Doing Fresh')])
 
     def test_health_names_the_current_step_and_flags_what_needs_a_look(self):
         def call(name, value, tokens=1000):

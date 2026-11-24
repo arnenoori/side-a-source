@@ -170,3 +170,8 @@ public struct WebSocketFrames: Sendable {
         if i + 2 < count { bytes[i + 2] ^= key.2 }
     }
 }
+
+/// The Mac closes an event socket silent this long; the phone counts one it has not heard from as long as gone too.
+public enum SocketTiming {
+    public static let silentFor: Double = 45
+}

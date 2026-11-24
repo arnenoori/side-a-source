@@ -89,8 +89,14 @@ public final class PoolProxy: @unchecked Sendable {
         return URLSession(configuration: configuration)
     }()
 
+    /// How long a request waits for this Mac's network to come back before its client is told. A Wi-Fi roam or a wake
+    /// from sleep takes seconds, and a turn that fails on one stops the session.
+    public var patience: TimeInterval = 90
+
     private let servingLock = NSLock()
     private var serving = 0
+    private var stopping = false
+    private var invalidated = false
     /// Requests being answered right now, streams included; a relaunch would cut them off.
     public var inFlight: Int { servingLock.withLock { serving } }
 
@@ -136,12 +142,20 @@ public final class PoolProxy: @unchecked Sendable {
         shared = nil
     }
 
-    /// Replies already streaming finish; nothing new is accepted. The session stays valid: a request between retries still
-    /// opens tasks on it, and a task on an invalidated session aborts the process.
+    /// Replies already streaming finish; nothing new is accepted. The session is let go only once the last request is
+    /// done: one between retries still opens tasks on it, and a task on an invalidated session aborts the process.
     public func stop() {
         unshare()
         listener?.cancel()
         listener = nil
+        if servingLock.withLock({ stopping = true; return closable() }) { session.finishTasksAndInvalidate() }
+    }
+
+    /// Under `servingLock`.
+    private func closable() -> Bool {
+        guard stopping, serving == 0, !invalidated else { return false }
+        invalidated = true
+        return true
     }
 
     private func listen(_ host: NWEndpoint.Host, _ port: NWEndpoint.Port, _ gate: PoolGate) async throws -> (NWListener, UInt16) {
@@ -201,8 +215,15 @@ public final class PoolProxy: @unchecked Sendable {
     }
 
     private func serve(_ request: HTTPRequest, to client: PoolClient, key: String) async {
-        servingLock.withLock { serving += 1 }
-        defer { servingLock.withLock { serving -= 1 } }
+        // A connection accepted before stop can still finish its request after the session was let go.
+        guard servingLock.withLock({ () -> Bool in
+            guard !invalidated else { return false }
+            serving += 1
+            return true
+        }) else { return client.fail(503, "overloaded_error", "Side A's pool is restarting.", retry: true) }
+        defer {
+            if servingLock.withLock({ serving -= 1; return closable() }) { session.finishTasksAndInvalidate() }
+        }
         let service = services.first { request.target.hasPrefix($0.prefix) }
         let refuse = { [weak self] (status: Int, type: String, message: String) async in
             await self?.decisions?.poolRefused(service?.provider, session: nil, status: status, message: message)
@@ -226,13 +247,13 @@ public final class PoolProxy: @unchecked Sendable {
             excluded.insert(account)
             do {
                 var credential = try await token(account, refused: false)
-                var (bytes, response) = try await send(request, to: url, as: service.provider, credential)
+                var (bytes, response) = try await reach(request, to: url, as: service.provider, credential)
                 if response.statusCode == 401 {
                     bytes.task.cancel()
                     let renewed = try await self.token(account, refused: true)
                     if renewed != credential {
                         credential = renewed
-                        (bytes, response) = try await send(request, to: url, as: service.provider, credential)
+                        (bytes, response) = try await reach(request, to: url, as: service.provider, credential)
                     }
                 }
                 let headers = Self.headers(response)
@@ -242,11 +263,19 @@ public final class PoolProxy: @unchecked Sendable {
                 return
             } catch let error as PoolTokenError {
                 await decisions?.poolTokenFailed(account, error.underlying)
+                // Every other account would fail the same way, and "all at their limit" would be untrue.
+                guard Self.networkAway(error.underlying) else { continue }
+                let message = "Side A couldn't renew a login while this Mac was offline: \(error.underlying.localizedDescription)"
+                await decisions?.poolRefused(service.provider, session: nil, status: 502, message: message)
+                return client.fail(502, "api_error", message, retry: true)
             } catch where Self.cancelled(error) {
                 return client.close()
             } catch {
                 let host = service.provider == .claude ? "Anthropic" : "OpenAI"
-                return await refuse(502, "api_error", "Side A couldn't reach \(host): \(error.localizedDescription)")
+                let message = "Side A couldn't reach \(host): \(error.localizedDescription)"
+                await decisions?.poolRefused(service.provider, session: nil, status: 502, message: message)
+                // Talking to the service itself, the client would retry a dropped connection or a timeout too: its call.
+                return client.fail(502, "api_error", message, retry: Self.unsent(error) || Self.cutOff(error))
             }
         }
         if Task.isCancelled { return client.close() }
@@ -260,6 +289,26 @@ public final class PoolProxy: @unchecked Sendable {
     private func token(_ account: String, refused: Bool) async throws -> PoolCredential {
         guard let decisions else { throw CancellationError() }
         do { return try await decisions.poolToken(account, refused: refused) } catch { throw PoolTokenError(underlying: error) }
+    }
+
+    /// `send`, tried again while the network is away, for as long as `patience`. A client that hangs up ends the wait.
+    private func reach(_ request: HTTPRequest, to url: URL, as provider: AgentProvider, _ credential: PoolCredential) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+        let deadline = Date().addingTimeInterval(patience)
+        var pause = 0.5
+        var resent = !Self.resends(request.target, method: request.method)
+        while true {
+            do {
+                return try await send(request, to: url, as: provider, credential)
+            } catch where Self.unsent(error) && Date().addingTimeInterval(pause) < deadline {
+                try await Task.sleep(for: .seconds(pause))
+                pause = min(pause * 2, 5)
+            } catch let error as URLError where error.code == .networkConnectionLost && !resent {
+                // Usually a kept connection the server had closed. The server may have had it all the same, so a resend can
+                // bill a turn twice; that's the price of not failing a conversation for it, and only these routes pay it.
+                resent = true
+                try await Task.sleep(for: .seconds(0.5))
+            }
+        }
     }
 
     private static func cancelled(_ error: any Error) -> Bool {
@@ -284,21 +333,9 @@ public final class PoolProxy: @unchecked Sendable {
         if let workspace = credential.accountID { outgoing.setValue(workspace, forHTTPHeaderField: "chatgpt-account-id") }
         outgoing.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         outgoing.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
-        let (bytes, response): (URLSession.AsyncBytes, URLResponse)
-        do {
-            (bytes, response) = try await session.bytes(for: outgoing)
-        } catch let error as URLError where error.code == .networkConnectionLost && Self.resends(request.target) {
-            // Usually a kept connection the server had closed. The server may have had it all the same, so a resend can bill a
-            // turn twice; that's the price of not failing a conversation for it, and only these routes pay it.
-            (bytes, response) = try await session.bytes(for: outgoing)
-        }
+        let (bytes, response) = try await session.bytes(for: outgoing)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         return (bytes, http)
-    }
-
-    /// The routes that produce a turn. Nothing else admitted is resent on a lost connection.
-    public static func resends(_ target: String) -> Bool {
-        ["/v1/messages", "/codex/responses"].contains(target.split(separator: "?", omittingEmptySubsequences: false).first.map(String.init) ?? "")
     }
 
     private static func headers(_ response: HTTPURLResponse) -> HTTPHeaders {
@@ -386,10 +423,10 @@ private final class PoolClient: @unchecked Sendable {
         close()
     }
 
-    func fail(_ status: Int, _ type: String, _ message: String) {
+    func fail(_ status: Int, _ type: String, _ message: String, retry: Bool = false) {
         let body = (try? JSONSerialization.data(withJSONObject: ["type": "error", "error": ["type": type, "message": message]])) ?? Data()
         var response = HTTPResponse.json(status, body)
-        response.headers.add("x-should-retry", "false")
+        response.headers.add("x-should-retry", retry ? "true" : "false")
         write(response.encoded(close: true))
         close()
     }

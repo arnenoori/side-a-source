@@ -7,20 +7,21 @@ public enum Hosting {
 
     public enum Mode: Equatable, Sendable {
         case new(model: String?)
-        case resume(String)
+        /// A model the resumed conversation goes on with; both CLIs take their usual model flag on a resume.
+        case resume(String, model: String? = nil)
         case fork(String)
 
-        public var resumes: String? { if case .resume(let id) = self { id } else { nil } }
+        public var resumes: String? { if case .resume(let id, _) = self { id } else { nil } }
     }
 
     /// Arguments after the agent's name. A first prompt is not here: the launcher adds it last.
     public static func arguments(_ agent: Agent, _ mode: Mode, images: [String] = []) -> [String] {
         switch (agent, mode) {
         case (.claude, .new(let model)): return model.map { ["--model", $0] } ?? []
-        case (.claude, .resume(let id)): return ["--resume", id]
+        case (.claude, .resume(let id, let model)): return ["--resume", id] + (model.map { ["--model", $0] } ?? [])
         case (.claude, .fork(let id)): return ["--resume", id, "--fork-session"]
         case (.codex, .new(let model)): return (model.map { ["-m", $0] } ?? []) + (images.isEmpty ? [] : ["-i", images.joined(separator: ",")])
-        case (.codex, .resume(let id)): return ["resume", id]
+        case (.codex, .resume(let id, let model)): return ["resume"] + (model.map { ["-m", $0] } ?? []) + [id]
         case (.codex, .fork(let id)): return ["fork", id]
         }
     }
@@ -332,20 +333,58 @@ public enum Hosting {
 
     // MARK: Pressing Enter again
 
-    static func squash(_ text: String) -> String { text.filter { !$0.isWhitespace } }
-
     /// What the composer showed right after Side A pasted `sent`, when it can only be Side A's:
     /// its start, or a paste placeholder for long or multi-line text. The result is recorded and
     /// later compared character for character; nil when unclear.
     public static func owned(sent: String, composer: Composer) -> String? {
         guard case .text(let whole) = composer else { return nil }
         let shown = withoutAttachments(whole)
-        let squashed = squash(shown), mine = squash(sent)
+        let mine = ReplyText.squash(sent)
         guard !mine.isEmpty else { return nil }
-        if squashed.hasPrefix(String(mine.prefix(24))) && (mine.count >= 24 || squashed == mine) { return whole }
-        let long = sent.count > 200 || sent.contains("\n")
-        if long && (shown.hasPrefix("[Pasted text #") || shown.hasPrefix("[Pasted Content ")) { return whole }
+        if startsLike(ReplyText.squash(shown), mine) { return whole }
+        if ReplyText.long(sent) && ReplyText.startsWithPlaceholder(shown) { return whole }
         return nil
+    }
+
+    /// A multi-line message's first line can be too short to tell it by, so the whole prompt decides; the answer stays the
+    /// glyph row, which `verdict` compares against.
+    public static func owned(sent: String, agent: Agent, screen: String) -> String? {
+        let composer = composer(agent, screen: screen)
+        if let expected = owned(sent: sent, composer: composer) { return expected }
+        guard case .text(let first) = composer, sent.contains("\n"), let whole = prompt(agent, screen: screen) else { return nil }
+        let shown = ReplyText.squash(withoutAttachments(whole)), mine = ReplyText.squash(sent)
+        guard !mine.isEmpty, startsLike(shown, mine) else { return nil }
+        return first
+    }
+
+    /// Both squashed. Its first 24 characters tell a reply apart; a shorter one must be all there is.
+    private static func startsLike(_ shown: String, _ mine: String) -> Bool {
+        shown.hasPrefix(String(mine.prefix(24))) && (mine.count >= 24 || shown == mine)
+    }
+
+    /// The whole prompt the screen shows, its rows joined, each without its indent. Claude's runs from the glyph row to
+    /// the rule under it (2.1.30x); Codex's is the glyph row and the indented rows under it. Nil when a row doesn't fit.
+    public static func prompt(_ agent: Agent, screen: String) -> String? {
+        let rows = plainLines(screen)
+        let glyph = agent == .claude ? "❯\u{00A0}" : "› "
+        guard case .text = composer(agent, screen: screen),
+              let top = rows.lastIndex(where: { row in
+                  let rest = row.dropFirst(2), digits = rest.prefix { $0.isNumber }
+                  return row.hasPrefix(glyph) && (agent == .claude || digits.isEmpty || !rest.dropFirst(digits.count).hasPrefix(". "))
+              }) else { return nil }
+        var shown = [String(rows[top].dropFirst(glyph.count)).trimmingCharacters(in: .whitespaces)]
+        for row in rows[(top + 1)...] {
+            let trimmed = row.trimmingCharacters(in: .whitespaces)
+            switch agent {
+            case .claude:
+                if !trimmed.isEmpty, trimmed.allSatisfy({ $0 == "─" }) { return shown.joined(separator: "\n") }
+                guard row.hasPrefix("  ") || trimmed.isEmpty else { return nil }
+            case .codex:
+                guard row.hasPrefix("  "), !trimmed.isEmpty else { return shown.joined(separator: "\n") }
+            }
+            shown.append(trimmed)
+        }
+        return agent == .codex ? shown.joined(separator: "\n") : nil
     }
 
     /// The text after the photos pasted ahead of it: their quoted paths as typed, or the chips Claude turns them into

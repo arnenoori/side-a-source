@@ -176,6 +176,9 @@ final class ModelTests: XCTestCase {
 
     func testGroupingKeepsFirstAppearanceOrder() {
         let model = AppModel.demo()
+        // The choice is kept across launches: leave it as found.
+        let kept = model.sessions.groupBy
+        defer { model.sessions.groupBy = kept }
         model.sessions.groupBy = .project
         XCTAssertEqual(model.sessions.groups(.working).map(\.title), ["side-a", "storefront"])
         model.sessions.groupBy = .none

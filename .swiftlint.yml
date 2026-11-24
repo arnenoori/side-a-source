@@ -127,6 +127,29 @@ custom_rules:
     message: "A fixed wait of 100 ms or more is flaky under load. Poll for the condition instead."
     severity: error
 
+  # A sleep of any length standing alone as a statement waits for something to have happened instead of checking that
+  # it did. Poll in a bounded loop (`for _ in 0..<200 where !done { try await Task.sleep(…) }`) or await the event. A
+  # sleep that is itself the point (letting a debounce window pass, proving nothing arrives) keeps a reason:
+  # `// swiftlint:disable:next sleep_as_sync_in_tests -- reason`.
+  sleep_as_sync_in_tests:
+    name: "Fixed sleep as synchronisation"
+    regex: '^\s*(?:try\??\s+)?(?:await\s+)?(?:Task\.sleep\(|Thread\.sleep\(|usleep\()'
+    included: ["Tests/.*\\.swift"]
+    excluded: ["Packages/.*", "apps/.*"]
+    excluded_match_kinds: [comment, comment.mark, comment.url, doccomment, doccomment.field, string]
+    message: "A fixed sleep is flaky under load and slow when idle. Poll for the condition with a bound, or disable on the line with a reason."
+    severity: warning
+
+  # A wait loop with no bound hangs the whole run when its condition never comes; give it a deadline or a count.
+  unbounded_poll_in_tests:
+    name: "Unbounded polling loop"
+    regex: '\bwhile\s+(?![^\n]*(?:Date\(\)|deadline|\.now\b|[Cc]lock|attempts?\b|tries\b|<))(?:true\b|!)'
+    included: ["Tests/.*\\.swift"]
+    excluded: ["Packages/.*", "apps/.*"]
+    excluded_match_kinds: [comment, comment.mark, comment.url, doccomment, doccomment.field, string]
+    message: "This loop waits with no deadline. Bound it (`for _ in 0..<N where …`, or `Date() < deadline`), or disable on the line with a reason."
+    severity: warning
+
   user_defaults_standard:
     name: "UserDefaults.standard"
     regex: 'UserDefaults\.standard'

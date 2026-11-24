@@ -33,17 +33,19 @@ public enum RemotePushPayload {
         }
     }
 
-    public static func finished(_ finished: FinishedSession, mac: String, now: Timestamp, quiet: Bool = false) -> PushPayload {
+    /// `faceID`: a reply to it takes Face ID, which a notification action can't give.
+    public static func finished(_ finished: FinishedSession, mac: String, now: Timestamp, quiet: Bool = false, faceID: Bool = false) -> PushPayload {
         cut(finished.summary) {
             PushPayload(t: PushKind.finished.rawValue, mac: mac, sent: now, sid: finished.sessionID, title: finished.title, turnID: finished.turnID,
-                        summary: $0, quiet: quiet ? true : nil)
+                        summary: $0, quiet: quiet ? true : nil, faceID: faceID ? true : nil)
         }
     }
 
     /// The Mac's one Ready notification: a single session reads as its own finished turn, more as a count and their names,
     /// newest first. No session or turn, so it offers Open only.
-    public static func ready(_ sessions: [FinishedSession], mac: String, now: Timestamp, quiet: Bool) -> PushPayload {
-        if sessions.count == 1, let only = sessions.first { return finished(only, mac: mac, now: now, quiet: quiet) }
+    public static func ready(_ sessions: [FinishedSession], mac: String, now: Timestamp, quiet: Bool,
+                             faceID: (SessionKey) -> Bool = { _ in false }) -> PushPayload {
+        if sessions.count == 1, let only = sessions.first { return finished(only, mac: mac, now: now, quiet: quiet, faceID: faceID(only.sessionID)) }
         var names: [String] = []
         for session in sessions where !names.contains(session.title) { names.append(session.title) }
         return cut(names.joined(separator: ", ")) {

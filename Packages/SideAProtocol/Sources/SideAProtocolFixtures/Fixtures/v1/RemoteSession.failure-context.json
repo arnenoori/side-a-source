@@ -1,0 +1,30 @@
+{
+  "abilities": [
+    "compact",
+    "followUp",
+    "transcript"
+  ],
+  "accountID": "0b9c2e4a-5f1d-4c1e-9a77-2f3e1d0c9b8a",
+  "accountName": "Work",
+  "agent": "codex",
+  "branch": "main",
+  "context": 258000,
+  "conversationID": "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b",
+  "cwd": "/Users/you/code/app",
+  "failure": {
+    "at": 1791559999.9,
+    "fix": "compact",
+    "kind": "contextFull",
+    "message": "The conversation is too long for the model. Compact it or clear it to go on.",
+    "retryable": false
+  },
+  "headless": false,
+  "id": "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b",
+  "model": "gpt-5.5-codex",
+  "openRequests": [],
+  "project": "app",
+  "status": "idle",
+  "statusAt": 1791559999.9,
+  "title": "Port the parser",
+  "worktree": false
+}

@@ -174,8 +174,9 @@ SideARemoteKit (package)                       SideARemote (app)
 | State | Meaning | Shown as |
 |---|---|---|
 | `connecting` | first attempt after launch | nothing for 600 ms, then a quiet "Connecting…" in the Mac chip |
-| `live` | socket open, seq current | green dot on the Mac chip |
-| `reconnecting(since:)` | socket dropped, backoff 0.5 s doubling to 30 s with ±20 % jitter (protocol); immediate retry on foreground and on network change | chip: "Reconnecting…"; content stays, with `Updated 2 min ago` once older than 60 s |
+| `live` | socket open, seq current, and proven: a pong or frame in the last 25 s (protocol, Keepalive) | green dot on the Mac chip |
+| `reconnecting(since:)` | socket dropped or unproven; the first try after a live socket drops comes after 125 to 250 ms, then the backoff (protocol); immediate retry on foreground and on network change | nothing for 800 ms (`MacConnection.blip`, so replacing a dead socket on the way back from the background doesn't flash), then chip: "Reconnecting…"; content stays, with `Updated 2 min ago` once older than 60 s |
+| `offline(.noNetwork)` | the path monitor says this iPhone has no network, after 5 s of reconnecting | "This iPhone has no internet connection"; the engine waits for a path instead of a timer |
 | `offline(.tailscaleOff)` | no VPN interface up and no relay route, or no route to the Mac's 100.x address | banner: "Tailscale is off on this iPhone", button **Open Tailscale** (`tailscale://`, App Store fallback) |
 | `offline(.macUnreachable)` | Tailscale up, Mac doesn't answer | banner: "Can't reach MacBook Pro. It may be asleep or Side A is closed." |
 | `offline(.revoked)` | 401 | full-screen state on that Mac: "This iPhone was removed from MacBook Pro", **Pair again** |
@@ -186,10 +187,22 @@ SideARemoteKit (package)                       SideARemote (app)
 
 Rules: banners sit under the navigation bar as an inset grouped row, never as a toast, and never
 cover content. Stale data stays visible with its age and is never greyed out (Side A rule: a
-stale reading says how old it is). Actions that need the Mac (Allow, Send) stay enabled while
+stale reading says how old it is). Actions that need the Mac (Allow) stay enabled while
 reconnecting and go to the outbox. While offline they're disabled with the reason as the
-accessibility hint. Foreground return and `NWPathMonitor` changes trigger an immediate reconnect
-and reset backoff. Every banner offers **Test Connection** (setup, Diagnostics).
+accessibility hint. Send is never disabled for a Mac that's only out of reach (composer, section
+4.4); only an ended pairing or a version to update turns it off. Foreground return and
+`NWPathMonitor` changes trigger an immediate reconnect and reset backoff. Every banner offers
+**Test Connection** (setup, Diagnostics).
+
+What the phone shows comes from proof, never from "no error yet": back in front, a socket silent
+for 45 s is replaced at once, one silent for 25 s reads as not live until it answers a ping, and
+the ping has 1.5 s after more than 10 s away (4 s otherwise). If the Mac answers a fresh
+`GET /v1/hello` while the socket stays silent for 2.5 s, the socket is replaced. One-shot reads
+(New Session's folders, models, commands) race every path again for up to 4 s before failing, and
+a failure reads in plain words ("Side A on MacBook Pro isn't reachable right now. It may be asleep
+or closed."), each path's own failure kept for the log. New Session draws the last folders,
+models and accounts from the cache at once; Start asks again under its key for up to 75 s while
+the Mac is out of reach ("Waiting for MacBook Pro. It starts once it's back.").
 
 ### Several Macs
 
@@ -284,7 +297,11 @@ shows a one-time row: "Run /hooks in Codex once on MacBook Pro to answer Codex r
   memory, Keep Awake, Quit Idle, Clean Up, add a Mac (section 4.14).
   Reference: ChatGPT Codex's Mac with a green dot.
 - **Toolbar trailing:** `square.and.pencil` (New session), then `ellipsis.circle` menu: Group by
-  (Project / Account / None), Show idle sessions. Settings is its own tab.
+  (Project / Account / None), Show idle sessions. Settings is its own tab. New session is a
+  `Menu` with a `primaryAction`: a tap opens the sheet, touch and hold lists up to 6 sessions
+  across every paired Mac (needs you, then ready, then by `statusAt`), each with its status glyph,
+  project and, with 2+ Macs, the Mac's name, then New Session last (`.menuOrder(.fixed)`). The
+  iPad sidebar's round New Session button carries the same menu.
 - **Bottom accessory** (`tabViewBottomAccessory`): only while one or more requests wait and the
   user isn't on that session. A glass capsule: amber dot, "Allow Bash · npm test", trailing
   "+2" when more wait. Tap opens the approval sheet. The tab bar never minimizes on scroll
@@ -300,6 +317,15 @@ shows a one-time row: "Run /hooks in Codex once on MacBook Pro to answer Codex r
 3. **Ready**: finished and waiting for a follow-up (Side A's Ready list).
 4. **Idle**: folded by default behind a "6 idle sessions" disclosure row; grouped by project
    when expanded.
+5. **Snoozed** (capability `sessions.snooze`): folded behind "2 snoozed sessions", each row saying
+   until when ("Snoozed · Until 09:00", "Until it needs you"). A row's trailing swipe **Snooze**
+   offers 1 Hour, 3 Hours, Tomorrow Morning (9:00 on this phone's clock) and Until It Needs Me; the
+   context menu has the same as a submenu, and **Wake** on a snoozed row. Never offered while the
+   session asks something, has a failure or a failing or stuck flag, and the Undo notice shows only
+   when the Mac's answer carries the snooze. The Mac keeps the snooze, so every phone and the Mac agree; whatever wakes
+   it (a request, a failure or stall, its time, a message to it, or finishing for Until It Needs Me)
+   sends the row back to its place with its usual notification. The phone shows a snoozed row in its
+   place again at once when it gets a request or a failure or its time passes, before the Mac says so.
 
 With "Group by Project", each section groups rows under quiet project subheaders (`.footnote`
 semibold, secondary, folder glyph), following ChatGPT Codex's projects-as-folders.
@@ -325,6 +351,18 @@ semibold, secondary, folder glyph), following ChatGPT Codex's projects-as-folder
   and only "failing" is red.
 - Line 3 also carries, trailing, the session's listening ports and memory in mono tertiary
   (`:3000 · 1.4 GB`), and a waiting message or stop ("Message waiting", "Stops after this step").
+- Line 2 carries the session's pull request when it has one (capability `sessions.pullRequest`):
+  a glyph and "#412 · checks passing" (or failing, running, merged, closed, draft), trailing, kept
+  while the metadata is cut. Glyph colours follow the status glyph: green for passing or merged,
+  red for failing, secondary while checks run, tertiary for closed or draft. The context menu adds
+  Open Pull Request and Copy Pull Request Link. Session Info shows it as a chip: a tap opens it in the
+  browser, a long press copies the link.
+- A failure the Mac recognises (capability `sessions.failure`) takes line 3 in its own words ("The
+  conversation is too long for the model. Compact it or clear it to go on."), red unless another try
+  gets past it. The context menu heads a section with it and the one action that helps: Compact
+  (the session's Compact, or `/compact` typed into a hosted Claude), Open Terminal for a git or `gh`
+  sign-in; a folder permission or an agent's sign-in says to approve or sign in at the Mac. Session
+  Info shows the same with the agent's own words below, keys and tokens taken out on the Mac.
 - **Swipe actions and context menu** (preview: the last assistant message) by row state: the
   table at the end of section 4.14. In short: Allow / Reply / Note / Continue on iPhone leading;
   Stop, Take Back, Quit, Open Terminal trailing; the context menu adds Send a Message…, Interrupt
@@ -405,7 +443,7 @@ the user bubble (every user turn on this phone is the same person, so the avatar
 non-fact; the bubble keeps the width instead).
 
 **Layout.** Content is a `ScrollView` + `LazyVStack(spacing: 0)` on `systemBackground`, with
-`defaultScrollAnchor(.bottom)` and a `ScrollPosition` keyed by message id. The composer is pinned
+`defaultScrollAnchor(.bottom)` for the initial offset and size changes (a long thread opens on, and follows, its end) and a `ScrollPosition` keyed by message id. A thread shorter than the screen starts under the title and grows downward, as Messages does, instead of sitting at the foot with a gap above it. The composer is pinned
 with `safeAreaBar(edge: .bottom)` (iOS 26), so the soft scroll edge effect blurs text under it
 the way v0's does. The top edge uses the same soft edge effect under the navigation bar. iOS 27:
 `toolbarMinimizeBehavior(.onScrollDown, for: .navigationBar)`.
@@ -613,6 +651,23 @@ holding three glass shapes that blend and morph together:
 The follow-mode button (section 4.3) lives in the same container with its own `glassEffectID`, so
 it buds off the composer and melts back into it.
 
+**Model chip.** On a session page, while the field is focused or holds text, a glass capsule
+beside the `+` shows the model's short name and a gauge for its effort (`Effort.gauge`); a tap
+opens the same `LiveModelSheet` as ⋯ › Model. It shows only when the session takes a model or
+effort change from the phone and the Mac lists its models, and in the one-row composer it gives
+way to the delivery menu and to accessibility type sizes. It fades in from 0.96 scale with
+`Motion.snappy` while the field narrows in the same animation (`ComposerRow`). While the + menu's
+photo grid takes the keyboard's place, the composer stacks: the field takes the whole width with
+mic, delivery and Send inside it, and the `+` and the chip sit under it. The one layout moves
+between the two arrangements with `Motion.smooth`, so closing the grid runs the same path back.
+
+**Open controls.** The `+` and the model chip show a soft `tertiarySystemFill` backing from
+touch-down until their menu, recent-photo strip or sheet has gone (`pressedBacking`: in 0.12 s,
+out 0.2 s). The recent-photo strip opens out of the `+` (0.96 scale, bottom-leading), fades at both
+ends into its glass, and the photo under the finger lifts 1.12× from its bottom edge while the
+others step aside by transform, never by re-layout. With Reduce Motion it cross-fades and the
+photo under the finger gets an accent ring instead.
+
 **Send.** Sending: the button shows a progress arc until the server accepts; failure keeps the
 text and shows "Not sent · Retry" under the field. Long press on the stop button (empty field)
 opens a context menu (the tap stays Interrupt): Interrupt Now, Stop Before Next Step, Send a
@@ -633,27 +688,42 @@ session's `abilities`. The plain tap keeps the default for each kind.
 Unhosted Claude has no instant interrupt (only stop mail, which waits for the next step and
 shares the one mail slot), so it offers no Interrupt and Send. **Interrupt and Send** sends the
 interrupt first and queues the reply only once the Mac has taken it, so the two never arrive out
-of order; for Codex it also waits (up to 8 s) for the session to stop working, since a turn
+of order; for Codex it also waits (up to 25 s, no less than the Mac's own 20 s) for the session to stop working, since a turn
 still running refuses or steers the text. A refused interrupt sends nothing: the text goes back
 into the field with "Couldn't stop it. …" under it.
 
-While the Mac is offline, Send is off and dimmed and the one status line under the field gives
-the reason. Back in front after the link dropped in the background, an unreachable Mac reads as
-Reconnecting… for its minute again (`MacConnection.foregrounded`), so Send stays usable while
-the link comes back; the outbox holds what's sent meanwhile.
+While the Mac is out of reach (reconnecting, or offline for a reason that passes: asleep,
+unreachable, Tailscale off, no network), Send stays on: its glyph becomes `tray.and.arrow.up`
+("Send When Connected"), the line under the field says "Sends when connected", and the bubble
+reads the same. Such a reply isn't signed or queued yet: it waits in its `ReplyFlight` (phase
+`waiting`, in the App Group database, so a kill keeps it) for up to 12 hours. Once the link has
+been live for 1.5 s (so the replay or snapshot has landed) and the app is in front, each goes in
+the order it was typed, signed then: a fresh signature, and Face ID only ever in front. One whose
+session has ended, whose session is on another turn than when it was typed, or that waited too
+long goes back into the field with "Not sent · …" and why. A reply queued while live keeps its
+one key in the outbox for 12 hours, so a resend after an ambiguous failure is a replay; a
+signature that ran out is refused before anything runs and signed again, and one that needs Face
+ID while the app is in the background waits for the front instead. Interrupt and the stop button
+need the Mac now (a queued stop lasts 2 minutes), since a late Stop stops whatever runs then.
+A flight's phases (`signing`, `queued`, `resigning`, `unsent`, `waiting`) and every move between
+them are one table, `ReplyFlight.Phase.next` in SideARemoteKit, tested state by event in
+`ReplyFlightTests`.
 
-**Dictation.** `mic` records with the iOS 26 Speech framework's on-device `SpeechTranscriber`
-and writes into the field as it hears; tap again (or Send) ends it. The mic is hidden when speech
-permission is denied; the keyboard's own dictation key still works.
+**Dictation.** `mic` records; tap again ends it, and the recording is transcribed by the Mac
+(`transcribe`) or, failing that, on the phone, and the words land in the field for editing, never
+sent by themselves. A recording that can't be transcribed is kept on a shelf for Retry. Its phases
+(`idle`, `recording`, `transcribing`, `failed`, `denied`) move along one table,
+`DictationPhase.next` in SideARemoteKit, tested in `DictationPhaseTests`.
 
 **Modes.** The composer sends `mode: auto` and protocol's [delivery table](protocol.md#delivery-table)
 decides; the placeholder reads from the same table so it never promises something else: Ready →
 follow-up (carrying the finished turn's `turnID`). Working and hosted → typed into the TUI now
 (Claude) or refused (Codex). Working and not hosted → a note for Claude (reaches the session at
 its next step and can be taken back until then: it shows as an ordinary outgoing bubble with
-"Next step" and a `clock` under it, Edit and Delete in its menu, and once read it looks like any
-delivered message), refused for Codex. While the Mac is offline, a bubble not yet confirmed
-(sending, next step, after this turn) reads "Not confirmed" with the offline reason's glyph. Status `unknown` → the composer is disabled
+"Claude reads it after this step" and a `clock` under it, Edit and Delete in its menu, and once read it looks like any
+delivered message), refused for Codex. While the Mac is out of reach a bubble still sending reads
+"Sends when connected"; offline, one already taken but not confirmed (next step, after this turn)
+reads "Can't check until connected" with the offline reason's glyph. Status `unknown` → the composer is disabled
 with "MacBook Pro can't tell what this session is doing." Waiting on a question → the text
 becomes that question's "write your own" answer (`answers` with `other`) and posts through
 `POST /v1/requests/{rid}/answer`; a plain reply would get 409 `session_waiting`.
@@ -873,7 +943,22 @@ the prompt has text: `interactiveDismissDisabled` with a "Discard?" confirmation
   `safeAreaInset` bar that rides the keyboard), horizontally scrolling glass chips:
   `Mac` (only with 2+), `Project` (folder glyph + name), `Agent` (Claude / Codex glyph), `Model`,
   `Worktree` (off / new `sidea/<name>`), `Account` (Auto, or a specific account with its
-  tightest limit in mono). Each chip opens a `Menu`, except Project which opens a searchable list.
+  tightest limit in mono). Each chip opens a `Menu`, except Project which opens a searchable list,
+  and Model ("Opus 5.5 · High"), which opens `ModelEffortSheet` at the medium detent: Default and
+  the Mac's models for the agent as a focus list, the chosen one on a rounded filled card at full
+  strength with its effort trailing, the others at 45% and 0.96 scale; a new choice slides the
+  fill across (`matchedGeometryEffect`, cross-fade with Reduce Motion) with one selection haptic.
+  Tapping the effort opens a stepped track under the card's row: dot stops, a dark capsule thumb
+  from the first stop to the chosen one, dragged 1:1 from where the finger took it, settling on
+  the nearest stop with a critically damped spring that keeps the release speed (`Motion.settle`),
+  a tap on a stop jumping to it, a selection haptic per stop crossed. The stop's name and the
+  model's `defaultEffort` "Recommended" sit above and blur-cross-fade; VoiceOver adjusts it as one
+  element. A running session's ⋯ › Model (or the composer's model chip) opens the same sheet and
+  sends model and effort as one change on Done. The sheet has × at the leading edge and the title
+  "Model" centred, in New Session and on a running session alike. With `restart.agent`, and when the
+  Mac says the other agent is installed and signed in (`AgentOptions.signedIn`), a running session's
+  sheet adds a second section for that agent, headed "Codex" (or "Claude") with no caption, its models in the same focus list and, with more than one account
+  for it, an Account picker. Picking there is a handoff draft (section 4.14, Hand off).
 - **Project picker:** searchable list (`.searchable`), sections "Recent" (last 5 projects
   used) and "All projects", each row: folder name `.body`, path mono `.caption` tertiary, branch
   in a mono capsule. Git roots show `arrow.triangle.branch`.
@@ -1156,6 +1241,32 @@ card, in the toolbar's Session section, in the row's context menu, and on bloate
 - If the old session is working, Restart first asks in a `confirmationDialog`: "It's still
   working. Stop it and restart?".
 
+**Hand off.** With `restart.agent`: a model of the other agent picked in the model sheet is a draft
+that stays on the phone (`HandoffDrafts`, per session) until Send. Nothing reaches the Mac before.
+- While it waits, the chip is a lone "⇄" (VoiceOver says where it goes) and shows only while the field is empty (once you type, the line is the
+  indicator and the field keeps the width), a line below the composer says "Hands off to
+  Codex when you send · Review ›" with an × that keeps the session's own agent, and the field's
+  placeholder is "Message for Codex…". Picking one of the session's own models clears it, as do
+  Send, the × and the session ending. It survives leaving the page.
+- Review opens the Restart Fresh sheet, titled "Hand Off to Codex", on the Mac's draft: Goal,
+  Branch, What Failed and Next Steps editable; Plan and Changed Files read-only; the agent, model,
+  effort and account under "Hands Off To"; the typed message under "Your Message", read-only,
+  with no footers. Done keeps the edits with the draft.
+- Send with an open question or permission refuses under the field: "Answer or deny Claude's open
+  request first." With the Mac not connected it refuses and keeps the draft and the text: a
+  handoff never waits in the outbox. On a working session it asks first ("Claude is still working.
+  Stop it and hand off?", Stop and Hand Off / Cancel). A mode that raises asks for Face ID, as a
+  start does. The text stays in the field until the Mac has started the new session. Photos in the
+  tray go with it as the new agent's first-prompt photos (`restart.agent.images`; Send waits for
+  uploads and stops on a failed one); a Mac without that capability gets the notice "Photos can't
+  go with a handoff…" and the photos stay in the tray, as they do when the handoff fails.
+- The page doesn't move: it becomes the new session (as Continue does). Above its first turn,
+  "Earlier with Claude · 42 messages" loads the old conversation's pages from the transcript route
+  by its conversation id, then a divider "Claude Opus 5.5 → Codex GPT-5.5 · Handoff ›" opens the
+  exact prompt that was sent (`GET /v1/handoffs/{id}`). The first turn shows only what was typed.
+- The session's row says "Handed off from Claude", and History nests the new conversation under
+  the old one as it does a fork.
+
 **Steer without typing.** Send a Message…, Stop Before Next Step, Take Back; every session, hosted
 or not, gated by `abilities`. The phone never shows the mail metaphor: a note on the wire is a
 message waiting for the next step on screen.
@@ -1257,13 +1368,15 @@ easier.
 | `REQUEST_SAFE` (local only) | Allow (no authentication), Deny (`.destructive` style), Open | `.timeSensitive` | Set by the Service Extension only for a `REQUEST` whose decrypted payload says `gate: lockScreen`: reads and searches, edits inside the project. |
 | `REQUEST` | Allow (`.authenticationRequired`), Deny, Open | `.timeSensitive` | Gate `.unlock`: any shell command, MCP or unknown tool, fetch. Allow asks for Face ID / passcode before it runs. Also what a request shows when decryption fails, but then Allow has no request id and opens the app instead. |
 | `REQUEST_DESTRUCTIVE` | Deny, Open | `.timeSensitive` | Gate `.biometric`. Allow only in the app behind Face ID. Body says "Destructive · Open to review". |
-| `QUESTION` | Open | `.timeSensitive` | Content Extension shows the options as tappable rows when the payload is `full`; otherwise only Open ("Claude has a question · Open to answer"). |
+| `QUESTION` | Answer (`UNTextInputNotificationAction`, `.authenticationRequired`, placeholder "Your answer"), Open | `.timeSensitive` | One question, all of it in the payload. The typed words go as that question's `other`. The Content Extension shows the options as tappable rows above the actions. |
+| `QUESTION_OPEN` (local only) | Open | `.timeSensitive` | Set by the Service Extension for a set of several questions or one that isn't `full`: one typed answer can't settle it. The Content Extension pages through a full set; otherwise "Open to answer". |
 | `PLAN` | Approve (`.authenticationRequired`), Approve + accept edits (`.authenticationRequired`), Open | `.active` | Content Extension renders the plan's first screen when `full`. Approving starts work and accept edits widens permissions, so both need unlock. |
-| `FINISHED` | Reply (`UNTextInputNotificationAction`, `.authenticationRequired`, placeholder "Follow up…"), Open | `.active` | A follow-up is a new prompt, so it needs unlock. Carries the payload's `turnID`. |
+| `FINISHED` | Reply (`UNTextInputNotificationAction`, `.authenticationRequired`, placeholder "Follow up…"), Open | `.active` | A follow-up is a new prompt, so it needs unlock. Carries the payload's `turnID`, and as `seen` too when the Mac's last hello (kept with the pairing in the shared keychain, which the extensions read) listed `replies.seen`; a held one goes again with that body. |
+| `FINISHED_FACE_ID` (local only) | Reply (`UNTextInputNotificationAction`, `.foreground`, button "Next"), Open | `.active` | Set by the Service Extension when the payload says `faceID`: the session's mode is permissive, so the Mac takes a reply only with the Face ID key, which a notification can't use. Reply opens the app on the session with the words in the composer sheet and the keyboard up; Send asks Face ID once. |
 | `LIMIT` | Open | `.passive` | "Work reached 95% of its 5-hour limit · resets 3:40 PM". |
 | `HEALTH` | Restart Fresh… (opens the app on the handoff sheet), Open | `.passive` | "side-a: no progress for 10 minutes". Once per session per hour (section 4.14). |
 | `TEST` | none | `.active` | Test Connection's notification (setup). |
-| `ANSWERED` | none | `.passive` | The relay's dismiss: "Answered on Mac" replaces the request with the same collapse id. |
+| `ANSWERED` | none | `.passive` | The relay's dismiss: "Answered" replaces the request, or a Ready that has nothing left in it, under the same collapse id. The app clears these at its next connection. |
 
 - Title: the payload's `title` ("Allow Bash"); subtitle: `side-a · Work` (plus Mac name with 2+
   Macs); body: the command or question, truncated by the system.
@@ -1274,8 +1387,27 @@ easier.
 - Actions run in the background: the action handler (app delegate, background launch) posts
   through the shared outbox using the keychain token, with `Idempotency-Key: <requestID>:<kind>`. In the app, a tap after a refused or unknown attempt goes under `<requestID>:<kind>:a<n>`.
   On failure it posts a local notification "Couldn't reach MacBook Pro. Open to answer."
-- Foreground: `willPresent` suppresses banners for the session on screen and turns others into
-  the bottom accessory plus a `.warning` haptic instead of a banner.
+- **Typed words are never dropped.** What a notification couldn't send goes into the session's
+  field (`NotificationDrafts`, in the App Group, taken into `TranscriptStore.drafts` when the app
+  comes to the front, after anything already typed there), and a local notification in place of
+  the one acted on says why; its tap opens the session's composer (`sidea-remote://compose/<mac>/<id>`).
+  That covers a reply the Mac refused (a session that needs Face ID, a turn that moved on) and a
+  typed answer the Mac couldn't be reached for: an answer's signature lasts two minutes, so it
+  doesn't wait in the outbox.
+- **A reply the Mac couldn't be reached for is held,** as one typed in the app while away: its
+  `ReplyFlight` waits unsigned (phase `waiting`) beside the outbox, and the app signs and sends it
+  once it reaches the Mac, in front for a session that needs Face ID. While it tries, the reply's
+  outbox item has its flight beside it, so an action cut off mid-send settles like the app's own.
+  The local notification says "Not sent yet: couldn't reach MacBook Pro…", since only the app can
+  send it later. A held reply that ends unsent (its session ended or moved on, 12 hours passed)
+  goes back into the field, and a notification says so when the app isn't in front.
+- Foreground: the Mac sends nothing to a phone whose app is in front and connected, and
+  `willPresent` shows no banner for a push from a Mac the app is connected to.
+- **Stale notifications go.** A Finished push whose turn left Ready (the session started again, was
+  answered, or was cleared on the Mac) is replaced: the Mac re-sends Ready with what's left,
+  quietly and `passive`, to the phones that show it, or the relay's "Answered" once nothing is left.
+  The app also clears, at each connection and whenever a turn leaves Ready while it runs, any
+  Finished notification for a turn that isn't Ready any more, and every "Answered".
 - **Token verification:** the relay's silent `verify` push (protocol, Push payloads) is answered in
   `application(_:didReceiveRemoteNotification:)` with `POST /v1/device/verify` to the relay.
 
@@ -1298,7 +1430,10 @@ easier.
 ### 5.3 Notification Content Extension
 
 SwiftUI in a `UIHostingController`, sized by `preferredContentSize`. Categories `QUESTION`,
-`PLAN`, `REQUEST_SAFE`, `REQUEST`, `REQUEST_DESTRUCTIVE`. It reads the decrypted payload from
+`QUESTION_OPEN`, `PLAN`, `REQUEST_SAFE`, `REQUEST`, `REQUEST_DESTRUCTIVE`. The options are rows in the
+card, not action buttons: iOS shows a category's actions under a card, and a category's buttons
+are fixed when it's registered, so per-question titles would need a category per question, which
+the card's list of categories can't name. It reads the decrypted payload from
 the notification's `userInfo["p"]`, which the Service Extension sets (no SQLite read in the
 extension); the `shared.sqlite` copy serves the Live Activity and widgets. A question or plan whose payload has `full: false` shows "Open to
 answer" and the Open action only, never partial options.
@@ -1524,6 +1659,19 @@ waiting request.
 | Composer send ↔ stop | glass morph via `glassEffectID` | cross-fade | `.impact(.light)` on send |
 | Pairing success | glass card morph + `checkmark` `.symbolEffect(.drawOn)` | fade | `.success` |
 | Restart Fresh runs | sheet dismisses; the transcript route is replaced by the new session's | fade | `.success` |
+| Undo notice | the pill slides up above the tab bar, or above the composer while one shows | fade | none (the action had its own) |
+
+**Undo.** One notice for every list action that can be taken back: Pin and Unpin (Sessions and
+History), Snooze and Wake, Archive and Unarchive (History, and an idle row's menu in Sessions), Discard
+a New Session draft, and removing the only queued message. It names what happened ("Unpinned",
+"Snoozed · Until 09:00", "Draft discarded") with Undo for 5 seconds, is announced to VoiceOver with
+"Undo available" and has an Undo action there, and ⌘Z takes it from a hardware keyboard. The app has no
+`UndoManager`, so there is no shake to undo. Undo restores what was there: an archive of a pinned
+conversation pins it again, a discarded draft comes back with its photos (they are deleted only once the
+notice has gone), and a queued message is queued again, which is offered only when it was the only one,
+so it lands where it was. Typing into a new draft takes a discarded draft's notice down, and an Undo
+that lands while a newer draft holds words or photos is dropped. Discarding a kept dictation recording
+has no Undo yet.
 
 ---
 

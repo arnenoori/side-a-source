@@ -63,16 +63,18 @@ struct RestartButton: View {
     }
 }
 
-/// Quit Session…, asked first; headless sessions are the Mac's own and stay.
+/// Quit Session: asked first only when the session is at work (`SessionActions.quitAsks`); headless sessions are the Mac's own and stay.
 struct QuitButton: View {
     let session: RemoteSession?
-    var title = "Quit Session…"
+    var title: String?
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
 
     var body: some View {
         if let session, !session.headless, model.tools.can(.quit) {
-            Button(title, systemImage: "xmark.circle", role: .destructive) { actions.on(model).quitting = session }
+            Button(title ?? (SessionActions.quitAsks(session) ? "Quit Session…" : "Quit Session"), systemImage: "xmark.circle", role: .destructive) {
+                actions.on(model).requestQuit(session)
+            }
                 .disabled(actions.isBusy(session.id))
         }
     }
@@ -90,8 +92,8 @@ struct PortButtons: View {
                 Button("Preview :\(String(port.port))", systemImage: "safari") {
                     actions.on(model).previewing = SessionActions.Port(session: session.id, port: port.port)
                 }
-                Button("Stop Server on :\(String(port.port))…", systemImage: "stop.circle") {
-                    actions.on(model).stopping = SessionActions.Port(session: session.id, port: port.port)
+                Button(SessionActions.stopAsks(session) ? "Stop Server on :\(String(port.port))…" : "Stop Server on :\(String(port.port))", systemImage: "stop.circle") {
+                    actions.on(model).requestStop(SessionActions.Port(session: session.id, port: port.port))
                 }
             }
         }

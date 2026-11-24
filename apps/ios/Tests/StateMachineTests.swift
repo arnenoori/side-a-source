@@ -182,7 +182,7 @@ final class StateMachineTests: XCTestCase {
         let (link, model) = try await link(outbox)
         link.apply(signing(link))
         let turn = model.transcripts.send("!rm -rf build", to: "s")
-        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .note, submit: .steer, resending: ["up1"])
+        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .note, submit: .steer, photos: .taken(["up1"]))
         try await until("not sent") { model.transcripts.unsent["s"] != nil }
         let count = await items(outbox).count
         XCTAssertEqual(count, 0)
@@ -210,7 +210,7 @@ final class StateMachineTests: XCTestCase {
         let outbox = try outbox()
         let (link, model) = try await link(outbox)
         let turn = model.transcripts.send("hello", to: "s")
-        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto, resending: ["up1", "up2"])
+        link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto, photos: .taken(["up1", "up2"]))
         try await until("queued") { await !self.items(outbox).isEmpty }
         let first = await items(outbox)[0]
 
@@ -320,7 +320,7 @@ final class StateMachineTests: XCTestCase {
         let outbox = try outbox()
         let (link, model) = try await link(outbox)
         let turn = model.transcripts.send("hello", to: "s")
-        let first = try await queued(outbox) { link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto, resending: ["up1"]) }
+        let first = try await queued(outbox) { link.flights.reply(turn.text, turn: turn.id, to: "s", mode: .auto, photos: .taken(["up1"])) }
         try await until("in flight") { await outbox.flights(for: "flights")[first.id]?.phase == .queued(resigned: false) }
 
         let again = try await queued(outbox) { settle(link, first, .failed(expired)) }

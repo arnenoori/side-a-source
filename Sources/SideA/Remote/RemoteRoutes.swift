@@ -70,7 +70,10 @@ enum RemoteRoutes {
         for route in routes {
             guard let params = match(route.pattern, request.path) else { continue }
             guard route.method == request.method else { methods.append(route.method); continue }
-            return tagged(await route.handle(Context(request: request, caller: caller, params: params, controller: controller)), request)
+            let response = await Perf.route("\(route.method) \(route.pattern.joined(separator: "/"))") {
+                await route.handle(Context(request: request, caller: caller, params: params, controller: controller))
+            }
+            return tagged(response, request)
         }
         guard methods.isEmpty else {
             var response = RemoteServer.error(405, .badRequest, "\(request.method) isn't served here.")

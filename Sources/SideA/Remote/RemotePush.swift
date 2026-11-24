@@ -87,7 +87,8 @@ final class RemotePush {
     private func put(_ device: String, _ registration: PushRegistration, secretHash: String, app: String) async -> Bool {
         let input = RelayClient.Device(apnsToken: registration.apnsToken, bundleID: registration.bundleID,
                                        apnsEnvironment: registration.apnsEnvironment.rawValue, secretHash: secretHash,
-                                       pushToStartToken: registration.pushToStartToken, appVersion: Self.version(app))
+                                       pushToStartToken: registration.pushToStartToken, appVersion: Self.version(app),
+                                       notifyQuiet: registration.prefs.macQuiet)
         let send: (String, RelayClient.Device) async throws -> Bool
         if let putDevice { send = putDevice } else if let relay { send = { try await relay.put($0, $1) } } else { return false }
         do {
@@ -109,7 +110,7 @@ final class RemotePush {
 
     private func scheduleRetry() {
         guard retrying == nil, !unacknowledged.isEmpty else { return }
-        let wait = retryAfter * min(1 << attempts, 10)
+        let wait = retryAfter * min(1 << min(attempts, 4), 10)
         attempts += 1
         retrying = Task { [weak self] in
             try? await Task.sleep(for: wait)
@@ -189,26 +190,45 @@ final class RemotePush {
         run(scheduler.finished(finished, ran: ran, now: clock(), presence: presence()))
     }
 
-    /// A turn that left Ready.
-    func finishedResolved(_ turnID: String) { resolve(turnID) }
+    /// The relay's only removal is its "Answered" push, so Ready shrinks in place while turns are left.
+    func finishedResolved(_ turnID: String) {
+        let shown = scheduler.ready.contains { $0.turnID == turnID }
+        resolve(turnID)
+        clear(Self.collapse(turnID))
+        guard shown else { return }
+        let left = scheduler.ready
+        guard !left.isEmpty else { return clear(Self.readyCollapse) }
+        let showing = Set(dismissals.showing(Self.readyCollapse))
+        guard !showing.isEmpty else { return }
+        send(RemotePushPayload.ready(left, mac: RemoteController.macID, now: clock().timeIntervalSince1970, quiet: true, faceID: needsFaceID),
+             category: .finished, collapse: Self.readyCollapse, wanted: \.finished, level: "passive", timeSensitive: false, expiresIn: 3600,
+             sound: false, only: { showing.contains($0.id) })
+    }
 
     /// Ready's one notification per Mac, updated in place. Active; without a sound soon after one that had it. A phone
     /// that can't show a grouped Ready gets each turn as its own FINISHED push instead, once.
     private func ready(_ turns: [FinishedSession], quiet: Bool) {
         guard !turns.isEmpty else { return }
         let now = clock().timeIntervalSince1970
-        let payload = RemotePushPayload.ready(turns, mac: RemoteController.macID, now: now, quiet: quiet)
-        send(payload, category: .finished, collapse: Self.readyCollapse, wanted: \.finished,
-             level: "active", timeSensitive: false, expiresIn: 3600, sound: !quiet, only: Self.groupsReady)
+        let payload = RemotePushPayload.ready(turns, mac: RemoteController.macID, now: now, quiet: quiet, faceID: needsFaceID)
+        dismissals.sent(Self.readyCollapse, to: send(payload, category: .finished, collapse: Self.readyCollapse, wanted: \.finished,
+                                                     level: "active", timeSensitive: false, expiresIn: 3600, sound: !quiet, only: Self.groupsReady))
         var sounded = quiet
         for turn in turns.reversed() where !perTurnSent.contains(turn.turnID) {
             perTurnSent.insert(turn.turnID)
-            send(RemotePushPayload.finished(turn, mac: RemoteController.macID, now: now, quiet: sounded), category: .finished,
-                 collapse: Self.collapse(turn.turnID), wanted: \.finished, level: "active", timeSensitive: false, expiresIn: 3600,
-                 sound: !sounded, only: { !Self.groupsReady($0) })
+            let collapse = Self.collapse(turn.turnID)
+            dismissals.sent(collapse, to: send(RemotePushPayload.finished(turn, mac: RemoteController.macID, now: now, quiet: sounded,
+                                                                          faceID: needsFaceID(turn.sessionID)),
+                                               category: .finished, collapse: collapse, wanted: \.finished, level: "active", timeSensitive: false,
+                                               expiresIn: 3600, sound: !sounded, only: { !Self.groupsReady($0) }))
             sounded = true
         }
         perTurnSent.formIntersection(turns.map(\.turnID))
+    }
+
+    private func needsFaceID(_ session: SessionKey) -> Bool {
+        guard let store = controller?.store, let mode = SessionCommands(store: store).permissionMode(session) else { return false }
+        return ConfirmPolicy.session(mode: mode) == .biometric
     }
 
     /// The turns already pushed one by one to phones without grouped Ready.
@@ -346,10 +366,14 @@ final class RemotePush {
     /// `answeredBy`, which already took its own away.
     func dismiss(_ request: RequestID, answeredBy: String? = nil) {
         resolve(request)
-        let devices = dismissals.settled(Self.collapse(request), answeredBy: answeredBy)
+        clear(Self.collapse(request), answeredBy: answeredBy)
+    }
+
+    private func clear(_ collapse: String, answeredBy: String? = nil) {
+        let devices = dismissals.settled(collapse, answeredBy: answeredBy)
         guard !devices.isEmpty, let relay else { return }
         for batch in Self.batches(devices) {
-            let body = RelayClient.Send(devices: batch, kind: "dismiss", collapseId: Self.collapse(request), priority: 5)
+            let body = RelayClient.Send(devices: batch, kind: "dismiss", collapseId: collapse, priority: 5)
             Task { await deliver(relay, body, doing: "clear a notification") }
         }
     }

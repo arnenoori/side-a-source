@@ -34,8 +34,8 @@ extension AccountStore {
         }
         for (session, stall) in stalls {
             switch stall.error {
-            // Cut off by sleep or the network: worth another try a minute on.
-            case "server_error": if now - stall.at >= StoppedSessions.retry, now - stall.at < StoppedSessions.interrupted { lifted[session] = stall.at }
+            // Cut off by sleep or the network: worth another try a minute on, once there is a network to try on.
+            case "server_error": if Online.shared.value, now - stall.at >= StoppedSessions.retry, now - stall.at < StoppedSessions.interrupted { lifted[session] = stall.at }
             // A 429 that names no limit is the pool's, this Mac's or the one it joined, with every account out.
             default: if poolAnswers(now: now) { lifted[session] = stall.at }
             }
@@ -57,7 +57,7 @@ extension AccountStore {
         let left = HelperRefusals(root: root).take()
         if !left.isEmpty { stopped { for (session, refusal) in left { $0.refuse(session, refusal.provider, at: refusal.at) } } }
         let lifted = liftedSessions(now: now)
-        guard !stoppedSessions.isEmpty || !lifted.isEmpty else { return }
+        guard !stoppedSessions.isEmpty || !lifted.isEmpty || stoppedSessions.counting else { return }
         await continueDue(now: now, lifted: lifted)
     }
 

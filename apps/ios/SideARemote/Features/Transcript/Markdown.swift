@@ -4,16 +4,19 @@ import SwiftUI
 /// Assistant prose: full width, no container (v0). Settled blocks take a native partial selection
 /// (`SelectableText`); only the block still fading in while a reply streams is plain `Text`.
 struct MarkdownView: View {
-    let blocks: [MarkdownBlock]
+    let markdown: String
     var sourceID: String = "md"
     /// While a reply streams: the newest words of the last block, still fading in.
     var fading: [FadingWords] = []
+    @Environment(\.openFile) private var openFile
 
     init(_ markdown: String, sourceID: String = "md", fading: [FadingWords] = []) {
-        blocks = MarkdownParser.blocks(markdown)
+        self.markdown = markdown
         self.sourceID = sourceID
         self.fading = fading
     }
+
+    private var blocks: [MarkdownBlock] { MarkdownParser.blocks(markdown, files: openFile != nil) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
@@ -89,6 +92,7 @@ struct MarkdownView: View {
 struct MarkdownTable: View {
     let header: [AttributedString]
     let rows: [[AttributedString]]
+    @Environment(\.openFile) private var openFile
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -105,6 +109,12 @@ struct MarkdownTable: View {
             }
             .padding(.vertical, Space.xxs)
         }
+        // Text opens links through openURL; a file's stops here, as SelectableText's does.
+        .environment(\.openURL, OpenURLAction { url in
+            guard let path = FileLink.path(url) else { return .systemAction }
+            openFile?.open(path)
+            return .handled
+        })
     }
 }
 

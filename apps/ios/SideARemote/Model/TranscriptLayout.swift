@@ -100,8 +100,10 @@ enum TranscriptLayout {
     static let flatRun = 3
     /// Turns further apart than this get a date separator.
     static let separatorGap: TimeInterval = 30 * 60
-    /// Files the transcript shows as a chip rather than a diff.
-    static let documentExtensions: Set<String> = ["md", "pdf", "csv", "txt", "png", "jpg", "json", "html"]
+    /// Files the transcript shows as a chip rather than a diff, as does any write that has no diff.
+    static let documentExtensions: Set<String> = ["md", "markdown", "pdf", "csv", "tsv", "txt", "rtf", "png", "jpg", "jpeg", "gif", "heic", "webp",
+                                                  "svg", "json", "html", "htm", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "key", "pages",
+                                                  "numbers", "ipynb", "log"]
 
     static func items(messages: [TranscriptMessage], earlier: Int, answered: [TranscriptStore.AnsweredRequest] = [],
                       open: [RemoteRequest] = [], working: Bool = false, outgoing: [TranscriptStore.Outgoing] = [],
@@ -229,7 +231,7 @@ enum TranscriptLayout {
 
     private static func standalone(_ tool: TranscriptTool) -> [TranscriptItem]? {
         if tool.subagent != nil { return [.subagent(tool)] }
-        if case .write(let path, let content) = tool.action, documentExtensions.contains((path as NSString).pathExtension.lowercased()) {
+        if case .write(let path, let content) = tool.action, tool.diffs.isEmpty || documentExtensions.contains((path as NSString).pathExtension.lowercased()) {
             return [.file(tool, path: path, bytes: content.utf8.count)]
         }
         if !tool.diffs.isEmpty { return tool.diffs.map { .diff(tool, $0) } }

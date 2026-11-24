@@ -240,6 +240,7 @@ private final class Clock: @unchecked Sendable {
     await b.start()
     try await until("phone needs update") { await b.state.connection == .needsUpdate(mac: false) }
     let asked = new.requests.count
+    // swiftlint:disable:next sleep_literal_in_tests -- proving a phone that needs an update asks no more
     try await Task.sleep(for: .milliseconds(100))
     #expect(new.requests.count == asked)
 }
@@ -420,6 +421,7 @@ private final class Clock: @unchecked Sendable {
     first.serverClose(1001, ServerEvent.byeSleep)
     try await until("asleep") { await sync.state.connection.cause == .macAsleep }
     // Rounds of refusals: enough of them for the relay's own offer, which doesn't replace the sleep.
+    // swiftlint:disable:next sleep_literal_in_tests -- proving rounds of refusals leave the sleep cause alone: the window must hold several of them
     try await Task.sleep(for: .milliseconds(400))
     #expect(await sync.state.connection.cause == .macAsleep)
     mac.relayRefuses(false)

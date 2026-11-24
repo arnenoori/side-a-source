@@ -59,16 +59,34 @@ public struct TunnelControl: Codable, Sendable, Equatable {
         public init(id: String, secretHash: String) { self.id = id; self.secretHash = secretHash }
     }
 
-    /// `devices`, `pairing` (Mac → relay); `gone` (relay → Mac); `mac` (relay → phone).
+    /// `devices`, `pairing`, `watch`, `goodbye` (Mac → relay); `gone` (relay → Mac); `mac` (relay → phone).
     public let type: String
     public var devices: [Device]?
     public var ticketHash: String?
     public var expiresAt: Double?
     public var slot: Int?
     public var online: Bool?
+    /// `goodbye`: `quit`, `off` or `sleep`. A Mac that leaves without one is gone quiet to the relay after ten minutes.
+    public var reason: String?
 
     public init(type: String, devices: [Device]? = nil, ticketHash: String? = nil, expiresAt: Double? = nil, slot: Int? = nil, online: Bool? = nil) {
         self.type = type; self.devices = devices; self.ticketHash = ticketHash; self.expiresAt = expiresAt; self.slot = slot; self.online = online
+    }
+
+    /// First on every connection: this Mac can be watched, so the relay may tell the phones if it goes quiet.
+    public static let watch = TunnelControl(type: "watch")
+
+    /// Why the Mac is leaving on purpose: the relay doesn't call a Mac that quit, or turned Remote off, quiet at all, and
+    /// gives one that is going to sleep a day.
+    public static func goodbye(_ reason: String) -> TunnelControl {
+        var control = TunnelControl(type: "goodbye")
+        control.reason = reason
+        return control
+    }
+
+    /// What `goodbye` may say.
+    public enum Goodbye {
+        public static let quit = "quit", off = "off", sleep = "sleep"
     }
 
     public var text: String {

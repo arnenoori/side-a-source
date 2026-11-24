@@ -193,7 +193,7 @@ extension NotificationPrefs {
     /// `<key>.<macID>`; until one is set, it reads the switch from when there was one for every Mac.
     enum Key: String, CaseIterable {
         case requests = "notify.requests", questions = "notify.questions", plans = "notify.plans", finished = "notify.finished"
-        case limits = "notify.limits", health = "notify.health", rotation = "notify.rotation"
+        case limits = "notify.limits", health = "notify.health", rotation = "notify.rotation", macQuiet = "notify.macQuiet"
         case timeSensitive = "notify.timeSensitive", quietWhileWatching = "notify.quietWhileWatching"
         case liveActivity = "activity.enabled"
 
@@ -208,7 +208,8 @@ extension NotificationPrefs {
         func flag(_ key: Key) -> Bool { key.value(mac: macID, in: defaults) }
         return NotificationPrefs(requests: flag(.requests), questions: flag(.questions), plans: flag(.plans), finished: flag(.finished),
                                  limits: flag(.limits), timeSensitiveRequests: flag(.timeSensitive), liveActivity: flag(.liveActivity),
-                                 suppressWhileWatching: flag(.quietWhileWatching), health: flag(.health), rotation: flag(.rotation))
+                                 suppressWhileWatching: flag(.quietWhileWatching), health: flag(.health), macQuiet: flag(.macQuiet),
+                                 rotation: flag(.rotation))
     }
 
     /// A forgotten Mac's switches go with it.

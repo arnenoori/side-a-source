@@ -103,7 +103,7 @@ final class RecoveryTests: XCTestCase {
     func testARetrySentFreshKeepsWhatTheReplyCarried() async throws {
         let outbox = try outbox()
         let link = LiveLink(mac: PairedMac(endpoint: endpoint, deviceID: "d", deviceName: "iPhone"), outbox: outbox, transport: Silent())
-        link.flights.reply("hello", turn: "t1", to: "s1", mode: .note, submit: .steer, resending: ["up1", "up2"])
+        link.flights.reply("hello", turn: "t1", to: "s1", mode: .note, submit: .steer, photos: .taken(["up1", "up2"]))
         try await wait(outbox, for: 1)
         let items = await outbox.items(for: "recovery")
         let item = try XCTUnwrap(items.first).id

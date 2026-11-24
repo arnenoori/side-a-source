@@ -45,6 +45,8 @@ final class SessionActions {
     private(set) var successes = 0
     /// What went wrong, in the Mac's words.
     var failure: String? { didSet { if failure != nil { failures += 1 } } }
+    /// The alert's title: the action that failed, when it has a word.
+    private(set) var failureTitle = "Couldn't Do That"
     /// Bumped with each failure, which the user feels as .error before reading the alert.
     private(set) var failures = 0
     /// Sessions with a call in flight, so their buttons wait.
@@ -72,13 +74,21 @@ final class SessionActions {
         }
     }
 
-    /// Runs a call for a session, marks it busy meanwhile, and reports a failure.
-    func run(_ key: String, _ work: @escaping (MacTools) async throws -> Void) {
+    /// Runs a call for a session, marks it busy meanwhile, and reports a failure. `working` shows a spinner and that
+    /// word in the pill until the call's own result replaces it; `failed` titles the alert a failure raises.
+    func run(_ key: String, working: String? = nil, failed: String? = nil, _ work: @escaping (MacTools) async throws -> Void) {
         guard let tools, !busy.contains(key) else { return }
         busy.insert(key)
+        let pill = working.map { Pill.working($0) }
         Task {
-            defer { busy.remove(key) }
-            do { try await work(tools) } catch ToolError.cancelled {} catch { failure = MacTools.message(error) }
+            defer {
+                busy.remove(key)
+                if let pill { Pill.end(pill) }
+            }
+            do { try await work(tools) } catch ToolError.cancelled {} catch {
+                failureTitle = failed ?? "Couldn't Do That"
+                failure = MacTools.message(error)
+            }
         }
     }
 
@@ -113,6 +123,25 @@ final class SessionActions {
         }.count
     }
 
+    /// Quitting loses nothing when the session is idle, so it just quits. One that is working, waiting on a request or
+    /// holding background tasks or a server asks once first.
+    static func quitAsks(_ session: RemoteSession) -> Bool {
+        stopAsks(session) || !(session.ports ?? []).isEmpty
+    }
+
+    /// Stopping a server asks only when the session itself is mid-work.
+    static func stopAsks(_ session: RemoteSession) -> Bool {
+        [.working, .needsYou].contains(SessionPhase(session)) || (session.backgroundTasks ?? 0) > 0
+    }
+
+    func requestQuit(_ session: RemoteSession) {
+        if Self.quitAsks(session) { quitting = session } else { quit(session) }
+    }
+
+    func requestStop(_ port: Port) {
+        if model?.sessions.session(port.session).map(Self.stopAsks) ?? true { stopping = port } else { stopServer(port) }
+    }
+
     func quit(_ session: RemoteSession) {
         run(session.id) { tools in
             try await tools.quit(session.id)
@@ -129,25 +158,60 @@ final class SessionActions {
         }
     }
 
-    func setPinned(_ session: RemoteSession, _ pinned: Bool) {
+    func setPinned(_ session: RemoteSession, _ pinned: Bool, undoable: Bool = true) {
         guard let conversation = session.conversationID else { return }
+        let model = model
         run("pin-\(session.id)") { tools in
-            // From a context menu, and the row moves into Pinned: no haptic or pill of its own.
             _ = try await tools.change(conversation, HistoryChange(pinned: pinned))
+            guard undoable, let model else { return }
+            Pill.undoable(pinned ? "Pinned" : "Unpinned") { self.on(model).setPinned(session, !pinned, undoable: false) }
+        }
+    }
+
+    /// Snoozes it, or wakes it with a nil `choice`; Undo puts back the snooze it had, or none.
+    func snooze(_ session: RemoteSession, _ choice: SessionSnooze.Choice?, until: Date? = nil, undoable: Bool = true) {
+        guard let model, let tools else { return }
+        let before = tools.snooze(of: session)
+        run("snooze-\(session.id)", failed: choice == nil ? "Couldn't Wake It" : "Couldn't Snooze It") { tools in
+            try await tools.snooze(session, choice, until: until ?? choice?.until())
+            guard undoable else { return }
+            // An older Mac answers a snooze it drops at once with none; there is nothing to undo then.
+            let snoozed = tools.snooze(of: session)
+            if choice != nil, snoozed == nil { return }
+            let text = snoozed.map { "Snoozed · \($0.untilText)" } ?? "Woken"
+            Pill.undoable(text) {
+                self.on(model).snooze(session, before?.choice, until: before?.until.map { Date(timeIntervalSince1970: $0) }, undoable: false)
+            }
+        }
+    }
+
+    /// Out of History, as there; the Mac unpins what it archives, so Undo pins it again when it was pinned.
+    func archive(_ session: RemoteSession) {
+        guard let conversation = session.conversationID, let model, let tools else { return }
+        let wasPinned = tools.isPinned(session)
+        run("archive-\(session.id)", failed: "Couldn't Archive It") { tools in
+            _ = try await tools.change(conversation, HistoryChange(archived: true))
+            Pill.undoable("Archived") {
+                self.on(model).run("archive-\(session.id)") { tools in
+                    _ = try await tools.change(conversation, wasPinned ? HistoryChange(pinned: true) : HistoryChange(archived: false))
+                }
+            }
         }
     }
 
     func compact(_ session: RemoteSession) {
-        run("compact-\(session.id)") { tools in
+        run("compact-\(session.id)", working: "Compacting", failed: "Couldn't Compact") { tools in
             try await tools.compact(session.id)
             self.successes += 1
+            Pill.show("Compacted")
         }
     }
 
     func review(_ session: RemoteSession) {
-        run("review-\(session.id)") { tools in
+        run("review-\(session.id)", working: "Starting review", failed: "Couldn't Start the Review") { tools in
             try await tools.review(session.id)
             self.successes += 1
+            Pill.show("Review started")
         }
     }
 
@@ -178,9 +242,10 @@ final class SessionActions {
 
     /// Fork a live session: pushed like any new hosted one, with "Forked from …" under its title.
     func fork(_ session: RemoteSession) {
-        run("fork-\(session.id)") { tools in
+        run("fork-\(session.id)", working: "Forking", failed: "Couldn't Fork") { tools in
             let hosted = try await tools.fork(session)
             self.successes += 1
+            Pill.show("Forked")
             self.started = hosted
         }
     }
@@ -254,31 +319,23 @@ private struct SessionActionsHost: ViewModifier {
             .confirmationDialog("Quit \(actions.quitting?.title ?? "Session")?", isPresented: present($actions.quitting),
                                 titleVisibility: .visible, presenting: actions.quitting) { session in
                 Button("Quit Session", role: .destructive) { actions.quit(session) }
-            } message: { _ in
-                Text("You can resume it later.")
             }
             .confirmationDialog("Quit ^[\(actions.quittingIdle ?? 0) idle session](inflect: true)?", isPresented: present($actions.quittingIdle),
                                 titleVisibility: .visible) {
                 Button("Quit Idle Sessions", role: .destructive) { actions.quitIdle() }
-            } message: {
-                Text("Each has sat idle \(SessionActions.idleMinutes) minutes or more. You can resume any of them later.")
             }
             .confirmationDialog("Stop the server on :\(String(actions.stopping?.port ?? 0))?", isPresented: present($actions.stopping),
                                 titleVisibility: .visible, presenting: actions.stopping) { port in
                 Button("Stop Server", role: .destructive) { actions.stopServer(port) }
-            } message: { _ in
-                Text("The session keeps running.")
             }
             .sheet(item: $actions.replying) { session in
-                ReplySheet(sessionID: session.id)
+                ComposerSheet(sessionID: session.id)
                     .environment(model)
             }
             .alert("Rename", isPresented: present($actions.renaming), presenting: actions.renaming) { session in
                 TextField("Title", text: $actions.newTitle)
                 Button("Rename") { actions.rename(session, to: actions.newTitle) }
                 Button("Cancel", role: .cancel) {}
-            } message: { _ in
-                Text("Side A keeps the name; Claude and Codex keep theirs.")
             }
             .sheet(item: $actions.previewing) { port in
                 PreviewSheet(port: port)
@@ -297,7 +354,7 @@ private struct SessionActionsHost: ViewModifier {
                 TerminalScreen(name: terminal.model.name, model: terminal.model)
                     .environment(model)
             }
-            .alert("Couldn't Do That", isPresented: Binding { actions.failure != nil } set: { if !$0 { actions.failure = nil } }) {
+            .alert(actions.failureTitle, isPresented: Binding { actions.failure != nil } set: { if !$0 { actions.failure = nil } }) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(actions.failure ?? "")

@@ -9,6 +9,8 @@ import UIKit
 /// pinch and double-tap zoom in a real `UIScrollView`, and drag down to send it back.
 struct ImageViewer: View {
     let images: [ImageRef]
+    /// False inside a page that has its own zoom, such as `FilePage`.
+    let zooms: Bool
     @State private var current: String?
     @State private var chrome = true
     @State private var copies = 0
@@ -16,8 +18,9 @@ struct ImageViewer: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(images: [ImageRef], start: String) {
+    init(images: [ImageRef], start: String, zooms: Bool = true) {
         self.images = images
+        self.zooms = zooms
         current = start
     }
 
@@ -43,7 +46,7 @@ struct ImageViewer: View {
         .scrollIndicators(.hidden)
         .background(Color.black)
         .ignoresSafeArea()
-        .zoomDestination("image-\(current ?? images[0].id)")
+        .zoomDestination(zooms ? "image-\(current ?? images[0].id)" : nil)
         .toolbarVisibility(chrome ? .visible : .hidden, for: .navigationBar, .bottomBar)
         .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
         .statusBarHidden(!chrome)

@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS images(id TEXT NOT NULL, session TEXT NOT NULL, agent
     PRIMARY KEY(path, line_offset, block)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS images_id ON images(id);
 CREATE INDEX IF NOT EXISTS images_session ON images(session, ts);
+CREATE TABLE IF NOT EXISTS handoffs(id TEXT PRIMARY KEY, from_conversation TEXT NOT NULL, to_conversation TEXT NOT NULL,
+    from_agent TEXT, to_agent TEXT, from_model TEXT, to_model TEXT, at REAL, prompt_path TEXT, mode TEXT);
+CREATE INDEX IF NOT EXISTS handoffs_to ON handoffs(to_conversation);
 """
 # Reading an unindexed FTS column reads the whole row, message text included, so `rows` maps each
 # message to its session; matching and deleting never touch the text. A version 3 index gets it at the
@@ -962,6 +965,47 @@ def sweep_thumbnails(root, db, cap=200 << 20):
     stamp.touch()
 
 
+HANDOFF_COLUMNS = ("id", "from_conversation", "to_conversation", "from_agent", "to_agent", "from_model", "to_model", "at",
+                   "prompt_path", "mode")
+HANDOFF_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+CONVERSATION_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+def with_handoffs(db, listed):
+    """Sets `handed_from` on each conversation another agent handed off to, so History nests it as it does a fork."""
+    ids = [item["id"] for item in listed if item.get("id")]
+    if not ids:
+        return listed
+    found = dict(db.execute(f"SELECT to_conversation, from_conversation FROM handoffs WHERE to_conversation IN ({','.join('?' * len(ids))}) "
+                            "ORDER BY at", ids).fetchall())
+    for item in listed:
+        if item.get("id") in found:
+            item["handed_from"] = found[item["id"]]
+    return listed
+
+
+def record_handoff(root, record):
+    """Keeps a handoff's link past a restart of Side A. The prompt stays in its own file, never in the index."""
+    if not isinstance(record, dict) or not HANDOFF_ID.fullmatch(str(record.get("id") or "")):
+        raise ValueError("A handoff needs its id")
+    for key in ("from_conversation", "to_conversation"):
+        if not CONVERSATION_ID.fullmatch(str(record.get(key) or "")):
+            raise ValueError(f"A handoff needs {key}")
+    db = connect(root)
+    with db:
+        db.execute(f"INSERT OR REPLACE INTO handoffs({','.join(HANDOFF_COLUMNS)}) VALUES ({','.join('?' * len(HANDOFF_COLUMNS))})",
+                   [record.get(key) for key in HANDOFF_COLUMNS])
+    db.close()
+    return {"recorded": record["id"]}
+
+
+def handoffs(root, limit=500):
+    db = connect(root)
+    rows = db.execute(f"SELECT {','.join(HANDOFF_COLUMNS)} FROM handoffs ORDER BY at DESC LIMIT ?", (limit,)).fetchall()
+    db.close()
+    return {"handoffs": [dict(zip(HANDOFF_COLUMNS, row)) for row in rows]}
+
+
 SESSION_COLUMNS = ("id", "agent", "cwd", "branch", "title", "first_prompt", "model", "first_ts", "last_ts", "cost",
                    "tokens", "prompts", "messages", "forked_from", "fork_point", "pr_url", "automated")
 
@@ -993,8 +1037,9 @@ def recent(root, agent=None, project=None, days=None, automated=False, limit=300
                                               "GROUP BY cwd ORDER BY max(last_ts) DESC LIMIT 80")]
     pins = {row[0]: session_dict(row) for row in db.execute(
         f"SELECT {','.join(SESSION_COLUMNS)} FROM sessions WHERE id IN ({','.join('?' * len(pinned))})", list(pinned))} if pinned else {}
+    listed = with_handoffs(db, [session_dict(row) for row in rows] + list(pins.values()))
     db.close()
-    return {"sessions": [session_dict(row) for row in rows], "projects": projects, "pinned": [pins[i] for i in pinned if i in pins]}
+    return {"sessions": listed[:len(rows)], "projects": projects, "pinned": [pins[i] for i in pinned if i in pins]}
 
 
 def fts_query(text):
@@ -1070,6 +1115,7 @@ def search(root, text, agent=None, project=None, days=None, automated=False, lim
     marks = ",".join("?" * len(grouped))
     meta = {row[0]: session_dict(row) for row in db.execute(
         f"SELECT {','.join(SESSION_COLUMNS)} FROM sessions WHERE id IN ({marks})", list(grouped))}
+    with_handoffs(db, list(meta.values()))
     db.close()
     now = time.time()
     results = []
@@ -1867,7 +1913,7 @@ def show(root, session_id, limit=4000, around=None):
     messages = merged([message for message in (viewer_row(row[0]) for row in db.execute(
         "SELECT data FROM views WHERE session=? AND seq>=? AND seq<? ORDER BY seq", (session_id, start, end))) if message["role"] != "thinking"])
     meta = db.execute(f"SELECT {','.join(SESSION_COLUMNS)} FROM sessions WHERE id=?", (session_id,)).fetchone()
-    session = session_dict(meta) if meta else {"id": session_id, "agent": agent}
+    session = with_handoffs(db, [session_dict(meta) if meta else {"id": session_id, "agent": agent}])[0]
     forks = [session_dict(row) for row in db.execute(
         f"SELECT {','.join(SESSION_COLUMNS)} FROM sessions WHERE forked_from=? ORDER BY first_ts", (session_id,))]
     parent = None
@@ -1911,12 +1957,18 @@ def parse_cursor(cursor):
         raise ValueError("Bad cursor") from None
 
 
-def page(root, session_id, limit=None, before=None, after=None, around=None, agent_id=None):
+HANDOFF_TURNS = 2000
+
+
+def page(root, session_id, limit=None, before=None, after=None, around=None, agent_id=None, turns=False):
     """A page of one conversation as Remote's bridge DTO. Cursors are `<generation>.<seq>.<rev>`: `after`
     returns the rows past it plus, in `replaced`, every row at or before it rewritten since. A cursor from
-    an older generation gets the newest page with `reset`."""
+    an older generation gets the newest page with `reset`. `turns` is for a handoff: only the user and assistant
+    rows, up to HANDOFF_TURNS of the newest, and always the conversation's first prompt."""
     if before and after:
         raise ValueError("Use one cursor")
+    if turns:
+        return handoff_turns(root, session_id, min(max(limit or HANDOFF_TURNS, 1), HANDOFF_TURNS))
     limit = min(max(limit or 50, 1), 200)
     cursor = parse_cursor(before or after) if before or after else None
     key, path, agent, sub = view_target(root, session_id, agent_id)
@@ -1950,6 +2002,24 @@ def page(root, session_id, limit=None, before=None, after=None, around=None, age
     return {"session_id": session_id, "agent_id": agent_id, "generation": generation, "messages": messages, "replaced": replaced,
             "before": f"{generation}.{start}.{rev}" if start > 0 else None, "after": f"{generation}.{end - 1}.{rev}",
             "has_more_after": end < count, "count": count, "inherited_before": inherited, "reset": reset}
+
+
+def handoff_turns(root, session_id, limit):
+    key, path, agent, sub = view_target(root, session_id, None)
+    db = connect(root)
+    try:
+        count, _ = update_view(db, key, path, agent, sub, (session_id, None))
+        generation, rev = db.execute("SELECT generation, rev FROM view_state WHERE session=?", (key,)).fetchone()
+        rows = db.execute("SELECT seq, data FROM views WHERE session=? AND role IN ('user', 'assistant') ORDER BY seq DESC LIMIT ?",
+                          (key, limit)).fetchall()[::-1]
+        first = db.execute("SELECT seq, data FROM views WHERE session=? AND role='user' ORDER BY seq LIMIT 1", (key,)).fetchone()
+    finally:
+        db.close()
+    if first and (not rows or rows[0][0] > first[0]):
+        rows.insert(0, first)
+    return {"session_id": session_id, "agent_id": None, "generation": generation, "messages": [remote_row(seq, data) for seq, data in rows],
+            "replaced": [], "before": None, "after": f"{generation}.{count - 1}.{rev}", "has_more_after": False, "count": count,
+            "inherited_before": 0, "reset": False}
 
 
 def line_at(path, src, token):
@@ -2087,11 +2157,90 @@ def prompt_uuid(entry):
 # A transcript's tail, read once per size and modification time: live() runs on every change to any transcript,
 # and most running sessions' transcripts have not moved since the last one.
 TAILS = {}
+TODO_STATUS = {"in_progress": "inProgress"}
 
 
-def tail_facts(lines):
-    """What health() needs from a transcript's last lines, none of it depending on the time or the session's status."""
-    calls, failures, context, step, mode, turn, compacted = [], 0, None, None, None, None, None
+def todo_plan(todos):
+    """A TodoWrite list as the TurnPlan a Codex plan is; None for an empty one."""
+    steps = []
+    for todo in todos if isinstance(todos, list) else []:
+        if not isinstance(todo, dict) or not isinstance(todo.get("content"), str):
+            continue
+        status = todo.get("status") if isinstance(todo.get("status"), str) else "pending"
+        form = todo.get("activeForm") if isinstance(todo.get("activeForm"), str) else None
+        steps.append({"text": todo["content"], "status": TODO_STATUS.get(status, status), "activeForm": form})
+    return {"explanation": None, "steps": steps} if steps else None
+
+
+TASK_TOOLS = ("TaskCreate", "TaskUpdate", "TaskList", "TaskGet")
+TASK_MADE = re.compile(r"^Task #(\S+) created successfully")
+TASK_LINE = re.compile(r"^#(\S+) \[(\w+)\] (.*?)(?: \[blocked by [^\]]*\])?$")
+
+
+def task_item(task, old=None):
+    """One task of Claude Code's task list, in the shape of a todo; an old copy lends the activeForm a listing lacks."""
+    form = task.get("activeForm") if isinstance(task.get("activeForm"), str) else (old or {}).get("activeForm")
+    status = task.get("status") if isinstance(task.get("status"), str) else (old or {}).get("status") or "pending"
+    return {"content": task.get("subject") if isinstance(task.get("subject"), str) else (old or {}).get("content"), "status": status, "activeForm": form}
+
+
+def task_call(board, part):
+    """Notes a task tool's call until its result: a new task's id, and whether an update took, only show there."""
+    if part.get("name") in TASK_TOOLS and isinstance(part.get("id"), str) and isinstance(part.get("input"), dict):
+        if len(board["pending"]) >= 64:
+            board["pending"].clear()
+        board["pending"][part["id"]] = (part["name"], part["input"])
+
+
+def task_result(board, part, entry):
+    """Applies a finished task tool call to the board of the session's tasks; True when the list changed. Claude Code
+    keeps the list on disk, so it outlives a compaction and a tail that starts after its first TaskCreate."""
+    call = board["pending"].pop(part.get("tool_use_id"), None)
+    if not call or part.get("is_error"):
+        return False
+    name, value = call
+    result = entry.get("toolUseResult") if isinstance(entry.get("toolUseResult"), dict) else {}
+    text = part_text(part.get("content"))
+    items = board["items"]
+    if name == "TaskCreate":
+        made = result.get("task") if isinstance(result.get("task"), dict) else {}
+        found = TASK_MADE.match(text)
+        key = str(made["id"]) if made.get("id") is not None else found.group(1) if found else None
+        if key is None:
+            return False
+        items[key] = task_item({**value, **{k: v for k, v in made.items() if k == "subject"}})
+        items[key]["status"] = "pending"
+    elif name == "TaskUpdate":
+        key = str(value.get("taskId"))
+        if result.get("success") is False or (not result and text.endswith("not found")):
+            return False
+        if value.get("status") == "deleted":
+            return items.pop(key, None) is not None
+        if key not in items:
+            return False
+        items[key] = task_item({k: v for k, v in value.items() if k != "status" or v in ("pending", "in_progress", "completed")}, items[key])
+    elif name == "TaskList":
+        listed = result.get("tasks") if isinstance(result.get("tasks"), list) else None
+        if listed is None:
+            rows = [TASK_LINE.match(line) for line in text.splitlines()]
+            listed = [{"id": row.group(1), "status": row.group(2), "subject": row.group(3)} for row in rows if row]
+        board["items"] = {str(task["id"]): task_item(task, items.get(str(task["id"]))) for task in listed
+                          if isinstance(task, dict) and task.get("id") is not None}
+    elif name == "TaskGet":
+        task = result.get("task") if isinstance(result.get("task"), dict) else None
+        if not task or task.get("id") is None:
+            return False
+        items[str(task["id"])] = task_item(task, items.get(str(task["id"])))
+    return True
+
+
+def tail_facts(lines, plan=None, board=None):
+    """What health() needs from a transcript's last lines, none of it depending on the time or the session's status.
+    plan is the todo list from before these lines: a TodoWrite carries the whole list, so a tail without one keeps it.
+    board is the session's TaskCreate/TaskUpdate tasks from before them, which a tail alone can't rebuild; the plan is
+    whichever of the two lists was written last."""
+    board = {"items": dict((board or {}).get("items", {})), "pending": dict((board or {}).get("pending", {}))}
+    calls, failures, context, step, mode, turn, compacted, error = [], 0, None, None, None, None, None, None
     for line in lines:
         try:
             entry = json.loads(line)
@@ -2102,7 +2251,12 @@ def tail_facts(lines):
         # Claude Code writes a permission-mode record at each change and stamps every prompt with the mode.
         if entry.get("type") in ("permission-mode", "user") and isinstance(entry.get("permissionMode"), str):
             mode = entry["permissionMode"]
-        turn = prompt_uuid(entry) or turn
+        prompt = prompt_uuid(entry)
+        turn = prompt or turn
+        # A finished list stays up through the turn that finished it, as a Codex plan does, and goes at the next prompt.
+        if prompt and plan and all(item["status"] == "completed" for item in plan["steps"]):
+            plan = None
+            board["items"] = {key: item for key, item in board["items"].items() if item["status"] != "completed"}
         # When the conversation was last compacted, so a typed /compact can be seen to have happened.
         if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
             compacted = epoch(entry.get("timestamp")) or compacted
@@ -2112,6 +2266,12 @@ def tail_facts(lines):
         content = message.get("content")
         parts = [part for part in content if isinstance(part, dict)] if isinstance(content, list) else []
         if entry["type"] == "assistant":
+            # Claude Code writes an API error as a reply of its own; the Mac classifies its words. A real reply after it
+            # means Claude got past it.
+            if entry.get("isApiErrorMessage"):
+                error = {"text": part_text(content)[:ERROR_TEXT], "code": entry.get("error"), "at": epoch(entry.get("timestamp"))}
+            elif any(part.get("type") == "tool_use" or (part.get("type") == "text" and part.get("text", "").strip()) for part in parts):
+                error = None
             usage = message.get("usage") or {}
             if usage.get("input_tokens") is not None:
                 context = sum(int(usage.get(key) or 0) for key in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
@@ -2119,17 +2279,37 @@ def tail_facts(lines):
                 if part.get("type") == "tool_use":
                     calls.append(json.dumps([part.get("name"), part.get("input")], sort_keys=True))
                     step = activity(part.get("name", "tool"), part.get("input"))
+                    if part.get("name") == "TodoWrite" and isinstance((part.get("input") or {}).get("todos"), list):
+                        plan = todo_plan(part["input"]["todos"])
+                    task_call(board, part)
                 elif part.get("type") == "text" and part.get("text", "").strip():
                     step = "Writing a reply"
         else:
             for part in parts:
+                # A failed tool is the work's failure, not the agent's: its output may say "overloaded" or EPERM about
+                # anything, and Claude reads it and goes on.
                 if part.get("type") == "tool_result":
+                    if task_result(board, part, entry):
+                        plan = todo_plan(list(board["items"].values()))
                     failures = failures + 1 if part.get("is_error") else 0
+                    if not part.get("is_error"):
+                        error = None
                 elif part.get("type") == "text" and prompt_text(part.get("text", "")):
-                    step, failures = "Reading your message", 0
+                    step, failures, error = "Reading your message", 0, None
             if isinstance(content, str) and prompt_text(content):
-                step, failures = "Reading your message", 0
-    return calls[-6:], failures, context, step, mode, turn, compacted
+                step, failures, error = "Reading your message", 0, None
+    return calls[-6:], failures, context, step, mode, turn, compacted, error, plan, board
+
+
+# The Mac needs only enough of an error to tell which kind it is.
+ERROR_TEXT = 600
+
+
+def part_text(content):
+    """A message's or tool result's text, whether a string or a list of parts."""
+    if isinstance(content, str):
+        return content
+    return " ".join(part.get("text", "") for part in content or [] if isinstance(part, dict) and isinstance(part.get("text"), str))
 
 
 def health(path, status):
@@ -2138,16 +2318,20 @@ def health(path, status):
     try:
         stamp = os.stat(path)
         key = (stamp.st_size, stamp.st_mtime_ns)
-        if TAILS.get(str(path), (None,))[0] != key:
+        known = TAILS.get(str(path))
+        if not known or known[0] != key:
             with open(path, "rb") as stream:
                 stream.seek(max(0, stamp.st_size - TAIL))
                 lines = stream.read().splitlines()
+            # The last read's list carries over while the transcript only grew, so a TodoWrite or task older than the tail
+            # still stands; past a gap wider than the tail, a newer list shows from the next TodoWrite.
+            plan, board = known[1][-2:] if known and known[0][0] <= stamp.st_size else (None, None)
             if len(TAILS) >= 512:
                 TAILS.clear()
-            TAILS[str(path)] = (key, tail_facts(lines))
+            TAILS[str(path)] = (key, tail_facts(lines, plan, board))
     except OSError:
         return {}
-    recent, failures, context, step, mode, turn, compacted = TAILS[str(path)][1]
+    recent, failures, context, step, mode, turn, compacted, error, plan, _ = TAILS[str(path)][1]
     quiet = time.time() - stamp.st_mtime
     repeats = max((recent.count(call) for call in recent), default=0)
     flag = None
@@ -2160,7 +2344,7 @@ def health(path, status):
     elif context and context >= BLOATED_AT:
         flag = {"kind": "bloated", "text": f"Context is {round(context / 1000)}k tokens"}
     return {"activity": step if status == "busy" else None, "context": context, "flag": flag, "mode": mode, "turnID": turn,
-            "compactedAt": compacted}
+            "compactedAt": compacted, "plan": plan, "lastError": error}
 
 
 def process_tree():
@@ -2411,10 +2595,12 @@ def codex_tail(path):
 
 def codex_status(entries, whole, mtime):
     """busy, idle, waiting or unknown from a rollout's tail, with since, the open question and the pending call."""
-    turn, since, outputs, calls, policy, model = None, None, set(), [], None, None
+    turn, since, outputs, calls, policy, model, prompt = None, None, set(), [], None, None, None
     for entry in entries:
         payload = entry.get("payload") or {}
         kind = payload.get("type")
+        if entry.get("type") == "event_msg" and kind == "user_message":
+            prompt = epoch(entry.get("timestamp")) or prompt  # a message typed, from any terminal or Side A
         if entry.get("type") == "turn_context":
             policy, model = payload.get("approval_policy", policy), payload.get("model") or model
         elif kind == "task_started":
@@ -2427,14 +2613,14 @@ def codex_status(entries, whole, mtime):
             outputs.add(payload.get("call_id"))
     if turn is None:
         # No turn event in reach: an empty rollout is idle, a long one we can't place is unknown, never idle.
-        return {"status": "idle" if whole else "unknown", "since": mtime, "waitingFor": None, "pending_call": None, "model": model}
+        return {"status": "idle" if whole else "unknown", "since": mtime, "waitingFor": None, "pending_call": None, "model": model, "prompt": prompt}
     status, waiting, pending = turn, None, None
     open_calls = [call for call in calls if call[0] not in outputs]
     if turn == "busy" and any(name.startswith("request_user_input") for _, name, _ in open_calls):
         status, waiting = "waiting", "question"
     elif turn == "busy" and open_calls and calls[-1][0] not in outputs and policy not in (None, "never"):
         pending = {"name": calls[-1][1], "since": calls[-1][2]}
-    return {"status": status, "since": since or mtime, "waitingFor": waiting, "pending_call": pending, "model": model}
+    return {"status": status, "since": since or mtime, "waitingFor": waiting, "pending_call": pending, "model": model, "prompt": prompt}
 
 
 def codex_health(entries, status, quiet):
@@ -2444,10 +2630,22 @@ def codex_health(entries, status, quiet):
 
 def codex_health_facts(entries):
     """The commands, failures, context and step in a rollout's tail; nothing here depends on the time."""
-    commands, exits, context, step = [], [], None, None
+    commands, exits, context, step, error = [], [], None, None, None
     for entry in entries:
         payload = entry.get("payload") or {}
         kind = payload.get("type")
+        # Codex records a turn's failure as an error event or on task_complete; a new prompt, a reply after it, or a turn
+        # that ended on a reply starts clean.
+        if kind == "error" and isinstance(payload.get("message"), str):
+            error = {"text": payload["message"][:ERROR_TEXT], "code": None, "at": epoch(entry.get("timestamp"))}
+        elif kind == "task_complete" and payload.get("error"):
+            failed = payload["error"]
+            text = failed.get("message") if isinstance(failed, dict) else str(failed)
+            error = {"text": str(text or "The turn failed")[:ERROR_TEXT], "code": None, "at": epoch(entry.get("timestamp"))}
+        elif kind == "user_message" or (kind == "task_complete" and payload.get("last_agent_message")) \
+                or (kind == "message" and payload.get("role") == "assistant") \
+                or (kind == "item_completed" and (payload.get("item") or {}).get("type") == "AgentMessage"):
+            error = None
         if kind == "token_count":
             usage = (payload.get("info") or {}).get("last_token_usage") or {}
             if usage:
@@ -2472,11 +2670,11 @@ def codex_health_facts(entries):
         if not code:
             break
         failures += 1
-    return commands[-6:], failures, context, step
+    return commands[-6:], failures, context, step, error
 
 
 def codex_flagged(facts, status, quiet):
-    recent, failures, context, step = facts
+    recent, failures, context, step, error = facts
     repeats = max((recent.count(command) for command in recent), default=0)
     flag = None
     if status == "busy" and quiet >= STUCK_AFTER:
@@ -2487,7 +2685,7 @@ def codex_flagged(facts, status, quiet):
         flag = {"kind": "failing", "text": f"{failures} failed steps in a row"}
     elif context and context >= BLOATED_AT:
         flag = {"kind": "bloated", "text": f"Context is {round(context / 1000)}k tokens"}
-    return {"activity": step if status == "busy" else None, "context": context, "flag": flag}
+    return {"activity": step if status == "busy" else None, "context": context, "flag": flag, "lastError": error}
 
 
 def tmux_panes(root):
@@ -2553,7 +2751,7 @@ def live_codex(root, memory, children, started, ports, parents, args, db):
                      "cwd": meta.get("cwd") or info["cwd"], "status": status["status"], "waitingFor": status["waitingFor"],
                      "since": status["since"], "kind": None, **resources(pid, memory, children, started, ports),
                      "started": started.get(pid), "model": status["model"] or (row[1] if row else None), "subagents": subagents,
-                     "pending_call": status["pending_call"], "path": main})
+                     "pending_call": status["pending_call"], "promptAt": status["prompt"], "path": main})
     return rows
 
 
@@ -2705,7 +2903,7 @@ def live_claude(root, db, memory, children, started, ports):
     for data, pid in running_claude():
         if data.get("cwd") == str(root):
             continue  # Side A's own window priming
-        row = db.execute("SELECT title, cost FROM sessions WHERE id=?", (data.get("sessionId"),)).fetchone()
+        row = db.execute("SELECT title, cost, pr_url FROM sessions WHERE id=?", (data.get("sessionId"),)).fetchone()
         status = data.get("status") or "idle"
         path = claude_transcript(data.get("sessionId"))
         found = health(path, status) if path else {}
@@ -2717,7 +2915,7 @@ def live_claude(root, db, memory, children, started, ports):
         with contextlib.suppress(OSError):
             found.update(claude_settings(root, data.get("sessionId"), found.get("mode"), os.path.getmtime(path) if path else 0))
         sessions.append({"agent": "claude", "cost": row[1] if row else None, **found, "pid": pid, "id": data.get("sessionId"), "name": data.get("name"),
-                         "title": row[0] if row else None, "cwd": data.get("cwd"), "status": status,
+                         "title": row[0] if row else None, "prUrl": row[2] if row else None, "cwd": data.get("cwd"), "status": status,
                          "waitingFor": data.get("waitingFor"), "since": epoch(data.get("statusUpdatedAt") or 0),
                          "kind": data.get("kind"), **resources(pid, memory, children, started, ports),
                          "started": started.get(pid)})

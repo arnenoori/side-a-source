@@ -67,3 +67,18 @@ private let now = 1_800_000_000.0
     stopped.delivered("s")
     #expect(stopped.isEmpty)
 }
+
+/// However many rests pass, a start that fails at once each time isn't asked for again past the ceiling.
+@Test func aSessionThatNeverGetsPastItsStopIsNotAskedForEver() {
+    var stopped = StoppedSessions()
+    var asks = 0, at = now
+    for _ in 0..<40 {
+        asks += stopped.due(now: at, idle: ["s"], lifted: ["s": at - 5]) { _ in true }.count
+        at += StoppedSessions.again
+        if asks.isMultiple(of: StoppedSessions.attempts) { at += StoppedSessions.rest }
+    }
+    #expect(asks == StoppedSessions.ceiling, "\(asks)")
+    #expect(stopped.counting)
+    #expect(stopped.due(now: at, idle: ["s"]) { _ in true }.isEmpty)
+    #expect(stopped.due(now: at + 60, idle: ["s"], lifted: ["s": at + 30]) { _ in true } == ["s"])
+}

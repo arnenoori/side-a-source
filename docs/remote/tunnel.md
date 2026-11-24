@@ -121,6 +121,8 @@ Text messages are control messages, JSON `{"type": …}`:
 |---|---|
 | Mac → relay | `{"type":"devices","devices":[{"id","secretHash"}]}` on connect and on every pair or revoke: the full list. Sockets of devices not listed close 4401 |
 | Mac → relay | `{"type":"pairing","ticketHash":"<b64url SHA-256>","expiresAt":<s>}`, or `{"type":"pairing"}` to close the window |
+| Mac → relay | `{"type":"watch"}` first on every connection: this Mac can be watched, so the relay may tell its phones if it goes quiet (relay-and-release, A Mac that goes quiet). An older Mac never says it, and is never told on |
+| Mac → relay | `{"type":"goodbye","reason":"quit"\|"off"\|"sleep"}` before it leaves on purpose: quitting, Remote or Anywhere turned off, or going to sleep. Counts only if the Mac's last word came within two minutes after it |
 | relay → Mac | `{"type":"gone","slot":n}`: that phone socket closed, so drop its streams |
 | relay → phone | `{"type":"mac","online":bool}` on connect and on every change |
 | either → relay | `ping` (plain text). The DO's `setWebSocketAutoResponse` answers `pong` without waking |

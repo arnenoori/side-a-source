@@ -1,0 +1,18 @@
+{
+  "agent": "codex",
+  "alive": true,
+  "createdAt": 1791559411.9,
+  "cwd": "/Users/you/code/app",
+  "handoffFrom": {
+    "agent": "claude",
+    "at": 1791559411.9,
+    "conversationID": "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+    "id": "3a0c9d2e-7b1f-4e5a-9c8d-1e2f3a4b5c6d",
+    "model": "claude-opus-5-5",
+    "prompt": true
+  },
+  "macAttached": false,
+  "name": "sa-app-7d1e",
+  "project": "app",
+  "viewers": 0
+}

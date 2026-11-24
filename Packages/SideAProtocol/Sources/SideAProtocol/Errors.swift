@@ -48,6 +48,10 @@ public struct ErrorCode: OpenEnum {
     public static let requestPending = Self(rawValue: "request_pending")
     /// The request's gate rose between showing and answering; fetch it and review again.
     public static let gateChanged = Self(rawValue: "gate_changed")
+    /// The queued reply to change or remove has gone or changed since the phone read it.
+    public static let queueChanged = Self(rawValue: "queue_changed")
+    /// A reply whose `RemoteReply.seen` no longer names where the session stands: a turn started since the person sent it.
+    public static let sessionMovedOn = Self(rawValue: "session_moved_on")
     // 410
     public static let cursorExpired = Self(rawValue: "cursor_expired")
     public static let codeExpired = Self(rawValue: "code_expired")

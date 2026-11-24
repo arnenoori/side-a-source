@@ -19,6 +19,11 @@ import SideAProtocol
         var retryAfter: Int?
 
         static let noSession = Failure(status: 404, code: .sessionNotFound, message: "That session isn't running on the Mac any more.")
+        static let queueChanged = Failure(status: 409, code: .queueChanged, message: "That reply has already gone or changed. Look again.")
+        static let promotedGone = Failure(status: 409, code: .queueChanged,
+                                          message: "It had already left the queue on the Mac, so it wasn't sent again.")
+        static let promotedBack = Failure(status: 409, code: .queueChanged, message: "It went back in the queue on the Mac, and goes when the turn ends.")
+        static let movedOn = Failure(status: 409, code: .sessionMovedOn, message: "The session moved on while this waited. Read what it did, then send it again.")
         static let notReady = Failure(status: 503, code: .notReady, message: "Side A is still starting Remote.", retryAfter: 2)
 
         static func invalid(_ message: String, _ reason: String) -> Failure {
@@ -78,8 +83,14 @@ import SideAProtocol
         /// The finished turn this follows up on; a reply to one that has moved on is refused.
         var turnID: String?
         var submit: ReplySubmit?
+        /// The queued reply this takes the place of.
+        var replaces: String?
         /// The phone that sent it and what it proved, for a reply that waits. Nil from the Mac.
         var origin: Island.QueuedFollowUp.Origin?
+        /// The phone's `Idempotency-Key`, which its receipt goes under.
+        var idempotencyKey: String?
+        var seen: String?
+        var promotes: String?
     }
 
     @MainActor struct Target {
@@ -235,22 +246,62 @@ import SideAProtocol
 
     /// Carries out a plan. The answer comes once the text is in the pane, not once the agent read it.
     func send(_ plan: Plan, _ message: Message) async throws(Failure) -> ReplyResult {
+        // Taken now, so the sweep `plan` started can't put it back while this delivers it.
+        let putBack = message.promotes.flatMap { Self.promoting.removeValue(forKey: $0)?.putBack }
+        let promotion = putBack.flatMap { _ in Promotion.waiting.next(.sendBegins)?.state }
+        switch plan {
+        case .failed, .done: break
+        default: if message.promotes != nil, putBack == nil, Promotion.putBack.next(.sendBegins)?.state == .refused { throw .promotedBack }
+        }
+        do throws(Failure) {
+            return try await deliver(plan, message)
+        } catch {
+            if promotion?.next(.sendFailed)?.putBack == true { putBack?() }
+            if let key = message.idempotencyKey {
+                for (session, list) in Self.delivered { Self.delivered[session] = list.filter { $0.key != key } }
+            }
+            throw error
+        }
+    }
+
+    private func deliver(_ plan: Plan, _ message: Message) async throws(Failure) -> ReplyResult {
         let hosted = store.hosted
         do {
             switch plan {
             case .failed(let failure): throw failure
             case .done(let result): return result
             case .codex(let live, let key, let text, let queue):
+                if let delivery = store.remote.receipts.answer(message.idempotencyKey, text: text) { return ReplyResult(delivery: delivery, sessionID: key) }
                 do throws(CodexTerminals.Failure) {
-                    return ReplyResult(delivery: try await store.remote.codex.send(live, text: text, queue: queue), sessionID: key)
+                    return ReplyResult(delivery: try await store.remote.codex.send(live, text: text, queue: queue, key: message.idempotencyKey), sessionID: key)
                 } catch { throw Failure.codex(error) }
             case .type(let name, let key, let working):
                 // Codex mid-turn: a follow-up, or a reply sent to queue, waits for the turn to end; anything else steers
                 // it, as through its app server. Claude queues what's submitted mid-turn either way.
                 let queue = message.mode == .followUp || message.submit == .queue
-                try await hosted.reply(name, text: message.text.trimmingCharacters(in: .whitespacesAndNewlines), images: message.images,
-                                       submit: queue ? .queue : .steer, working: working)
+                let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let waits = queue && working && store.hosted.sessions.first { $0.name == name }?.agent == .codex
+                let receipts = store.remote.receipts
+                if let delivery = receipts.answer(message.idempotencyKey, text: text) { return ReplyResult(delivery: delivery, sessionID: key) }
+                // After Interrupt and Send's stop: what it took off the prompt goes first, in the same prompt, so this
+                // never waits behind a turn of their own.
+                let carried = receipts.carried(hosted: name)
+                let typing = (carried.map(\.text) + [text]).filter { !$0.isEmpty }.joined(separator: "\n")
+                if let live = store.sessions.live.first(where: { $0.hosted == name }) {
+                    receipts.expect(message.idempotencyKey, text: typing, asked: text, live: live, delivery: waits ? .queued : .typed)
+                } else if let agent = hosted.sessions.first(where: { $0.name == name })?.agent {
+                    receipts.expect(message.idempotencyKey, text: typing, asked: text, hosted: name, agent: agent == .codex ? .codex : .claude,
+                                    delivery: waits ? .queued : .typed)
+                }
+                receipts.join(carried.map(\.key), with: message.idempotencyKey, text: typing)
+                do {
+                    try await hosted.reply(name, text: typing, images: message.images, submit: queue ? .queue : .steer, working: working,
+                                           key: message.idempotencyKey)
+                } catch {
+                    receipts.forget(message.idempotencyKey)
+                    receipts.release(carried.map(\.key))
+                    throw error
+                }
                 return ReplyResult(delivery: waits ? .queued : .typed, sessionID: key)
             case .keys(let name, let key, _):
                 try await hosted.keys(name, (message.keys ?? []).map(\.rawValue))
@@ -258,7 +309,11 @@ import SideAProtocol
             case .terminal(let live, let key, let text):
                 let projects = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
                 let transcript = live.provider == .claude ? live.sessionID.flatMap { AgentActivity.transcript(projects: projects, cwd: live.cwd, id: $0) } : nil
+                let receipts = store.remote.receipts
+                if let delivery = receipts.answer(message.idempotencyKey, text: text) { return ReplyResult(delivery: delivery, sessionID: key) }
+                receipts.expect(message.idempotencyKey, text: text, live: live)
                 do throws(TerminalTyping.Failure) { try await store.remote.typer.type(text, into: live, transcript: transcript) } catch {
+                    receipts.forget(message.idempotencyKey)
                     throw Failure(status: 409, code: .cannotDeliver, message: error.message)
                 }
                 return ReplyResult(delivery: .typed, sessionID: key)
@@ -272,7 +327,7 @@ import SideAProtocol
         }
     }
 
-    private func plan(_ message: Message, text: String, target: Target) -> Plan {
+    func decide(_ message: Message, text: String, target: Target, current: Bool) -> Plan {
         let island = store.island
         let agent = target.live?.provider ?? .claude
         let hosted = target.live?.hosted
@@ -302,11 +357,17 @@ import SideAProtocol
             return .done(ReplyResult(delivery: .note, sessionID: target.key))
         case .queued:
             guard let conversation = target.conversation else { return .failed(.cannotDeliver(.setup)) }
+            if let replaces = message.replaces {
+                guard island.replaceQueued(conversation, id: replaces, with: text, from: message.origin) else { return .failed(.queueChanged) }
+                return .done(ReplyResult(delivery: .queued, sessionID: target.key))
+            }
             guard island.queue(conversation, text, from: message.origin) else { return .failed(.cannotDeliver(.queueFull)) }
             return .done(ReplyResult(delivery: .queued, sessionID: target.key))
         case .followUp:
             guard let conversation = target.conversation else { return .failed(.cannotDeliver(.cannot)) }
-            guard let turnID = message.turnID else { return .failed(.invalid("Send the turn this follows up on.", "missing_turn")) }
+            guard let turnID = message.turnID ?? (current ? target.row?.id.uuidString.lowercased() : nil) else {
+                return .failed(.invalid("Send the turn this follows up on.", "missing_turn"))
+            }
             switch island.remoteFollowUp(session: conversation, turnID: turnID, text: text) {
             case .sent: return .done(ReplyResult(delivery: .followUp, sessionID: target.key))
             case .turnChanged:
@@ -344,25 +405,44 @@ import SideAProtocol
     }
 
     /// Hosted, `now` is Esc while it works; Codex in a terminal, its app server's interrupt. Otherwise stop mail,
-    /// Claude only: `now` while working, `nextStep` while working or waiting.
-    func interrupt(_ id: String, when: InterruptRequest.When = .now) async throws(Failure) -> InterruptResult {
+    /// Claude only: `now` while working, `nextStep` while working or waiting. A Stop only stops: the phone's replies the
+    /// agent hadn't read come back to it unsent. `send` (Interrupt and Send) keeps them for the reply that follows.
+    /// `resend`: no reply follows, and what the stop took back goes again by itself as the next prompt.
+    func interrupt(_ id: String, when: InterruptRequest.When = .now, send: Bool = false, resend: Bool = false) async throws(Failure) -> InterruptResult {
         guard let target = Target(id, store: store), let live = target.live else { throw .noSession }
         let state = target.state(store.island)
+        let carry = send || resend
         if let hosted = live.hosted, when == .now {
             guard state == .working else { throw .cannotDeliver(.cannot) }
-            do { try await store.hosted.interrupt(hosted, working: true) } catch {
+            let receipts = store.remote.receipts, panes = store.hosted
+            let taken = await receipts.stopping(hosted: hosted)
+            do { try await panes.interrupt(hosted, working: true) } catch {
+                await receipts.stopped(taken.map(\.key), nil, carry: carry)
                 throw (error as? HostedError).map(Failure.hosted) ?? Self.internalFailure("Side A couldn't type into that session.")
             }
+            // Before answering: Interrupt and Send's message must find the prompt empty.
+            if !taken.isEmpty { await receipts.stopped(taken.map(\.key), await panes.takeBack(hosted, sent: taken.map(\.text)), carry: carry) }
+            if resend { await self.resend(hosted) }
             return InterruptResult(method: .escape)
         }
         if when == .now, store.remote.codex.reach(live) == .attached {
             guard state == .working else { throw .cannotDeliver(.cannot) }
-            do throws(CodexTerminals.Failure) { try await store.remote.codex.interrupt(live) } catch { throw .codex(error) }
+            do throws(CodexTerminals.Failure) { try await store.remote.codex.interrupt(live, send: carry, resend: resend) } catch { throw .codex(error) }
             return InterruptResult(method: .turnInterrupt)
         }
         guard state == .working || (when == .nextStep && state == .waiting) else { throw .cannotDeliver(.cannot) }
         try mail("stop", to: live)
         return InterruptResult(method: .stop)
+    }
+
+    /// The receipts follow the one prompt they go in; one the pane's check finds unsent gives them all back.
+    private func resend(_ hosted: String) async {
+        let receipts = store.remote.receipts
+        let carried = receipts.carried(hosted: hosted)
+        guard let last = carried.last else { return }
+        let text = carried.map(\.text).joined(separator: "\n")
+        receipts.join(carried.map(\.key), with: nil, text: text)
+        do { try await store.hosted.reply(hosted, text: text, submit: .steer, key: last.key) } catch { receipts.release(carried.map(\.key)) }
     }
 
     /// Withdraws the note or stop a session hasn't read yet.

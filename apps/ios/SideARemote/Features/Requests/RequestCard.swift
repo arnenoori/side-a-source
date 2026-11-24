@@ -11,6 +11,8 @@ struct RequestCard: View {
     /// All of what Allow approves fits on the card; past `limit` it's cut, and Allow waits for the sheet.
     @State private var whole = true
     @ScaledMetric(relativeTo: .callout) private var limit: CGFloat = 200
+    @State private var failures = 0
+    @State private var asking = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
@@ -62,7 +64,7 @@ struct RequestCard: View {
                             }
                             .buttonStyle(.glass)
                             // Cut here or by the Mac: Allow waits for the sheet, which shows all of it.
-                            if !whole || request.truncated {
+                            if !request.allowsOnCard(whole: whole) {
                                 Button {
                                     approvals.request = request
                                 } label: {
@@ -72,12 +74,14 @@ struct RequestCard: View {
                                 .tint(.amber)
                                 .accessibilityHint("Shows all of it, with Allow")
                             } else if request.allowGate == .biometric {
+                                // All of it shows, so Face ID is the confirmation.
                                 Button {
-                                    approvals.request = request
+                                    allowWithFaceID()
                                 } label: {
                                     Text("Allow…").foregroundStyle(Color.destructive).frame(minWidth: 72)
                                 }
                                 .buttonStyle(.glass)
+                                .disabled(asking)
                             } else if let mode = request.switchMode {
                                 // Hold for Allow + Accept Edits, as the Mac's card offers it beside Allow.
                                 Menu {
@@ -115,6 +119,19 @@ struct RequestCard: View {
         }
         .zoomSource("request-\(request.id)")
         .accessibilityElement(children: .contain)
+        .sensoryFeedback(.error, trigger: failures)
+    }
+
+    private func allowWithFaceID() {
+        asking = true
+        Task {
+            defer { asking = false }
+            switch await FaceIDAllow.ask(for: request, on: model) {
+            case .granted(let confirm): model.requests.answer(request.id, .allow(confirmDestructive: true), confirm: confirm)
+            case .cancelled: break
+            case .failed: failures += 1
+            }
+        }
     }
 }
 
@@ -210,9 +227,9 @@ struct AnsweredLine: View {
         switch answered.delivery {
         case .sending: "Sending…"
         case .delivered: nil
-        case .answeredElsewhere: "Answered on the Mac first"
-        case .unknown: "May not have reached the Mac"
-        case .gone: "No longer open on the Mac"
+        case .answeredElsewhere: "Answered on \(model.mac.kind.the(model.mac.name)) first"
+        case .unknown: "May not have reached \(model.mac.kind.the(model.mac.name))"
+        case .gone: "No longer open on \(model.mac.kind.the(model.mac.name))"
         case .failed(let message): "Not sent · \(message)"
         }
     }

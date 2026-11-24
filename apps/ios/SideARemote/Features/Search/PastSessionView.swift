@@ -27,8 +27,8 @@ struct PastSessionView: View {
     }
 }
 
-/// Resume and Fork. A tap starts at once on the account Autopilot picks; a long press offers the account,
-/// a new worktree and the model.
+/// Resume and Fork. A tap starts at once on the account Autopilot picks; the ⋯ beside them, or a long press on either,
+/// offers the account, a new worktree and the model.
 struct ResumeBar: View {
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
@@ -51,6 +51,7 @@ struct ResumeBar: View {
                             .buttonStyle(.glassProminent)
                         start("Fork", systemImage: "arrow.triangle.branch", fork: true)
                             .buttonStyle(.glass)
+                        if hasOptions { moreMenu }
                     }
                 }
                 .controlSize(.large)
@@ -61,25 +62,47 @@ struct ResumeBar: View {
         }
     }
 
+    /// There is a choice to make beyond Resume and Fork themselves.
+    private var hasOptions: Bool { accounts.count > 1 || past.branch != nil || !models.isEmpty }
+
+    /// The account, a new worktree and the model, for a Resume or a Fork.
+    @ViewBuilder private func options(fork: Bool) -> some View {
+        if accounts.count > 1 {
+            Menu("On Account", systemImage: "person.crop.circle") {
+                ForEach(accounts) { account in
+                    Button(account.name) { actions.on(model).resume(past, .init(fork: fork, accountID: account.id), then: onResumed) }
+                }
+            }
+        }
+        if past.branch != nil {
+            Button("In a New Worktree", systemImage: "arrow.triangle.branch") { actions.on(model).resume(past, .init(fork: fork, worktree: true), then: onResumed) }
+        }
+        if !models.isEmpty {
+            Menu("Model", systemImage: "cpu") {
+                ForEach(models, id: \.id) { option in
+                    Button(option.title) { actions.on(model).resume(past, .init(fork: fork, model: option.id), then: onResumed) }
+                }
+            }
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Section("Resume") { options(fork: false) }
+            Section("Fork") { options(fork: true) }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.body.weight(.semibold))
+                .frame(minWidth: 24)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.glass)
+        .accessibilityLabel("More Ways to Resume")
+    }
+
     private func start(_ title: String, systemImage: String, fork: Bool) -> some View {
         Menu {
-            if accounts.count > 1 {
-                Menu("On Account") {
-                    ForEach(accounts) { account in
-                        Button(account.name) { actions.on(model).resume(past, .init(fork: fork, accountID: account.id), then: onResumed) }
-                    }
-                }
-            }
-            if past.branch != nil {
-                Button("In a New Worktree", systemImage: "arrow.triangle.branch") { actions.on(model).resume(past, .init(fork: fork, worktree: true), then: onResumed) }
-            }
-            if !models.isEmpty {
-                Menu("Model") {
-                    ForEach(models, id: \.id) { option in
-                        Button(option.title) { actions.on(model).resume(past, .init(fork: fork, model: option.id), then: onResumed) }
-                    }
-                }
-            }
+            options(fork: fork)
         } label: {
             Label(title, systemImage: systemImage)
                 .font(.body.weight(.semibold))

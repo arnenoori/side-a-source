@@ -7,11 +7,13 @@ enum Route: Hashable {
     /// A session on one Mac: two Macs can't be told apart by a session id alone.
     case session(SessionKey, mac: String)
     case step(SessionKey, TranscriptTool)
-    case diff(FileDiff, sourceID: String)
+    /// `session`: where the diff's file can be opened, when that's known.
+    case diff(FileDiff, sourceID: String, session: SessionKey? = nil)
     /// Everything one turn of a session changed.
     case turnDiff(SessionKey, turn: String)
     case code(CodePayload)
-    case file(SessionKey, TranscriptTool, path: String)
+    /// `tool`: the step that wrote it, whose text shows while the file loads.
+    case file(SessionKey, TranscriptTool?, path: String)
     case images(SessionKey, [ImageRef], start: String)
     /// An account as one Mac sees it: the same account can be signed in on two.
     case account(String, mac: String)
@@ -27,6 +29,7 @@ enum Route: Hashable {
         switch self {
         case .session(let id, _), .step(let id, _), .file(let id, _, _), .images(let id, _, _), .turnDiff(let id, _): id
         case .subagent(let ref): ref.parent
+        case .diff(_, _, let id?): id
         default: nil
         }
     }
@@ -68,8 +71,8 @@ extension View {
         modifier(ZoomSource(id: id))
     }
 
-    /// The pushed page side of the same zoom.
-    @ViewBuilder func zoomDestination(_ id: String) -> some View {
+    /// The pushed page side of the same zoom; none for nil.
+    @ViewBuilder func zoomDestination(_ id: String?) -> some View {
         modifier(ZoomDestination(id: id))
     }
 }
@@ -84,11 +87,11 @@ private struct ZoomSource: ViewModifier {
 }
 
 private struct ZoomDestination: ViewModifier {
-    let id: String
+    let id: String?
     @Environment(\.zoomNamespace) private var namespace
 
     func body(content: Content) -> some View {
-        if let namespace { content.navigationTransition(.zoom(sourceID: id, in: namespace)) } else { content }
+        if let namespace, let id { content.navigationTransition(.zoom(sourceID: id, in: namespace)) } else { content }
     }
 }
 
@@ -129,10 +132,10 @@ struct RoutePage: View {
         switch route {
         case .session(let id, _): TranscriptView(sessionID: id)
         case .step(let session, let tool): ToolStepPage(sessionID: session, tool: tool).zoomDestination(tool.id)
-        case .diff(let diff, let source): DiffPage(diff: diff).zoomDestination(source)
+        case .diff(let diff, let source, let session): DiffPage(diff: diff, sessionID: session).zoomDestination(source)
         case .turnDiff(let session, let turn): TurnDiffPage(sessionID: session, turnID: turn)
         case .code(let payload): CodePage(payload: payload).zoomDestination(payload.id)
-        case .file(let session, let tool, let path): FilePage(sessionID: session, tool: tool, path: path).zoomDestination("file-\(tool.id)")
+        case .file(let session, let tool, let path): FilePage(sessionID: session, tool: tool, path: path).zoomDestination("file-\(tool?.id ?? path)")
         case .images(_, let images, let start): ImageViewer(images: images, start: start)
         case .account(let id, _): AccountDetailView(accountID: id)
         case .waiting: WaitingSessionsView()

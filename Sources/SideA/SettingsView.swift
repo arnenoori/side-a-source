@@ -787,7 +787,6 @@ struct GeneralSettings: View {
     @Bindable var store: AccountStore
     @ObservedObject var updates: Updates
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @AppStorage(MenuPlayer.enabledKey) private var playerEnabled: Bool = PreferencesMirror.fallback(MenuPlayer.enabledKey)
     @State private var indexBytes: Int64 = 0
     @State private var rebuilding = false
     var body: some View {
@@ -795,8 +794,9 @@ struct GeneralSettings: View {
             Section {
                 Toggle("Open at login", isOn: Binding(get: { launchAtLogin }, set: { store.setLaunchAtLogin($0); launchAtLogin = SMAppService.mainApp.status == .enabled }))
                 Toggle("Show only in the menu bar", isOn: Binding(get: { store.config.menuBarOnly }, set: { store.setMenuBarOnly($0) }))
-                Toggle("3D player", isOn: $playerEnabled)
+                PlayerToggle()
             }
+            Section("App Icon") { AppIconPicker() }
             KeepAwakeSettings(keepAwake: store.keepAwake)
             Section {
                 Toggle(isOn: Binding(get: { store.config.sync == true }, set: { store.setSync($0) })) {

@@ -26,6 +26,7 @@ private final class Clock: @unchecked Sendable {
     try await until("loop ended") { await sync.state.connection == .unpaired }
 
     // Several checks go by while the claim is fresh: the item is still the extension's.
+    // swiftlint:disable:next sleep_literal_in_tests -- proving the item stays the extension's across several checks
     try await Task.sleep(for: .milliseconds(300))
     let waiting = await sync.state
     #expect(waiting.outcomes["old"] == nil)
@@ -50,6 +51,7 @@ private final class Clock: @unchecked Sendable {
     let sync = try engine(FakeMac(), token: nil, outbox: outbox, now: { clock.now })
     await sync.start()
     try await until("loop ended") { await sync.state.connection == .unpaired }
+    // swiftlint:disable:next sleep_literal_in_tests -- the other process finishes the item only after the engine has looked at it once
     try await Task.sleep(for: .milliseconds(100))
     await outbox.remove("old")
     try await until("gone") { await sync.state.pending.isEmpty }

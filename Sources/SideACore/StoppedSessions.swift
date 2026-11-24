@@ -12,6 +12,9 @@ public struct StoppedSessions: Codable, Equatable, Sendable {
     public static let again = 900.0
     public static let attempts = 3
     public static let rest = 6 * 3600.0
+    /// However many rests pass, a session that never gets past its stop is asked this many times at most: a prompt
+    /// whose start keeps failing isn't sent for ever. The count starts over once the session is no longer stopped.
+    public static let ceiling = 3 * attempts
     /// A response cut off by sleep or the network can be tried again a minute on, and is the user's after half a day.
     public static let retry = 60.0
     public static let interrupted = 12 * 3600.0
@@ -24,6 +27,8 @@ public struct StoppedSessions: Codable, Equatable, Sendable {
     private struct Ask: Codable, Equatable, Sendable {
         var at: Double
         var times: Int
+        /// Asks since the session was last seen past its stop; nil in a file from before the ceiling.
+        var total: Int?
     }
 
     /// Refused by the pool with every account out: waits for one with room.
@@ -35,6 +40,8 @@ public struct StoppedSessions: Codable, Equatable, Sendable {
     public init() {}
 
     public var isEmpty: Bool { refused.isEmpty && moved.isEmpty }
+    /// Asks are still counted for some session, so `due` has to run to see it past its stop.
+    public var counting: Bool { !asked.isEmpty }
 
     public mutating func refuse(_ session: String, _ provider: AgentProvider, at: Double) {
         refused[session] = Refusal(provider: provider, at: at)
@@ -63,17 +70,24 @@ public struct StoppedSessions: Codable, Equatable, Sendable {
         refused = refused.filter { now - $0.value.at < Self.forget }
         // A traded session mid-turn was sent on by the user.
         moved = moved.filter { now - $0.value < Self.forget && !working.contains($0.key) }
-        asked = asked.filter { now - $0.value.at < Self.rest }
+        let lifted = lifted.filter { now - $0.value < Self.forget }
+        let stopped = Set(refused.keys).union(moved.keys).union(lifted.keys)
+        // Past its stop: not stopped `again` after its last ask, as a start that failed at once would be by then.
+        for (session, ask) in asked where !stopped.contains(session) && now - ask.at >= Self.again { asked[session]?.total = 0 }
+        // One with nothing toward the ceiling only spaces and counts asks, which a rest forgets.
+        asked = asked.filter { ($0.value.total ?? $0.value.times) > 0 || now - $0.value.at < Self.rest }
         var due = Set(refused.filter { room($0.value.provider) }.keys)
         due.formUnion(moved.filter { now - $0.value >= Self.settle }.keys)
-        due.formUnion(lifted.filter { now - $0.value < Self.forget }.keys)
+        due.formUnion(lifted.keys)
         due.formIntersection(idle)
         due = due.filter { session in
             guard let last = asked[session] else { return true }
-            return last.times < Self.attempts && now - last.at >= Self.again
+            let times = now - last.at < Self.rest ? last.times : 0
+            return times < Self.attempts && now - last.at >= Self.again && (last.total ?? last.times) < Self.ceiling
         }
         for session in due {
-            asked[session] = Ask(at: now, times: (asked[session]?.times ?? 0) + 1)
+            let last = asked[session].flatMap { now - $0.at < Self.rest ? $0 : Ask(at: $0.at, times: 0, total: $0.total ?? $0.times) }
+            asked[session] = Ask(at: now, times: (last?.times ?? 0) + 1, total: (last?.total ?? last?.times ?? 0) + 1)
         }
         return due.sorted()
     }

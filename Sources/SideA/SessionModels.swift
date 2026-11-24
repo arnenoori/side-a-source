@@ -24,6 +24,8 @@ struct SessionInfo: Decodable, Identifiable, Hashable, Sendable {
     let prompts: Int?
     let messages: Int?
     let forkedFrom: String?
+    /// The conversation the other agent handed off to this one; History nests it as it does a fork.
+    var handedFrom: String?
     let forkPoint: String?
     let prUrl: String?
     let hits: Int?
@@ -32,6 +34,7 @@ struct SessionInfo: Decodable, Identifiable, Hashable, Sendable {
     var name: String { title ?? firstPrompt ?? "Untitled session" }
     var project: String { cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "" }
     var isCodex: Bool { agent == "codex" }
+    var parent: String? { forkedFrom ?? handedFrom }
 }
 
 struct MessageSegment: Sendable {
@@ -125,7 +128,14 @@ struct LiveSession: Decodable, Identifiable, Hashable, Sendable {
     var backgroundTasks: [BackgroundTask]?
     /// Its newest prompt's uuid, which names the turn a turn diff reads, and when it was last compacted.
     var turnID: String?
+    /// When a Codex rollout last recorded a message the person typed, from any terminal or Side A; nil for Claude.
+    var promptAt: Double?
     var compactedAt: Double?
+    /// Claude's newest TodoWrite list from its transcript's tail, in a Codex plan's shape.
+    var plan: TurnPlan?
+    var prUrl: String?
+    /// Raw and unredacted: it stays on the Mac until `AgentFailure` and `Redact` have read it.
+    var lastError: LastError?
     /// Those still going; a task's status is Claude Code's own word.
     var runningTasks: Int? { backgroundTasks.map { $0.filter { !["completed", "failed", "killed", "stopped", "cancelled"].contains($0.status ?? "") }.count } }
     var provider: AgentProvider { agent.flatMap(AgentProvider.init(rawValue:)) ?? .claude }
@@ -134,7 +144,13 @@ struct LiveSession: Decodable, Identifiable, Hashable, Sendable {
     var stale: Bool { status == "idle" && Date().timeIntervalSince1970 - (since ?? .infinity) >= Double(Self.staleMinutes) * 60 }
     static let staleMinutes = 30
     private enum CodingKeys: String, CodingKey { case pid, sessionID = "id", name, title, cost, cwd, status, waitingFor, since, activity, context, flag, memory, processes, ports, started, hosted, agent, kind,
-             model, effort, mode, fast, contextPercent, backgroundTasks, turnID, compactedAt }
+             model, effort, mode, fast, contextPercent, backgroundTasks, turnID, promptAt, compactedAt, plan, prUrl, lastError }
+
+    struct LastError: Decodable, Hashable, Sendable {
+        let text: String
+        let code: String?
+        let at: Double?
+    }
 
     struct BackgroundTask: Decodable, Hashable, Sendable {
         let id: String?

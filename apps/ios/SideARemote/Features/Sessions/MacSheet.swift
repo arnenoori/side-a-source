@@ -14,7 +14,7 @@ struct MacSheet: View {
                 Section {
                     LabeledContent("Status") {
                         HStack(spacing: 6) {
-                            ConnectionDot(state: mac.state)
+                            ConnectionDot(state: mac.shown)
                             Text(mac.status)
                         }
                     }
@@ -44,6 +44,7 @@ struct MacSheet: View {
                 }
                 Section {
                     QuitIdleButton()
+                    ScreenButton(title: "Screen")
                     if model.tools.can(.cleanup) {
                         NavigationLink { CleanupView() } label: { Label("Clean Up", systemImage: "trash.slash") }
                     }

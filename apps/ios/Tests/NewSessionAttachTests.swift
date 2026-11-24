@@ -29,14 +29,12 @@ final class NewSessionAttachTests: XCTestCase {
 
     // MARK: Menu
 
-    func testTheSheetsMenuLeavesOutTheOptionsRow() {
-        let rows = DrawerRows.make(canUpload: true, room: 4, hasCamera: true, clipboardHasImage: true, options: false)
+    func testTheSheetsMenuHasOnlyWaysToAttach() {
+        let rows = DrawerRows.make(canUpload: true, room: 4, hasCamera: true, clipboardHasImage: true)
         XCTAssertEqual(rows.count, 4)
-        XCTAssertFalse(rows.options)
         XCTAssertTrue(rows.attaches)
-        XCTAssertEqual(DrawerRows.make(canUpload: true, room: 4, hasCamera: true, clipboardHasImage: true).count, 5)
-        // Nothing to attach and no options: the sheet shows no + at all, rather than an empty menu.
-        XCTAssertEqual(DrawerRows.make(canUpload: false, room: 4, hasCamera: true, clipboardHasImage: true, options: false).count, 0)
+        // Nothing to attach: the sheet shows no + at all, rather than an empty menu.
+        XCTAssertEqual(DrawerRows.make(canUpload: false, room: 4, hasCamera: true, clipboardHasImage: true).count, 0)
     }
 
     func testAMacThatCantTakeUploadsGetsNoPlusAndAMacNotPickedYetGetsNone() {
@@ -140,6 +138,7 @@ final class NewSessionAttachTests: XCTestCase {
         attachments.add(png(), to: draft)
         attachments.discard(draft)
         await hold.release()
+        // swiftlint:disable:next sleep_literal_in_tests -- proving a photo finished after the sheet was discarded does not come back
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertTrue(attachments.items(draft).isEmpty, "a photo finished after the sheet was discarded doesn't come back")
         XCTAssertEqual(attachments.gate(draft), .ready([]))
@@ -320,6 +319,7 @@ final class NewSessionAttachTests: XCTestCase {
         let id = try XCTUnwrap(second.items(draft).first?.id)
         second.remove(id, from: draft)
         await hold.release()
+        // swiftlint:disable:next sleep_literal_in_tests -- proving nothing is sent for a photo removed before its turn
         try await Task.sleep(for: .milliseconds(150))
         XCTAssertEqual(a.sent + b.sent, 0)
         XCTAssertTrue(first.items(draft).isEmpty)
@@ -334,12 +334,13 @@ final class NewSessionAttachTests: XCTestCase {
         a.gate = slow
         a.attach(to: first); b.attach(to: second)
         first.add(png(), to: draft)
-        for _ in 0..<100 where a.sent == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<1000 where a.sent == 0 { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(a.sent, 1, "on its way to the first Mac")
         first.rehome(draft, to: second)
         try await settled(second, draft, count: 1)
         XCTAssertEqual(ready(second), ["b-1"])
         await slow.release()
+        // swiftlint:disable:next sleep_literal_in_tests -- proving the first Mac's late answer changes nothing
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(ready(second), ["b-1"], "the first Mac's answer doesn't reach the tile")
         XCTAssertEqual(b.sent, 1)

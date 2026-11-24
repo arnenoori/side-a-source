@@ -14,39 +14,15 @@ enum CommandSuggestions {
 
     /// The word the caret (a UTF-16 offset) is in or just after, when it starts with "/" or, for Codex, "$".
     static func word(in text: String, caret: Int, agent: AgentProvider) -> (range: NSRange, word: String)? {
-        let string = text as NSString
-        let caret = min(max(caret, 0), string.length)
-        var start = caret
-        while start > 0, !isSpace(string.character(at: start - 1)) { start -= 1 }
-        var end = caret
-        while end < string.length, !isSpace(string.character(at: end)) { end += 1 }
-        guard start < caret else { return nil }
-        let word = string.substring(with: NSRange(location: start, length: end - start))
-        guard word.hasPrefix("/") || agent == .codex && word.hasPrefix("$") else { return nil }
-        return (NSRange(location: start, length: end - start), word)
+        CaretWord.command(in: text, caret: caret, codex: agent == .codex)
     }
 
     /// Options starting with the word first, then those containing it, in the Mac's own order.
-    static func matches(_ word: String, in options: [Option]) -> [Option] {
-        let typed = word.lowercased()
-        let sigil = typed.prefix(1)
-        let mine = options.filter { $0.id.hasPrefix(sigil) }
-        let starts = mine.filter { $0.id.lowercased().hasPrefix(typed) }
-        let rest = typed.count > 1 ? mine.filter { !$0.id.lowercased().hasPrefix(typed) && $0.id.lowercased().contains(typed.dropFirst()) } : []
-        return Array((starts + rest).prefix(limit))
-    }
+    static func matches(_ word: String, in options: [Option]) -> [Option] { CaretWord.matches(word, in: options, limit: limit) }
 
     /// The text with the word replaced by the chosen command and a space after it, and the caret after that space.
     static func apply(_ option: Option, to text: String, at range: NSRange) -> (text: String, caret: Int) {
-        let string = text as NSString
-        let after = range.location + range.length
-        let space = after < string.length && isSpace(string.character(at: after)) ? "" : " "
-        let replaced = string.replacingCharacters(in: range, with: option.id + space)
-        return (replaced, range.location + (option.id + " ").utf16.count)
-    }
-
-    private static func isSpace(_ unit: unichar) -> Bool {
-        unit == 0x20 || unit == 0x0A || unit == 0x09 || unit == 0x0D
+        CaretWord.replace(range, in: text, with: option.id)
     }
 }
 
@@ -55,6 +31,8 @@ enum CommandSuggestions {
 struct CommandSuggestionList: View {
     let options: [AgentOptions.Option]
     let highlighted: Int
+    /// The options are paths: each shows its file's name over its folder.
+    var files = false
     let onPick: (AgentOptions.Option) -> Void
 
     @ScaledMetric(relativeTo: .body) private var rowHeight = 52
@@ -84,9 +62,10 @@ struct CommandSuggestionList: View {
     private func row(_ option: AgentOptions.Option, highlighted: Bool) -> some View {
         Button { onPick(option) } label: {
             VStack(alignment: .leading, spacing: 1) {
-                Text(option.id).font(.body.weight(.medium))
-                if !option.label.isEmpty {
-                    Text(option.label).font(.subheadline).foregroundStyle(.secondary)
+                let file = files ? FileMentions.Row(path: option.id) : nil
+                Text(file?.name ?? option.id).font(.body.weight(.medium)).truncationMode(files ? .middle : .tail)
+                if let detail = file?.folder ?? Optional(option.label), !detail.isEmpty {
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary).truncationMode(files ? .head : .tail)
                 }
             }
             .lineLimit(1)

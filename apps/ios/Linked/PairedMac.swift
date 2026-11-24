@@ -15,6 +15,9 @@ struct PairedMac: Codable, Hashable {
     var relayURL: String?
     /// The Mac's tailnet from its code (`t=`), for the different-tailnet warning when pairing another Mac.
     var tailnet: String?
+    /// From the Mac's last hello. A notification's reply goes without asking the Mac, and may carry only fields it reads:
+    /// the signature covers the body, so an older Mac refuses one it doesn't know.
+    var capabilities: Set<Capability>?
 
     /// Keychain accounts: `macs`, every paired Mac in the order they were paired, then `token.`, `secret.`
     /// and `pushKey.` with each Mac's id. A phone paired before multi-Mac kept its one Mac under `mac`.
@@ -42,13 +45,13 @@ struct PairedMac: Codable, Hashable {
         let macs = all(keychain)
         if let same = macs.first(where: { $0.endpoint.macID == invitation.macID }) {
             guard same.endpoint.serverKeyHash != invitation.fp else { return nil }
-            return "This code's security key isn't the one \(RequestText.visible(same.endpoint.name)) paired with. Pair only if you reset Side A on that Mac."
+            return "This code's security key isn't the one \(RequestText.visible(same.endpoint.name)) paired with. Pair only if you reset Side A on that \(same.endpoint.kind.noun)."
         }
         func folded(_ name: String) -> String {
             name.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard let name = invitation.macName, let twin = macs.first(where: { folded($0.endpoint.name) == folded(name) }) else { return nil }
-        return "\(RequestText.visible(twin.endpoint.name)) is already paired, and this code is from a different Mac with the same name. Pair only if you meant to add another Mac."
+        return "\(RequestText.visible(twin.endpoint.name)) is already paired, and this code is from a different \(twin.endpoint.kind.noun) with the same name. Pair only if you meant to add another \(twin.endpoint.kind.noun)."
     }
 
     /// The paired Mac on another tailnet than the code's, when neither has the relay to reach across.
@@ -80,7 +83,7 @@ struct PairedMac: Codable, Hashable {
         var mac = self
         let old = endpoint
         mac.endpoint = Endpoint(macID: old.macID, baseURL: old.baseURL, alternates: old.alternates, serverKeyHash: old.serverKeyHash, name: old.name,
-                                relay: RelayRoute(url: url, installID: relayInstallID, deviceID: deviceID))
+                                relay: RelayRoute(url: url, installID: relayInstallID, deviceID: deviceID), os: old.os)
         return mac
     }
 
@@ -107,18 +110,21 @@ struct PairedMac: Codable, Hashable {
         return mac
     }
 
-    /// The Mac changed its addresses: keep the new alternates for next launch.
-    func updating(_ endpoints: Endpoints, keychain: SharedKeychain = .shared) -> PairedMac {
+    /// The Mac changed its addresses or what it can do: keep them for next launch and for the notification extensions.
+    func updating(_ endpoints: Endpoints, capabilities: Set<Capability>, os: HostOS? = nil,
+                  keychain: SharedKeychain = .shared) -> PairedMac {
         var mac = self
-        mac.endpoint = endpoint.updated(with: endpoints)
+        mac.endpoint = endpoint.updated(with: endpoints).updated(os: os)
+        mac.capabilities = capabilities
         if mac != self, PairedMac.load(endpoint.macID, keychain: keychain) != nil { PairedMac.upsert(mac, keychain) }
         return mac
     }
 
     /// `X-SideA-Confirm` from this pairing's key: nil when there's no key, the app is locked, or Face ID was declined.
-    func sign(_ signer: DeviceKeys.Signer, purpose: ConfirmPurpose, subject: String, reason: String = "Confirm on your Mac",
+    func sign(_ signer: DeviceKeys.Signer, purpose: ConfirmPurpose, subject: String, reason: String? = nil,
               fromNotification: Bool = false) async -> String? {
-        await DeviceKeys.header(signer, macID: endpoint.macID, deviceID: deviceID, purpose: purpose, subject: subject, reason: reason,
+        await DeviceKeys.header(signer, macID: endpoint.macID, deviceID: deviceID, purpose: purpose, subject: subject,
+                                reason: reason ?? "Confirm on \(endpoint.kind.your())",
                                 fromNotification: fromNotification)
     }
 

@@ -19,6 +19,9 @@ final class AppModel {
     let history: HistoryStore
     let images: ImageStore
     let tools: MacTools
+    let deliveryChoices = DeliveryChoices()
+    let handoffs = HandoffDrafts()
+    @ObservationIgnored var stopResends = StopResends()
     /// Fictional data, no network, nothing written outside the app's own container.
     let isDemo: Bool
     var paired: Bool
@@ -42,30 +45,38 @@ final class AppModel {
         self.accounts = accounts; self.history = history; self.isDemo = isDemo; self.paired = paired
         images = ImageStore(isDemo: isDemo)
         tools = MacTools(isDemo ? .demo(.sample(sessions.sessions)) : live.map(MacTools.Mode.live) ?? .unavailable)
+        sessions.title = { [weak tools] in tools?.title(for: $0) ?? $0.title }
     }
 
     static func demo(now: Date = .now) -> AppModel {
-        let model = demo(DemoData(now: now), name: "MacBook Pro", now: now)
+        let model = demo(DemoData(now: now), name: "MacBook Pro", id: NotificationAnswer.demoMac, now: now)
         model.mac.route = .wifi
+        #if DEBUG
+        // `--demo-linux`: the demo host is a Linux box, to see the copy that doesn't say Mac.
+        if ProcessInfo.processInfo.arguments.contains("--demo-linux") {
+            model.mac.reportedName = "build-box"
+            model.mac.kind = .linux
+        }
+        #endif
         return model
     }
 
     /// A second demo Mac, for the multi-Mac screens: a few of the first one's sessions on another machine.
     static func demoSecond(now: Date = .now) -> AppModel {
-        let model = demo(DemoData(now: now).second, name: "Mac mini", now: now)
-        model.demoID = "demo-2"
+        let model = demo(DemoData(now: now).second, name: "Mac mini", id: "demo-2", now: now)
         model.mac.route = .tailscale
         return model
     }
 
-    private static func demo(_ data: DemoData, name: String, now: Date) -> AppModel {
+    private static func demo(_ data: DemoData, name: String, id: String, now: Date) -> AppModel {
         let requests = RequestsStore(data.requests)
-        let sessions = SessionsStore(data.sessions, extras: data.extras)
+        let sessions = SessionsStore(data.sessions, extras: data.extras, macID: id)
         let transcripts = TranscriptStore(data.transcripts, earlier: data.earlier)
         let model = AppModel(mac: MacConnection(name: name, state: .live, lastSeen: now),
                              sessions: sessions, requests: requests, transcripts: transcripts,
                              accounts: AccountsStore(data.accounts, autopilot: data.autopilot), history: HistoryStore(data.history),
                              isDemo: true, paired: true)
+        model.demoID = id
         model.mac.onPower = true
         model.mac.memoryUsed = 21.4
         model.mac.memoryTotal = 36
@@ -107,7 +118,8 @@ final class AppModel {
         var live: MacTools.Live?
         if let link, let outbox { live = MacTools.Live(engine: link.engine, paired: mac, outbox: outbox) }
         let connection = MacConnection(name: mac.endpoint.name, nickname: MacNicknames.nickname(for: mac.endpoint.macID), state: .connecting, lastSeen: .now)
-        let model = AppModel(mac: connection, sessions: SessionsStore([]),
+        connection.kind = mac.endpoint.kind
+        let model = AppModel(mac: connection, sessions: SessionsStore([], macID: mac.endpoint.macID),
                              requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
                              history: HistoryStore([]), isDemo: false, paired: true, live: live)
         model.pairing = mac
@@ -147,10 +159,13 @@ final class MacConnection: Identifiable {
     nonisolated deinit {}
 
     enum Offline: Equatable {
-        case tailscaleOff, macUnreachable, macAsleep, relayRefused, revoked, keyChanged, incompatible(installed: String?), appOutdated
+        case tailscaleOff, macUnreachable, macAsleep, relayRefused, noNetwork, revoked, keyChanged, incompatible(installed: String?), appOutdated
 
         /// Revoked and a changed key end the pairing: the whole Sessions tab says so, not a banner.
         var needsPairing: Bool { self == .revoked || self == .keyChanged }
+
+        /// What's sent meanwhile waits and goes once the Mac is back; the others need someone to act first.
+        var comesBack: Bool { [.tailscaleOff, .macUnreachable, .macAsleep, .relayRefused, .noNetwork].contains(self) }
 
         /// Not known to end the pairing, but a moved or re-keyed Mac looks like this too. Not for a Mac that said it's
         /// asleep, or one that only needs updating.
@@ -165,13 +180,31 @@ final class MacConnection: Identifiable {
 
     var isOffline: Bool { state.isOffline }
 
+    /// `state` as the screens show it: a drop that's live again within `blip` never shows, so a socket replaced on the
+    /// way back from the background doesn't flash "Reconnecting…".
+    private(set) var shown: State
+    @ObservationIgnored private var showing: Task<Void, Never>?
+    static let blip: Duration = .milliseconds(800)
+
+    var isAway: Bool {
+        switch shown {
+        case .reconnecting: true
+        case .offline(let reason): reason.comesBack
+        default: false
+        }
+    }
+
     let id = UUID()
     /// What the Mac calls itself, from its pairing and hellos.
     var reportedName: String
     /// The name given it on this iPhone, which wins everywhere the phone shows the Mac.
     var nickname: String?
     var name: String { nickname ?? reportedName }
-    var state: State
+    /// What kind of computer it is, from its pairing and hellos; a Mac until it says otherwise. Words about it come from `kind`.
+    var kind: HostOS = .macos
+    var state: State {
+        didSet { if state != oldValue { settle() } }
+    }
     var lastSeen: Date
     /// nil until the Mac's first `remote.mac` report, so nothing shows a guess.
     var onPower: Bool?
@@ -211,7 +244,17 @@ final class MacConnection: Identifiable {
     }
 
     init(name: String, nickname: String? = nil, state: State, lastSeen: Date) {
-        reportedName = name; self.nickname = nickname; self.state = state; self.lastSeen = lastSeen
+        reportedName = name; self.nickname = nickname; self.state = state; self.lastSeen = lastSeen; shown = state
+    }
+
+    private func settle() {
+        showing?.cancel()
+        guard case .reconnecting = state, shown == .live else { return shown = state }
+        showing = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.blip)
+            guard !Task.isCancelled, let self else { return }
+            shown = state
+        }
     }
 
     /// Renamed on this iPhone, or back to the Mac's own name with nil or blank; kept per Mac across launches.
@@ -225,7 +268,7 @@ final class MacConnection: Identifiable {
     /// so Send isn't held off while the link comes back. A pairing that ended, or a Mac that said it's asleep, stays.
     func foregrounded(now: Date = .now) {
         switch state {
-        case .offline(.macUnreachable): state = .reconnecting(since: now)
+        case .offline(.macUnreachable), .offline(.noNetwork): state = .reconnecting(since: now)
         case .offline(.tailscaleOff) where vpnUp: state = .reconnecting(since: now)
         default: break
         }

@@ -1,54 +1,10 @@
 import SideAProtocol
+import SideARemoteKit
+import SideARemoteShared
 import SwiftUI
 
-/// Send a Message…: a focused field and Send in the toolbar; the session reads it at its next step.
-struct MessageSheet: View {
-    let sessionID: SessionKey
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
-    @FocusState private var focused: Bool
-
-    private var session: RemoteSession? { model.sessions.session(sessionID) }
-    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("What should it know?", text: $text, axis: .vertical)
-                        .lineLimit(3...8)
-                        .focused($focused)
-                }
-            }
-            .navigationTitle("Message")
-            .navigationSubtitle(session?.title ?? "")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Send", systemImage: "arrow.up") {
-                        model.note(trimmed, to: sessionID)
-                        dismiss()
-                    }
-                    .buttonStyle(.glassProminent)
-                    .disabled(trimmed.isEmpty)
-                    .needsMac()
-                }
-            }
-            .onAppear { focused = true }
-        }
-        .presentationDetents([.height(240), .medium])
-        // Writing wants a quiet page: glass over a busy transcript reads as smudge behind the field.
-        .presentationBackground(Color(.systemGroupedBackground))
-    }
-}
-
-/// A turn this phone sent that the Mac's transcript doesn't show yet, with where it is under it:
-/// "Sending…", "Next step" while it waits for the session's next step, or nothing once taken. A tap on a waiting
-/// message offers Edit (back into the field, to send again), Copy and Delete; a long-press selects part of it.
+/// A turn this phone sent that the Mac's transcript doesn't show yet, with where it is under it (`DeliveryStatus`). A tap
+/// on a waiting message offers Edit (back into the field, to send again), Copy and Delete; a long-press selects part of it.
 struct OutgoingBubble: View {
     let sessionID: SessionKey
     let turn: TranscriptStore.Outgoing
@@ -77,35 +33,12 @@ struct OutgoingBubble: View {
                     .background(Color(.secondarySystemFill), in: .rect(cornerRadius: Radius.userBubble, style: .continuous))
                     .opacity(turn.state == .sending || turn.state == .takingBack ? 0.6 : 1)
             }
-            status
-                .labelStyle(.titleAndIcon)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            DeliveryStatus(sessionID: sessionID, turn: turn)
                 .padding(.trailing, Space.xxs)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .animation(Motion.smooth(reduceMotion), value: turn.state)
         .accessibilityElement(children: .contain)
-    }
-
-    @ViewBuilder private var status: some View {
-        if case .offline(let reason) = model.mac.state, turn.state != .sent, turn.state != .read {
-            // Out of reach, nothing here is known to have gone or still to be waiting.
-            Label("Not confirmed", systemImage: reason.symbol)
-        } else {
-            switch turn.state {
-            case .sending:
-                Text("Sending…")
-            case .sent, .read:
-                EmptyView()
-            case .queued:
-                Label("After this turn", systemImage: "text.append")
-            case .note:
-                Label("Next step", systemImage: "clock")
-            case .takingBack:
-                Label("Taking back…", systemImage: "arrow.uturn.backward")
-            }
-        }
     }
 
     private var menu: [SelectableText.Action] {
@@ -124,6 +57,89 @@ struct OutgoingBubble: View {
     }
 }
 
+/// A failure isn't said here: the text is back in the field, with the reason in red under it.
+private struct DeliveryStatus: View {
+    let sessionID: SessionKey
+    let turn: TranscriptStore.Outgoing
+    @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        // The line keeps its height while it has nothing to say, so a stage that clears it doesn't move the list.
+        ZStack(alignment: .trailing) {
+            Text(verbatim: " ").hidden()
+            TimelineView(.periodic(from: .now, by: 5)) { context in line(at: context.date) }
+        }
+        .font(.footnote)
+    }
+
+    @ViewBuilder private func line(at now: Date) -> some View {
+        let session = model.sessions.session(sessionID)
+        let working = session.map { SessionPhase($0) == .working } == true
+        let since = turn.since ?? turn.at
+        let unchecked = turn.unchecked
+        let late = !unchecked && (ReplyProgress.patience(turn.state).map { now.timeIntervalSince(since) > $0 } ?? false)
+        // The Mac follows it in the agent's own record, so what a Stop takes back of it comes back to go again.
+        let followed = session?.receipts?.contains { $0.answers(turn.item) } == true
+        let frees = late && working && followed && session.map(model.stopGivesBack) == true && !model.mac.shown.isOffline
+            && ReplyProgress(turn.state, overdue: true).actions(interrupts: true).contains(.interruptAndSend)
+        if let words = unchecked ? (text: "Can't check: Side A restarted on \(model.mac.name)", symbol: "questionmark.circle")
+            : words(session, working: working, followed: followed, late: late, since: since, now: now) {
+            let label = Label(words.text, systemImage: words.symbol)
+                .multilineTextAlignment(.trailing)
+                .foregroundStyle(late ? AnyShapeStyle(.amberText) : AnyShapeStyle(.secondary))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: Space.s) {
+                    label
+                    if frees { interruptButton }
+                }
+                VStack(alignment: .trailing, spacing: Space.xxs) {
+                    label
+                    if frees { interruptButton }
+                }
+            }
+            .animation(Motion.smooth(reduceMotion), value: frees)
+            .onChange(of: frees) { _, frees in
+                guard frees else { return }
+                var announcement = AttributedString("\(words.text). \(Delivery.interrupt.title) is available.")
+                announcement.accessibilitySpeechAnnouncementPriority = .low
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
+    }
+
+    private var interruptButton: some View {
+        Button(Delivery.interrupt.title) { model.interruptAndResend(sessionID) }
+            .font(.footnote.weight(.semibold))
+            .buttonStyle(.borderless)
+            .hitArea(vertical: 12)
+            .accessibilityHint("Stops the current step, then sends the message as the next prompt.")
+    }
+
+    private func words(_ session: RemoteSession?, working: Bool, followed: Bool, late: Bool, since: Date, now: Date) -> (text: String, symbol: String)? {
+        let agent = session?.agent.title ?? AgentProvider.claude.title
+        let elapsed = Formatting.elapsed(since: since, now: now)
+        let waited = late && elapsed != "now" ? " · \(elapsed)" : ""
+        let step = session?.step.map { "\u{201C}\($0)\u{201D}" } ?? "this step"
+        if turn.state == .sending, model.mac.isAway { return (SendsWhenConnected.line, SendsWhenConnected.symbol) }
+        // Out of reach, nothing here is known to have gone or still to be waiting.
+        if case .offline(let reason) = model.mac.shown, ![.sent, .held, .read].contains(turn.state) {
+            return ("Can't check until connected", reason.symbol)
+        }
+        switch turn.state {
+        case .sending: return (late ? "Waiting for \(model.mac.name)…" : "Sending…", "arrow.up")
+        case .sent where followed: return (late ? "\(agent) hasn't taken it\(waited)" : "Sent to \(agent)", "paperplane")
+        case .sent: return working ? ("\(agent) reads it after this step", "clock") : nil
+        case .held: return (working ? "\(agent) reads it after \(step)\(waited)" : "\(agent) reads it next", late ? "hourglass" : "clock")
+        case .note: return ("\(agent) reads it after this step\(waited)", late ? "hourglass" : "clock")
+        case .queued: return ("\(agent) reads it after this turn", "text.append")
+        case .read: return ("\(agent) read it", "checkmark")
+        case .takingBack: return ("Taking back…", "arrow.uturn.backward")
+        case .unsent, .withdrawn: return nil
+        }
+    }
+}
+
 /// A message waiting for the next step that this phone didn't send (or a stop): a quiet line; a tap or long-press
 /// offers to withdraw it.
 struct MailLine: View {
@@ -138,9 +154,7 @@ struct MailLine: View {
     private var withdraw: String { mail.kind == .stop ? "Cancel Stop" : "Delete Message" }
 
     var body: some View {
-        Label(taking ? (mail.kind == .stop ? "Cancelling…" : "Deleting…")
-                     : mail.kind == .stop ? "Stops after this step" : "Message waiting",
-              systemImage: mail.kind == .stop ? "pause.circle" : "clock")
+        Label(taking ? (mail.kind == .stop ? "Cancelling…" : "Deleting…") : mail.kind.line, systemImage: mail.kind.symbol)
             .foregroundStyle(.secondary)
             .font(.footnote)
             .frame(maxWidth: .infinity, alignment: .leading)

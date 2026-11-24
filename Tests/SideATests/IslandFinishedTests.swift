@@ -41,21 +41,18 @@ import Testing
         let fd = try #require(fds[session])
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
         var buffer = [UInt8](repeating: 0, count: 4096)
-        for _ in 0..<300 {
-            let count = read(fd, &buffer, buffer.count)
-            if count > 0 {
-                let object = try JSONSerialization.jsonObject(with: Data(buffer[0..<count]).split(separator: 10).first ?? Data()) as? [String: Any]
-                return object?["followUp"] as? String ?? ""
-            }
-            if count == 0 { return nil }
-            try await Task.sleep(for: .milliseconds(10))
+        var count = -1
+        await eventually { count = read(fd, &buffer, buffer.count); return count >= 0 || errno != EAGAIN }
+        if count > 0 {
+            let object = try JSONSerialization.jsonObject(with: Data(buffer[0..<count]).split(separator: 10).first ?? Data()) as? [String: Any]
+            return object?["followUp"] as? String ?? ""
         }
-        Issue.record("the hook for \(session) heard nothing")
+        if count < 0 { Issue.record("the hook for \(session) heard nothing") }
         return nil
     }
 
     func settle(_ done: () -> Bool) async throws {
-        for _ in 0..<300 where !done() { try await Task.sleep(for: .milliseconds(10)) }
+        await eventually { done() }
         #expect(done())
     }
 }

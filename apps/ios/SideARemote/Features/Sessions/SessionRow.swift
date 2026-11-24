@@ -1,4 +1,5 @@
 import SideAProtocol
+import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
@@ -7,11 +8,16 @@ import SwiftUI
 struct SessionRow: View {
     @Environment(AppModel.self) private var model
     @Environment(ApprovalPresenter.self) private var approvals
+    @Environment(SessionActions.self) private var actions
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let session: RemoteSession
+    @State private var choosingSnooze = false
 
     private var phase: SessionPhase { SessionPhase(session) }
+    private var snooze: SessionSnooze? { model.tools.snooze(of: session) }
+    /// Never offered while it asks something: a snooze mustn't hide a request.
+    private var snoozable: Bool { model.tools.can(.snooze) && phase != .needsYou && session.snoozable }
     private var extras: SessionExtras? { model.sessions.extras[session.id] }
     private var request: RemoteRequest? { session.openRequests.first.flatMap(model.requests.request) }
 
@@ -27,7 +33,7 @@ struct SessionRow: View {
                         .lineLimit(typeSize >= .xxLarge ? 2 : 1)
                     Spacer(minLength: Space.xs)
                     if let statusAt = session.statusAt {
-                        Text(Formatting.elapsed(since: Date(timeIntervalSince1970: statusAt)))
+                        ElapsedText(since: Date(timeIntervalSince1970: statusAt), live: phase == .working || phase == .needsYou)
                             .font(.footnote.monospacedDigit())
                             .foregroundStyle(.secondary)
                             .contentTransition(.numericText())
@@ -45,23 +51,51 @@ struct SessionRow: View {
         .frame(minHeight: 52)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
-        .swipeActions(edge: .leading, allowsFullSwipe: false) { leadingActions }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) { trailingActions }
+        .swipeActions(edge: .leading, allowsFullSwipe: request?.allowsFromRow == true && phase == .needsYou) { leadingActions }
+        .swipeActions(edge: .trailing, allowsFullSwipe: phase == .ready || phase == .idle) { trailingActions }
         .contextMenu {
             contextActions
         } preview: {
             SessionPreview(session: session, text: extras?.lastReply)
         }
+        .confirmationDialog("Snooze", isPresented: $choosingSnooze, titleVisibility: .hidden) {
+            ForEach(SessionSnooze.Choice.offered, id: \.self) { choice in
+                Button(choice.title) { actions.on(model).snooze(session, choice) }
+            }
+        }
     }
 
     private var metadata: String {
-        [session.project, session.accountName, session.model].compactMap { $0 }.joined(separator: " · ")
+        [session.project, session.accountName, session.model, model.handoffs.link(for: session).map { "Handed off from \($0.agent.title)" }]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     /// Line 2: which agent, where it runs, and what it holds open. Ports and memory are the secondary facts,
     /// so where both don't fit they go, rather than cutting the project, account and model.
     private var metadataLine: some View {
         ViewThatFits(in: .horizontal) {
+            if let pull = session.pullRequest {
+                // The pull request goes before the ports, and keeps its place while the rest is cut.
+                HStack(spacing: Space.xxs) {
+                    agentIcons
+                    Text(metadata).lineLimit(1).fixedSize()
+                    Spacer(minLength: Space.xs)
+                    PullRequestBadge(pull: pull)
+                    if let ports = portsText { Text(ports).font(.footnote.monospaced()).lineLimit(1).fixedSize() }
+                }
+                HStack(spacing: Space.xxs) {
+                    agentIcons
+                    Text(metadata).lineLimit(1)
+                    Spacer(minLength: Space.xs)
+                    PullRequestBadge(pull: pull)
+                }
+                HStack(spacing: Space.xxs) {
+                    agentIcons
+                    Text(metadata).lineLimit(1)
+                    Spacer(minLength: Space.xs)
+                    PullRequestBadge(pull: pull, compact: true)
+                }
+            }
             if let ports = portsText {
                 HStack(spacing: Space.xxs) {
                     agentIcons
@@ -95,6 +129,9 @@ struct SessionRow: View {
         } else if let attention = model.tools.attention(for: session) {
             InlineFact(symbol: attention.symbol, text: attention.title)
                 .foregroundStyle(.secondary)
+        } else if let failure = session.failure {
+            InlineFact(symbol: failure.symbol, text: failure.message)
+                .foregroundStyle(failure.retryable ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.destructive))
         } else if let flag = session.flag, flag.kind == .unsent {
             // Quiet: nothing is wrong with the session, one message just didn't arrive. Retry is in the transcript.
             InlineFact(symbol: "arrow.uturn.backward", text: flag.text)
@@ -103,19 +140,22 @@ struct SessionRow: View {
             InlineFact(symbol: flag.kind == .failing ? "exclamationmark.triangle.fill" : "exclamationmark.triangle", text: flag.text)
                 .foregroundStyle(flag.kind == .failing ? AnyShapeStyle(Color.destructive) : AnyShapeStyle(.secondary))
         } else if let mail = session.mail {
-            InlineFact(symbol: mail.kind == .note ? "clock" : "pause.circle",
-                       text: mail.kind == .note ? "Message waiting" : "Stops after this step")
+            InlineFact(symbol: mail.kind.symbol, text: mail.kind.line)
+                .foregroundStyle(.secondary)
+        } else if let snooze {
+            InlineFact(symbol: "moon.zzz", text: "Snoozed · \(snooze.untilText)")
                 .foregroundStyle(.secondary)
         } else if let step = session.step {
             Text(step)
-                .font(.footnote.monospaced())
+                .font(.footnote)
                 .foregroundStyle(.secondary)
         }
     }
 
     /// What line 3 shows, to animate on.
     private var factKey: String {
-        request.map { "r:\($0.id)" } ?? model.tools.attention(for: session).map { "a:\($0.kind.rawValue)" } ?? session.flag.map { "f:\($0.text)" } ?? session.mail.map { "m:\($0.kind)" } ?? "s:\(session.step ?? "")"
+        request.map { "r:\($0.id)" } ?? model.tools.attention(for: session).map { "a:\($0.kind.rawValue)" } ?? session.failure.map { "x:\($0.kind.rawValue)" }
+            ?? session.flag.map { "f:\($0.text)" } ?? session.mail.map { "m:\($0.kind)" } ?? snooze.map { "z:\($0.at)" } ?? "s:\(session.step ?? "")"
     }
 
     private var portsText: String? {
@@ -125,7 +165,10 @@ struct SessionRow: View {
 
     private var accessibilityText: String {
         var parts = [session.title, phase.title]
-        if let request { parts.append(request.accessoryTitle) } else if let flag = session.flag { parts.append(flag.text) } else if let step = session.step { parts.append(step) }
+        if let request { parts.append(request.accessoryTitle) } else if let failure = session.failure { parts.append(failure.message) }
+        else if let flag = session.flag { parts.append(flag.text) } else if let step = session.step { parts.append(step) }
+        if let snooze { parts.append("Snoozed, \(snooze.untilText)") }
+        if let pull = session.pullRequest { parts.append("Pull request \(pull.summary)") }
         parts += [session.project, session.accountName, session.agent.title, session.hosted.map { _ in "in a terminal" }].compactMap { $0 }
         if let statusAt = session.statusAt { parts.append(Formatting.elapsed(since: Date(timeIntervalSince1970: statusAt))) }
         return parts.joined(separator: ", ")
@@ -139,7 +182,7 @@ struct SessionRow: View {
         switch phase {
         case .needsYou:
             // Only what the row shows whole: a longer command or an edit is allowed from its sheet.
-            if let request, !request.isQuestion, request.allowGate != .biometric, request.fitsRow {
+            if let request, request.allowsFromRow {
                 Button("Allow", systemImage: "checkmark") { model.requests.answer(request.id, .allow(confirmDestructive: false)) }
                     .needsMac()
                     .tint(.amber)
@@ -166,6 +209,13 @@ struct SessionRow: View {
             }
         case .ready, .idle:
             QuitButton(session: session, title: "Quit")
+        }
+        if snoozable {
+            if snooze != nil {
+                Button("Wake", systemImage: "sun.max") { actions.on(model).snooze(session, nil) }.tint(.indigo).needsMac()
+            } else {
+                Button("Snooze", systemImage: "moon.zzz") { choosingSnooze = true }.tint(.indigo).needsMac()
+            }
         }
     }
 
@@ -211,10 +261,32 @@ struct SessionRow: View {
             RenameButton(session: session)
             QuitButton(session: session)
         }
+        if let failure = session.failure {
+            Section(failure.message) { FailureFixButton(session: session, failure: failure) }
+        }
+        if let pull = session.pullRequest {
+            Section { PullRequestMenu(pull: pull) }
+        }
         Section {
             PinButton(session: session)
+            SnoozeMenu(session: session)
+            if phase == .idle, session.conversationID != nil, model.tools.can(.history) {
+                Button("Archive", systemImage: "archivebox") { actions.on(model).archive(session) }
+            }
             if phase != .needsYou { TerminalButton(session: session, title: "Open Terminal") }
             Button("Copy Session ID", systemImage: "doc.on.doc") { UIPasteboard.general.string = session.conversationID ?? session.id }
+        }
+    }
+}
+
+/// Ticks fall on `since` plus whole steps, and every change `elapsed` makes lands on a 15 s one.
+struct ElapsedText: View {
+    let since: Date
+    var live = true
+
+    var body: some View {
+        TimelineView(.periodic(from: since, by: live ? 15 : 60)) { context in
+            Text(Formatting.elapsed(since: since, now: max(context.date, since)))
         }
     }
 }
@@ -242,7 +314,7 @@ private struct SessionPreview: View {
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(session.title).font(.headline)
             Text([session.project, session.accountName, session.model].compactMap { $0 }.joined(separator: " · "))
-                .font(.footnote.monospaced()).foregroundStyle(.secondary)
+                .font(.footnote).foregroundStyle(.secondary)
             Text(text ?? session.step ?? "No replies yet")
                 .font(.body)
                 .padding(.top, Space.xxs)

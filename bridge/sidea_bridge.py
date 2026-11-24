@@ -1191,6 +1191,8 @@ def busy_slots(root, config):
 
 # Why slot_processes() last answered None, in words safe for the log.
 listing_problem = ""
+# The pool sessions slot_processes() last saw, by pid. They belong to no login, and can stall like any other.
+pool_processes = {}
 # The first limit suits a calm Mac; under a load of hundreds `ps` needs more.
 PS_LIMITS = (10, 40)
 # Waits before reading an unreadable process again: most are exiting or between fork and exec.
@@ -1238,6 +1240,7 @@ def slot_processes(root, config):
     of a trade, so it holds up every trade: a process that has finished can't read anything."""
     global listing_problem  # noqa: PLW0603 -- the listing problem is one process-wide note, set by whichever listing fails
     listing_problem = ""
+    pool_processes.clear()
     output = listed_processes()
     if output is None:
         return None
@@ -1268,6 +1271,7 @@ def slot_processes(root, config):
         env = found[1]
         # A pool session reaches Anthropic through Side A and reads no login.
         if env.get("SIDE_A_POOL") == "1":
+            pool_processes[pid] = "pool"
             continue
         store = env.get("CLAUDE_SECURESTORAGE_CONFIG_DIR")
         if store is None:
@@ -2473,7 +2477,7 @@ def run_sessions(root, args):
     elif args.action == "search":
         result = sessions.search(root, args.text, args.agent, args.project, args.days, args.automated)
     elif args.action == "show" and args.format == "remote":
-        result = sessions.page(root, args.text, args.limit, args.before, args.after, args.around, args.agent_id)
+        result = sessions.page(root, args.text, args.limit, args.before, args.after, args.around, args.agent_id, args.turns)
     elif args.action == "show":
         result = sessions.show(root, args.text, args.limit or 4000, args.around)
     elif args.action == "message":
@@ -2488,6 +2492,10 @@ def run_sessions(root, args):
         result = sessions.turn_diff(root, args.text, args.turn)
     elif args.action == "rename":
         result = sessions.rename_live(args.text, args.name)
+    elif args.action == "handoff-link":
+        result = sessions.record_handoff(root, json.loads(args.text))
+    elif args.action == "handoffs":
+        result = sessions.handoffs(root, min(args.limit or 500, 2000))
     else:
         result = sessions.live(root)
     return result
@@ -2551,7 +2559,7 @@ def build_parser():
     inbox_parser = commands.add_parser("inbox")
     inbox_parser.add_argument("state", choices=["on", "off", "status"])
     sessions_command = commands.add_parser("sessions")
-    sessions_command.add_argument("action", choices=["index", "recent", "search", "show", "live", "serve", "message", "image", "images", "turn-diff", "rename"])
+    sessions_command.add_argument("action", choices=["index", "recent", "search", "show", "live", "serve", "message", "image", "images", "turn-diff", "rename", "handoff-link", "handoffs"])
     sessions_command.add_argument("text", nargs="?", default="")
     sessions_command.add_argument("--agent", choices=["claude", "codex"])
     sessions_command.add_argument("--project")
@@ -2569,6 +2577,7 @@ def build_parser():
     sessions_command.add_argument("--generation")
     sessions_command.add_argument("--agent-id")
     sessions_command.add_argument("--recheck", action="store_true")
+    sessions_command.add_argument("--turns", action="store_true")
     sessions_command.add_argument("--turn")
     sessions_command.add_argument("--only", action="append")
     sessions_command.add_argument("--only-none", action="store_true")
@@ -2694,7 +2703,7 @@ def main():
                           "codexEmail": codex_bridge.global_email(), "claudeModel": recent_model(),
                           "logins": login_stamps(root, config), "loginEnds": login_ends(root, config),
                           "live": live_limits(root, config), "busy": busy_logins(root, config, processes),
-                          "limits": limit_errors(root, config, processes), "stalled": stalled_sessions(processes), "models": slot_models(processes), "quiet": slot_quiet(processes)}))
+                          "limits": limit_errors(root, config, processes), "stalled": stalled_sessions({**(processes or {}), **pool_processes}), "models": slot_models(processes), "quiet": slot_quiet(processes)}))
         return
     if args.command == "swap":
         swap(root, config, args.slot, account_by_id(config, args.account), share=args.share)

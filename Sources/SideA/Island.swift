@@ -142,7 +142,7 @@ final class Island {
     /// The Ready row whose reply field is open.
     var replying: Ready.ID?
     /// Per session, follow-ups queued while it works: on disk, because the Stop hook that takes them can outlast this app.
-    @ObservationIgnored private(set) var queued: [String: [QueuedFollowUp]] = [:]
+    @ObservationIgnored var queued: [String: [QueuedFollowUp]] = [:] { didSet { if queued != oldValue { queuedChanged() } } }
     @ObservationIgnored private var queuedGoneSince: [String: Date] = [:]
     @ObservationIgnored lazy var queuedFile: URL? = store.flatMap { $0.isDemo ? nil : $0.root.appendingPathComponent("runtime/queued-followups.json") }
     /// Tests hold waiters without touching Remote's global state.
@@ -762,7 +762,7 @@ final class Island {
         }
     }
 
-    private func saveQueued() {
+    func saveQueued() {
         keepLiveListForQueued()
         guard let queuedFile else { return }
         if queued.isEmpty { try? FileManager.default.removeItem(at: queuedFile); return }

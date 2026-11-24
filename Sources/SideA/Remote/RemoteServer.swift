@@ -49,6 +49,9 @@ final class RemoteServer: @unchecked Sendable {
     /// A device's first authenticated request since this server started: proof the phone holds its token.
     var authenticated: (@Sendable (String) -> Void)?
     private var vouched: Set<String> = []
+    /// Any authenticated request, at most once a minute: the phone is in use.
+    var active: (@Sendable () -> Void)?
+    private var lastActive = 0.0
 
     /// One per address the phone can reach, each relaying to `inner`; see SocketFront for why it isn't an NWListener.
     private var listeners: [String: SocketFront] = [:]
@@ -424,10 +427,14 @@ final class RemoteServer: @unchecked Sendable {
     /// come to 4 MiB, not the 1.25 GiB of uploads they could hold before.
     static let unauthenticatedBody = 64 << 10
     static let uploadBody = 20 << 20
+    static let recordingBody = TranscribeRoute.largest
 
     /// Asked by the parser once a request's head is in, on the queue: a body is only kept for someone who may send it.
     func bodyLimit(_ head: HTTPRequest) -> Int? {
-        if device(head) != nil { return head.method == "POST" && head.path == ["v1", "uploads"] ? Self.uploadBody : nil }
+        if device(head) != nil {
+            if Self.unrecorded(head) { return Self.recordingBody }
+            return head.method == "POST" && head.path == ["v1", "uploads"] ? Self.uploadBody : nil
+        }
         if preview(head) != nil { return nil }
         return Self.unauthenticatedBody
     }
@@ -451,6 +458,10 @@ final class RemoteServer: @unchecked Sendable {
         if request.method == "POST" && path == ["v1", "pair"] { return true }
         return attempt(request)
     }
+
+    /// A POST that changes nothing and whose answer must not be kept: dictation's words would sit in the idempotency
+    /// records otherwise.
+    static func unrecorded(_ request: HTTPRequest) -> Bool { request.method == "POST" && request.path == ["v1", "transcribe"] }
 
     /// `POST /v1/pair/{attempt}/wait` and `DELETE /v1/pair/{attempt}`.
     private static func attempt(_ request: HTTPRequest) -> Bool {
@@ -480,6 +491,7 @@ final class RemoteServer: @unchecked Sendable {
         }
         let device = device(request)
         if let device, vouched.insert(device).inserted { authenticated?(device) }
+        if device != nil, now - lastActive >= 60 { lastActive = now; active?() }
         let open = Self.open(request)
         if device == nil {
             if Self.attempt(request) {
@@ -510,9 +522,16 @@ final class RemoteServer: @unchecked Sendable {
                                           keys: confirmKeys[device] ?? ConfirmGate.Keys(confirm: nil, unlock: nil), replay: replay) {
                 return reply(refusal)
             }
+            // The screen shows everything the terminal does and more: Face ID too, its mode bound into the signature.
+            if request.path.count >= 3, request.path[2] == "screen",
+               let refusal = Self.confirm(request.headers[ConfirmSignature.header], macID: macID, device: device, purpose: .screen,
+                                          subject: request.path.count == 4 ? ConfirmMessage.subject(screen: ScreenMode(rawValue: request.path[3])) : "",
+                                          needs: .biometric, keys: confirmKeys[device] ?? ConfirmGate.Keys(confirm: nil, unlock: nil), replay: replay) {
+                return reply(refusal)
+            }
             return upgrade(request, device: device, on: connection, reply: reply)
         }
-        if (request.method == "POST" || request.method == "DELETE"), !open, let device {
+        if (request.method == "POST" || request.method == "DELETE"), !open, !Self.unrecorded(request), let device {
             guard let key = request.headers["Idempotency-Key"], !key.isEmpty, key.count <= IdempotencyStore.maxKey else {
                 return reply(Self.error(400, .missingIdempotencyKey, "Send an Idempotency-Key."))
             }
@@ -591,6 +610,7 @@ final class RemoteServer: @unchecked Sendable {
                 return reply(Self.error(429, .rateLimited, "Too many connections from this device.", retryAfter: 10))
             }
             let peer = WebSocketPeer(id: connection.id, device: device, path: request.path, connection: connection)
+            peer.source = connection.source
             sockets[connection.id] = peer
             RemoteLog.shared("#\(connection.id) WebSocket open \(RemoteLog.path(request)) device \(device.prefix(6))")
             // Its owner attaches first: frames may have come in the same packet as the upgrade.
@@ -760,7 +780,7 @@ final class HTTPConnection: @unchecked Sendable {
         // Nil from the server means the parser's usual limit; no server, a stranger's.
         guard let server else { return RemoteServer.unauthenticatedBody }
         let limit = server.bodyLimit(head)
-        if limit == RemoteServer.uploadBody {
+        if limit == RemoteServer.uploadBody || limit == RemoteServer.recordingBody {
             headTimer?.cancel()
             headTimer = cancel(after: timeouts.upload)
         }
@@ -840,11 +860,13 @@ final class HTTPConnection: @unchecked Sendable {
 final class WebSocketPeer: @unchecked Sendable {
     static let maxQueued = 1 << 20
     static let pingEvery: TimeInterval = 15
-    static let silentFor: TimeInterval = 45
+    static let silentFor: TimeInterval = SocketTiming.silentFor
 
     let id: UInt64
     let device: String
     let path: [String]
+    /// The address it came from; `tunnel:<slot>` through the relay.
+    var source = ""
     private weak var connection: HTTPConnection?
     private var parser = WebSocketCodec.Parser()
     private var queuedBytes = 0

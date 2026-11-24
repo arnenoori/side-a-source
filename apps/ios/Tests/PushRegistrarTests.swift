@@ -1,4 +1,6 @@
 import SideAProtocol
+import SideARemoteKit
+import SideARemoteShared
 import XCTest
 @testable import SideARemote
 
@@ -19,6 +21,28 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertFalse(prefs.health)
         XCTAssertTrue(prefs.limits)
         XCTAssertTrue(prefs.requests)
+    }
+
+    /// The relay's word that a Mac went quiet is on until turned off, and the Mac passes the switch to the relay.
+    func testAQuietMacIsToldUntilTurnedOff() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PushRegistrarTests.\(UUID())"))
+        XCTAssertEqual(NotificationPrefs.stored(for: "studio", in: defaults).macQuiet, true)
+        defaults.set(false, forKey: NotificationPrefs.Key.macQuiet.key(mac: "studio"))
+        XCTAssertEqual(NotificationPrefs.stored(for: "studio", in: defaults).macQuiet, false)
+        XCTAssertEqual(NotificationPrefs.stored(for: "laptop", in: defaults).macQuiet, true)
+    }
+
+    /// Tapping it opens the Mac whose install its `q` names, and nothing if no paired Mac is that one.
+    func testAQuietMacsPushOpensThatMac() {
+        func mac(_ install: String) -> PairedMac {
+            PairedMac(endpoint: Endpoint(macID: "m-\(install)", baseURL: URL(string: "https://100.64.0.1:47800")!, serverKeyHash: "k", name: install),
+                      deviceID: "d", deviceName: "iPhone", relayInstallID: install, relayURL: "https://relay.example")
+        }
+        let macs = [mac("i-r1"), mac("i-r2")]
+        let named = RelayDevice.activityMacID(install: "i-r2")
+        XCTAssertEqual(AppDelegate.quietLink(["q": named], macs: macs)?.absoluteString, "sidea-remote://mac/m-i-r2")
+        XCTAssertNil(AppDelegate.quietLink(["q": "unknown"], macs: macs))
+        XCTAssertNil(AppDelegate.quietLink([:], macs: macs))
     }
 
     /// Each Mac keeps its own switches; one never set reads the switch from before there was one per Mac.

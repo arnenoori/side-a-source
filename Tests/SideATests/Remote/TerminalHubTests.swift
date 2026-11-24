@@ -32,6 +32,7 @@ private struct Viewer {
         self.socket = socket
         let screen = screen
         Task {
+            // swiftlint:disable:next unbounded_poll_in_tests -- a receive loop, not a wait: it ends when the socket closes and throws.
             do { while true { await screen.add(try await socket.receive()) } } catch { await screen.end(error) }
         }
     }
@@ -41,17 +42,6 @@ private struct Viewer {
     }
 
     func type(_ seq: UInt32, _ text: String) async throws { try await socket.send(.data(TermFrame.input(seq: seq, bytes: Data(text.utf8)).data)) }
-}
-
-@MainActor
-/// `seconds` is what a quiet machine needs; a loaded one gets six times as long, and a condition that holds ends the wait at once.
-private func eventually(_ seconds: Double = 10, _ condition: () async -> Bool) async -> Bool {
-    let end = Date().addingTimeInterval(seconds * 6)
-    while Date() < end {
-        if await condition() { return true }
-        try? await Task.sleep(for: .milliseconds(50))
-    }
-    return false
 }
 
 /// The whole terminal path against real tmux: the phone's URLSession, the TLS listener, a tmux client in a PTY, the

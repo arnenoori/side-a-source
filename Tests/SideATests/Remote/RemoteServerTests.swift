@@ -168,7 +168,7 @@ private func ready(_ server: RemoteServer) async {
     }
     for _ in 0..<5 { #expect(await status("GET /v1/hello HTTP/1.1\r\n\(host)\r\n") == "HTTP/1.1 200") }
     #expect(await status("GET /v1/hello HTTP/1.1\r\n\(host)\r\n") == "HTTP/1.1 429")
-    for _ in 0..<50 where closed.withLock({ $0.count }) < 14 { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { closed.withLock({ $0.count }) >= 14 }
     #expect(closed.withLock { $0.count } >= 14)
 }
 
@@ -177,6 +177,7 @@ private func ready(_ server: RemoteServer) async {
     let identity = try #require(try keychain.store.identity())
     let token = DeviceToken.make()
     let server = RemoteServer(identity: identity, epoch: "e1") { request, _ in
+        // swiftlint:disable:next sleep_literal_in_tests -- the slow request is the point: the ones pipelined behind it have to queue
         if request.path.last == "slow" { try? await Task.sleep(for: .milliseconds(500)) }
         return HTTPResponse.json(200, Data(#"{"path":"\#(request.path.joined(separator: "/"))"}"#.utf8))
     }
@@ -297,6 +298,7 @@ private func ready(_ server: RemoteServer) async {
     slow.send(head + "Content-Length: 8\r\n\r\n")
     // Four seconds of body, a byte every half second: well past the head's time, never past the body's.
     for _ in 0..<8 {
+        // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- the drip is the point: a body slower than the head's time but inside its own
         try await Task.sleep(for: .milliseconds(500))
         slow.send("x")
     }
@@ -313,6 +315,7 @@ private func ready(_ server: RemoteServer) async {
     defer { loris.close() }
     loris.send("GET /v1/sessions HTTP/1.1\r\n")
     for _ in 0..<8 {
+        // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- the drip is the point: a head that never ends
         try await Task.sleep(for: .milliseconds(250))
         loris.send("X-Slow: 1\r\n")
     }

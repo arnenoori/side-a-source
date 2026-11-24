@@ -26,11 +26,38 @@ final class CodexTerminals {
         case busy
     }
 
+    struct Interrupt: Equatable {
+        /// Waiting in `sent` when it was asked for.
+        let ids: Set<String>
+        var follows: Follows
+
+        enum Follows: Equatable {
+            /// A plain Stop, or Interrupt and Send whose reply came first and went alone.
+            case nothing
+            /// Interrupt and Send: what it drops waits for the reply.
+            case reply
+            /// Interrupt and Resend: no reply follows, and what it drops goes again by itself once the turn has ended.
+            case resend
+
+            init(send: Bool, resend: Bool) { self = !send ? .nothing : resend ? .resend : .reply }
+        }
+
+        var holds: Bool { follows != .nothing }
+    }
+
     struct Thread {
         var status: CodexAppServer.Thread.Status
         var turn: String?
         /// Messages sent with turn/start that Codex hasn't shown as the user's yet, by clientUserMessageId.
         var sent: [String: (text: String, at: Date)] = [:]
+        /// In Codex's queue (`thread/queue/add`); one that leaves it joins `sent`.
+        var queued: [String: (text: String, at: Date)] = [:]
+        /// Side A's own interrupt, until the turn it stops ends.
+        var interrupting: Interrupt?
+        /// What that interrupt dropped, kept for the reply that follows: the two go as one turn.
+        var carry: (entries: [(id: String, text: String)], at: Date)?
+        /// Gives `carry` back if no reply comes for it.
+        var carryTimer: Task<Void, Never>?
         /// One it dropped: a steer still waiting when the turn was interrupted never reaches the model or the TUI.
         var unsent: (text: String, at: Date)?
         /// Model, effort and mode for its next turns, kept in step with the TUI's own changes.
@@ -83,7 +110,7 @@ final class CodexTerminals {
     static let allowedHomes: Set<String>? = ProcessInfo.processInfo.environment["SIDEA_CODEX_HOMES"]
         .map { Set($0.split(separator: ":").map { URL(fileURLWithPath: String($0)).standardizedFileURL.path }) }
 
-    private weak var store: AccountStore?
+    weak var store: AccountStore?
     private(set) var links: [String: Link] = [:]
     private(set) var running = false
     private var recheck: Task<Void, Never>?
@@ -209,7 +236,7 @@ final class CodexTerminals {
         }
     }
 
-    private func link(of live: LiveSession) -> (Link, AppServerClient, String)? {
+    func link(of live: LiveSession) -> (Link, AppServerClient, String)? {
         guard let thread = live.sessionID, let home = home(of: live), let link = links[home], let client = link.client,
               link.threads[thread] != nil else { return nil }
         return (link, client, thread)
@@ -219,7 +246,7 @@ final class CodexTerminals {
 
     /// Sends a message to the session's thread. Mid-turn, `queue` waits for the turn to end (`thread/queue/add`);
     /// otherwise it steers. Idle, either one starts a turn. Both show in the TUI as the user's message.
-    func send(_ live: LiveSession, text: String, queue: Bool) async throws(Failure) -> ReplyResult.Delivery {
+    func send(_ live: LiveSession, text typed: String, queue: Bool, key: String? = nil) async throws(Failure) -> ReplyResult.Delivery {
         #if DEBUG
         if staged != nil {
             guard let id = live.sessionID, var row = staged?[id], row.reach == .attached else { throw .notAttached }
@@ -231,28 +258,58 @@ final class CodexTerminals {
         }
         #endif
         guard let (link, client, thread) = link(of: live) else { throw .notAttached }
+        // Interrupt and Send's reply can arrive before the turn it stopped has ended. Past the wait it goes alone and what
+        // the stop was to carry goes back to the phone now, rather than waiting for a reply that has already come.
+        for _ in 0..<Int(Self.carryWait * 10) where link.threads[thread]?.interrupting?.holds == true { try? await Task.sleep(for: .milliseconds(100)) }
+        if let stop = link.threads[thread]?.interrupting, stop.holds {
+            link.threads[thread]?.interrupting?.follows = .nothing
+            for id in stop.ids where link.threads[thread]?.sent.removeValue(forKey: id) != nil {
+                store?.remote.receipts.codex(client: id, .unsent, reason: ReplyReceipt.stopped(agent: .codex))
+            }
+            RemoteLog.shared("codex app server at \(link.home): the interrupted turn hadn't ended after \(Int(Self.carryWait)) s, sending alone")
+        }
+        let carried = link.threads[thread]?.carry?.entries ?? []
+        if typed.isEmpty, carried.isEmpty { return .typed }
+        link.threads[thread]?.carry = nil
+        link.threads[thread]?.carryTimer?.cancel()
+        let text = (carried.map(\.text) + [typed]).filter { !$0.isEmpty }.joined(separator: "\n")
         let working = link.threads[thread].map { if case .active = $0.status { true } else { false } } ?? false
         let id = UUID().uuidString.lowercased()
         let fields: [String: CodexAppServer.JSON] = ["threadId": .string(thread), "clientUserMessageId": .string(id), "input": CodexAppServer.input(text)]
         let params = CodexAppServer.JSON.object(fields)
+        let receipts = store?.remote.receipts
+        for entry in carried { receipts?.codex(client: entry.id, becomes: id) }
+        func giveBack() { if !carried.isEmpty { receipts?.codex(client: id, .unsent, reason: ReplyReceipt.stopped(agent: .codex)) } }
         if queue, working, link.queues {
+            receipts?.expect(key, text: text, asked: typed, live: live, client: id, delivery: .queued)
+            // Before the call: the turn can end and Codex report it leaving the queue before the answer comes.
+            link.threads[thread]?.queued[id] = (text, Date())
             do {
                 _ = try await client.call("thread/queue/add", params)
+                if link.threads[thread]?.queued[id] != nil || link.threads[thread]?.sent[id] != nil { receipts?.codex(client: id, .held) }
                 return .queued
             } catch AppServerClient.Failure.rpc(let error) where error.unknownMethod {
                 // An older daemon: steer instead, which the TUI shows the same way.
+                link.threads[thread]?.queued[id] = nil
                 link.queues = false
                 RemoteLog.shared("codex app server at \(link.home): no thread/queue/add, steering instead")
             } catch {
+                link.threads[thread]?.queued[id] = nil
+                receipts?.forget(key)
+                giveBack()
                 throw Self.failure(error)
             }
         }
+        receipts?.expect(key, text: text, asked: typed, live: live, client: id, delivery: .typed)
         do {
             link.threads[thread]?.sent[id] = (text, Date())
             if !queue, working, link.steers, let turn = link.threads[thread]?.turn {
                 // Steer only the turn that's running: one that ended meanwhile gets a turn of its own instead.
                 do {
                     _ = try await client.call("turn/steer", .object(fields.merging(["expectedTurnId": .string(turn)]) { $1 }))
+                    // Its answer means the running turn holds it, to read once the current step ends; unless its user
+                    // item came first.
+                    if link.threads[thread]?.sent[id] != nil { receipts?.codex(client: id, .held) }
                     return sent(thread, link)
                 } catch AppServerClient.Failure.rpc(let error) where error.unknownMethod {
                     link.steers = false
@@ -265,6 +322,8 @@ final class CodexTerminals {
             return sent(thread, link)
         } catch {
             link.threads[thread]?.sent[id] = nil
+            receipts?.forget(key)
+            giveBack()
             throw Self.failure(error)
         }
     }
@@ -288,41 +347,46 @@ final class CodexTerminals {
     }
 
     /// Sends Codex never showed: dropped by an interrupt at once, otherwise once the thread has been idle a while.
-    private func lost(_ thread: String, _ link: Link, interrupted: Bool) {
+    /// `stopped`: the interrupt was Side A's own Stop.
+    private func lost(_ thread: String, _ link: Link, interrupted: Bool, stopped: Bool = false) {
         guard var state = link.threads[thread], !state.sent.isEmpty else { return }
         let idle = state.status == .idle
-        let late = state.sent.filter { interrupted || idle && Date().timeIntervalSince($0.value.at) > 30 }
+        let held = state.interrupting?.ids ?? []
+        let late = state.sent.filter { !held.contains($0.key) && (interrupted || idle && Date().timeIntervalSince($0.value.at) > ReplyReceipts.unseen) }
         guard let last = late.values.max(by: { $0.at < $1.at }) else { return }
-        for id in late.keys { state.sent[id] = nil }
+        for id in late.keys {
+            state.sent[id] = nil
+            store?.remote.receipts.codex(client: id, .unsent, reason: stopped ? ReplyReceipt.stopped(agent: .codex)
+                : interrupted ? "The interrupt stopped Codex before it read it." : "Codex never took it into a turn.")
+        }
         state.unsent = last
         link.threads[thread] = state
         RemoteLog.shared("codex app server at \(link.home): a message to \(thread) never reached the session")
         store?.remote.events?.liveChanged()
     }
 
-    func interrupt(_ live: LiveSession) async throws(Failure) {
-        #if DEBUG
-        if staged != nil {
-            guard let id = live.sessionID, var row = staged?[id], row.reach == .attached else { throw .notAttached }
-            guard row.status == .working else { throw .rpc("No turn is running.") }
-            row.status = .idle
-            staged?[id] = row
-            store?.remote.events?.liveChanged()
-            return
-        }
-        #endif
-        guard let (link, client, thread) = link(of: live) else { throw .notAttached }
-        var turn = link.threads[thread]?.turn
-        if turn == nil {
-            // Attached mid-turn: the newest turn is the running one.
-            let page = try? await client.call("thread/turns/list", .object(["threadId": .string(thread), "limit": .number(1)]))
-            turn = page?["data"]?.array?.first.flatMap { $0["status"]?.string == "inProgress" ? $0["id"]?.string : nil }
-        }
-        guard let turn else { throw .rpc("No turn is running.") }
-        do {
-            _ = try await client.call("turn/interrupt", .object(["threadId": .string(thread), "turnId": .string(turn)]))
-        } catch {
-            throw Self.failure(error)
+    /// How long Interrupt and Send's reply waits for the stopped turn to end; the phone waits at least as long first.
+    static let carryWait: Double = InterruptTiming.macWaits
+
+    private func dequeued(_ thread: String, _ link: Link) {
+        guard let client = link.client else { return }
+        Task { [weak self] in
+            var waiting = Set<String>()
+            var cursor: CodexAppServer.JSON = .null
+            var seen: Set<String> = []
+            // A daemon that keeps handing out cursors would page for ever; with the list unfinished, nothing has left it.
+            for _ in 0..<20 {
+                guard let page = try? await client.call("thread/queue/list", .object(["threadId": .string(thread), "cursor": cursor])) else { return }
+                waiting.formUnion(page["data"]?.array?.compactMap { $0["clientUserMessageId"]?.string } ?? [])
+                cursor = page["nextCursor"] ?? .null
+                if cursor == .null || !seen.insert(Self.key(cursor)).inserted { break }
+            }
+            guard cursor == .null else { return }
+            guard self != nil, link.client === client, let queued = link.threads[thread]?.queued else { return }
+            for (id, entry) in queued where !waiting.contains(id) {
+                link.threads[thread]?.queued[id] = nil
+                link.threads[thread]?.sent[id] = (entry.text, Date())
+            }
         }
     }
 
@@ -398,76 +462,7 @@ final class CodexTerminals {
         }
     }
 
-    // MARK: Settings
-
-    /// The models the session's daemon offers, read once per connection.
-    func models(_ live: LiveSession) async throws(Failure) -> [CodexAppServer.Model] {
-        guard let (link, client, _) = link(of: live) else { throw .notAttached }
-        if let models = link.models { return models }
-        var models: [CodexAppServer.Model] = []
-        var cursor: CodexAppServer.JSON = .null
-        do {
-            repeat {
-                let page = try await client.call("model/list", .object(["cursor": cursor]))
-                models += page["data"]?.array?.compactMap(CodexAppServer.Model.init) ?? []
-                cursor = page["nextCursor"] ?? .null
-            } while cursor != .null
-        } catch {
-            throw Self.failure(error)
-        }
-        if link.client === client { link.models = models }
-        return models
-    }
-
-    /// Changes what the session's next turns run with; the TUI's footer follows. A model without the effort the
-    /// session has takes the model's default, as the TUI's own picker does.
-    func change(_ live: LiveSession, model: String? = nil, effort: String? = nil, mode: String? = nil) async throws(Failure) {
-        guard let (link, client, thread) = link(of: live) else { throw .notAttached }
-        guard link.settable else { throw .unsupported }
-        guard let current = link.threads[thread]?.settings else { throw .notAttached }
-        let raises = [CodexAppServer.Settings.neverMode, CodexAppServer.Settings.fullAccessMode]
-        if let mode, !CodexAppServer.modes.contains(mode), !raises.contains(mode) { throw .invalid("Codex has no \(mode) mode.") }
-        var effort = effort
-        if model != nil || effort != nil {
-            let models = try await models(live)
-            let name = model ?? current.model
-            // A model the account doesn't list (a custom provider's) takes any effort the user picks.
-            if let chosen = models.first(where: { $0.id == name }) {
-                if let wanted = effort, !chosen.efforts.contains(wanted) { throw .invalid("\(chosen.name) has no \(wanted) effort.") }
-                if effort == nil, let had = current.effort, !chosen.efforts.contains(had) { effort = chosen.defaultEffort }
-            } else if model != nil {
-                throw .invalid("This Codex account doesn't offer \(name).")
-            }
-        }
-        // A raise sets the approval or sandbox policy; default lowers one back to what the session ran with before it.
-        var updates: [CodexAppServer.JSON] = []
-        if let mode, raises.contains(mode) {
-            updates.append(current.raise(thread: thread, to: mode))
-            if model != nil || effort != nil { updates.append(current.update(thread: thread, model: model, effort: effort, mode: nil)) }
-        } else {
-            if mode == "default", current.raised {
-                guard let base = link.threads[thread]?.base else {
-                    throw .invalid("Side A doesn't know what this session ran with before full access. Change it in the terminal.")
-                }
-                updates.append(CodexAppServer.Settings.lower(thread: thread, to: base))
-            }
-            if model != nil || effort != nil || mode != nil {
-                updates.append(current.update(thread: thread, model: model, effort: effort, mode: mode))
-            }
-        }
-        do {
-            for update in updates { _ = try await client.call("thread/settings/update", update) }
-        } catch AppServerClient.Failure.rpc(let error) where error.unknownMethod {
-            link.settable = false
-            RemoteLog.shared("codex app server at \(link.home): no thread/settings/update")
-            store?.remote.events?.liveChanged()
-            throw .unsupported
-        } catch {
-            throw Self.failure(error)
-        }
-    }
-
-    private static func failure(_ error: Error) -> Failure {
+    static func failure(_ error: Error) -> Failure {
         switch error as? AppServerClient.Failure {
         case .rpc(let rpc)?: .rpc(rpc.message)
         default: .closed
@@ -618,7 +613,11 @@ final class CodexTerminals {
             guard let thread, link.threads[thread] != nil else { return }
             link.threads[thread]?.turn = nil
             link.changes = [:]
-            lost(thread, link, interrupted: params["turn"]?["status"]?.string == "interrupted")
+            let interrupted = params["turn"]?["status"]?.string == "interrupted"
+            let stop = link.threads[thread]?.interrupting
+            if interrupted, let stop, stop.holds { hold(thread, link, stop) }
+            link.threads[thread]?.interrupting = nil
+            lost(thread, link, interrupted: interrupted, stopped: interrupted && stop != nil)
             readCost(thread, link)
         case "thread/tokenUsage/updated":
             guard let thread, link.threads[thread] != nil, let percent = params["tokenUsage"].flatMap(CodexAppServer.contextPercent),
@@ -640,9 +639,20 @@ final class CodexTerminals {
         case "item/started", "item/completed":
             guard let item = params["item"] else { return }
             if let id = item["id"]?.string, let changes = CodexAppServer.changes(item) { link.changes[id] = changes }
-            if method == "item/completed", item["type"]?.string == "userMessage", let thread, let id = item["clientId"]?.string {
+            if method == "item/completed", item["type"]?.string == "userMessage", let thread, let state = link.threads[thread] {
+                // A queued one may lose its clientId on the way out of the queue; its text still names it. An id that is
+                // another's (typed in the TUI, or another client's) is that message, whatever its words.
+                let pending = state.sent.merging(state.queued) { $1 }
+                let named = item["clientId"]?.string
+                guard let id = named.map({ pending[$0] != nil ? $0 : nil })
+                        ?? pending.sorted(by: { $0.value.at < $1.value.at }).first(where: { CodexInputEvidence.matches(item, $0.value.text) })?.key else { return }
                 link.threads[thread]?.sent[id] = nil
+                link.threads[thread]?.queued[id] = nil
+                store?.remote.receipts.codex(client: id, .read)
             }
+        case "thread/queue/changed":
+            guard let thread, link.threads[thread]?.queued.isEmpty == false else { return }
+            dequeued(thread, link)
         case "thread/settings/updated":
             // Changed from here, from the TUI, or by another client: the next turns run with these.
             guard let thread, link.threads[thread] != nil, let settings = params["threadSettings"].flatMap(CodexAppServer.Settings.init(updated:)),

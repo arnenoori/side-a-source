@@ -1,4 +1,5 @@
 import Observation
+import Photos
 import PhotosUI
 import SideAProtocol
 import SwiftUI
@@ -13,6 +14,8 @@ final class AttachSurface {
     nonisolated deinit {}
 
     let drawer = AttachDrawer()
+    /// The + held: the newest photos in a strip above the field.
+    let strip = RecentStrip()
     /// What the field's paste and the drawer's Paste row read at the moment of pasting, not at the moment they were set up.
     let target = AttachTarget()
     var picks: [PhotosPickerItem] = []
@@ -27,30 +30,65 @@ final class AttachSurface {
     func add(_ images: [Data], room: Int) { for data in images.prefix(room) { target.add(data) } }
 
     /// Opens the drawer, or brings the keyboard back in its place. False when there is nothing to attach (a Mac that can't take uploads, a
-    /// full tray, no window yet): the caller does what it did before the drawer. `options` is the menu's last row;
-    /// nil leaves it out.
+    /// full tray, no window yet): the caller does what it did before the drawer. `photosOnly` is the + menu's Photos:
+    /// the library grid at the keyboard's height, without the actions the menu already offered.
     @discardableResult
-    func open(key: SessionKey?, tools: MacTools, reduceMotion: Bool, options: (() -> Void)?) -> Bool {
+    func open(key: SessionKey?, tools: MacTools, reduceMotion: Bool, photosOnly: Bool = false) -> Bool {
         guard let key else { return false }
         let room = room(key, tools: tools)
         let rows = DrawerRows.make(canUpload: tools.can(.uploads), room: room, hasCamera: drawer.camera.hasCamera,
-                                   clipboardHasImage: UIPasteboard.general.hasImages, options: options != nil)
+                                   clipboardHasImage: UIPasteboard.general.hasImages)
         guard rows.attaches else { return false }
+        drawer.toggle(rows: rows, hooks: hooks(key: key, tools: tools), reduceMotion: reduceMotion, photosOnly: photosOnly)
+        return true
+    }
+
+    /// The + menu's Camera: the drawer opens on the grid and the viewfinder grows out of its camera tile, asking for
+    /// the camera first if nobody has. A refusal goes to Settings, as the tile does.
+    func openCamera(key: SessionKey?, tools: MacTools, reduceMotion: Bool) {
+        guard !drawer.isOpen, open(key: key, tools: tools, reduceMotion: reduceMotion, photosOnly: true) else { return }
+        let drawer = drawer
+        Task { @MainActor in
+            if drawer.camera.access.asksOnTap { await drawer.camera.ask() }
+            switch drawer.camera.access {
+            case .authorized:
+                // The panel rises first, so the viewfinder has a tile to grow from.
+                try? await Task.sleep(for: .milliseconds(320))
+                drawer.openCamera()
+            case .denied: drawer.openSettings()
+            default: DrawerFeedback.warning()
+            }
+        }
+    }
+
+    /// The + menu's Paste. Reading raises the system's Allow Paste question for another app's picture; false when that
+    /// was refused or the picture is gone.
+    func pasteImage(key: SessionKey?, tools: MacTools) -> Bool {
+        guard let key else { return false }
+        return pasteClipboard(into: tools.attachments, key: key)
+    }
+
+    /// The drawer's Add, for one photo.
+    func attach(_ asset: PHAsset, thumbnail: UIImage?, key: SessionKey?, tools: MacTools) {
+        guard let key else { return }
+        if !hooks(key: key, tools: tools).add(asset, thumbnail: thumbnail ?? UIImage()) { DrawerFeedback.warning() }
+    }
+
+    private func pasteClipboard(into attachments: ComposerAttachments, key: SessionKey) -> Bool {
+        guard let data = UIPasteboard.general.image?.jpegData(compressionQuality: 0.95) else { return false }
+        add([data], room: attachments.room(key))
+        return true
+    }
+
+    private func hooks(key: SessionKey, tools: MacTools) -> DrawerHooks {
         let attachments = tools.attachments
-        let hooks = DrawerHooks(
+        return DrawerHooks(
             room: { attachments.room(key) },
             reserve: { attachments.reserve(preview: $0, in: key, refetch: $1) },
             supply: { attachments.supply($0, $1, in: key) },
             files: { [self] in showsFiles = true },
             picker: { [self] in showsPicker = true },
-            pasteImage: { [self] in
-                guard let data = UIPasteboard.general.image?.jpegData(compressionQuality: 0.95) else { return false }
-                add([data], room: attachments.room(key))
-                return true
-            },
-            options: options ?? {})
-        drawer.toggle(rows: rows, hooks: hooks, reduceMotion: reduceMotion)
-        return true
+            pasteImage: { [self] in pasteClipboard(into: attachments, key: key) })
     }
 }
 
@@ -99,13 +137,13 @@ private struct AttachPresenters: ViewModifier {
             .onChange(of: ObjectIdentifier(tools.attachments)) { surface.target.attachments = tools.attachments }
             .onChange(of: tools.can(.uploads)) { _, can in surface.target.canUpload = can }
             .onAppear { KeyboardMetrics.start() }
-            .onDisappear { surface.drawer.abort() }
+            .onDisappear { surface.drawer.abort(); surface.strip.close() }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .background { surface.drawer.abort() }
+                if phase == .background { surface.drawer.abort(); surface.strip.close() }
                 // The camera may have been allowed or refused in Settings while the app was away.
                 if phase == .active { surface.drawer.camera.refresh() }
             }
-            .onChange(of: key) { surface.drawer.abort() }
+            .onChange(of: key) { surface.drawer.abort(); surface.strip.close() }
     }
 }
 

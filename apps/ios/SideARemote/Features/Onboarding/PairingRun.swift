@@ -181,8 +181,8 @@ struct PairingFailure: Equatable {
     /// Before the code is posted: Remote off, or a version either side must update past.
     init?(_ hello: Hello, macName mac: String, clientBuild: Int) {
         switch hello.needsUpdate(clientBuild: clientBuild) {
-        case .client: self.init(title: "Update Side A Remote to pair with this Mac.", primary: .appStore)
-        case .mac: self.init(title: "Update Side A on your Mac.", primary: .tryAgain)
+        case .client: self.init(title: "Update Side A Remote to pair with this \(hello.mac.kind.noun).", primary: .appStore)
+        case .mac: self.init(title: "Update Side A on \(hello.mac.kind.your(mac)).", primary: .tryAgain)
         case nil:
             guard !hello.remoteOn else { return nil }
             self.init(title: "Turn on Remote in Side A on \(mac).", primary: .tryAgain)

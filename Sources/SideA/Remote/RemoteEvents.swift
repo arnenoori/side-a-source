@@ -124,7 +124,9 @@ final class RemoteEvents: Island.Watcher {
         for row in new where !before.contains(row.id) {
             guard let finished = WireBuilders.finished(row, island: island) else { continue }
             record(.finishedAdd(finished))
-            store?.remote.push.finished(finished, ran: ran(finished.sessionID, at: row.at))
+            let ran = ran(finished.sessionID, at: row.at)
+            // A snooze that finishing doesn't wake keeps the turn's end quiet until it wakes.
+            if store?.remote.snoozes.quiets(finished.sessionID) != true { store?.remote.push.finished(finished, ran: ran) }
         }
         for row in old where !after.contains(row.id) {
             if let session = row.finish.sessionID { record(.finishedResolve(sessionID: session, reason: reason.rawValue)) }
@@ -207,7 +209,7 @@ final class RemoteEvents: Island.Watcher {
         for session in next where sessions[session.id].map({ !Self.same($0, session) }) ?? true { record(.sessionUpsert(session)) }
         // A flag that starts; `start` took in the ones already up.
         for session in next {
-            if let flag = session.flag, sessions[session.id].map({ $0.flag?.kind != flag.kind }) ?? true { store.remote.push.health(session, flag) }
+            if let flag = session.flag, session.snooze == nil, sessions[session.id].map({ $0.flag?.kind != flag.kind }) ?? true { store.remote.push.health(session, flag) }
             if session.status == .working, working[session.id] == nil {
                 working[session.id] = session.statusAt.map { Date(timeIntervalSince1970: $0) } ?? Date()
             }
@@ -216,6 +218,7 @@ final class RemoteEvents: Island.Watcher {
         for (id, session) in sessions where session.flag != nil && latest[id]?.flag == nil {
             store.remote.push.healthEnded(id)
         }
+        store.remote.snoozes.prune(keeping: ids)
         working = working.filter { ids.contains($0.key) }
         lastFinished = lastFinished.filter { ids.contains($0.key) }
         sessions = latest
@@ -266,7 +269,8 @@ final class RemoteEvents: Island.Watcher {
 
     /// A hosted session needs someone at its screen: a reply that may not have gone in, a compaction that didn't show.
     func hostedAttention(_ name: String, _ attention: HostedSessions.Attention) {
-        record(.hostedAttention(HostedAttention(name: name, kind: .init(rawValue: attention.kind), text: attention.text)))
+        // Screen lines can hold a pasted key.
+        record(.hostedAttention(HostedAttention(name: name, kind: .init(rawValue: attention.kind), text: Redact.secrets(attention.text))))
     }
 
     // MARK: Usage

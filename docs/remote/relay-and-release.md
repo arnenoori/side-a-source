@@ -83,7 +83,7 @@ All JSON, all under `/v1`, bodies capped at 8 KB.
 | `GET /installs/self` | Device counts, whether sends are paused, and `gone: [{device, reason}]`: the Mac's self-check for Test Connection (setup). |
 | `POST /installs/rotate` | `{newPublicKey}`, signed with the old key. The id stays the same; the old key stops working at once. |
 | `DELETE /installs` | Remove Side A / Remote turned off: deletes the install and all its devices. |
-| `PUT /devices/{deviceId}` | `{apnsToken, environment: "sandbox"\|"production", secretHash, pushToStartToken?, appVersion}`. Creates or replaces a device (`development` is accepted as an alias for `sandbox`). Sent when the phone first reports its tokens (`POST /v1/devices/push`) and whenever they change. A new or changed APNs token starts **unverified** (below). |
+| `PUT /devices/{deviceId}` | `{apnsToken, environment: "sandbox"\|"production", secretHash, pushToStartToken?, appVersion, notifyQuiet?}`. `notifyQuiet`: whether this device wants the word that its Mac went quiet (below); absent leaves it as it was. Creates or replaces a device (`development` is accepted as an alias for `sandbox`). Sent when the phone first reports its tokens (`POST /v1/devices/push`) and whenever they change. A new or changed APNs token starts **unverified** (below). |
 | `DELETE /devices/{deviceId}` | Revoke from Settings > Remote. |
 | `POST /send` | One push to one or more of this install's devices (below). Returns a result per device. |
 
@@ -163,7 +163,7 @@ with headers `apns-push-type: alert`, `apns-topic: <registration bundleID>` (`co
 `apns-priority`, `apns-expiration`, `apns-collapse-id`, and `e` set to that device's envelope.
 `loc-key` strings (`PUSH_REQUEST_FALLBACK`, `PUSH_QUESTION_FALLBACK`, `PUSH_PLAN_FALLBACK`,
 `PUSH_FINISHED_FALLBACK`, `PUSH_LIMIT_FALLBACK`, `PUSH_HEALTH_FALLBACK`, `PUSH_ROTATION_FALLBACK`, `PUSH_TEST_FALLBACK`,
-`PUSH_ANSWERED`) live in the
+`PUSH_ANSWERED`, and the relay's own `PUSH_MAC_QUIET`, `PUSH_MAC_ASLEEP`, `PUSH_MAC_BACK`) live in the
 app's `Localizable.strings` ("Side A needs you", "A session finished"), so even the fallback text
 is the app's, and a stolen install key can make a phone show only those fixed strings.
 
@@ -183,6 +183,50 @@ the `ANSWERED` category: "Answered on Mac" replaces the request on the Lock Scre
 Per-device results: `ok`, `gone` (token unregistered; Mac shows "iPhone stopped receiving
 notifications, open Side A Remote"), `retry` (with seconds), `rejected` (with APNs reason, a bug
 on our side), `unverified` (the token hasn't answered its challenge yet).
+
+### A Mac that goes quiet
+
+The Mac can't report its own death, so the install's object notices. It watches the Mac's tunnel socket
+(tunnel.md): a Mac that said `watch` on connect and then has no socket for **10 minutes**, or whose socket
+is open but silent for 10 minutes (its ping goes out every 25 s and the object's auto-response timestamp
+records each), has gone quiet. The alarm then sends each verified device that asked one alert, **once per
+outage**, and an all-clear when the Mac returns.
+
+Ten minutes is past what an ordinary absence takes: a Wi-Fi roam or a lost network (seconds), a Sparkle
+relaunch or wake from sleep (a minute or two), a relay deploy (every socket drops and the Macs are back
+in seconds). It is short enough that a crash is found long before anyone looks at the phone, which the
+33-hour outage was not.
+
+What the Mac says as it leaves decides what happens:
+
+| Leaves with | Alert |
+|---|---|
+| Nothing: a crash, a power cut, a dropped network | After 10 minutes: `PUSH_MAC_QUIET` |
+| `goodbye: sleep` (`NSWorkspace.willSleepNotification`) | After 24 hours asleep: `PUSH_MAC_ASLEEP`. A night and a working day are not news |
+| `goodbye: quit` (app quit, logout, shutdown) or `off` (Remote or Anywhere turned off) | Never: the owner did it |
+
+A goodbye counts only if the Mac's last word came within 2 minutes after it, so one followed by hours of
+pings was withdrawn. A Mac shut out because the relay's day budget for it ran out doesn't count as quiet
+either. A relay that is paused (`RELAY_PAUSED`, `RELAY_TUNNEL_PAUSED`), unconfigured, over the install's
+per-minute or per-day send limit, or told to retry by APNs holds the alert and tries again in one to five
+minutes; each alert is a send for those limits. **Never alerted:** an install that never opened a tunnel
+(no row), and a Mac that never said `watch` (an older app), so a relay deployed ahead of the Macs says nothing
+about their sleep.
+
+Who is told: only devices the Mac registered with `notifyQuiet: true` (`PUT /v1/devices/{id}`; the phone's
+"Mac goes quiet" switch, on by default, travels in `NotificationPrefs.macQuiet`). A device left as `false`
+or never named is not told; an older Mac that doesn't send the field changes nothing.
+
+The words are the relay's, as for every push: `aps.alert` is a `loc-key` (`PUSH_MAC_QUIET`,
+`PUSH_MAC_ASLEEP`, `PUSH_MAC_BACK`), category `MAC_QUIET`, `thread-id` and `apns-collapse-id` `mac-quiet`,
+`"q": "<macID>"` for the tap, no `e` and no `mutable-content`. The alert is priority 10, sound, active, and
+expires after 6 hours; the all-clear is priority 5, passive, no sound, expires after 1 hour, and replaces
+the alert in Notification Center. The all-clear is sent only if the alert was.
+
+Storage, in tables made when first needed: `tunnel_mac(id, up, since, watch, goodbye, goodbye_at, alerted)`
+(one row from the Mac's first connect) and `quiet_devices(id)`. Nothing the Mac wrote is stored but the
+word `quit`, `off` or `sleep`. While a watching Mac is connected the object's alarm runs about every
+10 minutes, and goes back to its daily round when the Mac is gone for good.
 
 ### Storage
 

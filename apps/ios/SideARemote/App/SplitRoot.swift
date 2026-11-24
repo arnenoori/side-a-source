@@ -185,7 +185,7 @@ private struct SessionsSplit: View {
         Binding { SplitPath.selection(path, session: root.session(hosted:mac:)) } set: { path = SplitPath.selecting($0, in: path) }
     }
 
-    private var canStart: Bool { root.visible.contains { $0.tools.can(.hosted) } }
+    private var canStart: Bool { root.canStartSession }
 
     private var pushed: Binding<[Route]> {
         Binding { SplitPath.pushed(path) } set: { path = SplitPath.replacing(pushed: $0, in: path) }
@@ -248,6 +248,27 @@ private struct SessionsSplit: View {
             .id(SplitPath.root(path))
             .environment(\.keepsTabBar, true)
         }
+        .onAppear(perform: restoreOpen)
+        .onChange(of: SplitPath.root(path)) { _, route in
+            guard !root.model.isDemo else { return }
+            switch route {
+            case .session(let id, let mac)?: ListPrefsStore.setOpen((mac, id))
+            case nil: ListPrefsStore.setOpen(nil)
+            default: break
+            }
+        }
+    }
+
+    /// Once a launch: the session open at the last one, if its Mac still lists it. Later, a window widened from the
+    /// stack keeps what that stack showed.
+    private static var restored = false
+
+    private func restoreOpen() {
+        guard !Self.restored else { return }
+        Self.restored = true
+        guard path.isEmpty, !root.model.isDemo, let open = ListPrefsStore.open(),
+              root.model(for: open.mac)?.sessions.session(open.session) != nil else { return }
+        path = [.session(open.session, mac: open.mac)]
     }
 }
 
@@ -256,14 +277,22 @@ private struct NewSessionButton: View {
     @Environment(KeyRequests.self) private var keys
 
     var body: some View {
-        Button { keys.newSession += 1 } label: {
+        Menu {
+            QuickSessionsMenu { keys.newSession += 1 }
+        } label: {
             Image(systemName: "square.and.pencil")
                 .font(.system(size: 19, weight: .medium))
                 .frame(width: 48, height: 48)
                 .contentShape(.circle)
                 .hoverEffect(.highlight)
+        } primaryAction: {
+            keys.newSession += 1
         }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .menuOrder(.fixed)
         .buttonStyle(.plain)
+        .accessibilityHint("Touch and hold for recent sessions")
         .foregroundStyle(.tint)
         .glassEffect(.regular.interactive(), in: .circle)
         .accessibilityLabel("New Session")

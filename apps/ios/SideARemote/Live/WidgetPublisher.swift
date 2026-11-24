@@ -58,7 +58,7 @@ extension WidgetSnapshot {
             return
         }
         let rows = each.flatMap { snapshot in snapshot.sessions.map { var row = $0; row.mac = snapshot.macID; return row } }
-        merged.macName = "\(each.count) Macs"
+        merged.macName = "\(each.count) \(macs.map(\.mac.kind).shared.titlePlural)"
         merged.working = each.map(\.working).reduce(0, +)
         merged.waiting = each.map(\.waiting).reduce(0, +)
         merged.top = each.lazy.compactMap(\.top).first

@@ -1,5 +1,22 @@
 #!/usr/bin/env bash
-# Runs scripts/check.sh before anything is pushed. Skip once with git push --no-verify.
+# Runs scripts/check.sh on every branch commit about to be pushed, then posts its `local-check` status once the push
+# has landed (GitHub can't take a status for a commit it doesn't have yet). Skip once with git push --no-verify;
+# scripts/merge-pr.sh still refuses a PR with no local-check status.
 set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+# Read the refs first: check.sh clears the GIT_* variables the hook runs with.
+shas=()
+while read -r _ local_sha remote_ref _; do
+  [[ "$remote_ref" == refs/heads/* && "$local_sha" != 0000000000000000000000000000000000000000 ]] && shas+=("$local_sha")
+done
 git fetch -q origin main 2>/dev/null || true
-exec "$(git rev-parse --show-toplevel)/scripts/check.sh"
+common="$(git rev-parse --path-format=absolute --git-common-dir)"
+log="$common/sidea-local-check.log"
+for sha in ${shas[@]+"${shas[@]}"}; do
+  # A commit that already passed here (check.sh recorded it) isn't run again.
+  [[ -f "$common/sidea-local-check/$sha" ]] || "$root/scripts/check.sh" --sha "$sha"
+  # Detached, so the push isn't held up: it waits for the commit to reach GitHub, posts, and writes to the log.
+  (cd "$root" && nohup ./scripts/check.sh --post "$sha" --wait </dev/null >>"$log" 2>&1 &)
+done
+# A push of nothing checkable (a delete, a tag) still gets the plain gate for the checked-out commit.
+[[ ${#shas[@]} -gt 0 ]] || exec "$root/scripts/check.sh"

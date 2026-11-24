@@ -58,6 +58,10 @@ private func object(_ value: some Encodable) throws -> [String: Any] {
 
     // A phone without the toggle sends no `rotation`: it wants none.
     #expect(try JSONDecoder().decode(NotificationPrefs.self, from: Fixtures.data("future/NotificationPrefs.before-health")).rotation == nil)
+    // And no `macQuiet`: the relay says nothing to it about its Mac going quiet.
+    #expect(try JSONDecoder().decode(NotificationPrefs.self, from: Fixtures.data("future/NotificationPrefs.before-health")).macQuiet == nil)
+    let quiet = NotificationPrefs(macQuiet: true, rotation: false)
+    #expect(try JSONDecoder().decode(NotificationPrefs.self, from: JSONEncoder().encode(quiet)).macQuiet == true)
 }
 
 @Test func anAutopilotUpdateIsAStateEventThatSurvivesTheWire() throws {

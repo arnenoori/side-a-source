@@ -22,6 +22,8 @@ final class MacTools {
     /// What a hosted session's screen needs a person for (`hosted.attention`), by tmux name, until the session changes.
     private(set) var attention: [String: HostedAttention] = [:]
     private(set) var options: OptionsList?
+    /// From the Mac this launch, not the cache.
+    @ObservationIgnored private var optionsFresh = false
     private(set) var projects: [RemoteProject] = []
     /// From `GET /v1/autopilot`, and each Move Now.
     private(set) var autopilot: AutopilotState?
@@ -33,6 +35,8 @@ final class MacTools {
 
     /// Live sessions' History rows as the Mac last answered a change: pin and Side A's own title.
     private(set) var past: [String: PastSession] = [:]
+    /// Snoozes and wakes from this phone, ahead of the Mac's row for a few seconds; the demo keeps them.
+    private(set) var snoozing: [SessionKey: (snooze: SessionSnooze?, at: Date)] = [:]
 
     /// Settings changed from this phone, field by field, until the session's row says so; the demo keeps them.
     private(set) var changed: [SessionKey: SessionSettings] = [:]
@@ -119,7 +123,8 @@ final class MacTools {
     static let everything: Set<Capability> = [.hosted, .terminal, .continueOnPhone, .uploads, .options, .history, .search, .restart, .ports,
                                               .quit, .mac, .cleanup, .autopilot, .incidents, .interrupt, .interruptNextStep, .replyNote,
                                               .replyTerminal, .replyInbox, .hostedTrust, .hostedShow, .accountsUse,
-                                              .autopilotToggle, .autopilotAnswers, .autopilotContinues, .rotation]
+                                              .autopilotToggle, .autopilotAnswers, .autopilotContinues, .rotation, .repliesQueue, .files, .fileRead,
+                                              .snooze, .pullRequests, .failures, .repliesPromote, .restartAgent]
 
     func can(_ capability: Capability) -> Bool { capabilities.contains(capability) }
 
@@ -243,8 +248,16 @@ final class MacTools {
 
     /// Once per launch, again on demand; a Mac without `options` leaves the composer's own list.
     func loadOptions(force: Bool = false) async {
-        guard !isDemo, can(.options), force || options == nil else { return }
-        if let list = try? await client().options() { options = list }
+        guard !isDemo, can(.options), force || options == nil || !optionsFresh else { return }
+        guard let client = try? await client(), let list = try? await client.reaching({ try await client.options() }) else { return }
+        options = list
+        optionsFresh = true
+    }
+
+    /// The last launch's options and folders, shown until the Mac's own arrive, so New Session works while it's away.
+    func restore(options: OptionsList?, projects: [RemoteProject]?) {
+        if self.options == nil, let options { self.options = options }
+        if self.projects.isEmpty, let projects { self.projects = projects }
     }
 
     func models(for agent: AgentProvider) -> [ModelOption] {
@@ -255,13 +268,15 @@ final class MacTools {
 
     func loadProjects() async throws {
         guard !isDemo else { return }
-        projects = try await client().projects().projects
+        let client = try await client()
+        projects = try await client.reaching { try await client.projects() }.projects
     }
 
     // MARK: Sessions
 
-    /// The key is the caller's, made once per sheet, so a second tap on Start is a replay, not a second session.
-    func start(_ start: StartHosted, key: String) async throws -> HostedSession {
+    /// The key is the caller's, made once per sheet, so a second tap on Start, or a resend while the Mac is out of reach,
+    /// is a replay, not a second session.
+    func start(_ start: StartHosted, key: String, waiting: @escaping () -> Void = {}) async throws -> HostedSession {
         #if DEBUG
         // `--demo-start`: the demo answers a start with a hosted session, to see what follows Start.
         if isDemo, ProcessInfo.processInfo.arguments.contains("--demo-start") {
@@ -273,11 +288,17 @@ final class MacTools {
         }
         #endif
         let session: HostedSession = try await guarded(.settings, subject: ConfirmMessage.subject(start: start), level: ConfirmPolicy.start(start), reason: "Start this session") { confirm in
-            try await client().post("/v1/hosted", json: start, idempotencyKey: key, confirm: confirm)
+            let client = try await client()
+            return try await client.reaching(for: Self.startWaits, missed: waiting) {
+                try await client.post("/v1/hosted", json: start, idempotencyKey: key, confirm: confirm)
+            }
         }
         hosted[session.name] = session
         return session
     }
+
+    /// Inside the signature's two minutes, with room for a request that runs out its own timeout on the way.
+    static let startWaits: Double = 75
 
     /// A new hosted session continuing from a live one's latest state; the parent keeps running.
     func fork(_ session: RemoteSession) async throws -> HostedSession {
@@ -302,6 +323,44 @@ final class MacTools {
         return try await guarded(subject: ConfirmMessage.subject(action: .restart, target: session, body: restart), reason: "Restart this session") { confirm in
             try await client().restart(session, restart, idempotencyKey: key, confirm: confirm)
         }
+    }
+
+    /// The agent a session can be handed off to, when the Mac can start it here: installed, signed in, with models.
+    func otherAgent(for session: RemoteSession) -> AgentOptions? {
+        guard can(.restartAgent), can(.hosted), session.cwd != nil, session.conversationID != nil, !session.headless else { return nil }
+        guard let options = agent(session.agent == .claude ? .codex : .claude), options.installed, options.signedIn == true,
+              !options.models.isEmpty else { return nil }
+        return options
+    }
+
+    /// Never through the outbox: a handoff that waited could start long after the person moved on, so it goes now or not at all.
+    func handOff(_ session: RemoteSession, draft: HandoffDraft, message: String, photos: [String] = [], key: String) async throws -> HostedSession {
+        let handoff: Handoff
+        if let reviewed = draft.handoff { handoff = reviewed } else { handoff = try await self.handoff(session.id) }
+        // Only a Mac that lists the capability reads them; the composer holds the photos back from any other.
+        let restart = RestartRequest(handoff: handoff, accountID: draft.accountID, model: draft.modelID, agent: draft.agent,
+                                     effort: draft.effort?.rawValue, permissionMode: PermissionMode.handedOff(mode(of: session), to: draft.agent).mode,
+                                     message: message, attachments: can(.restartAgentImages) ? photos : nil)
+        return try await guarded(subject: ConfirmMessage.subject(action: .restart, target: session.id, body: restart),
+                                 level: ConfirmPolicy.restart(restart, sessionMode: mode(of: session)), reason: "Hand off to \(draft.agent.title)") { confirm in
+            let client = try await client()
+            return try await client.reaching(for: Self.startWaits) {
+                try await client.restart(session.id, restart, idempotencyKey: key, confirm: confirm)
+            }
+        }
+    }
+
+    /// A page of the conversation a handoff came from, which has ended, by its conversation id.
+    func earlierPage(_ conversation: String, before: Cursor?) async throws -> TranscriptPage {
+        if isDemo { return demoEarlierPage(conversation) }
+        let client = try await client()
+        return try await client.reaching { try await client.transcript(conversation, before.map { .before($0) } ?? .latest, limit: 40) }
+    }
+
+    func handoffPrompt(_ id: String) async throws -> String {
+        if isDemo { return demoHandoffPrompt() }
+        let client = try await client()
+        return try await client.reaching { try await client.handoffPrompt(id) }.text
     }
 
     func quit(_ session: SessionKey) async throws {
@@ -386,9 +445,9 @@ final class MacTools {
     }
 
     func loadModels(for session: RemoteSession) async {
-        guard session.abilities.contains(.settingsModel) || session.abilities.contains(.settingsEffort) else { return }
-        guard isLive else { return }
-        if let list = try? await client().models(session.agent, session: session.id) { sessionModels[session.id] = list.models }
+        guard session.takesModelSettings else { return }
+        guard isLive, let client = try? await client() else { return }
+        if let list = try? await client.reaching({ try await client.models(session.agent, session: session.id) }) { sessionModels[session.id] = list.models }
     }
 
     /// Signed with the unlock key, or with the confirm key after Face ID when the change raises. A Mac that wants Face ID
@@ -411,6 +470,47 @@ final class MacTools {
                                    mode: change.mode.map { done.mode ?? $0 }, fast: change.fast.map { done.fast ?? $0 })
         changed[session.id] = (changed[session.id] ?? SessionSettings()).merging(mine)
         return result
+    }
+
+    /// Files in the session's folder for an `@` word, best match first. Nothing from a Mac that doesn't list them.
+    func files(_ session: SessionKey, matching query: String) async -> [String] {
+        if isDemo { return DemoData.files.filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) } }
+        guard can(.files) else { return [] }
+        return (try? await signed { try await client().files(session, matching: query) })?.files ?? []
+    }
+
+    /// A file of the session's folder, written to a temporary folder under its own name so Quick Look and Share know
+    /// what it is. Copies from earlier fetches go after an hour.
+    func file(_ session: SessionKey, path: String) async throws -> URL {
+        guard can(.fileRead) else { throw ToolError.oldMac }
+        let data = try await client().file(session, path: path)
+        let files = FileManager.default.temporaryDirectory.appendingPathComponent("files", isDirectory: true)
+        let old = (try? FileManager.default.contentsOfDirectory(at: files, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        for folder in old where ((try? folder.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast) < .now.addingTimeInterval(-3600) {
+            try? FileManager.default.removeItem(at: folder)
+        }
+        let name = (path as NSString).lastPathComponent
+        let folder = files.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(name.isEmpty || name == "." || name == ".." ? "file" : name)
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+        return url
+    }
+
+    /// Takes a reply out of the session's queue; the demo pretends.
+    func removeQueued(_ reply: QueuedReply, in session: SessionKey) async throws {
+        if isDemo { return }
+        try await signed { try await client().removeQueued(session, reply.id) }
+    }
+
+    /// Puts new words in a queued reply's place, signed as any reply is; the demo pretends.
+    func reword(_ reply: QueuedReply, to text: String, in session: SessionKey) async throws {
+        if isDemo { return }
+        var body = RemoteReply(text: text, mode: .followUp)
+        body.replaces = reply.id
+        let _: ReplyResult = try await guarded(subject: ConfirmMessage.subject(action: .reply, target: session, body: body), reason: "Change this message") {
+            try await client().post("/v1/sessions/\(session)/reply", json: body, confirm: $0)
+        }
     }
 
     /// Compacts an idle session's context; the demo pretends.
@@ -454,7 +554,18 @@ final class MacTools {
         let session = TerminalSession(client: await live.engine.client, name: name, viewer: TerminalModel.viewer(for: name, mac: paired.endpoint.macID),
                                       outbox: live.outbox,
                                       confirm: confirm)
-        return TerminalModel(name: name, session: session)
+        let model = TerminalModel(name: name, session: session)
+        model.kind = paired.endpoint.kind
+        return model
+    }
+
+    /// The Mac's screen, starting on `hosted`'s window when the Mac finds one. Each open is signed with the Face ID key.
+    func screen(hosted: String?) async -> ScreenModel {
+        guard let live else { return ScreenModel(session: nil, hosted: hosted, screenOn: false, needsKeys: false) }
+        let kind = live.paired.endpoint.kind
+        let confirm = needsKeys ? nil : DeviceKeys.screen(macID: live.paired.endpoint.macID, deviceID: live.paired.deviceID, kind: kind)
+        return ScreenModel(session: ScreenSession(client: await live.engine.client, confirm: confirm), hosted: hosted,
+                           screenOn: can(.screenOn), needsKeys: needsKeys, kind: kind)
     }
 
     // MARK: Ports
@@ -618,6 +729,31 @@ final class MacTools {
 
     func isPinned(_ session: RemoteSession) -> Bool { session.conversationID.flatMap { past[$0]?.pinned } ?? false }
 
+    // MARK: Snooze
+
+    /// Never while it asks something or has failed: a stale snooze must not hide either.
+    func snooze(of session: RemoteSession, now: Date = .now) -> SessionSnooze? {
+        guard session.openRequests.isEmpty, session.status != .waiting, session.failure == nil else { return nil }
+        let mine = snoozing[session.id].flatMap { isDemo || now.timeIntervalSince($0.at) < 15 ? $0 : nil }
+        let snooze = mine.map(\.snooze) ?? session.snooze
+        // Past its time it is awake here too, though an offline Mac hasn't said so.
+        return snooze?.until.map { $0 > now.timeIntervalSince1970 } ?? true ? snooze : nil
+    }
+
+    /// Nil `choice` wakes it. The row moves at once; a refusal puts it back.
+    func snooze(_ session: RemoteSession, _ choice: SessionSnooze.Choice?, until: Date?) async throws {
+        let before = snoozing[session.id]
+        snoozing[session.id] = (choice.map { SessionSnooze(choice: $0, until: until?.timeIntervalSince1970, at: Date.now.timeIntervalSince1970) }, .now)
+        guard !isDemo else { return }
+        do {
+            let row = try await client().snooze(session.id, SnoozeRequest(choice: choice, until: until?.timeIntervalSince1970))
+            snoozing[session.id] = (row.snooze, .now)
+        } catch {
+            snoozing[session.id] = before
+            throw error
+        }
+    }
+
     /// The first page of History, for which live sessions are pinned and renamed.
     func loadPast() async {
         guard !isDemo, can(.history), past.isEmpty, let page = try? await history(archived: false, cursor: nil) else { return }
@@ -630,17 +766,25 @@ final class MacTools {
         try await connection().engine.upload(data, mime: mime)
     }
 
+    func transcribe(_ audio: Data, _ ask: TranscribeAsk) async throws -> TranscribeResult {
+        try await client().transcribe(audio, ask)
+    }
+
+    /// What every paired host is called together, for words that no one host is in reach of.
+    private static var fleet: HostOS { PairedMac.all().map(\.endpoint.kind).shared }
+
     /// The Mac's own words when it sent some.
     static func message(_ error: Error) -> String {
         switch error {
         case let failure as RemoteFailure: failure.error.message
         case ToolError.demo: "The demo doesn't change anything."
         case ToolError.unavailable: "Side A can't open its storage on this \(ThisDevice.kind). Reinstall it to make changes."
-        case ToolError.badURL: "The Mac sent an address the phone can't open."
-        case ToolError.gone: "The Mac no longer lists this session."
+        case ToolError.badURL: "\(fleet.sentenceThe()) sent an address the phone can't open."
+        case ToolError.gone: "\(fleet.sentenceThe()) no longer lists this session."
         case ToolError.cancelled: "Cancelled."
         case ToolError.locked: "Unlock your \(ThisDevice.kind) to do this."
         case ToolError.pairAgain: "Pair this \(ThisDevice.kind) again to do this from it."
+        case ToolError.oldMac: "Update Side A on \(fleet.your()) to open its files here."
         default: (error as NSError).localizedDescription
         }
     }
@@ -669,4 +813,6 @@ enum ToolError: Error {
     case locked
     /// The Mac checks signatures, and this pairing has no keys it knows (`MacTools.needsKeys`).
     case pairAgain
+    /// The Mac doesn't list the capability the call needs.
+    case oldMac
 }

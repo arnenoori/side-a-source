@@ -32,7 +32,8 @@ private final class Calls: @unchecked Sendable {
     remote.start()
     await store.syncHosting()
     remote.refresh()
-    try await Task.sleep(for: .milliseconds(100))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving that nothing starts with Remote off
+    try await Task.sleep(for: .milliseconds(50))
     #expect(!store.hostingWanted)
     #expect(calls.all.isEmpty, "\(calls.all)")
     #expect(keychain.memoryReads == 0 && !remote.opened)
@@ -55,7 +56,7 @@ private final class Calls: @unchecked Sendable {
     probing.probe = { calls.probe(); return TailscaleStatus(state: .notInstalled) }
     probing.on = true
     probing.refresh()
-    for _ in 0..<50 where calls.probed == 0 { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { calls.probed >= 1 }
     #expect(calls.probed == 1)
 }
 
@@ -71,9 +72,10 @@ private final class Calls: @unchecked Sendable {
     }
     remote.on = true
     remote.refresh()
-    for _ in 0..<100 where calls.probed < 3 { try await Task.sleep(for: .milliseconds(20)) }
+    await eventually { calls.probed >= 3 }
     #expect(calls.probed == 3)
-    try await Task.sleep(for: .milliseconds(150))
+    // swiftlint:disable:next sleep_as_sync_in_tests -- proving it is left alone once up: three re-probe intervals (30 ms each) pass with no more asks
+    try await Task.sleep(for: .milliseconds(90))
     #expect(calls.probed == 3 && remote.tailscale?.state == .ready)
     remote.on = false
 }
