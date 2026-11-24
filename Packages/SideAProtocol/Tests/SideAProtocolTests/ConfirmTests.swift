@@ -92,7 +92,6 @@ private let knownSubjects: [(String, @Sendable () throws -> String, String)] = [
     ("continues off", { ConfirmMessage.subject(autopilotContinues: AutopilotChange(enabled: false)) }, "continues:enabled:false"),
     ("allow and switch mode", { try ConfirmMessage.subject(requestID: "r1", allowMode: .acceptEdits) }, "r1:allowMode:acceptEdits"),
     ("settings", { try ConfirmMessage.subject(sessionID: "s1", settings: SettingsChange(mode: .plan)) }, "s1:D1aWkmhvzkfb4ehLzkd0M8fM8tk_GBqeAV7pNf_68kE"),
-    // The Mac hashes the change it decoded, so the wire's spelling and the value's agree.
     ("settings as sent", {
         try ConfirmMessage.subject(sessionID: "s1", settings: JSONDecoder().decode(SettingsChange.self, from: Fixtures.data("SettingsChange.mode-raise")))
     }, "s1:IGN-KBPsi6JQoZh4nhWjOykqCCVLOgaIWVjv3kImHiI"),

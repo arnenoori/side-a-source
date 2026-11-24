@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The folder list: searchable, recent first, then every folder the Mac offers. Pushed inside New Session's own stack;
-/// choosing one pops back.
 struct ProjectPicker: View {
     @Binding var selection: RemoteProject?
     @Environment(AppModel.self) private var model
@@ -52,7 +50,6 @@ struct ProjectPicker: View {
     }
 }
 
-/// Folder name, its path in mono and the branch in a mono capsule; git folders wear a branch glyph.
 struct ProjectRow: View {
     let project: RemoteProject
 
@@ -88,7 +85,6 @@ struct ProjectRow: View {
 }
 
 extension String {
-    /// `/Users/arne/Coding/side-a` as `~/Coding/side-a`; the Mac's home isn't the phone's, so any /Users/<name>.
     var abbreviatingHome: String {
         let parts = split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count > 2, parts[1] == "Users" else { return self }

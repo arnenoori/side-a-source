@@ -1,8 +1,6 @@
 import Foundation
 import Testing
 
-/// The test-hygiene rules' regexes, read from .swiftlint.yml and tried on lines they must and mustn't flag, so a change
-/// to a pattern can't quietly stop it catching anything.
 private func rule(_ name: String) throws -> NSRegularExpression {
     let config = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../.swiftlint.yml")
     let text = try String(contentsOf: config, encoding: .utf8)

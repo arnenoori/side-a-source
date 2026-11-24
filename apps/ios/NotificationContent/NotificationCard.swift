@@ -3,8 +3,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// What the card shows and where its answer stands. A question pages through its set compactly; a
-/// single question answers on the tap.
 @Observable
 final class NotificationCardModel {
     nonisolated deinit {}
@@ -48,7 +46,6 @@ final class NotificationCardModel {
         }
     }
 
-    /// Multi-select's Continue, or the typed answer from the text action.
     func advance() {
         if page + 1 < questions.count {
             page += 1
@@ -101,8 +98,6 @@ extension NotificationCardModel.Sending {
     var isRetryable: Bool { if case .failed = self { true } else { false } }
 }
 
-/// The card: the notification's own title and subtitle, then the category's body. The system's
-/// default content is hidden, so this is the whole view above the actions.
 struct NotificationCard: View {
     let card: NotificationCardModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -124,7 +119,6 @@ struct NotificationCard: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(reduceMotion ? nil : .smooth, value: card.page)
         .animation(reduceMotion ? nil : .smooth, value: card.sending)
-        // The app's cap: past xxLarge the card's rows break apart.
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
         .tint(Accent.current.color)
     }
@@ -135,7 +129,6 @@ struct NotificationCard: View {
             Outcome(symbol: "checkmark.circle.fill", tint: .green, line: "Sent")
         case .answeredElsewhere:
             Outcome(symbol: "checkmark.circle", tint: .secondary, line: "Answered on \(card.payload.flatMap { PairedMac.load($0.mac) }?.endpoint.kind.the() ?? "the Mac")")
-        // Its signature lasts two minutes: only an app that reaches the Mac soon sends it, so the card asks for that.
         case .queued(let mac):
             Outcome(symbol: "clock", tint: .secondary, line: "Couldn't reach \(mac). Open Side A Remote to send it.")
         case .kept(let line):
@@ -172,7 +165,6 @@ private struct Outcome: View {
     }
 }
 
-/// "Open to answer", for a set that didn't fit in the push: never partial options.
 private struct OpenToAnswer: View {
     let line: String
     let open: () -> Void
@@ -191,8 +183,6 @@ private struct OpenToAnswer: View {
         .buttonStyle(.plain)
     }
 }
-
-// MARK: - Question
 
 private struct QuestionBody: View {
     let card: NotificationCardModel
@@ -319,8 +309,6 @@ private struct OptionRow: View {
     }
 }
 
-// MARK: - Plan
-
 private struct PlanBody: View {
     let card: NotificationCardModel
     @State private var height: CGFloat = 0
@@ -341,8 +329,6 @@ private struct PlanBody: View {
     }
 }
 
-/// The transcript's Markdown, compact and without images: the blocks from the shared parser, with
-/// inline code brought down to the smaller text.
 private struct PlanMarkdown: View {
     let blocks: [MarkdownBlock]
 
@@ -395,8 +381,6 @@ private struct PlanMarkdown: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
-
-// MARK: - Request
 
 private struct RequestBody: View {
     let card: NotificationCardModel

@@ -3,8 +3,6 @@ import SideARemoteShared
 import SwiftUI
 import UIKit
 
-/// The Mac's screen, full bleed in either orientation, with a small status line and the controls riding on top. It
-/// watches until Control is turned on, and it lets go of the Mac the moment the app leaves the foreground.
 struct ScreenScreen: View {
     @State private var screen: ScreenModel
     @Environment(AppModel.self) private var model
@@ -37,7 +35,8 @@ struct ScreenScreen: View {
         .sensoryFeedback(.start, trigger: screen.phase == .live) { _, live in live }
         .onAppear { screen.start() }
         .onDisappear {
-            screen.stop()
+            // Leaving the foreground ends it below; a disappear while the app isn't active is the system moving things about.
+            if scenePhase == .active { screen.stop() }
             UIApplication.shared.isIdleTimerDisabled = false
         }
         // Auto-Lock would end the stream long before the Mac's display sleeps.
@@ -47,8 +46,6 @@ struct ScreenScreen: View {
         }
         .onChange(of: screen.controlling) { _, controlling in if !controlling { keyboard = false } }
     }
-
-    // MARK: Chrome
 
     private var topBar: some View {
         VStack(spacing: Space.xs) {
@@ -112,7 +109,6 @@ struct ScreenScreen: View {
 
     private func shown(_ target: ScreenTarget) -> Bool { screen.started?.target == target }
 
-    /// One short line: how it's going, and why clicks don't reach the Mac when they don't.
     private var status: String? {
         switch screen.phase {
         case .connecting: return "Connecting to \(model.mac.name)…"
@@ -155,8 +151,6 @@ struct ScreenScreen: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: Stopped
-
     @ViewBuilder private func stopped(_ stop: ScreenModel.Stop) -> some View {
         let (title, symbol, detail, action) = Self.describe(stop, mac: model.mac.name, kind: screen.kind)
         ContentUnavailableView {
@@ -185,7 +179,6 @@ struct ScreenScreen: View {
     }
 }
 
-/// The canvas and the keyboard's catcher, wired to the model: frames in, clicks, scrolls and keys out.
 private struct ScreenHost: UIViewRepresentable {
     let screen: ScreenModel
     @Binding var keyboard: Bool

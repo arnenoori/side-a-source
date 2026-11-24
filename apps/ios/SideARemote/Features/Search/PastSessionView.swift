@@ -1,14 +1,10 @@
 import SideAProtocol
 import SwiftUI
 
-/// A past conversation, read-only: the transcript, and in place of the
-/// composer Resume and Fork, which start it hosted in its own folder.
 struct PastSessionView: View {
     @Environment(AppModel.self) private var model
     let past: PastSession
-    /// The message a search matched: scrolled to and flashed.
     var match: String?
-    /// Resumed or forked from here: the live session takes this page's place, so Back goes to History.
     @State private var started: HostedSession?
 
     var body: some View {
@@ -27,8 +23,6 @@ struct PastSessionView: View {
     }
 }
 
-/// Resume and Fork. A tap starts at once on the account Autopilot picks; the ⋯ beside them, or a long press on either,
-/// offers the account, a new worktree and the model.
 struct ResumeBar: View {
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
@@ -62,10 +56,8 @@ struct ResumeBar: View {
         }
     }
 
-    /// There is a choice to make beyond Resume and Fork themselves.
     private var hasOptions: Bool { accounts.count > 1 || past.branch != nil || !models.isEmpty }
 
-    /// The account, a new worktree and the model, for a Resume or a Fork.
     @ViewBuilder private func options(fork: Bool) -> some View {
         if accounts.count > 1 {
             Menu("On Account", systemImage: "person.crop.circle") {

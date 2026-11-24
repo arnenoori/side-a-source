@@ -4,7 +4,6 @@ import SideAProtocol
 import SideAProtocolFixtures
 import Testing
 
-/// A Mac that tags each body the way L2's server does and answers a matching `If-None-Match` with an empty 304.
 private func taggingMac(_ body: @escaping @Sendable (URLRequest) -> Data) -> FakeMac {
     let mac = FakeMac()
     mac.respond { request in

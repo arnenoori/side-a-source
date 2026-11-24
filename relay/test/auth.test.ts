@@ -147,7 +147,6 @@ describe('devices', () => {
     await register(thief);
     const stolen = { ...newPhone(thief), apnsToken: victim.apnsToken };
     await putDevice(thief, stolen);
-    // The challenge reaches the victim's phone, which doesn't know this install and drops it.
     const response = await call(await signed(thief, 'POST', '/v1/send', alert(stolen)));
     expect(await response.json()).toEqual({ results: [{ device: stolen.deviceId, result: 'unverified' }] });
   });

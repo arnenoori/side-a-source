@@ -8,7 +8,6 @@ enum TerminalFocus {
         let bundleID: String
         let pid: pid_t
         let tty: String?
-        /// The session's own process, under the terminal.
         var session: pid_t = 0
     }
 
@@ -183,7 +182,6 @@ enum TerminalFocus {
         return ProcessEnvironment.origin(ProcessEnvironment.arguments(pid: process.parent)) ?? "a background job"
     }
 
-    /// Why a session has no tab on this Mac to show.
     static func whereabouts(of pid: Int) -> String {
         if let origin = origin(of: pid) { return "It's an automated run started by \(origin), so it has no terminal." }
         var current = pid_t(pid)
@@ -206,7 +204,6 @@ enum TerminalFocus {
         return withUnsafeBytes(of: info.pvi_cdir.vip_path) { String(cString: $0.bindMemory(to: CChar.self).baseAddress!) }
     }
 
-    /// The session runs in a pane of the user's own tmux server.
     static func inTmux(_ pid: Int) -> Bool { tmuxServer(above: pid_t(pid)) != nil }
 
     /// The process has a terminal, and its group is the one that terminal reads keys for.

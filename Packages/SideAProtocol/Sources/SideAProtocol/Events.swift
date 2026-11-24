@@ -133,14 +133,12 @@ public struct TranscriptDelta: Codable, Hashable, Sendable {
 
 /// What the Mac sends on `/v1/ws/events`, as `{"type": …, "data": …}`.
 public enum ServerEvent: Hashable, Sendable {
-    // control
     case welcome(Welcome)
     case snapshot(StateSnapshot)
     /// quit, update, sleep
     case bye(reason: String)
     /// The `bye` reason that says the Mac is going to sleep. Any other reason, or none, is a Mac on its way back.
     public static let byeSleep = "sleep"
-    // state (sequenced)
     case sessionUpsert(RemoteSession)
     case sessionRemove(id: SessionKey, replacedBy: SessionKey?)
     case requestAdd(RemoteRequest)
@@ -164,7 +162,6 @@ public enum ServerEvent: Hashable, Sendable {
     case incidentUpdate([Incident])
     /// Autopilot's whole state, when it changed. An older phone decodes it as `.unknown` and reads `GET /v1/autopilot`.
     case autopilotUpdate(AutopilotState)
-    // transcript (per subscription, unsequenced)
     case transcriptAppend(TranscriptDelta)
     case transcriptReplace(TranscriptDelta)
     case transcriptReset(sessionID: SessionKey, generation: String)

@@ -2,7 +2,6 @@ import CoreGraphics
 import SideARemoteKit
 import Testing
 
-// Every state × event of the + button's press.
 @Test func everyEventFromEveryPressState() {
     typealias P = AttachPress
     let start = CGPoint(x: 10, y: 10), near = CGPoint(x: 15, y: 15), far = CGPoint(x: 40, y: 10)

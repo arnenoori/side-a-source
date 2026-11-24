@@ -3,8 +3,8 @@ import Network
 import SideAProtocol
 
 /// A client WebSocket (RFC 6455) on an `HTTPStream`: the upgrade, masked frames out, fragments joined, pings answered.
-/// A refused upgrade throws the close code its status stands for (401 → 4401, 426 → 4426, 429 → 4429), as URLSession's
-/// did, and a close frame throws `SocketClosed` with its code.
+/// A refused upgrade throws the close code its status stands for (401 → 4401, 426 → 4426, 429 → 4429), and a close
+/// frame throws `SocketClosed` with its code.
 final class NWSocket: SocketConnection, @unchecked Sendable {
     static let maxMessage = 16 << 20
 

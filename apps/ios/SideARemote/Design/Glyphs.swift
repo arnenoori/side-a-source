@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The leading glyph on a session row: the state alone. The agent sits inline in the
-/// metadata line, where a badge can't crowd it.
 struct StatusGlyph: View {
     let phase: SessionPhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -28,7 +26,6 @@ struct StatusGlyph: View {
         }
     }
 
-    /// The still form, the one Reduce Motion shows and a menu can draw.
     static func symbol(_ phase: SessionPhase) -> String {
         switch phase {
         case .needsYou: "circle.circle.fill"
@@ -55,7 +52,6 @@ struct StatusGlyph: View {
     }
 }
 
-/// The disc from the Mac's player, flat: a circle with a hub. Stands in for the `sidea.disc` custom symbol.
 struct DiscGlyph: View {
     var size: CGFloat = 22
 

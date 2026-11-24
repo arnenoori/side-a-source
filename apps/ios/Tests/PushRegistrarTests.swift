@@ -7,7 +7,6 @@ import XCTest
 @MainActor
 final class PushRegistrarTests: XCTestCase {
     func testDebugBuildRegistersItsOwnTopicOnTheSandbox() {
-        // Tests run inside the Debug app, so this is what a development build sends.
         XCTAssertEqual(Bundle.main.bundleIdentifier, "com.arnenoori.sidea.remote.dev")
         XCTAssertEqual(PushRegistrar.environment, .sandbox)
     }
@@ -23,7 +22,6 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertTrue(prefs.requests)
     }
 
-    /// The relay's word that a Mac went quiet is on until turned off, and the Mac passes the switch to the relay.
     func testAQuietMacIsToldUntilTurnedOff() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "PushRegistrarTests.\(UUID())"))
         XCTAssertEqual(NotificationPrefs.stored(for: "studio", in: defaults).macQuiet, true)
@@ -32,7 +30,6 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertEqual(NotificationPrefs.stored(for: "laptop", in: defaults).macQuiet, true)
     }
 
-    /// Tapping it opens the Mac whose install its `q` names, and nothing if no paired Mac is that one.
     func testAQuietMacsPushOpensThatMac() {
         func mac(_ install: String) -> PairedMac {
             PairedMac(endpoint: Endpoint(macID: "m-\(install)", baseURL: URL(string: "https://100.64.0.1:47800")!, serverKeyHash: "k", name: install),
@@ -45,7 +42,6 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertNil(AppDelegate.quietLink([:], macs: macs))
     }
 
-    /// Each Mac keeps its own switches; one never set reads the switch from before there was one per Mac.
     func testEachMacHasItsOwnSwitches() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "PushRegistrarTests.\(UUID())"))
         defaults.set(false, forKey: "notify.finished")
@@ -59,7 +55,6 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertFalse(NotificationPrefs.stored(for: "studio", in: defaults).finished)
     }
 
-    /// A relay that couldn't be reached is asked again without waiting for the next launch.
     func testATokenTheRelayHasNotHeardIsReportedUntilItHas() async throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "PushRegistrarTests.\(UUID())"))
         let calls = Calls()
@@ -69,7 +64,6 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "push.relayOwed"))
         let count = await calls.count
         XCTAssertEqual(count, 3)
-        // Nothing owed: nothing sent.
         registrar.reportOwed()
         try await Task.sleep(for: .milliseconds(30))
         let after = await calls.count

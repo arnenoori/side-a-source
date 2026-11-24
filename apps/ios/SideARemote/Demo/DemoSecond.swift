@@ -11,7 +11,6 @@ extension DemoData {
                           cwd: "~/Coding/backups", project: "backups", accountID: "work", accountName: "Work", model: "sonnet",
                           status: .working, statusAt: ago(4), step: "Running restic check", hosted: "sa-backups-2a1d",
                           abilities: [.transcript, .type, .interrupt, .terminal, .end]),
-            // Two-way terminal: Codex through its shared server, mid-turn; Codex outside it; Claude through its inbox.
             RemoteSession(id: "mini-uptime", conversationID: "mini-uptime", agent: .codex, title: "Page on two failed probes",
                           cwd: "~/Coding/uptime", project: "uptime", accountID: "lab", accountName: "Lab", model: "gpt-5-codex",
                           status: .working, statusAt: ago(2), step: "Editing prober.ts",

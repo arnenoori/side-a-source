@@ -3,7 +3,6 @@ import Testing
 @testable import SideA
 import SideACore
 
-/// The log never carries an attempt id, a preview credential or a query, and keeps three files of at most 2 MB.
 @Test func theRemoteLogRedactsPathsAndRotates() throws {
     func request(_ target: String) -> HTTPRequest {
         let path = target.split(separator: "?").first.map { $0.split(separator: "/").map(String.init) } ?? []

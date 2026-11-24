@@ -10,7 +10,6 @@ dmg="dist/SideA-$version-macOS-universal.dmg"
 test -f "$archive"
 test -f "$dmg"
 python3 scripts/verify-downloads.py
-# Published versions are immutable. A failed draft can be retried safely.
 release_list="$(gh release list --repo "$repository" --limit 1000 --json tagName,isDraft)"
 state="$(printf '%s' "$release_list" | python3 -c 'import json,sys; r=next((r for r in json.load(sys.stdin) if r["tagName"] == sys.argv[1]), None); print("missing" if r is None else "draft" if r["isDraft"] else "published")' "$tag")"
 case "$state" in

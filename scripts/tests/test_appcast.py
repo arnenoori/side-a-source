@@ -40,7 +40,6 @@ class AppcastTests(unittest.TestCase):
                               capture_output=True, check=False).returncode
 
     def test_matching_metadata_passes(self):
-        # Cryptographic verification is separately performed by Sparkle's sign_update.
         self.assertEqual(self.verify(), 0)
 
     def test_wrong_download_or_length_rejected(self):

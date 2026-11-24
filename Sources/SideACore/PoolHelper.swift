@@ -1,6 +1,7 @@
 import Foundation
 import SideAProtocol
 
+#if canImport(Network)
 /// The app serves the pool while it runs; the helper serves it on the same port and key while it doesn't, so a session
 /// started through the pool keeps working after Side A quits or crashes.
 public struct PoolFiles: Sendable {
@@ -57,6 +58,7 @@ public struct PoolFiles: Sendable {
         return Int64(time.tv_sec) * 1_000_000 + Int64(time.tv_usec)
     }
 }
+#endif
 
 public struct PoolPlan: Codable, Equatable, Sendable {
     public struct Member: Codable, Equatable, Sendable {
@@ -117,6 +119,7 @@ public enum PoolBridge {
     }
 }
 
+#if canImport(Network)
 @MainActor public final class PoolFallback: PoolDecisions {
     public private(set) var plan: PoolPlan
     private let root: URL
@@ -232,7 +235,6 @@ public enum PoolBridge {
     private var lastFailure: String?
     private let port: UInt16
     private let bridge: (([String]) async throws -> Data)?
-    /// Opens Side A again. Without it the helper only serves.
     private let reopen: (() -> Void)?
     /// The Side A this helper belongs to. Another copy's claim (Side A Dev beside the installed one) is its helper's to act on.
     private let bundle: String?
@@ -370,3 +372,4 @@ public enum PoolBridge {
         try? handle.write(contentsOf: Data(line.utf8))
     }
 }
+#endif

@@ -27,7 +27,6 @@ export async function probe(env: ApnsKey, environment: Environment, now: number)
   }
 }
 
-// Counts consecutive failures per environment across cron runs.
 export class Health extends DurableObject<Env> {
   async record(probes: Probe[]): Promise<Record<string, number>> {
     const streaks: Record<string, number> = {};
@@ -35,7 +34,6 @@ export class Health extends DurableObject<Env> {
       const key = `failures:${environment}`;
       const before = (await this.ctx.storage.get<number>(key)) ?? 0;
       const streak = ok ? 0 : before + 1;
-      // A healthy run every 15 minutes would otherwise write the same 0 twice.
       if (streak !== before) await this.ctx.storage.put(key, streak);
       streaks[environment] = streak;
     }

@@ -42,7 +42,6 @@ describe('APNs responses', () => {
     const second = await call(await signed(mac, 'POST', '/v1/send', update));
     expect((await second.json() as any).results[0].result).toBe('gone');
     expect(apns.pushes).toHaveLength(0);
-    // The device itself is untouched.
     expect((await send(mac, phone)).result).toBe('ok');
   });
 

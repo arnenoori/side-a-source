@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// A store with an empty library whose bridge says which logins the Mac has; no Python, Keychain or ~/.claude.
 @MainActor private final class MacLogins {
     let store = AccountStore(demo: true)
     var claude = "", codex = ""
@@ -12,11 +11,9 @@ import Testing
     var adoptFails = false
     init() {
         store.config.accounts = []; store.config.selectedID = nil; store.activeIDs = [:]
-        // Held strongly: a store outlives its test while its tasks finish.
         store.testBridge = { args in
             switch args.first {
             case "active":
-                // As the bridge does: a login whose email is in the library is that account's.
                 let accounts = self.store.config.accounts
                 let claudeID = accounts.first { $0.provider == .claude && !self.claude.isEmpty && $0.email.caseInsensitiveCompare(self.claude) == .orderedSame }?.id
                 let codexID = accounts.first { $0.provider == .codex && !self.codex.isEmpty && $0.email.caseInsensitiveCompare(self.codex) == .orderedSame }?.id
@@ -33,13 +30,11 @@ import Testing
     }
     func tick() async throws {
         #expect(await store.refreshActive())
-        // The adds start in their own main-actor tasks; yielding lets each reach its first wait, then it is `adopting`.
         for _ in 0..<10 { await Task.yield() }
         await eventually { store.adopting.isEmpty }
     }
 }
 
-/// A login Side A hasn't seen joins the library on its own, in use, with no Add button left behind.
 @MainActor @Test func aNewMacLoginIsAddedWithoutAClick() async throws {
     let mac = MacLogins()
     mac.claude = "New@Example.com"; mac.codex = "codex@example.com"
@@ -50,11 +45,9 @@ import Testing
     #expect(claude.email == "New@Example.com" && claude.name == "New" && claude.allowAuto)
     #expect(mac.store.activeIDs[.claude] == claude.id && mac.store.activeIDs[.codex] == accounts.first { $0.provider == .codex }?.id)
     #expect(mac.store.loginsToAdd.isEmpty)
-    // The phone's list is built from the library.
     #expect(Set(WireBuilders.accounts(mac.store).map(\.email)) == ["New@Example.com", "codex@example.com"])
 }
 
-/// Ticks that see the same login, together or after it was added, add it once.
 @MainActor @Test func aMacLoginIsAddedOnce() async throws {
     let mac = MacLogins()
     mac.claude = "dup@example.com"
@@ -64,14 +57,11 @@ import Testing
     try await mac.tick()
     try await mac.tick()
     #expect(mac.store.config.accounts.count == 1 && mac.adopted.count == 1)
-    // Another case of the same email is the same account.
     mac.claude = "DUP@example.com"
     try await mac.tick()
     #expect(mac.store.config.accounts.count == 1 && mac.adopted.count == 1)
 }
 
-/// An account the user removed stays removed: its login gets the Add button instead, and adding it by hand takes
-/// the removal back.
 @MainActor @Test func aRemovedLoginIsNotAddedBack() async throws {
     let mac = MacLogins()
     mac.claude = "gone@example.com"
@@ -83,7 +73,6 @@ import Testing
     try await mac.tick()
     #expect(mac.store.config.accounts.isEmpty && mac.adopted.count == 1)
     #expect(mac.store.loginsToAdd[.claude] == "gone@example.com")
-    // Only that login: Codex's own is still added.
     mac.codex = "gone@example.com"
     try await mac.tick()
     #expect(mac.store.config.accounts.map(\.provider) == [.codex])
@@ -93,8 +82,6 @@ import Testing
     #expect(mac.store.config.accounts.count == 2)
 }
 
-/// A quiet try that fails leaves nothing half-added and shows the Add button rather than an error, and isn't
-/// retried every tick.
 @MainActor @Test func aFailedAddLeavesTheButton() async throws {
     let mac = MacLogins()
     mac.adoptFails = true
@@ -109,7 +96,6 @@ import Testing
     #expect(mac.store.config.accounts.count == 1 && mac.store.loginsToAdd.isEmpty)
 }
 
-/// Add Account needs no name: the account takes its email's once sign-in confirms it, unless it was renamed meanwhile.
 @MainActor @Test func anAccountAddedWithoutANameTakesItsEmails() async throws {
     let store = AccountStore(demo: true)
     store.config.accounts = []
@@ -128,7 +114,6 @@ import Testing
     #expect(store.config.accounts.first { $0.id == named }?.name == "Work")
 }
 
-/// Removing an account on the Mac tells the phone with `account.remove`, not a usage update.
 @MainActor @Test func aRemovedAccountLeavesThePhone() async throws {
     let store = AccountStore(demo: true)
     let queue = DispatchQueue(label: "test.hub")
@@ -147,7 +132,6 @@ import Testing
     #expect(!hub.recorded(after: 0).contains { if case .usageUpdate(let accounts) = $0 { accounts.contains { $0.id == id } } else { false } })
 }
 
-/// An account in the library that isn't signed in, while the Mac's login is its own, is confirmed without a Sign in click.
 @MainActor @Test func anUnreadyAccountHoldingTheMacLoginIsConfirmed() async throws {
     let mac = MacLogins()
     mac.store.config.accounts = [Account(name: "Work", email: "work@example.com")]

@@ -2,12 +2,9 @@ import LocalAuthentication
 import SideARemoteShared
 import SwiftUI
 
-/// What this device unlocks with, for copy that names it: an iPad may have Touch ID, and a device with none enrolled
-/// falls back to its passcode.
 enum Biometry: Equatable {
     case faceID, touchID, opticID, passcode
 
-    /// As of the app's last activation (`DeviceBiometry`), so a view body never waits on LocalAuthentication.
     static var current: Biometry { DeviceBiometry.shared.current }
 
     /// Asks LocalAuthentication. A biometry locked out for a while after failed tries is still the one the device has,
@@ -29,7 +26,6 @@ enum Biometry: Equatable {
         }
     }
 
-    /// "Face ID", or "Passcode" for a title.
     var name: String {
         switch self {
         case .faceID: "Face ID"
@@ -39,7 +35,6 @@ enum Biometry: Equatable {
         }
     }
 
-    /// "Face ID", or "your passcode" inside a sentence.
     var phrase: String { self == .passcode ? "your passcode" : name }
 
     var symbol: String {
@@ -52,8 +47,6 @@ enum Biometry: Equatable {
     }
 }
 
-/// The device's biometry, read once at launch and again each time the app becomes active (Settings can enroll or
-/// remove it meanwhile), and watched by the views that name it.
 @Observable
 final class DeviceBiometry {
     nonisolated deinit {}
@@ -67,8 +60,6 @@ final class DeviceBiometry {
     }
 }
 
-/// Face ID or the passcode on opening Side A Remote, and on coming back after `after` away (on by default,
-/// Settings › Security). A phone left unlocked shouldn't hand over sessions, the terminal and Allow.
 @Observable
 final class AppLock {
     nonisolated deinit {}
@@ -77,14 +68,12 @@ final class AppLock {
     static let key = "lock.enabled"
 
     private(set) var locked: Bool { didSet { DeviceKeys.appLocked = locked } }
-    /// Not the active app: the switcher's snapshot and anyone glancing see the cover, not a transcript.
     private var away = false
     @ObservationIgnored private var leftAt: Date?
     @ObservationIgnored private var asking = false
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         #if DEBUG
-        // Screenshots and the demo run unlocked.
         if arguments.contains("--locked") { locked = true; DeviceKeys.appLocked = true; return }
         if arguments.contains("--demo") || arguments.contains("--no-lock") { locked = false; return }
         #endif
@@ -102,7 +91,6 @@ final class AppLock {
             away = true
             leftAt = .now
         case .active:
-            // A glance at another app or a locked screen doesn't cost a Face ID; the same absence that locks the app does.
             if let leftAt, Date.now.timeIntervalSince(leftAt) >= Self.after {
                 OwnerAuth.expire()
                 if Self.enabled, !PairedMac.all().isEmpty { locked = true }
@@ -119,13 +107,18 @@ final class AppLock {
         guard locked, !asking else { return }
         asking = true
         defer { asking = false }
-        // Face ID first, so replies and allows after it sign without asking again; the passcode only when that's refused.
-        let biometric = LAContext()
-        biometric.localizedFallbackTitle = ""
-        if (try? await biometric.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Unlock Side A Remote")) == true {
-            DeviceKeys.adopt(biometric)
+        let keyed = await DeviceKeys.unlock(macIDs: PairedMac.all().map(\.endpoint.macID), reason: "Unlock Side A Remote")
+        if keyed == .passed {
             locked = false
             return
+        }
+        if keyed == .unpaired {
+            let biometric = LAContext()
+            biometric.localizedFallbackTitle = ""
+            if (try? await biometric.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: "Unlock Side A Remote")) == true {
+                locked = false
+                return
+            }
         }
         do {
             if try await LAContext().evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Side A Remote") { locked = false }
@@ -136,8 +129,6 @@ final class AppLock {
     }
 }
 
-/// The lock and the cover in their own window, above every sheet, cover and alert the app has up, so a request or
-/// terminal that was open when the app locked (or that a notification tap opens while it's locked) stays out of reach.
 @MainActor
 final class LockWindow {
     nonisolated deinit {}
@@ -166,8 +157,6 @@ final class LockWindow {
     }
 }
 
-/// What shows while locked: the icon on the system background, and Unlock if Face ID was dismissed. Away from the
-/// app, the icon alone.
 struct LockScreen: View {
     let lock: AppLock
 

@@ -4,9 +4,6 @@ import SideARemoteKit
 import SideARemoteShared
 import UserNotifications
 
-// Compiled into the app and the Notification Content Extension: the packages link statically, so
-// each binary carries its own copy rather than sharing one through the framework.
-
 /// Answers from a notification, without the app running: the same outbox item the app would make
 /// (`<requestID>:<kind>`, so a second tap is a replay), then one try straight away. What doesn't
 /// get through stays queued for the app's engine.
@@ -14,14 +11,11 @@ enum NotificationAnswer {
     enum Result: Equatable {
         case sent
         case answeredElsewhere
-        /// Still in the outbox; the app sends it when it reaches the Mac.
         case queued(mac: String)
         /// Only the app sends it, once it is next opened and reaches the Mac: nothing runs a notification's work later.
         case held(mac: String)
-        /// Kept in the app (a reply in the session's field, an answer on its question), with why it didn't go.
         case kept(String)
         case failed(String)
-        /// No paired Mac matches the payload's.
         case noMac
 
         /// The request is settled, or will be once the outbox sends it. A refused answer leaves it waiting on the Mac,
@@ -34,10 +28,8 @@ enum NotificationAnswer {
         }
     }
 
-    /// The demo's payloads name this Mac; answering them only pretends.
     static let demoMac = PushOpener.demoMac
 
-    /// `typed`: words the person wrote into the answer, kept on the question if it can't be sent now.
     static func send(_ answer: RemoteAnswer, to request: RequestID, macID: String, typed: (text: String, session: SessionKey)? = nil) async -> Result {
         // Signed with the unlock key, which works only while the phone is unlocked: a Lock Screen allow goes unsigned,
         // and the Mac takes it only if the request's gate is the Lock Screen.
@@ -70,7 +62,6 @@ enum NotificationAnswer {
         .answer(request, answer, macID: macID, now: now, confirm: confirm)
     }
 
-    /// FINISHED's Reply: a follow-up to the turn the push named.
     static func reply(_ text: String, to session: SessionKey, turnID: String?, macID: String) async -> Result {
         if macID == demoMac { return await post(.reply(session, RemoteReply(text: text), macID: macID, now: 0)) }
         guard let mac = PairedMac.load(macID), let outbox = outbox() else { return .noMac }
@@ -170,8 +161,6 @@ extension PushPayload {
     }
 }
 
-/// The local categories. Actions that change something on the Mac need unlock, except
-/// `REQUEST_SAFE`'s Allow.
 enum NotificationCategories {
     enum Action {
         static let allow = "ALLOW"
@@ -180,9 +169,7 @@ enum NotificationCategories {
         static let approve = "APPROVE"
         static let approveEdits = "APPROVE_EDITS"
         static let reply = "REPLY"
-        /// A single question's typed answer.
         static let answer = "ANSWER"
-        /// The Content Extension's "Write your own…", swapped in for the question's actions.
         static let writeOwn = "WRITE_OWN"
     }
 
@@ -224,12 +211,10 @@ enum NotificationCategories {
             category(.macQuiet, [open]),
             category(.test, []),
             category(.answered, []),
-            // The Service Extension's fallback when it couldn't read the Mac's words.
             category(.open, [open]),
         ])
     }
 
-    /// The answer an action stands for; nil for Open and the default tap.
     static func answer(for action: String) -> RemoteAnswer? {
         switch action {
         case Action.allow: .allow(confirmDestructive: false)
@@ -257,8 +242,6 @@ enum DeliveredRequests {
         let date: Date
     }
 
-    /// What a request's notification can be called: the sealed categories, the Open-only fallback, and the
-    /// "Couldn't reach" one put in its place, which has no category but keeps the payload.
     static let categories: Set<String> = ["REQUEST", "REQUEST_SAFE", "REQUEST_DESTRUCTIVE", "QUESTION", "QUESTION_OPEN", "PLAN", "OPEN"]
 
     /// Request notifications still up for requests this Mac no longer has open: the "Answered" push never came (the
@@ -304,11 +287,9 @@ enum DeliveredRequests {
     }
 }
 
-/// Words typed into a notification that couldn't go from there, for the session's field. In the App Group: the Content
-/// Extension keeps them too.
 enum NotificationDrafts {
     private static let key = "notificationDrafts"
-    nonisolated(unsafe) private static let store = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard
+    private static var store: UserDefaults { SharedStorage.defaults }
 
     static func keep(_ text: String, session: SessionKey, mac: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)

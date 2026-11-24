@@ -4,8 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// No hook waiting: an idle Claude session still says continue on phone, and a message left for a hook that died is
-/// taken back and flagged.
 @MainActor @Test func aClaudeInboxNobodyReadsIsTakenBackAndFlagged() async throws {
     let store = AccountStore(demo: true)
     let folder = store.root.appendingPathComponent("runtime/inbox")
@@ -13,7 +11,6 @@ import Testing
         "pid": Int(getpid()), "id": "s", "status": "idle", "cwd": "/tmp/app", "started": 1_700_000_000, "agent": "claude"]))
     store.sessions.live = [live]
     #expect(!store.remote.inbox.watching(live))
-    // A watcher file naming a process that isn't this session's child doesn't count.
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     try "1".write(to: folder.appendingPathComponent("\(getpid()).watcher"), atomically: true, encoding: .utf8)
     #expect(!store.remote.inbox.watching(live))

@@ -25,7 +25,6 @@ import Testing
     #expect(PullRequest.number(in: "https://github.com/you/app/pull/412/files") == 412)
 }
 
-/// The link goes at once; `gh` runs once a minute at most, and not at all for a while after it says it needs a sign-in.
 @MainActor
 @Test func ghIsAskedAtMostOnceAMinuteAndRestsWhenSignedOut() async throws {
     let pulls = PullRequests()

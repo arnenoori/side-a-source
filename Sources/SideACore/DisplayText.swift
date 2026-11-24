@@ -33,7 +33,6 @@ public enum DisplayText {
     static let spaces = 80
     static let longLine = 1_000
 
-    /// Draws nothing: every Unicode space separator, tabs, and the Braille and Hangul blanks.
     static func blank(_ scalar: Unicode.Scalar) -> Bool {
         scalar == "\t" || scalar.properties.generalCategory == .spaceSeparator || [0x115F, 0x1160, 0x2800, 0x3164, 0xFFA0].contains(scalar.value)
     }
@@ -58,7 +57,6 @@ public enum DisplayText {
 }
 
 extension IslandAction {
-    /// Every string it shows.
     public var shownText: [String] {
         switch self {
         case .command(let text), .read(let text), .search(let text), .fetch(let text), .plan(let text): [text]
@@ -71,7 +69,6 @@ extension IslandAction {
         }
     }
 
-    /// A command, a path, a search or a link: nothing in these is long by nature.
     public var isOneLiner: Bool {
         switch self {
         case .command, .read, .search, .fetch: true

@@ -10,7 +10,6 @@ final class KeyCheck {
         /// Past five seconds: macOS is holding the key, likely behind a dialog.
         case waiting
         case signed, refused
-        /// The identity couldn't be read at all.
         case unreadable
     }
 
@@ -19,13 +18,11 @@ final class KeyCheck {
     static let unreadableText = "Side A can't read its security key."
 
     private(set) var state = State.unchecked
-    /// Tests stand in for a signature that takes its time.
     @ObservationIgnored var signs: @Sendable (RemoteKeychain.Identity) -> Bool = { RemoteKeychain.signs($0) }
     /// The one signature under way. `reset` clears it, so an old key's answer finds it gone.
     @ObservationIgnored private var run: UUID?
     @ObservationIgnored private var waited: Task<Void, Never>?
 
-    /// What the Remote tab says while the key holds Remote back.
     var problem: String? {
         switch state {
         case .waiting: Self.waitingText
@@ -35,8 +32,6 @@ final class KeyCheck {
         }
     }
 
-    /// One signature off the main thread; `signed` runs once it has signed. Past five seconds the state says what it
-    /// waits for.
     func check(_ identity: RemoteKeychain.Identity, signed: @escaping @MainActor () -> Void) {
         guard run == nil, state != .signed else { return }
         let id = UUID()
@@ -65,7 +60,6 @@ final class KeyCheck {
 
     func unreadable() { state = .unreadable }
 
-    /// A new key: checked again from the start.
     func reset() {
         waited?.cancel()
         waited = nil

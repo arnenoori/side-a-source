@@ -3,41 +3,39 @@ import Foundation
 import SideAProtocol
 import SideAProtocolFixtures
 
-/// A scripted Mac: REST answers from a handler, sockets the test feeds frame by frame.
 final class FakeMac: Transport, @unchecked Sendable {
     struct Reply { var status = 200; var body = Data(); var headers: [String: String] = [:] }
     private let lock = NSLock()
     private var _requests: [URLRequest] = []
     private var _sockets: [FakeSocket] = []
     private var handler: @Sendable (URLRequest) -> Reply = { _ in Reply(status: 404) }
-    /// `GET /v1/hello`, answered apart from `handler` so tests only script what they're about.
     private var helloReply = Reply(body: try! Fixtures.data("Hello.paired"))
 
     var requests: [URLRequest] { lock.withLock { _requests } }
     var sockets: [FakeSocket] { lock.withLock { _sockets } }
+    /// Runs on each socket the client opens, before it is used: a Mac that has already refused it, say.
+    var onSocket: (@Sendable (FakeSocket) -> Void)? {
+        get { lock.withLock { _onSocket } }
+        set { lock.withLock { _onSocket = newValue } }
+    }
+    private var _onSocket: (@Sendable (FakeSocket) -> Void)?
     func respond(_ handler: @escaping @Sendable (URLRequest) -> Reply) { lock.withLock { self.handler = handler } }
     func hello(_ reply: Reply) { lock.withLock { helloReply = reply } }
-    /// Hosts whose TLS key isn't the pinned one: every request to them fails the handshake.
     private var _rekeyed: Set<String> = []
     func rekeyed(_ hosts: Set<String>) { lock.withLock { _rekeyed = hosts } }
-    /// Hosts that never answer.
     private var _unreachable: Set<String> = []
     func unreachable(_ hosts: Set<String>) { lock.withLock { _unreachable = hosts } }
-    /// Every request fails as a phone with no direct path, turned away by the relay.
     private var _relayRefuses = false
     func relayRefuses(_ refuses: Bool) { lock.withLock { _relayRefuses = refuses } }
     private var _learned: [Endpoints] = []
-    /// What the engine passed on from each trusted hello.
     var learned: [Endpoints] { lock.withLock { _learned } }
     func learned(_ endpoints: Endpoints) async { lock.withLock { _learned.append(endpoints) } }
-    /// Requests to these paths wait, once they reach the Mac, until their `Gate` opens: a slow answer.
     private var gates: [String: Gate] = [:]
     func hold(_ path: String) -> Gate {
         let gate = Gate()
         lock.withLock { gates[path] = gate }
         return gate
     }
-    /// Everything but hello.
     var calls: [URLRequest] { requests.filter { $0.url?.path != "/v1/hello" } }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -58,24 +56,25 @@ final class FakeMac: Transport, @unchecked Sendable {
 
     func socket(_ request: URLRequest) -> any SocketConnection {
         let socket = FakeSocket(request: request)
-        lock.withLock { _sockets.append(socket) }
+        let prepare = lock.withLock { () -> (@Sendable (FakeSocket) -> Void)? in
+            _sockets.append(socket)
+            return _onSocket
+        }
+        prepare?(socket)
         return socket
     }
 
-    /// The next socket the client opens, once it has sent its hello.
     func socket(_ index: Int) async throws -> FakeSocket {
         try await until("socket \(index)") { self.sockets.count > index && !self.sockets[index].raw.isEmpty }
         return sockets[index]
     }
 }
 
-/// A request held on the Mac's side until the test opens it.
 final class Gate: @unchecked Sendable {
     private let lock = NSLock()
     private var opened = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var _arrived = 0
-    /// How many requests are waiting here now or got through.
     var arrived: Int { lock.withLock { _arrived } }
 
     func wait() async {
@@ -114,12 +113,10 @@ final class FakeSocket: SocketConnection, @unchecked Sendable {
     }
 
     var sent: [ClientMessage] { lock.withLock { _sent } }
-    /// Every frame the client sent, as sent.
     var raw: [SocketMessage] { lock.withLock { _raw } }
     var closedByClient: Int? { lock.withLock { _closed } }
 
     private var _sendError: Error?
-    /// Every send from now on fails with this error.
     func failSends(_ error: Error) { lock.withLock { _sendError = error } }
 
     func send(_ message: SocketMessage) async throws {
@@ -151,9 +148,7 @@ final class FakeSocket: SocketConnection, @unchecked Sendable {
 
     private var _pingError: Error?
     private var _pings = 0
-    /// How many pings the client sent.
     var pings: Int { lock.withLock { _pings } }
-    /// Every ping from now on goes unanswered, with this error.
     func failPings(_ error: Error) { lock.withLock { _pingError = error } }
 
     func sendPing() async throws {
@@ -166,7 +161,6 @@ final class FakeSocket: SocketConnection, @unchecked Sendable {
     private var _holdsClose = false
     private var _closeLanded = false
     private var _heldReceive: CheckedContinuation<Void, Never>?
-    /// The client's close takes effect only when the test says, with `serverClose`.
     func holdClose() { lock.withLock { _holdsClose = true } }
 
     func close(code: Int, reason: String?) {
@@ -182,7 +176,6 @@ final class FakeSocket: SocketConnection, @unchecked Sendable {
         feed.yield(.success(.text(String(decoding: try! JSONEncoder().encode(envelope), as: UTF8.self))))
     }
 
-    /// A frame as the Mac wrote it, whatever it holds.
     func push(raw text: String) { feed.yield(.success(.text(text))) }
 
     func push(_ control: TermControl) {
@@ -214,7 +207,6 @@ struct Keys: CredentialStore {
 
 struct Timeout: Error, CustomStringConvertible { let description: String }
 
-/// Polls until `condition` holds, for at most two seconds.
 func until(_ what: String, _ condition: @escaping @Sendable () async -> Bool) async throws {
     for _ in 0..<400 {
         if await condition() { return }

@@ -3,7 +3,6 @@ import Foundation
 import SideACore
 import Testing
 
-/// Each argv, as `[]` when the bridge's own parser takes it, or argparse's complaint.
 private func bridgeRefusals(_ commands: [[String]]) throws -> [[String]: String] {
     let script = """
     import contextlib, io, json, sys
@@ -61,7 +60,6 @@ private func bridgeRefusals(_ commands: [[String]]) throws -> [[String]: String]
     return await calls.argv
 }
 
-/// Every command line the app hands the bridge, so a renamed command or option fails here instead of in the menu.
 @MainActor @Test func everyCommandTheAppRunsParsesInTheBridge() async throws {
     let account = "11111111-2222-3333-4444-555555555555"
     let keep = ["--keep", "pinned-session"]

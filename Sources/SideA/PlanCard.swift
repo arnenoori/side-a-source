@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The turn's live plan (Codex `turn/plan/updated`) above the field, read from the phone's row: folded to the step in
-/// progress and how far along it is, open to every step, as the phone's PlanCard.
 struct PlanCard: View {
     let plan: TurnPlan
     @State private var open: Bool

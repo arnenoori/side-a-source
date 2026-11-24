@@ -5,8 +5,6 @@ import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
-/// Nothing is ever sent by itself: the words land in the field for editing. A recording that can't be transcribed
-/// stays for Retry, on the shelf, so it is still there when its field next opens.
 @Observable
 final class Dictation {
     nonisolated deinit {}
@@ -26,7 +24,6 @@ final class Dictation {
     static let limit = TranscribeRoute.longest
     static let closing: TimeInterval = 30
     static let bars = 40
-    /// Longer than this is too much to lose to a stray tap on ×.
     static let asksBeforeDiscarding: TimeInterval = 10
 
     private(set) var phase: Phase = .idle
@@ -38,7 +35,6 @@ final class Dictation {
     private(set) var failures = 0
 
     var isActive: Bool { phase != .idle }
-    /// The words aren't in the field yet but will be: what Start would go without.
     var isBusy: Bool { phase == .recording || phase == .transcribing }
     var canRetry: Bool { file != nil }
     var holdsRecording: Bool { isBusy || canRetry }
@@ -47,7 +43,6 @@ final class Dictation {
     @ObservationIgnored var target: Target?
     @ObservationIgnored private let recorder = DictationRecorder()
     @ObservationIgnored private var file: URL?
-    /// The shelf key `file` sits under, once it failed.
     @ObservationIgnored private var kept: String?
     @ObservationIgnored private var meter: Task<Void, Never>?
     @ObservationIgnored private var work: Task<Void, Never>?
@@ -93,7 +88,6 @@ final class Dictation {
         }
     }
 
-    /// Also what an interruption does, so what was said is kept.
     func finish() {
         guard phase == .recording else { return }
         elapsed = max(elapsed, recorder.time)
@@ -125,7 +119,6 @@ final class Dictation {
         transcribe()
     }
 
-    /// The words still reach the draft of a field that went away mid-recording.
     func leave() {
         if phase == .recording { finish() } else if phase == .denied { move(.cancelled) }
     }
@@ -158,12 +151,11 @@ final class Dictation {
         kept = key
     }
 
-    /// Every way the Mac fails is named, so one that keeps failing doesn't pass as the phone's choice.
     private static func words(_ file: URL, seconds: TimeInterval, target: Target) async throws -> (String, String?) {
         let tools = target.model.tools
         let mac = target.model.mac.name
         var reason: String?
-        if tools.isLive, tools.can(.transcribe), target.model.mac.state == .live {
+        if !DictationPrefs.onPhone, tools.isLive, tools.can(.transcribe), target.model.mac.state == .live {
             var ask = target.ask
             ask.seconds = Int(seconds.rounded())
             ask.language = language
@@ -216,7 +208,6 @@ final class Dictation {
         kept = nil
     }
 
-    /// A field never tapped has its caret at 0 with a draft in it: the words go after the draft.
     static func insert(_ words: String, into text: String, at selection: NSRange) -> (text: String, caret: Int) {
         let whole = text as NSString
         let untouched = selection.location == 0 && selection.length == 0 && whole.length > 0
@@ -264,4 +255,11 @@ extension Dictation.Target {
                   ask: TranscribeAsk(session: session?.id, hint: [project, session.map { model.tools.title(for: $0) }].compactMap(\.self).joined(separator: ", ")),
                   words: [project, "Claude", "Codex", "Side A"].compactMap(\.self), shelf: shelf ?? session?.id)
     }
+}
+
+/// Where a recording is turned into words. The host's transcription is the default where it has one; choosing
+/// the phone keeps the audio on it.
+enum DictationPrefs {
+    static let key = "dictation.onPhone"
+    static var onPhone: Bool { SharedStorage.defaults.bool(forKey: key) }
 }

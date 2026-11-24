@@ -24,6 +24,14 @@
     "promise/param-names": "error",
     "vitest/valid-expect": ["error", { "maxArgs": 2 }],
 
+    // Size limits, set to the tightest the code passes today; a file that needs more gets a named override below. Split the code before raising a number.
+    "max-lines": ["error", { "max": 377 }],
+    "max-lines-per-function": ["error", { "max": 58 }],
+    "max-params": ["error", { "max": 6 }],
+    "complexity": ["error", { "max": 32 }],
+    "max-depth": ["error", { "max": 3 }],
+    "max-nested-callbacks": ["error", { "max": 1 }],
+
     // Off: typescript-eslint's autofix removes `as` casts that narrow from `any`, and tsc then fails.
     "typescript/no-unnecessary-type-assertion": "off",
     // Off: tsc already checks that every exhaustive switch returns.
@@ -46,6 +54,36 @@
         "typescript/no-explicit-any": "warn",
         "typescript/no-non-null-assertion": "warn"
       }
+    },
+    {
+      // Tests nest describe and it callbacks, so a describe body counts as one long function.
+      "files": ["test/**"],
+      "rules": {
+        "max-lines-per-function": ["error", { "max": 156 }],
+        "max-nested-callbacks": ["error", { "max": 4 }]
+      }
+    },
+    {
+      "files": ["test/tunnel.test.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 620 }],
+        "max-lines-per-function": ["error", { "max": 211 }]
+      }
+    },
+    {
+      "files": ["src/install.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 590 }],
+        "max-params": ["error", { "max": 7 }]
+      }
+    },
+    {
+      "files": ["src/tunnel.ts"],
+      "rules": { "max-lines": ["error", { "max": 587 }] }
+    },
+    {
+      "files": ["src/send.ts"],
+      "rules": { "complexity": ["error", { "max": 43 }] }
     }
   ],
   "ignorePatterns": ["worker-configuration.d.ts", "dist", "node_modules", ".wrangler"]

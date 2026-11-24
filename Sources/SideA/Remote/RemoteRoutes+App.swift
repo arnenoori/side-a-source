@@ -4,8 +4,6 @@ import SideAProtocol
 import UniformTypeIdentifiers
 
 extension RemoteRoutes {
-    /// Longest reply or note, in characters.
-
     static let appRoutes: [Route] = [
         Route("GET", "v1/state", state),
         Route("GET", "v1/sessions", sessions),
@@ -46,7 +44,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// Runs on the main actor with the app's store, or answers 503 while there is none.
     static func onMain(_ context: Context, _ body: @escaping @MainActor (AccountStore) -> HTTPResponse) async -> HTTPResponse {
         await MainActor.run {
             guard let store = context.controller.store else { return notReady }
@@ -54,15 +51,12 @@ extension RemoteRoutes {
         }
     }
 
-    /// The same for work that awaits: it starts on the main actor and the route waits for its answer.
     static func onMainAsync(_ context: Context, _ body: @escaping @MainActor (AccountStore) async -> HTTPResponse) async -> HTTPResponse {
         await MainActor.run { () -> Task<HTTPResponse, Never>? in
             guard let store = context.controller.store else { return nil }
             return Task { @MainActor in await body(store) }
         }?.value ?? notReady
     }
-
-    // MARK: Lists
 
     @Sendable static func state(_ context: Context) async -> HTTPResponse {
         guard let list = await listed(context, { _ in context.controller.events?.snapshot() }), let build = list.value else { return notReady }
@@ -101,8 +95,6 @@ extension RemoteRoutes {
             return json(200, WireBuilders.fullRequest(item))
         }
     }
-
-    // MARK: Answer
 
     @Sendable static func answer(_ context: Context) async -> HTTPResponse {
         guard let body = context.body(AnswerBody.self) else { return badJSON }
@@ -169,16 +161,12 @@ extension RemoteRoutes {
         }
     }
 
-    // MARK: Talk
-
     typealias Target = SessionCommands.Target
 
-    /// The error answer for a command's failure, in the words the Sessions window shows too.
     static func response(_ failure: SessionCommands.Failure) -> HTTPResponse {
         RemoteServer.error(failure.status, failure.code, failure.message, details: failure.details, retryAfter: failure.retryAfter)
     }
 
-    /// Runs a command on the main actor with the app's store: its value as JSON, or its failure.
     static func command<T: Encodable & Sendable>(_ context: Context, status: Int = 200,
                                                  _ body: @escaping @MainActor (SessionCommands) async throws(SessionCommands.Failure) -> T) async -> HTTPResponse {
         await onMainAsync(context) { store in
@@ -186,7 +174,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// A command with nothing to say back: 204, or its failure.
     static func command(_ context: Context, _ body: @escaping @MainActor (SessionCommands) async throws(SessionCommands.Failure) -> Void) async -> HTTPResponse {
         await onMainAsync(context) { store in
             do throws(SessionCommands.Failure) {
@@ -215,7 +202,6 @@ extension RemoteRoutes {
             refused = await refusal(context, .reply, target: id, body: reply, needs: needs)
         }
         if let refused { return refused }
-        // Whoever writes to a snoozed session wants it back in the list.
         await MainActor.run { if let row = context.controller.events?.session(id) { context.controller.snoozes.wake(row.id) } }
         var message = SessionCommands.Message(text: reply.text, images: images, mode: reply.mode, keys: reply.keys, turnID: reply.turnID, submit: reply.submit,
                                               origin: Island.QueuedFollowUp.Origin(device: context.device, proven: needs))
@@ -226,7 +212,6 @@ extension RemoteRoutes {
         let plan = await MainActor.run { () -> SessionCommands.Plan in
             guard let store = context.controller.store else { return .failed(.notReady) }
             let commands = SessionCommands(store: store)
-            // What was just proven was judged a moment ago; a session that asks more now doesn't take it.
             if let now = commands.permissionMode(id), ConfirmProof(ConfirmPolicy.reply(reply, sessionMode: now)) > needs {
                 return .failed(SessionCommands.Failure(status: 409, code: .gateChanged, message: "This session needs more now than when you sent this. Send it again."))
             }
@@ -283,7 +268,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// Files under the session's folder for an `@` mention, best match first.
     @Sendable static func files(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? "", query = context.request.query["q"] ?? ""
         let folder = await MainActor.run { context.controller.store.flatMap { SessionCommands.Target(id, store: $0)?.live?.cwd } }
@@ -321,9 +305,6 @@ extension RemoteRoutes {
 
     static func invalidReply(_ message: String, _ reason: String) -> HTTPResponse { response(.invalid(message, reason)) }
 
-    // MARK: Settings and models
-
-    /// `POST /v1/sessions/{id}/settings`, signed: unlocked for a model, effort or mode, Face ID for a mode that raises.
     @Sendable static func changeSettings(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(SettingsChange.self) else { return badJSON }
         let id = context.params["id"] ?? ""
@@ -333,36 +314,28 @@ extension RemoteRoutes {
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.settings(id, change) }
     }
 
-    /// `GET /v1/models?kind=claude|codex[&session=<id>]`: a Codex session's own daemon lists its account's models;
-    /// otherwise what `/v1/options` offers.
     @Sendable static func models(_ context: Context) async -> HTTPResponse {
         guard let agent = AgentProvider(rawValue: context.request.query["kind"] ?? "claude") else {
             return RemoteServer.error(400, .badRequest, "kind is claude or codex.")
         }
         let session = context.request.query["session"]
         let live = await command(context) { commands throws(SessionCommands.Failure) in try await commands.models(agent, session: session) }
-        // A list from the daemon, or a failure; null falls through to the catalog.
         if live.status != 200 || live.body != Data("null".utf8) { return live }
         guard let options = await RemoteOptions.agents(context.controller) else { return notReady }
         return json(200, ModelList(agent: agent, models: options.first { $0.agent == agent }?.models ?? []))
     }
 
-    // MARK: Turns
-
-    /// `GET /v1/sessions/{id}/turns/{turnID}/diff`.
     @Sendable static func turnDiff(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? "", turn = context.params["turnID"] ?? ""
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.turnDiff(id, turn: turn) }
     }
 
-    /// `POST /v1/sessions/{id}/compact`: 204 once Codex has started it.
     @Sendable static func compact(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         if let refused = await refusal(context, .compact, target: id) { return refused }
         return empty(await command(context, status: 204) { commands throws(SessionCommands.Failure) in try await commands.compact(id); return Empty() })
     }
 
-    /// `POST /v1/sessions/{id}/review {target}`.
     @Sendable static func review(_ context: Context) async -> HTTPResponse {
         guard let request = context.body(ReviewRequest.self) else { return badJSON }
         let id = context.params["id"] ?? ""

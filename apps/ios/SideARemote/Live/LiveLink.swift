@@ -5,12 +5,8 @@ import SideAProtocol
 import SideARemoteKit
 import SideARemoteShared
 
-/// Feeds the stores from one paired Mac: the sync engine's state into sessions, requests, accounts
-/// and the Mac chip, and a transcript feed for the session on screen. Answers and replies leave
-/// through the engine's outbox, so a dropped connection doesn't lose them.
 @Observable
 final class LiveLink {
-    /// The Macs whose socket is live right now, by id.
     static var liveMacs: Set<String> { Set(liveOwners.keys) }
     /// Which link made each Mac live: a stopped link takes away only its own, never a replacement's for the same Mac.
     @ObservationIgnored private static var liveOwners: [String: ObjectIdentifier] = [:]
@@ -20,15 +16,11 @@ final class LiveLink {
     let engine: SyncEngine
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var updates: Task<Void, Never>?
-    /// Answers on their way, by request, until the outbox settles them. A new tap replaces the entry.
     @ObservationIgnored private var sent: [RequestID: Sent] = [:]
     @ObservationIgnored private let path = NWPathMonitor()
     @ObservationIgnored private var saving: Task<Void, Never>?
-    /// Transcripts on screen, which their feeds keep; prefetch leaves them alone.
     @ObservationIgnored private var following: Set<SessionKey> = []
-    /// Each prefetched session's `statusAt` then, so it's fetched again only once it has moved on.
     @ObservationIgnored private var prefetched: [SessionKey: Timestamp?] = [:]
-    /// The engine goes through `Paths` only when no transport was handed in; a test's own transport has no path to show.
     @ObservationIgnored private let routed: Bool
     @ObservationIgnored private var routeWatch: Task<Void, Never>?
     @ObservationIgnored private var reconnectingEnds: Task<Void, Never>?
@@ -39,7 +31,6 @@ final class LiveLink {
         let session: SessionKey
         let answer: RemoteAnswer
         let mode: PermissionMode?
-        /// The key that signed it: Face ID's for a destructive Allow from the sheet, else the unlock key.
         let signer: DeviceKeys.Signer
     }
 
@@ -60,7 +51,6 @@ final class LiveLink {
         path.cancel()
     }
 
-    /// Forgotten or replaced: nothing of this link keeps running.
     func stop() {
         stopped = true
         setLive(false)
@@ -89,8 +79,6 @@ final class LiveLink {
             if let ref = SubagentRef(key: session) { return try await engine.message(ref.parent, seq: seq, agent: ref.agentID) }
             return try await engine.message(session, seq: seq)
         }
-        // A network that came back retries at once instead of waiting out the backoff; one that went away leaves the
-        // backoff alone, or every flicker would start it over.
         path.pathUpdateHandler = { [weak model] update in
             let vpn = update.availableInterfaces.contains { $0.type == .other }
             let up = update.status == .satisfied
@@ -104,7 +92,6 @@ final class LiveLink {
         path.start(queue: .global(qos: .utility))
         if routed { watchRoute(model) }
         Task { await flights.restoreFlights() }
-        // Off the main actor, so the hello goes out now rather than once the first frames are drawn.
         Task.detached(priority: .userInitiated) { await engine.start() }
         updates = Task { [weak self] in
             for await state in engine.updates {
@@ -123,8 +110,6 @@ final class LiveLink {
             for await path in changes {
                 let route = MacConnection.Route(path)
                 if model?.mac.route != route { model?.mac.route = route }
-                // A way in was just found, as when the relay says the Mac is back: connect now, not when the backoff ends.
-                // It only ends a wait, so a switch while connected changes nothing.
                 if path != nil { await engine.reconnectNow() }
             }
             await paths.stopObserving(id)
@@ -141,14 +126,11 @@ final class LiveLink {
             Task { await flights.restoreFlights() }
         }
         Task { [engine, mac] in
-            // Back in front: race the paths now rather than wait out a backoff from while it was away.
             if foreground { await Paths.shared(for: mac.endpoint, credentials: KeychainCredentials()).foreground() }
             await engine.setForeground(foreground)
         }
     }
 
-    /// Runs while a transcript is on screen: loads the newest page, then follows it until the view
-    /// goes away.
     func follow(_ session: SessionKey) async {
         following.insert(session)
         defer { following.remove(session) }
@@ -166,9 +148,7 @@ final class LiveLink {
     }
 
     /// A session just started is listed before its agent writes the transcript, which 404s until then (a trust dialog
-    /// can hold it for minutes). Without a page nothing streams, so it asks again while the transcript is on screen.
-    /// A page that can't be had says so, which the transcript shows with Try Again; a refusal that retrying won't
-    /// change stops here, and the others keep trying behind that message.
+    /// can hold it for minutes).
     private func loadLatest(_ feed: TranscriptFeed, _ session: SessionKey) async {
         var wait = Duration.milliseconds(500)
         model?.transcripts.loadFailed(false, for: session)
@@ -193,7 +173,6 @@ final class LiveLink {
     private func send(_ request: RemoteRequest, _ answer: RemoteAnswer, mode: PermissionMode?, confirm: String?) {
         sent[request.id] = nil
         Task { [engine, mac] in
-            // In the app the phone is unlocked, so the unlock key signs without asking; the Mac decides whether it needs it.
             let signer: DeviceKeys.Signer = confirm == nil ? .unlock : .confirm
             var confirm = confirm
             if confirm == nil, let subject = try? Self.subject(request.id, answer, mode: mode) {
@@ -206,8 +185,6 @@ final class LiveLink {
         }
     }
 
-    /// 409 `outcome_unknown` is never retried by the outbox; the user's Retry sends the same
-    /// answer under a new key.
     private func retry(_ answered: TranscriptStore.AnsweredRequest) {
         guard !DeviceKeys.appLocked, let entry = sent[answered.id], case .unknown(let item) = entry.attempt else { return }
         sent[answered.id]?.attempt = .retrying(item: item)
@@ -233,13 +210,11 @@ final class LiveLink {
         }
     }
 
-    /// What an answer's confirm signs: an Allow that switches mode signs the mode.
     static func subject(_ request: RequestID, _ answer: RemoteAnswer, mode: PermissionMode?) throws -> String? {
         if let mode { return try ConfirmMessage.subject(requestID: request, allowMode: mode) }
         return try ConfirmMessage.subject(requestID: request, answer: answer)
     }
 
-    /// Moves each sent answer's line along: sending, then delivered, answered elsewhere, unknown or failed.
     func track(_ state: RemoteState) {
         for (session, drops) in state.queueDrops where drops != seenQueueDrops[session] {
             seenQueueDrops[session] = drops
@@ -264,8 +239,7 @@ final class LiveLink {
         flights.trackSteering(state)
     }
 
-    /// A live drop says only which session: the snapshot says which reply, so a phone that heard it and one that was away
-    /// settle it the same way, once. The next snapshot covers a refresh that never gets through.
+    /// The next snapshot covers a refresh that never gets through.
     private func refreshDrops() {
         guard dropsRefresh == nil else { return }
         dropsRefresh = Task { [engine] in
@@ -287,8 +261,6 @@ final class LiveLink {
         if now != settled { UserDefaults.standard.set(Array(now), forKey: key) }
     }
 
-    /// A question's answer typed into a notification that couldn't go: in the field while that question is open, where
-    /// sending it answers the question. Once the Mac no longer has the question, it's dropped and the session says so.
     private func placeKeptAnswers(_ state: RemoteState, in transcripts: TranscriptStore) {
         // Only the Mac's list as it is now can say a question has closed.
         guard state.connection.isLive, state.caughtUp else { return }
@@ -306,7 +278,6 @@ final class LiveLink {
         }
     }
 
-    /// A burst of updates saves once, a few seconds after it settles.
     private func saveSoon() {
         saving?.cancel()
         saving = Task { @MainActor [weak self] in
@@ -324,8 +295,6 @@ final class LiveLink {
         model.cache(finished: finished).save(mac.endpoint.macID)
     }
 
-    /// The APNs token and notification settings to the Mac: on each connection, since the Mac is the
-    /// relay's source of truth, and whenever either changes.
     func reportPush() {
         guard state.connection.isLive else { return }
         Task { [engine] in await PushRegistrar.shared.report(to: await engine.client) }
@@ -356,7 +325,6 @@ final class LiveLink {
         if state.epoch != nil { Launch.mark("snapshot", "\(state.sessions.count) sessions") }
         if let hello = state.hello, hello.paired == true { mac = mac.updating(hello.endpoints, capabilities: hello.capabilities, os: hello.mac.os) }
         guard let model else { return }
-        // Side A restarted on the Mac, and with it went the receipts that would have said these were read.
         if restarted {
             model.transcripts.restarted(mac: mac.endpoint.name, receipts: Set(state.sessions.values.flatMap { $0.receipts ?? [] }.map(\.id)))
         }
@@ -378,12 +346,11 @@ final class LiveLink {
         }
     }
 
-    /// A link that waits for the network publishes nothing, so "Reconnecting…" turns to the reason when its time is up
-    /// whether or not a new state comes.
     private func applyConnection(_ state: RemoteState, to connection: MacConnection) {
         connection.kind = mac.endpoint.kind
         connection.apply(state, name: mac.endpoint.name,
                          onTailnet: Tailscale.isTailnet((state.address ?? mac.endpoint.baseURL).host() ?? ""), hasRelay: mac.endpoint.relay != nil)
+        if state.mac != nil { MacShapes.set(portable: connection.portable, for: mac.endpoint.macID) }
         reconnectingEnds?.cancel()
         guard case .reconnecting(let since) = connection.state else { return }
         let left = since.addingTimeInterval(MacConnection.reconnectingFor(state.connection)).timeIntervalSinceNow
@@ -394,7 +361,6 @@ final class LiveLink {
         }
     }
 
-    /// Once a connection: the open list read fresh, then any request notification left up for one no longer in it.
     private func sweepNotifications() {
         let asked = Date.now
         Task { [engine, mac] in
@@ -406,7 +372,6 @@ final class LiveLink {
         }
     }
 
-    /// A turn left Ready while the app was open: its Finished notification goes now, not at the next connection.
     private func sweepFinished(_ state: RemoteState) {
         guard state.connection.isLive else { return }
         let asked = Date.now, finished = state.finished.mapValues(\.turnID)
@@ -414,8 +379,6 @@ final class LiveLink {
         Task { [mac] in await DeliveredRequests.sweep(mac: mac.endpoint.macID, open: nil, asked: asked, onlyMac: false, finished: finished) }
     }
 
-    /// The transcripts likely opened next, what needs you and then the newest working sessions: their newest page,
-    /// without subscribing, so opening one draws at once and its feed only catches up.
     private func prefetch() {
         guard let model, state.epoch != nil else { return }
         let likely = (model.sessions.rows(.needsYou) + model.sessions.rows(.working)).prefix(4)
@@ -434,12 +397,9 @@ final class LiveLink {
     }
 }
 
-/// One tap's answer on its way, under its own outbox item, so it never reads what an earlier tap's key came to.
 enum AnswerAttempt: Equatable {
     case sending(item: String, retried: Bool)
-    /// Retry was tapped and it's being signed: no outcome to read until it's queued.
     case retrying(item: String)
-    /// 409 `outcome_unknown`, or an answer that aged out of the outbox with the Mac out of reach; kept for Retry.
     case unknown(item: String)
 
     /// What the row shows (nil: leave it, the request settled elsewhere) and what's left; nil once settled.
@@ -461,7 +421,6 @@ enum AnswerAttempt: Equatable {
 }
 
 extension TranscriptStore.Delivery {
-    /// An outbox outcome as the answer's line shows it; nil while a retry is in flight.
     init(_ outcome: OutboxOutcome?, retried: Bool) {
         self = switch outcome {
         case .delivered?: .delivered
@@ -470,7 +429,6 @@ extension TranscriptStore.Delivery {
         case .answeredElsewhere?: .answeredElsewhere
         // Gone after a retry isn't a refusal; the first attempt may be why.
         case .failed(let error)? where retried && error.code == .requestNotFound: .gone
-        // Never sent or never heard back: either way the answer may not be there, and Retry sends it again.
         case .unknown?, .notDelivered?: .unknown
         case .failed(let error)?: .failed(error.message)
         case nil: .sending
@@ -479,11 +437,9 @@ extension TranscriptStore.Delivery {
 }
 
 extension RequestResolution {
-    /// What the transcript says about a request settled away from this screen.
     func line(thisDevice: String, host: String = "Mac") -> String {
         switch by {
         case .mac: answer == .allow ? "Allowed on \(host)" : answer == .deny ? "Denied on \(host)" : "Answered on \(host)"
-        // The notification's own actions answer as this device, without the app.
         case .device where deviceID == thisDevice: "Answered from a notification"
         case .device: "Answered on \(deviceName ?? "another device")"
         case .terminal: "Answered in the terminal"
@@ -497,16 +453,14 @@ extension RequestResolution {
 }
 
 extension MacConnection {
-    /// A phone with no network knows why at once; anything else might be the Mac's tunnel or a socket coming back.
     static func reconnectingFor(_ connection: Connection) -> TimeInterval { connection.cause == .noNetwork ? 5 : 60 }
 
-    /// A drop shows as "Reconnecting…" for a minute (with no network, a few seconds), then as offline with the reason.
-    /// `onTailnet`: the Mac's address needs Tailscale, so a missing VPN explains the drop, unless the relay reaches it anyway.
     func apply(_ remote: RemoteState, name: String, onTailnet: Bool = true, hasRelay: Bool = false, now: Date = .now) {
         if reportedName != name { reportedName = name }
         if let mac = remote.mac {
             onPower = mac.onPower
             battery = mac.battery
+            portable = mac.battery != nil
             memoryUsed = Double(mac.memoryUsed) / 1_000_000_000
             memoryTotal = Double(mac.memoryTotal) / 1_000_000_000
             keepAwake = mac.keepAwake

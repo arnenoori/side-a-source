@@ -1,6 +1,5 @@
 import AppKit
 
-/// Small player sounds, synthesized at first use so no audio files ship with the app.
 @MainActor
 enum Sounds {
     enum Effect {
@@ -16,7 +15,6 @@ enum Sounds {
     static var volume: Float { Float(PreferencesMirror.value(volumeKey) as Double) }
 
     static func play(_ effect: Effect) {
-        // A trade followed by a switch, or several sessions waiting at once, sounds once.
         guard enabled, Date().timeIntervalSince(lastPlayed[effect] ?? .distantPast) > 0.6 else { return }
         lastPlayed[effect] = Date()
         let sound = cache[effect] ?? NSSound(data: wav(samples(effect)))

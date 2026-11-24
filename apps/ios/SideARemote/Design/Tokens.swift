@@ -1,13 +1,9 @@
 import SideAProtocol
 import SwiftUI
 
-// Surfaces and text use system colours only; the few custom
-// colours live in the asset catalog with light, dark and high-contrast variants.
-
 extension Color {
     /// Fills that mean "needs you": the glyph, the Allow tint, ring fills at 75–96%. Never the accent the user picks.
     static let amber = Color("Amber")
-    /// Amber text on plain backgrounds, 4.5:1 in both appearances.
     static let amberText = Color("AmberText")
     static let done = Color.green
     static let destructive = Color.red
@@ -21,7 +17,6 @@ extension ShapeStyle where Self == Color {
     static var amberText: Color { .amberText }
 }
 
-/// The 4 pt grid.
 enum Space {
     static let xxs: CGFloat = 4
     static let xs: CGFloat = 8
@@ -45,8 +40,6 @@ extension View {
 }
 
 extension View {
-    /// Behind a control while what it opened is up, so the menu, strip or sheet visibly belongs to it. In on touch-down,
-    /// out a little slower once the thing has gone.
     func pressedBacking(_ shown: Bool, in shape: some Shape) -> some View {
         background {
             shape.fill(Color(.tertiarySystemFill))
@@ -70,7 +63,6 @@ struct IconTarget: LabelStyle {
     }
 }
 
-/// Corner radii, all continuous.
 enum Radius {
     static let userBubble: CGFloat = 20
     static let questionCard: CGFloat = 20
@@ -85,10 +77,9 @@ enum Radius {
 enum Motion {
     static func smooth(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.35) }
     static func snappy(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .snappy(duration: 0.25) }
-    /// Rows moving between sections, which travel farther.
     static func move(_ reduceMotion: Bool) -> Animation { reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.45) }
-    /// Opacity only, so Reduce Motion keeps it as it is.
     static let press = Animation.easeOut(duration: 0.12)
+    static let shimmer = Animation.linear(duration: 2.4).repeatForever(autoreverses: false)
     /// `velocity` is in fractions of the distance left per second, which is what `interpolatingSpring` takes.
     static func settle(_ reduceMotion: Bool, velocity: Double = 0) -> Animation {
         reduceMotion ? .easeOut(duration: 0.2) : .interpolatingSpring(duration: 0.3, bounce: 0, initialVelocity: velocity)
@@ -100,7 +91,6 @@ extension AgentProvider {
     var symbol: String { self == .claude ? "asterisk" : "chevron.left.forwardslash.chevron.right" }
 }
 
-/// Glyphs per tool.
 enum ToolGlyph {
     static func symbol(for name: String) -> String {
         switch name {

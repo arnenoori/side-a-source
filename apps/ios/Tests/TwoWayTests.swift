@@ -2,7 +2,6 @@ import SideAProtocol
 import XCTest
 @testable import SideARemote
 
-/// Replies to sessions in a terminal Side A doesn't host: Codex through its shared server, Claude through its inbox.
 @MainActor
 final class TwoWayTests: XCTestCase {
     private let model = AppModel.demoSecond()

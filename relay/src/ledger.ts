@@ -17,7 +17,6 @@ export class Ledger extends DurableObject<Env> {
 
   async registered(dayEnds: number): Promise<void> {
     await this.ctx.storage.put('count', await this.registrations() + 1);
-    // Nothing can name this object once its day is over.
     await this.ctx.storage.setAlarm(dayEnds);
   }
 

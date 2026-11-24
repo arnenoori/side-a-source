@@ -82,7 +82,6 @@ private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.app
     #expect(BridgeErrorKind(CocoaError(.fileNoSuchFile)) == .other)
 }
 
-/// "bridle" holds "idle": its ended login must read as signed out, not idle and renewed forever.
 @MainActor @Test func anAccountNamedLikeIdleIsStillSignedOut() async {
     let (store, id) = named("bridle") { _ in throw BridgeFailure(stderr: "Side A[signin]: Sign in to bridle again.") }
     await store.refreshUsage(id)
@@ -128,7 +127,6 @@ private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.app
     return (store, id)
 }
 
-/// Test Pool once showed a revoked "dev429" as Ready, because its message held "429".
 @MainActor @Test func testPoolDoesntCallARevokedLoginNamedLike429Ready() async {
     let (store, id) = await testingPool("dev429") { _ in throw BridgeFailure(stderr: "Side A[signin]: Sign in to dev429 again.") }
     #expect(store.poolTest?[id] == "Sign in to dev429 again.")
@@ -145,7 +143,6 @@ private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.app
     }
 }
 
-/// A saved login that now belongs to another account says so by the bridge's own field, or by its words from an older bridge.
 @MainActor @Test func aLoginReplacedByAnotherAccountIsFoundByTheBridgesFieldOrItsWords() async {
     let words = "Side A[signin]: Sign in to A again; its saved login is now b@example.com's."
     for stderr in [words + "\nSide A[replaced-by]: \"b@example.com\"", words] {
@@ -154,7 +151,6 @@ private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.app
         let id = store.config.accounts[0].id
         await store.refreshUsage(id)
         #expect(store.health[id] == .signIn(replacedBy: "Bee"))
-        // A replaced login says so itself, so there is no second notice for the lapse.
         #expect(store.signInWarned.isEmpty)
     }
 }

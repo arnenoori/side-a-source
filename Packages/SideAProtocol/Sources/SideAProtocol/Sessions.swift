@@ -85,7 +85,6 @@ public struct MailState: Codable, Hashable, Sendable {
     public init(kind: Kind, at: Timestamp) { self.kind = kind; self.at = at }
 }
 
-/// One row per live agent process, plus hosted tmux sessions that have no agent process yet.
 /// A reply the Mac holds for a session until its turn ends (`ReplyResult.delivery == .queued`, Claude's Stop waiter).
 /// `id` names it for `RemoteReply.replaces` and `DELETE /v1/sessions/{id}/queue/{qid}`; it changes when the text does.
 public struct QueuedReply: Codable, Hashable, Sendable, Identifiable {
@@ -100,6 +99,7 @@ public struct FileMatches: Codable, Hashable, Sendable {
     public init(files: [String]) { self.files = files }
 }
 
+/// One row per live agent process, plus hosted tmux sessions that have no agent process yet.
 public struct RemoteSession: Codable, Hashable, Sendable, Identifiable {
     /// Capability `replies.queue`: the replies waiting for this session's turn to end, in the order they go. Left out
     /// when there are none.

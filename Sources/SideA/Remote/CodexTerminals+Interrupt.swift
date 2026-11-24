@@ -2,11 +2,7 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// A Stop on a Codex turn through its app server, and Interrupt and Send's carry of what it dropped.
 extension CodexTerminals {
-    /// A plain Stop drops the steers Codex hasn't read, and they go back to the phone; with `send` they wait for the
-    /// reply that follows and start the next turn with it.
-    /// `resend`: no reply follows; what it drops goes again by itself once the turn has ended.
     func interrupt(_ live: LiveSession, send: Bool = false, resend: Bool = false) async throws(Failure) {
         #if DEBUG
         if staged != nil {
@@ -36,8 +32,6 @@ extension CodexTerminals {
         }
     }
 
-    /// Interrupt and Send: what the interrupt dropped waits for the reply, which `send` puts after it in one turn.
-    /// A reply that doesn't come gives them back, as a plain Stop does.
     func hold(_ thread: String, _ link: Link, _ stop: Interrupt) {
         guard var state = link.threads[thread] else { return }
         let entries = state.sent.filter { stop.ids.contains($0.key) }.sorted { $0.value.at < $1.value.at }.map { (id: $0.key, text: $0.value.text) }

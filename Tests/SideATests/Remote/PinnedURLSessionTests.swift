@@ -29,7 +29,6 @@ import Testing
     let (body, response) = try await transport.send(hello)
     #expect(response.statusCode == 200 && response.value(forHTTPHeaderField: "X-SideA-Epoch") == "e1")
     #expect(String(decoding: body, as: UTF8.self).contains(#""device":"-""#))
-    // The phone's hash of the key it saw is the one the Mac puts in the QR code.
     #expect(trust.observed == pin)
 
     var request = URLRequest(url: URL(string: "wss://127.0.0.1:\(port)/v1/ws/events")!)
@@ -39,7 +38,6 @@ import Testing
     #expect(try await socket.receive() == .text("echo hi"))
     socket.close(code: 1000, reason: nil)
 
-    // Pinned to another key, the handshake is cancelled before the token goes out.
     let wrong = URLSessionTransport(trust: PinnedTrust(.pinned(Data(count: 32).base64URL)))
     hello.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     await #expect(throws: (any Error).self) { try await wrong.send(hello) }

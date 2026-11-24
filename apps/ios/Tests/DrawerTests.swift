@@ -6,8 +6,6 @@ import XCTest
 
 @MainActor
 final class DrawerLogicTests: XCTestCase {
-    // MARK: Paste
-
     func testAnImageOnlyClipboardAttachesAndTextStaysText() {
         XCTAssertEqual(PasteDecision.decide(hasText: false, hasImage: true, room: 3), .image)
         XCTAssertEqual(PasteDecision.decide(hasText: true, hasImage: false, room: 3), .text)
@@ -29,8 +27,6 @@ final class DrawerLogicTests: XCTestCase {
         XCTAssertEqual(PasteDecision.decide(types: ["not.a.type"], room: 2), .text)
     }
 
-    // MARK: Permission
-
     func testOnlyTheStatesThatCanListRecentsListThem() {
         XCTAssertTrue(PhotoAccess.full.canListRecents)
         XCTAssertTrue(PhotoAccess.limited.canListRecents)
@@ -49,8 +45,6 @@ final class DrawerLogicTests: XCTestCase {
         XCTAssertTrue(PhotoAccess.denied.needsSettings)
         XCTAssertFalse(PhotoAccess.notDetermined.needsSettings)
     }
-
-    // MARK: Rows
 
     func testTheMenuOffersWhatCanBeAttachedAndAlwaysTheOptions() {
         let all = DrawerRows.make(canUpload: true, room: 4, hasCamera: true, clipboardHasImage: true)
@@ -72,7 +66,6 @@ final class PanelLogicTests: XCTestCase {
     func testThePanelOpensAtTheKeyboardsHeightAndPullsUpToTheGrid() {
         XCTAssertGreaterThan(detents.large, detents.base)
         XCTAssertLessThanOrEqual(detents.large, 874 * 0.82)
-        // A short window never makes the large detent smaller than the keyboard it replaced.
         XCTAssertEqual(PanelDetents(base: 300, window: 400, safeTop: 20).large, 300)
     }
 
@@ -119,7 +112,6 @@ final class PanelLogicTests: XCTestCase {
         XCTAssertFalse(refused.showsPreview)
         XCTAssertTrue(refused.opensCamera, "the full camera path says what to do about a refusal")
         XCTAssertEqual(CameraAccess(.restricted, hasCamera: true), .denied)
-        // The simulator has no camera whatever the permission says, and a tap there does nothing.
         let none = CameraAccess(.authorized, hasCamera: false)
         XCTAssertEqual(none, .unavailable)
         XCTAssertFalse(none.showsPreview)
@@ -165,7 +157,6 @@ final class DrawerAttachmentTests: XCTestCase {
         attachments.supply(id, nil, in: "s1")
         guard case .failed = attachments.items("s1").first?.state else { return XCTFail("expected a failure") }
         XCTAssertFalse(attachments.isUploading("s1"))
-        // Nothing was ever fetched, so Retry only clears the tile.
         attachments.retry(id, in: "s1")
         XCTAssertTrue(attachments.items("s1").isEmpty)
     }
@@ -259,11 +250,9 @@ final class ComposerFieldTests: XCTestCase {
         XCTAssertEqual(tinted, .red)
         XCTAssertEqual(plain, .label)
         XCTAssertEqual(view.typingAttributes[.foregroundColor] as? UIColor, .label)
-        // The same weight and size either way, so nothing shifts.
         let tintedFont = view.textStorage.attribute(.font, at: 2, effectiveRange: nil) as? UIFont
         let plainFont = view.textStorage.attribute(.font, at: 9, effectiveRange: nil) as? UIFont
         XCTAssertEqual(tintedFont, plainFont)
-        // The command is edited away: the tint goes with it.
         view.text = "review now"
         view.restyle([], tint: .red)
         XCTAssertEqual(view.textStorage.attribute(.foregroundColor, at: 2, effectiveRange: nil) as? UIColor, .label)

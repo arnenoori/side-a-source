@@ -21,7 +21,6 @@ private let outcomes: [OutboxOutcome] = [.delivered(Data()), .answeredElsewhere(
     #expect(InterruptAnswer.unreachable.notice == "Couldn't reach the Mac to stop it.")
 }
 
-// Every state × event of a note watched in its session's mail.
 @Test func everyEventFromEveryNoteMailState() {
     typealias M = NoteMail
     let events: [M.Event] = [.delivered, .noteGone, .mailShown, .mailAbsent(age: 5), .mailAbsent(age: 31)]
@@ -39,7 +38,6 @@ private let outcomes: [OutboxOutcome] = [.delivered(Data()), .answeredElsewhere(
     }
 }
 
-// Every state × event of the held replies' delivery.
 @Test func everyEventFromEveryHeldDeliveryState() {
     typealias H = HeldDelivery
     let events: [H.Event] = [.asked(caughtUp: false), .asked(caughtUp: true), .done]

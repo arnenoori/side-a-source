@@ -51,7 +51,6 @@ const FLIGHT_LIMITS = { angle: 60 * DEG, curve: 0.22, yaw: 25 * DEG, turn: [0.3,
 // The reference's flight: up and to the left at about 46°, no bow, no spin.
 export const MEASURED_FLIGHT = { angle: -46 * DEG, curve: 0, yaw: 0, turn: 0.4, spin: 0, tilt: 0, pitch: 0, speed: 1 };
 
-// Each play picks its own way out, so hovering again shows the heart from another side.
 export function pickFlight(random = Math.random) {
   const span = ([a, b]) => a + (b - a) * random();
   const around = limit => (2 * random() - 1) * limit;
@@ -61,7 +60,6 @@ export function pickFlight(random = Math.random) {
     angle: around(L.angle),
     curve: around(L.curve),
     yaw,
-    // It turns through facing the viewer, never further round toward edge-on.
     turn: (yaw > 0 || (yaw === 0 && random() < 0.5) ? -1 : 1) * span(L.turn),
     spin: around(L.spin),
     tilt: around(L.tilt),
@@ -80,7 +78,6 @@ export function loveAt(t, flight = MEASURED_FLIGHT, out = {}) {
   const away = Math.max(0, h - LET_GO);
   const drift = away > 0 ? track(DRIFT, away) : 0;
   const loose = easeInOut(clamp(away / 2.5));
-  // While it grows it stays upright on the bubble and slowly turns, so it reads as solid; once free it leans into its path.
   return fill(out, true, width, Math.max(0, track(SINK, h)), drift,
     flight.yaw + flight.turn * easeInOut(clamp(h / LET_GO)) + 0.04 * Math.sin(h * 1.3) + flight.spin * away * loose,
     0.012 * Math.sin(h * 1.1) + (flight.tilt - 0.3 * flight.angle) * loose,
@@ -88,8 +85,6 @@ export function loveAt(t, flight = MEASURED_FLIGHT, out = {}) {
     veil, bubble);
 }
 
-// Where the heart's tip is in page pixels. The early drift is the measured one; the last stretch lengthens so the
-// heart clears this viewport's edge exactly when the reference's heart clears the phone's.
 export function heartTip(l, flight, { anchorX, anchorY, phone, width, height }, out = {}) {
   const full = 1.2 * phone;
   const dx = Math.sin(flight.angle), dy = -Math.cos(flight.angle);

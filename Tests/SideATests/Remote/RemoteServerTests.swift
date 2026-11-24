@@ -21,7 +21,6 @@ private func makeServer(_ keychain: TestKeychain, token: String) throws -> (Remo
     return (server, port, identity.spkiHash)
 }
 
-/// Up to 15 s: the listener's TLS identity comes from a test keychain that every Remote test reaches at once.
 private func ready(_ server: RemoteServer) async {
     for _ in 0..<750 where server.listenerStates.values.first != .ready { try? await Task.sleep(for: .milliseconds(20)) }
 }
@@ -37,7 +36,6 @@ private func ready(_ server: RemoteServer) async {
     let client = PinnedClient(port: port, pin: pin)
     client.send("GET /v1/hello HTTP/1.1\r\n\(host)\r\nGET /v1/sessions HTTP/1.1\r\n\(host)Authorization: Bearer \(token)\r\nConnection: close\r\n\r\n")
     let both = await client.text(until: "\"device\":\"d1\"")
-    // Two requests on one connection, answered in order.
     #expect(both.components(separatedBy: "HTTP/1.1 200 OK").count == 3)
     #expect(both.contains(#""path":"v1/hello","device":"-""#) && both.contains("X-SideA-Epoch: e1"))
 
@@ -54,7 +52,6 @@ private func ready(_ server: RemoteServer) async {
         one.close()
     }
 
-    // A phone pinned to another key never gets as far as sending its token.
     let wrongPin = PinnedClient(port: port, pin: Data(count: 32))
     wrongPin.send("GET /v1/hello HTTP/1.1\r\n\(host)\r\n")
     #expect(await wrongPin.wait { !$0.isEmpty }.isEmpty)
@@ -73,7 +70,6 @@ private func ready(_ server: RemoteServer) async {
     #expect(await stranger.text(until: "\r\n\r\n").hasPrefix("HTTP/1.1 401"))
 
     let phone = PinnedClient(port: port, pin: pin)
-    // The first frame rides in the same packet as the upgrade.
     phone.send(Data((upgrade + "Authorization: Bearer \(token)\r\n\r\n").utf8) + maskedFrame(1, Data("hi".utf8)))
     let echoed = await phone.wait { $0.firstRange(of: Data("echo hi".utf8)) != nil }
     #expect(String(decoding: echoed, as: UTF8.self).hasPrefix("HTTP/1.1 101 Switching Protocols"))
@@ -84,7 +80,6 @@ private func ready(_ server: RemoteServer) async {
     #expect(closed.firstRange(of: Data([0x88, 0x09, 0x11, 0x31])) != nil, "\(Array(closed.suffix(30)))")
 }
 
-/// The header is only a courtesy to an old phone: what stops a token alone is the signature each route asks for.
 @Test func aPhoneTooOldToSignIsToldToUpdate() async throws {
     let keychain = try TestKeychain()
     let token = DeviceToken.make()
@@ -139,7 +134,6 @@ private func ready(_ server: RemoteServer) async {
     #expect(states["192.0.2.1"] == .failed("The address isn't on this Mac any more"))
 }
 
-/// One port up while busy, never past nine above the base, and never past the top of the range.
 @Test func aBusyPortMovesUpWithinItsRange() {
     #expect(RemoteController.nextPort(after: 47900, base: 47900) == 47901)
     #expect(RemoteController.nextPort(after: 47909, base: 47900) == nil)
@@ -158,10 +152,8 @@ private func ready(_ server: RemoteServer) async {
         let client = PinnedClient(port: port, pin: pin)
         defer { client.close() }
         client.send(request)
-        // Eighteen handshakes in a row: give each room when the whole suite runs at once.
         return String(await client.text(until: "\r\n", within: 10).prefix(12))
     }
-    // A cancelled attempt and a quick retry: re-polls and cancels don't spend what a new pairing needs.
     for _ in 0..<4 {
         #expect(await status("POST /v1/pair/a1/wait HTTP/1.1\r\n\(host)Content-Length: 0\r\n\r\n") == "HTTP/1.1 200")
         #expect(await status("DELETE /v1/pair/a1 HTTP/1.1\r\n\(host)\r\n") == "HTTP/1.1 200")
@@ -187,14 +179,12 @@ private func ready(_ server: RemoteServer) async {
     defer { server.stop() }
     await ready(server)
     let head = "Host: 127.0.0.1:\(port)\r\nAuthorization: Bearer \(token)\r\n"
-    // Twelve 300 KiB bodies behind the slow one: more than the queue holds, so reading pauses and picks up again.
     let body = String(repeating: "x", count: 300 << 10)
     var stream = "GET /v1/slow HTTP/1.1\r\n\(head)\r\n"
     for index in 0..<12 { stream += "POST /v1/n\(index) HTTP/1.1\r\n\(head)Idempotency-Key: k\(index)\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)" }
     let client = PinnedClient(port: port, pin: identity.spkiHash)
     defer { client.close() }
     client.send(stream)
-    // 3.6 MB through TLS takes a while when the whole suite runs at once.
     let text = await client.text(until: #""path":"v1/n11""#, within: 10)
     let order = text.components(separatedBy: #""path":""#).dropFirst().map { $0.prefix { $0 != "\"" } }
     #expect(order == ["v1/slow"] + (0..<12).map { "v1/n\($0)" })
@@ -218,7 +208,6 @@ private func ready(_ server: RemoteServer) async {
     other.send("GET /v1/hello HTTP/1.1\r\nHost: evil.example\r\n\r\n")
     #expect(await other.text(until: "\r\n\r\n").hasPrefix("HTTP/1.1 421"))
 
-    // Off with no addresses left, the listener goes and the tunnel gets no port.
     server.setTunnel(false)
     #expect(await withCheckedContinuation { done in server.tunnelPort { done.resume(returning: $0) } } == nil)
 }
@@ -267,10 +256,8 @@ private func ready(_ server: RemoteServer) async {
         client.send(text)
         return String(await client.text(until: "\r\n", within: seconds).prefix(12))
     }
-    // No token: a 20 MiB upload is refused from its head, before any body is sent.
     #expect(await send("POST /v1/uploads HTTP/1.1\r\n\(host)Content-Length: \(20 << 20)\r\n\r\n") == "HTTP/1.1 413")
     #expect(await send("POST /v1/pair HTTP/1.1\r\n\(host)Content-Length: \(RemoteServer.unauthenticatedBody + 1)\r\n\r\n") == "HTTP/1.1 413")
-    // Signed in, the same route takes more than a stranger may send.
     #expect(await send("POST /v1/sessions HTTP/1.1\r\n\(host)Authorization: Bearer \(token)\r\nIdempotency-Key: s1\r\nContent-Length: \(100 << 10)\r\n\r\n"
                        + String(repeating: "x", count: 100 << 10), within: 10) == "HTTP/1.1 200")
     let body = String(repeating: "x", count: 2 << 20)
@@ -278,15 +265,11 @@ private func ready(_ server: RemoteServer) async {
                        within: 10) == "HTTP/1.1 200")
 }
 
-/// The head's clock stops once the head is in: a body that keeps coming takes as long as it needs, one that stops
-/// arriving ends the connection, and a head that never finishes still does.
 @Test func aSlowBodyGetsItsTimeButAStalledOneOrAStalledHeadDoesNot() async throws {
     let keychain = try TestKeychain()
     let token = DeviceToken.make()
     let (server, port, pin) = try makeServer(keychain, token: token)
     defer { server.stop() }
-    // Roomy enough that a loaded machine's late sleeps and slow handshake don't trip them: the head's clock still ends
-    // well inside the body's drip, and the body's clock is still several times its gap.
     server.timeouts = .init(head: 1.5, body: 3, idle: 30)
     let closed = OSAllocatedUnfairLock(initialState: 0)
     server.connectionClosed = { _ in closed.withLock { $0 += 1 } }
@@ -296,7 +279,6 @@ private func ready(_ server: RemoteServer) async {
     let slow = PinnedClient(port: port, pin: pin)
     defer { slow.close() }
     slow.send(head + "Content-Length: 8\r\n\r\n")
-    // Four seconds of body, a byte every half second: well past the head's time, never past the body's.
     for _ in 0..<8 {
         // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- the drip is the point: a body slower than the head's time but inside its own
         try await Task.sleep(for: .milliseconds(500))
@@ -323,7 +305,6 @@ private func ready(_ server: RemoteServer) async {
     #expect(closed.withLock { $0 } == 2)
 }
 
-/// A device revoked or paired again under the same id proves its token afresh, so its new record is seen.
 @Test func aDevicePairedAgainIsVouchedForAgain() async throws {
     let keychain = try TestKeychain()
     let token = DeviceToken.make()
@@ -353,8 +334,6 @@ private func ready(_ server: RemoteServer) async {
     #expect(seen.withLock { $0 } == ["d1", "d1", "d1"])
 }
 
-/// A resend after a lost response carries the same key and the same signature: its stored answer comes back without
-/// the signature being checked (or spent) again, and the action never runs twice. Keys are per device.
 @Test func aResentSignedAnswerReplaysItsResultBeforeAnySignatureCheck() async throws {
     let keychain = try TestKeychain()
     let identity = try #require(try keychain.store.identity())
@@ -363,7 +342,6 @@ private func ready(_ server: RemoteServer) async {
     let keys: [String: ConfirmGate.Keys] = ["d1": .init(confirm: nil, unlock: unlock.publicKey.x963Representation.base64URL),
                                             "d2": .init(confirm: nil, unlock: P256.Signing.PrivateKey().publicKey.x963Representation.base64URL)]
     let replay = ConfirmGate.ReplayCache()
-    // The route's own check, as the answer route makes it: a replayed signature would be refused here.
     let server = RemoteServer(identity: identity, epoch: "e1") { request, caller in
         runs.withLock { $0 += 1 }
         let device = caller.device ?? ""
@@ -389,12 +367,9 @@ private func ready(_ server: RemoteServer) async {
         return await client.text(until: "}", within: 10)
     }
     #expect(await post(one).hasPrefix("HTTP/1.1 200") && runs.withLock { $0 } == 1)
-    // The response was lost; the outbox sends it again, signature and all.
     let again = await post(one)
     #expect(again.hasPrefix("HTTP/1.1 200") && again.contains("Idempotent-Replay: true") && runs.withLock { $0 } == 1)
-    // The same key from another device is that device's own request, and the first device's signature is no use to it.
     let other = await post(two)
     #expect(other.hasPrefix("HTTP/1.1 401") && !other.contains("Idempotent-Replay") && runs.withLock { $0 } == 2)
-    // The same key with another body is refused without running.
     #expect(await post(one, #"{"x":1}"#).hasPrefix("HTTP/1.1 422") && runs.withLock { $0 } == 2)
 }

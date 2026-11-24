@@ -7,8 +7,6 @@ import SideACore
 final class Snoozes {
     struct Entry: Codable, Equatable {
         var snooze: SessionSnooze
-        /// What the session was doing when last looked at: a new turn means someone sent it a message, and for
-        /// `needsMe`, working then idle means it finished.
         var turnID: String?
         var status: SessionStatus
     }
@@ -59,7 +57,6 @@ final class Snoozes {
         return entry.snooze
     }
 
-    /// Why a snooze of this row would wake at once: it asks something, or it has failed or stalled.
     static func refusal(_ row: RemoteSession) -> Wake? {
         let entry = Entry(snooze: SessionSnooze(choice: .needsMe, until: nil, at: 0), turnID: row.turnID, status: row.status)
         return woken(entry, row, now: 0).flatMap { [.request, .failure].contains($0) ? $0 : nil }

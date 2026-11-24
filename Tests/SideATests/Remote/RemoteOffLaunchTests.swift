@@ -13,7 +13,6 @@ private final class Calls: @unchecked Sendable {
     var probed: Int { lock.withLock { probes } }
 }
 
-/// A launch with Remote off and terminal hosting off: no tmux, no Keychain read, no login shell, no log file.
 @MainActor @Test func aRemoteOffHostingOffLaunchTouchesNothing() async throws {
     let store = AccountStore(demo: true)
     let calls = Calls()
@@ -22,7 +21,6 @@ private final class Calls: @unchecked Sendable {
         return Data(#"{"tmux": null}"#.utf8)
     })
     let keychain = RemoteKeychain.inMemory()
-    // Fixed addresses make the controller available, as the app in Applications is.
     let remote = RemoteController(store: store, keychain: keychain, addresses: ["127.0.0.1"])
     remote.on = false
     remote.probe = { calls.probe(); return TailscaleStatus(state: .notInstalled) }
@@ -39,7 +37,6 @@ private final class Calls: @unchecked Sendable {
     #expect(keychain.memoryReads == 0 && !remote.opened)
     #expect(calls.probed == 0)
 
-    // Either switch wants hosting: tmux is looked for then, and only then.
     store.hostTerminal = true
     await store.syncHosting()
     #expect(calls.all.map { Array($0.prefix(2)) } == [["hosting", "install"]])
@@ -51,7 +48,6 @@ private final class Calls: @unchecked Sendable {
 
     remote.start()
     #expect(remote.opened && keychain.memoryReads > 0)
-    // Fixed addresses skip the probe, so this controller has none.
     let probing = RemoteController(store: AccountStore(demo: true), keychain: .inMemory())
     probing.probe = { calls.probe(); return TailscaleStatus(state: .notInstalled) }
     probing.on = true
@@ -60,8 +56,6 @@ private final class Calls: @unchecked Sendable {
     #expect(calls.probed == 1)
 }
 
-/// Tailscale not answering at launch, as after an update relaunches the app, isn't believed for good: asked again
-/// until it's up, then left alone.
 @MainActor @Test func aTailscaleThatWasntUpIsAskedAgain() async throws {
     let calls = Calls()
     let remote = RemoteController(store: AccountStore(demo: true), keychain: .inMemory())
@@ -80,8 +74,6 @@ private final class Calls: @unchecked Sendable {
     remote.on = false
 }
 
-/// The Sessions window's composer, row menus and suggestions read state only: with Remote and hosting off, showing
-/// them and sending a note start no tmux, read no Keychain and open no log.
 @MainActor @Test func theSessionsWindowsNewControlsTouchNothingWithRemoteOff() async throws {
     let store = AccountStore(demo: true)
     let calls = Calls()
@@ -105,9 +97,7 @@ private final class Calls: @unchecked Sendable {
     store.sessions.compose("s-work", how: .now)
     for _ in 0..<50 where store.sessions.outcomes["s-work"] == nil { try await Task.sleep(for: .milliseconds(20)) }
     #expect(store.sessions.outcomes["s-work"]?.result == .sent(.note))
-    // The settings chip reads the phone's row; nothing it shows runs anything.
     _ = SettingsChip.summary(WireBuilders.session(store.sessions.live[0], store: store, finished: []))
-    // With the Codex island off, Codex's hook trust is never asked, and nothing is left to ask it again.
     store.island.installed[.codex] = false
     store.island.codexMail = "review"
     await store.readCodexMailTrust()
@@ -121,7 +111,6 @@ private func phone(_ id: String) -> RemoteDevice {
     RemoteDevice(id: id, name: "iPhone", model: "", system: "", app: "1", build: 1, hash: Data(), secretHash: "", created: 0)
 }
 
-/// Whether Remote is active is each controller's own: its switch and its phones, read by the island through its store.
 @MainActor @Test func eachControllerIsActiveOnItsOwnSwitchAndItsOwnPhones() async throws {
     func controller(on: Bool, phones: [String]) throws -> (AccountStore, RemoteController) {
         let store = AccountStore(demo: true)
@@ -130,7 +119,6 @@ private func phone(_ id: String) -> RemoteDevice {
         store.remote = remote
         remote.on = on
         for id in phones { try remote.devices.add(phone(id), replacing: nil) }
-        // Looks at the device list without changing it, as a revoke of someone who isn't paired does.
         remote.revoke("nobody")
         return (store, remote)
     }
@@ -140,7 +128,6 @@ private func phone(_ id: String) -> RemoteDevice {
     #expect(a.active && !b.active && !c.active)
     #expect(storeA.island.keepsWaiters && !storeB.island.keepsWaiters && !storeC.island.keepsWaiters)
 
-    // One controller's phones and switch don't reach another.
     c.on = true
     #expect(c.active && !b.active)
     b.on = false
@@ -148,7 +135,6 @@ private func phone(_ id: String) -> RemoteDevice {
     #expect(a.active && c.active)
 }
 
-/// Removing the last phone ends what only a phone needed, though the switch stays on.
 @MainActor @Test func removingTheLastPhoneWhileRemoteStaysOnMakesItInactive() async throws {
     let store = AccountStore(demo: true)
     store.testBridge = { _ in Data("{}".utf8) }
@@ -161,7 +147,6 @@ private func phone(_ id: String) -> RemoteDevice {
 
     remote.revoke("d1")
     #expect(remote.on && !remote.active && !store.island.keepsWaiters)
-    // A phone paired again makes it active without touching the switch.
     try remote.devices.add(phone("d3"), replacing: nil)
     remote.revoke("nobody")
     #expect(remote.active)

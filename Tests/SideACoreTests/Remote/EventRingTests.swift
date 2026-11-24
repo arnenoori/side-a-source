@@ -9,11 +9,9 @@ import Testing
     #expect(ring.replay(epoch: "e1", after: 3, now: 0) == [40, 50])
     #expect(ring.replay(epoch: "e1", after: 2, now: 0) == [30, 40, 50])
     #expect(ring.replay(epoch: "e1", after: 5, now: 0)?.isEmpty == true)
-    // Older than the ring, from the future, another launch, or a first connect: a snapshot.
     #expect(ring.replay(epoch: "e1", after: 1, now: 0) == nil)
     #expect(ring.replay(epoch: "e1", after: 6, now: 0) == nil)
     #expect(ring.replay(epoch: "e0", after: 4, now: 0) == nil)
     #expect(ring.replay(epoch: nil, after: nil, now: 0) == nil)
-    // Events past ten minutes are gone even when the ring has room.
     #expect(ring.replay(epoch: "e1", after: 3, now: 601) == nil)
 }

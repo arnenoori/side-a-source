@@ -31,7 +31,18 @@ public struct RemoteSuggestion: Codable, Hashable, Sendable, Identifiable {
     public let id: String
     /// "Always allow Bash(npm run test:*) in this project".
     public let title: String
-    public init(id: String, title: String) { self.id = id; self.title = title }
+    /// How long the rule is kept. Absent from a Mac that doesn't say, and for a mode switch.
+    public let scope: SuggestionScope?
+    public init(id: String, title: String, scope: SuggestionScope? = nil) { self.id = id; self.title = title; self.scope = scope }
+}
+
+public struct SuggestionScope: OpenEnum {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    /// Until the session ends; nothing is written to a settings file.
+    public static let session = Self(rawValue: "session")
+    /// Kept in a settings file, for this project or everywhere; the title says which.
+    public static let saved = Self(rawValue: "saved")
 }
 
 /// The twin of `Island.Pending`.

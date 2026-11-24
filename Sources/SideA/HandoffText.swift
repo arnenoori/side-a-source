@@ -1,7 +1,6 @@
 import Foundation
 import SideAProtocol
 
-/// Built without a model, so a handoff costs no tokens and can't put words in the person's mouth.
 nonisolated enum HandoffText {
     struct Turn: Equatable, Sendable {
         let user: Bool

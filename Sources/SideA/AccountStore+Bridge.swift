@@ -13,7 +13,6 @@ struct BridgeFailure: LocalizedError, BridgeError, Sendable {
 }
 
 extension AccountStore {
-    /// Whether a bridge command changes a login, the Keychain or files, rather than only reading.
     static func changes(_ args: [String]) -> Bool {
         guard let command = args.first else { return false }
         if command == "cleanup" { return args.count > 1 && ["archive", "remove-worktree", "restore"].contains(args[1]) }
@@ -54,7 +53,6 @@ extension AccountStore {
         await syncHosting()
     }
 
-    /// Side A's tmux server is for people who asked for it: terminal hosting, or Remote, which serves hosted sessions.
     var hostingWanted: Bool { hostTerminal || remote.on }
 
     /// Installs and watches Side A's tmux when it's wanted, and stops watching when it no longer is. Sessions already
@@ -70,7 +68,6 @@ extension AccountStore {
         do { limitHook = try await integration("hook", enabled ? "on" : "off") } catch { self.error = error.localizedDescription }
     }
 
-    /// Asks first, from a right-click on Quit: the one way to take Side A off this Mac and undo what it set up.
     func confirmUninstall() {
         let alert = NSAlert()
         alert.alertStyle = .warning

@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// The one place a test names a code as a string; the wire carries the same bytes whatever the Mac types it as.
 private func answer(_ status: Int, _ code: String, _ message: String, details: [String: String]? = nil, retryAfter: Int? = nil) -> HTTPResponse {
     RemoteServer.error(status, ErrorCode(rawValue: code), message, details: details, retryAfter: retryAfter)
 }
@@ -26,7 +25,6 @@ private func text(_ response: HTTPResponse) -> String { String(decoding: respons
     #expect(text(response) == #"{"error":{"code":"internal","message":"Broke.","retryable":false}}"#)
 }
 
-/// Every code the Mac sends reads back as the protocol's own APIError with that code.
 @Test func everyCodeTheMacSendsReadsBackAsTheProtocolsError() throws {
     let codes = ["bad_request", "bad_json", "missing_idempotency_key", "unauthorized", "bad_code", "confirm_required", "confirm_invalid", "declined",
                  "sas_mismatch", "forbidden_origin", "not_found", "session_not_found", "request_not_found", "image_not_found", "no_pairing",
@@ -41,7 +39,6 @@ private func text(_ response: HTTPResponse) -> String { String(decoding: respons
     }
 }
 
-/// What a command's failure answers with: its status, code, words, details and Retry-After.
 @MainActor @Test func aCommandsFailureAnswersWithItsStatusCodeAndWords() throws {
     func wire(_ failure: SessionCommands.Failure) -> (Int, String, String?) {
         let response = RemoteRoutes.response(failure)

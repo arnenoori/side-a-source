@@ -76,8 +76,6 @@ public enum RemoteTranscript {
         init?(intValue: Int) { nil }
     }
 
-    // MARK: The bridge's shapes
-
     private struct Page: Decodable {
         let sessionID: String
         let agentID: String?
@@ -192,8 +190,6 @@ public enum RemoteTranscript {
             }
         }
     }
-
-    // MARK: Cuts
 
     /// Any one string in a list or event is cut here; the uncut value is a separate fetch.
     public static let maxString = 64 << 10

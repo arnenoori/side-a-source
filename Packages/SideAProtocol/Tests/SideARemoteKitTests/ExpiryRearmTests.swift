@@ -13,8 +13,6 @@ private final class Clock: @unchecked Sendable {
     }
 }
 
-/// The notification extension claims an item just before it expires and is suspended. The engine's expiry check finds the
-/// claim fresh and settles nothing; with the connection loop ended (never paired here), nothing else touches the queue.
 @Test func anExpiredItemAnotherProcessHeldSettlesOnceItsClaimLapses() async throws {
     let (outbox, _) = try temporaryOutbox()
     try await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 100))
@@ -25,14 +23,12 @@ private final class Clock: @unchecked Sendable {
     await sync.start()
     try await until("loop ended") { await sync.state.connection == .unpaired }
 
-    // Several checks go by while the claim is fresh: the item is still the extension's.
     // swiftlint:disable:next sleep_literal_in_tests -- proving the item stays the extension's across several checks
     try await Task.sleep(for: .milliseconds(300))
     let waiting = await sync.state
     #expect(waiting.outcomes["old"] == nil)
     #expect(waiting.pending.map(\.id) == ["old"])
 
-    // Its claim is 31 s old: free again. No drain, no enqueue, nothing else asks.
     clock.now = 130
     try await until("settled") {
         let state = await sync.state
@@ -42,7 +38,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// The other process finished it instead: "Sending…" ends when the queue no longer holds it.
 @Test func anExpiredItemAnotherProcessFinishedLeavesPending() async throws {
     let (outbox, _) = try temporaryOutbox()
     try await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 100))

@@ -2,7 +2,6 @@ import UIKit
 import XCTest
 @testable import SideARemote
 
-/// The viewfinder, driven by a stand-in camera: the simulator has none, and tests need none.
 @MainActor
 final class InlineCameraTests: XCTestCase {
     @MainActor private final class Tray {

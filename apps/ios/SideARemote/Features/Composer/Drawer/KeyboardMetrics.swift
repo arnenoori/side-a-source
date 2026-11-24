@@ -1,20 +1,17 @@
 import GameController
 import UIKit
 
-/// What the keyboard last looked like, so the attachment panel can take its exact place: its height for each way the
-/// screen is held (kept between launches, so the first opening after a launch is right too), and whether it is docked.
-/// One set of observers for the whole app, made the first time anything asks.
 @MainActor
 final class KeyboardMetrics {
     static let shared = KeyboardMetrics()
     nonisolated deinit {}
 
     private(set) var heights: KeyboardHeights
-    /// False while the keyboard floats, is split, or is undocked: there is no area at the bottom for a panel to take.
     private(set) var isDocked = true
     /// The panel is the keyboard right now, so what the system reports is the panel's own height, not a keyboard's.
     var panelIsShowing = false
 
+    // swiftlint:disable:next own_defaults_suite -- measured keyboard heights are this device's alone, never shared with the widgets
     private let store = UserDefaults(suiteName: "SideARemote.keyboard") ?? UserDefaults()
 
     private init() {
@@ -36,13 +33,10 @@ final class KeyboardMetrics {
 
     var hasHardwareKeyboard: Bool { GCKeyboard.coalesced != nil }
 
-    /// The height the panel takes for the screen as it is held now.
     func panelHeight(landscape: Bool, isPad: Bool) -> CGFloat { heights.height(landscape: landscape, isPad: isPad) }
 
-    /// Where a panel goes, for this device and keyboard.
     var presentation: PanelPresentation {
         #if DEBUG
-        // `--panel-popover`: the iPad hardware-keyboard path, on a simulator that has none.
         if ProcessInfo.processInfo.arguments.contains("--panel-popover") { return .popover }
         #endif
         return .decide(isPad: UIDevice.current.userInterfaceIdiom == .pad, hardwareKeyboard: hasHardwareKeyboard, keyboardDocked: isDocked)

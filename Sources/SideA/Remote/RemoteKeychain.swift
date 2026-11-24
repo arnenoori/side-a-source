@@ -7,10 +7,8 @@ import SideACore
 /// which agents read and could write a hash into. Each build has its own service, so Side A Dev never sees release's.
 struct RemoteKeychain: @unchecked Sendable {
     let service: String
-    /// Tests use a throwaway keychain; the app uses the login keychain's default.
     let keychain: SecKeychain?
 
-    /// Set only for the demo: devices and the relay key live in memory and there is no TLS key, so a demo never reads the login keychain.
     private let memory: Memory?
 
     init(service: String = (Bundle.main.bundleIdentifier ?? AppCopies.releaseID + ".dev") + ".remote", keychain: SecKeychain? = nil) {
@@ -20,9 +18,7 @@ struct RemoteKeychain: @unchecked Sendable {
     private init(memory: Memory) { service = "demo.sidea.remote"; keychain = nil; self.memory = memory }
 
     static func inMemory() -> RemoteKeychain { RemoteKeychain(memory: Memory()) }
-    /// An in-memory keychain's reads so far, for tests that check nothing was read.
     var memoryReads: Int { memory?.reads ?? 0 }
-    /// Tests: an in-memory keychain that can't be written.
     func failWrites(_ on: Bool) { memory?.failsWrites = on }
 
     /// The login keychain; in Side A Dev only, the keychain file `SIDEA_REMOTE_KEYCHAIN` names, unlocked with
@@ -58,7 +54,6 @@ struct RemoteKeychain: @unchecked Sendable {
         }
     }
 
-    /// Adding names the keychain to write to; every other call searches it.
     private func scoped(_ query: [CFString: Any], adding: Bool = false) -> CFDictionary {
         var query = query
         if let keychain { query[adding ? kSecUseKeychain : kSecMatchSearchList] = adding ? keychain : [keychain] }
@@ -88,15 +83,11 @@ struct RemoteKeychain: @unchecked Sendable {
         return access
     }
 
-    // MARK: Devices
-
     /// nil when there is no item yet. Throws when one exists but can't be read: Remote then accepts no device
     /// and never replaces the item silently.
     func readDevices() throws -> Data? { try read("devices", what: "Paired devices") }
     func writeDevices(_ data: Data) throws { try write(data, "devices", label: "Side A Remote devices", what: "Paired devices") }
     func deleteDevices() { delete("devices") }
-
-    // MARK: Relay install key
 
     /// The Ed25519 key that signs every request to the push relay; its hash is the install id. Made on first use.
     func installKey(create: Bool = true) throws -> Curve25519.Signing.PrivateKey? {
@@ -111,8 +102,6 @@ struct RemoteKeychain: @unchecked Sendable {
 
     func deleteInstallKey() { delete("install") }
 
-    // MARK: Transcription key
-
     func transcriptionKey() throws -> String? {
         try read("transcription", what: "The transcription key").map { String(decoding: $0, as: UTF8.self) }
     }
@@ -120,8 +109,6 @@ struct RemoteKeychain: @unchecked Sendable {
         try write(Data(key.utf8), "transcription", label: "Side A Remote transcription key", what: "The transcription key")
     }
     func deleteTranscriptionKey() { delete("transcription") }
-
-    // MARK: Items
 
     private func read(_ account: String, what: String) throws -> Data? {
         if let memory { return memory[account] }
@@ -156,8 +143,6 @@ struct RemoteKeychain: @unchecked Sendable {
         if let memory { memory[account] = nil; return }
         SecItemDelete(scoped([kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: account]))
     }
-
-    // MARK: Identity
 
     struct Identity: @unchecked Sendable {
         let identity: SecIdentity

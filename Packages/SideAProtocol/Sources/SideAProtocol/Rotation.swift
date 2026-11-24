@@ -1,7 +1,5 @@
 import Foundation
 
-// How the Mac rotates sessions between accounts, for the phone to explain and steer.
-
 public extension Capability {
     /// From the Mac: `RemoteAccount`'s and `RemoteSession`'s rotation fields, `AutopilotState.next` and friends,
     /// `autopilot.update`, `GET /v1/usage/outlook` and the signed rotation routes. From a phone's `hello`: it can show

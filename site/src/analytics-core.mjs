@@ -1,9 +1,7 @@
-// Deliberately small: public capture API only, no SDK, autocapture, or recordings.
 const actions = new Set(['open', 'next', 'previous', 'play', 'stop', 'mode', 'hold']);
 const events = new Set(['$pageview', 'download_clicked', 'release_list_opened', 'setup_opened', 'demo_interacted', 'demo_load_failed', 'release_lookup_failed']);
 const optOutKey = 'side-a-analytics-disabled';
 
-/** Dependencies are injectable so privacy and failure behavior can be tested without sending events. */
 export function createAnalytics({ projectToken, host, location, navigator, storage, randomUUID, fetch }) {
   let visitID;
   let disabled = false;

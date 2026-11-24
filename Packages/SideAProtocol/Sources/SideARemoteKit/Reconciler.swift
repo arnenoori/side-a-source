@@ -5,7 +5,6 @@ import SideAProtocol
 /// refresh a part of it. A value with no sockets, tasks or clock: each call changes the state and returns what the
 /// caller has to do about it. `SyncEngine` owns the connection and runs the effects.
 struct Reconciler {
-    /// What a call asks of the engine.
     enum Effect: Equatable {
         /// An answer still queued here lost the race to this resolution: it settles as answered elsewhere and leaves the outbox.
         case settle(Outbox.Item, RequestResolution)
@@ -16,14 +15,12 @@ struct Reconciler {
     var state = RemoteState()
     /// Every request the Mac has open; `state.requests` is these less the ones with an answer pending.
     var open: [RequestID: RemoteRequest] = [:]
-    /// The order `state.resolved` was filled in, so it keeps the last 50.
     private var resolvedOrder: [RequestID] = []
     /// A welcome that can't replay came: events wait for the snapshot that follows it.
     var awaitingSnapshot = false
     /// The Mac's `seq` at a welcome that replays: `state.caughtUp` once events reach it.
     private var replayTo: Int?
 
-    /// What an event that came on the socket did.
     enum Receipt: Equatable {
         /// Not the next one in the sequence, or the state is waiting for a snapshot: nothing changed.
         case ignored
@@ -52,7 +49,6 @@ struct Reconciler {
             state.caughtUp = true
             self.replayTo = nil
         }
-        // A slice refreshed over REST already reflects events up to its seq.
         if let slice = Self.slice(of: event), seq <= state.sliceSeq[slice] ?? -1 { return .reflected }
         return .applied(apply(event))
     }
@@ -71,8 +67,6 @@ struct Reconciler {
         apply(snapshot)
         return true
     }
-
-    // REST lists: each refreshes its part of the state and never moves `seq`.
 
     mutating func replace(_ list: RequestList, asked: String?) -> Bool {
         guard fresher(list.seq, .requests, asked: asked) else { return false }
@@ -99,7 +93,6 @@ struct Reconciler {
     /// The Mac no longer has this request open, whichever of an answer's response and its event comes first.
     mutating func closed(_ request: RequestID) { open[request] = nil }
 
-    /// `state.requests`: the open ones, less those with an answer pending in the outbox.
     mutating func project() {
         let answering = Set(state.pending.compactMap(\.answering))
         state.requests = open.filter { !answering.contains($0.key) }

@@ -2,7 +2,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// What the composer sent last, and what became of it.
 struct ComposerOutcome: Equatable {
     enum Result: Equatable {
         case sent(ReplyResult.Delivery)
@@ -15,10 +14,8 @@ struct ComposerOutcome: Equatable {
     let how: ComposerSend
 }
 
-/// ↩, ⌥↩, or the send menu's note.
 enum ComposerSend: Equatable { case now, afterTurn, note }
 
-/// A conversation as the composer sees it: its live process and finished turn, and what the phone could do with it.
 @MainActor struct ComposerTarget {
     let id: String
     let live: LiveSession?
@@ -61,7 +58,6 @@ enum ComposerSend: Equatable { case now, afterTurn, note }
         return abilities.contains(.replyInbox) || (status == .finished || ready != nil) && abilities.contains(.followUp)
     }
 
-    /// ⌥↩ means something: the turn can be waited for.
     var queues: Bool { working && (hosted || terminal || abilities.contains(.followUp)) }
 
     /// Esc: Stop Now in a pane or through Codex's server, else stop mail before the next step.
@@ -77,7 +73,6 @@ enum ComposerSend: Equatable { case now, afterTurn, note }
         return working ? "Message…" : "Reply…"
     }
 
-    /// The line under the field while nothing else is there.
     var hint: String {
         if waiter { return "It finished. What you send starts its next turn right away." }
         if ready != nil, live == nil || abilities.isDisjoint(with: [.type, .replyInbox, .replyTerminal]) {
@@ -151,13 +146,11 @@ extension SessionStore {
         }
     }
 
-    /// Not sent · Retry: the same words, the same way.
     func retry(_ id: String) {
         guard let outcome = outcomes[id], case .failed = outcome.result else { return }
         reply(outcome.text, images: outcome.images.filter { FileManager.default.fileExists(atPath: $0) }, to: id, how: outcome.how)
     }
 
-    /// The reply Codex or Claude dropped, sent again in full.
     func retryDropped(_ id: String) {
         guard let live = ComposerTarget(id, store: store).live, let text = SessionCommands(store: store).unsent(live) else { return }
         reply(text, to: id, how: .now)
@@ -167,7 +160,6 @@ extension SessionStore {
         commands = await RemoteOptions.commands(RemoteOptions.homes(store), cache: store.remote.cache)
     }
 
-    /// ⎋ from the composer.
     func interrupt(_ id: String) {
         let target = ComposerTarget(id, store: store)
         guard let live = target.live, let when = target.interrupt else { return }

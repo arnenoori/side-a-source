@@ -14,7 +14,6 @@ extension RemoteRoutes {
 
     static let noImage = RemoteServer.error(404, .imageNotFound, "That image isn't on the Mac any more.")
 
-    /// The conversation a phone's session key names: a live session's own id, or the key itself for one that ended.
     static func conversation(_ context: Context) async -> String? {
         let id = context.params["id"] ?? ""
         return await MainActor.run { context.controller.store.flatMap { conversation(id, store: $0) } }
@@ -78,7 +77,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// The bytes, checked against the id; a locator gone stale is re-scanned once.
     static func imageBytes(_ context: Context, _ id: String) async -> (Data, String)? {
         for recheck in [false, true] {
             guard let reply = try? await bridge(context, "image", id, recheck ? ["--recheck"] : []),

@@ -4,7 +4,6 @@ import Testing
 
 private typealias D = RemoteDelivery
 
-/// Every cell of protocol's delivery table, read across: auto, followUp, note, keys.
 @Test(arguments: [
     (D.State.waiting, false, AgentProvider.claude, [D.Decision.refused(.waiting), .refused(.waiting), .note, .refused(.notHosted)]),
     (.waiting, true, .codex, [.refused(.waiting), .refused(.waiting), .note, .keys]),
@@ -33,7 +32,6 @@ func replyDeliveryFollowsTheTable(_ state: RemoteDelivery.State, _ hosted: Bool,
         // In a Side A terminal Codex's own composer queues it, hooks or not.
         #expect(D.decide(.working, hosted: true, agent: .codex, mode: .followUp, mailHooks: false, stopHooks: stopHooks) == .typed)
     }
-    // Codex's notes go through the same mail hooks.
     #expect(D.decide(.working, hosted: false, agent: .codex, mode: .note, mailHooks: false, stopHooks: true) == .refused(.cannot))
     #expect(D.decide(.working, hosted: false, agent: .claude, mode: .followUp, mailHooks: true, stopHooks: false) == .refused(.setup))
 }

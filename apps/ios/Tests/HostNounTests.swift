@@ -4,14 +4,12 @@ import SideARemoteShared
 import XCTest
 @testable import SideARemote
 
-/// What the phone calls the computer behind a host: a Mac keeps the words it had, anything else is a computer.
 @MainActor
 final class HostNounTests: XCTestCase {
     func testAMacKeepsEveryWordItHad() {
         let mac = HostOS.macos
         XCTAssertEqual([mac.noun, mac.titleNoun, mac.plural, mac.titlePlural], ["Mac", "Mac", "Macs", "Macs"])
         XCTAssertEqual([mac.the(), mac.your(), mac.sentenceThe()], ["the Mac", "your Mac", "The Mac"])
-        // The host's name never replaces "Mac" for a Mac.
         XCTAssertEqual([mac.the("Studio"), mac.your("Studio"), mac.sentenceThe("Studio")], ["the Mac", "your Mac", "The Mac"])
         XCTAssertEqual("\(mac.titleNoun)'s Screen", "Mac's Screen")
         XCTAssertEqual("Forget This \(mac.titleNoun)", "Forget This Mac")
@@ -42,7 +40,6 @@ final class HostNounTests: XCTestCase {
         let old = Endpoint(macID: "m", baseURL: try XCTUnwrap(URL(string: "https://100.1.2.3:47800")), serverKeyHash: "k", name: "Studio")
         XCTAssertNil(old.os)
         XCTAssertEqual(old.kind, .macos)
-        // Saved JSON from before `os` decodes, and a hello that names no kind changes nothing.
         let saved = try JSONEncoder().encode(old)
         XCTAssertEqual(try JSONDecoder().decode(Endpoint.self, from: saved), old)
         XCTAssertEqual(old.updated(os: nil), old)

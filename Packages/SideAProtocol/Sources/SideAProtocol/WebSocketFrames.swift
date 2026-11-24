@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 
 /// RFC 6455 framing for both ends: the Mac's server and the phone's client. A server sends unmasked frames and
@@ -31,7 +35,6 @@ public struct WebSocketFrames: Sendable {
     private let maxMessage: Int
     private let strict: Bool
     private var buffer = Data()
-    /// Bytes of `buffer` already decoded; dropped on the next `append` rather than per frame.
     private var cursor = 0
     private var fragmentOpcode: Opcode?
     private var fragments = Data()

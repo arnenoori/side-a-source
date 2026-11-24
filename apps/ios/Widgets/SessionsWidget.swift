@@ -2,8 +2,6 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// What's working and what needs you. Rows open their session; no Allow buttons on
-/// the Home Screen, where they're too easy to tap by accident.
 struct SessionsWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Sessions", provider: SnapshotProvider()) { entry in
@@ -20,7 +18,6 @@ struct SessionsWidget: Widget {
 struct SessionsWidgetView: View {
     @Environment(\.widgetFamily) private var widgetFamily
     let entry: SnapshotEntry
-    /// The DEBUG gallery's family; WidgetKit's otherwise.
     var familyOverride: WidgetFamily?
     private var family: WidgetFamily { familyOverride ?? widgetFamily }
 
@@ -37,8 +34,6 @@ struct SessionsWidgetView: View {
             PairFirst()
         }
     }
-
-    // MARK: Home Screen
 
     private func medium(_ snapshot: WidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -78,7 +73,6 @@ struct SessionsWidgetView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// "1 needs you · 3 working", the Mac's name trailing; "as of" replaces the name once stale.
     private func header(_ snapshot: WidgetSnapshot) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             if snapshot.waiting > 0 {
@@ -117,7 +111,6 @@ struct SessionsWidgetView: View {
         }
     }
 
-    /// The app's glyphs, still: an amber ring for needs you, the progress mark for working.
     private func glyph(_ phase: WidgetSnapshot.Session.Phase) -> some View {
         Group {
             if phase == .needsYou {
@@ -140,8 +133,6 @@ struct SessionsWidgetView: View {
         }
         .padding(.top, 4)
     }
-
-    // MARK: Lock Screen
 
     @ViewBuilder private func rectangular(_ snapshot: WidgetSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 1) {

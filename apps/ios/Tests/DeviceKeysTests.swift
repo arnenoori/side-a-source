@@ -2,8 +2,6 @@ import SideAProtocol
 import XCTest
 @testable import SideARemote
 
-/// The unlock key's signature checks out the way the Mac checks it (`ConfirmSignature.verify`). The Face ID key
-/// needs a person, so only its creation is covered here.
 final class DeviceKeysTests: XCTestCase {
     private let mac = "test-mac-\(UUID().uuidString.prefix(8))"
 
@@ -20,14 +18,12 @@ final class DeviceKeysTests: XCTestCase {
         XCTAssertEqual(signature.signer, .unlock)
         XCTAssertTrue(signature.verify(publicKey: keys.unlock, macID: mac, deviceID: "d1", purpose: .allow, subject: subject,
                                        now: Date.now.timeIntervalSince1970))
-        // The same signature doesn't stand for another request or another key.
         XCTAssertFalse(signature.verify(publicKey: keys.unlock, macID: mac, deviceID: "d1", purpose: .allow, subject: "r2:allow",
                                         now: Date.now.timeIntervalSince1970))
         XCTAssertFalse(signature.verify(publicKey: keys.confirm, macID: mac, deviceID: "d1", purpose: .allow, subject: subject,
                                         now: Date.now.timeIntervalSince1970))
     }
 
-    /// Pair Again makes keys before the Mac has taken them: until the new pairing is saved, the old one's still sign.
     func testNewKeysSignOnlyOnceTheirPairingIsKept() async throws {
         guard let old = DeviceKeys.create(for: mac) else { throw XCTSkip("no keys on this simulator") }
         XCTAssertFalse(DeviceKeys.has(.unlock, for: mac))
@@ -52,7 +48,6 @@ final class DeviceKeysTests: XCTestCase {
         DeviceKeys.promote(for: mac)
         _ = DeviceKeys.create(for: mac)
         DeviceKeys.delete(for: mac)
-        // Keys a Pair Again left waiting go too.
         DeviceKeys.promote(for: mac)
         XCTAssertFalse(DeviceKeys.has(.unlock, for: mac))
         XCTAssertFalse(DeviceKeys.has(.confirm, for: mac))

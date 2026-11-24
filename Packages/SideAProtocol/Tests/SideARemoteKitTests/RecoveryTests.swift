@@ -10,7 +10,6 @@ private func helloData(_ change: (inout [String: Any]) -> Void = { _ in }) throw
     return try JSONSerialization.data(withJSONObject: hello)
 }
 
-/// What the Mac tells a caller whose token it doesn't know.
 private func stranger() throws -> FakeMac.Reply {
     .init(body: try helloData {
         $0["paired"] = false
@@ -25,8 +24,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     socket.push(nil, welcome("e", seq: 0, replay: false))
     try await until("live") { await sync.state.connection.isLive }
 }
-
-// MARK: Half-open sockets
 
 @Test func aFailedPongClosesTheSocketAndReconnects() async throws {
     var timing = fastTiming
@@ -83,8 +80,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-// MARK: States that used to be final
-
 @Test func removedComesBackWithTheForeground() async throws {
     let mac = FakeMac()
     mac.hello(try stranger())
@@ -93,7 +88,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     try await until("unpaired") { await sync.state.connection == .unpaired }
     #expect(mac.sockets.isEmpty)
 
-    // Still refused: one more ask, and the same answer.
     let asked = mac.requests.count
     await sync.setForeground(true)
     try await until("asked again") { mac.requests.count > asked }
@@ -132,7 +126,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-/// Pull to refresh, Test Connection and a network change all ask again; the loop had ended, so they used to do nothing.
 @Test func needsUpdateComesBackWhenAskedAgain() async throws {
     let mac = FakeMac()
     mac.hello(.init(body: try helloData { $0["minClientBuild"] = 99 }))
@@ -145,7 +138,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-/// Updating the Mac is the fix, and the Mac tells nobody it happened.
 @Test func aMacThatWasTooOldIsFoundAgainOnceItUpdates() async throws {
     let mac = FakeMac()
     mac.hello(.init(body: try helloData { $0["maxProtocol"] = 0 }))
@@ -157,7 +149,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-/// A retry with the Mac out of reach proves nothing, so the screen keeps saying what it said until the Mac answers.
 @Test func aRetryThatCantReachTheMacDoesntChangeWhatsShown() async throws {
     let mac = FakeMac()
     mac.hello(try stranger())
@@ -200,7 +191,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     #expect(await sync.state.connection == .idle)
 }
 
-/// A token on a device list the Mac can't read gets 503: an answer, not a removal. Build 11's engine backs off on it too.
 @Test func aMacThatCantReadItsDevicesIsntARemoval() async throws {
     let mac = FakeMac()
     let body = Data(#"{"error":{"code":"not_ready","message":"Side A can't read its paired devices right now.","retryable":true}}"#.utf8)
@@ -215,8 +205,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     try await live(sync, try await mac.socket(0))
     await sync.stop()
 }
-
-// MARK: Hello
 
 @Test func aHelloThatDoesntKnowThePhoneKeepsItsAddresses() async throws {
     let mac = FakeMac()
@@ -252,15 +240,12 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-// MARK: The relay's refusal
-
 @Test func repeatedRefusalsOfferPairAgainAndAnAnswerTakesItBack() async throws {
     let mac = FakeMac()
     mac.relayRefuses(true)
     let sync = try engine(mac)
     await sync.start()
     try await until("offered") { await sync.state.connection.cause == .relayRefused }
-    // It's an offer: the phone stays paired and keeps asking.
     #expect(await sync.state.connection != .unpaired)
 
     mac.relayRefuses(false)
@@ -279,8 +264,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     #expect(await sync.state.connection.cause != .relayRefused)
     await sync.stop()
 }
-
-// MARK: Sleep
 
 @Test func aGoodbyeForSleepSaysSoUntilTheMacAnswers() async throws {
     let mac = FakeMac()
@@ -320,8 +303,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     let event = try JSONDecoder().decode(ServerEvent.self, from: Data(#"{"type":"bye","data":{"reason":"sleep"}}"#.utf8))
     #expect(event == .bye(reason: ServerEvent.byeSleep))
 }
-
-// MARK: Test notification
 
 @Test func testPushPostsToTheExistingRouteAndReportsTheRelay() async throws {
     let mac = FakeMac()

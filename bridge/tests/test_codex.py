@@ -58,7 +58,6 @@ class CodexTests(unittest.TestCase):
             codex.usage(Path(d),b)
             command,env,_=cls.call_args[0]
             self.assertNotEqual(env['CODEX_HOME'],str(codex.global_home()))
-            # Review: a profile holding another account's login (a 0.4 copy) was read and primed as B.
             auth.write_text(json.dumps({'tokens':{'id_token':token('a@example.com')}}))
             calls=cls.call_count
             for action in (codex.usage, codex.prime):
@@ -66,8 +65,6 @@ class CodexTests(unittest.TestCase):
             self.assertEqual(cls.call_count,calls)
 
     def test_a_revoked_login_asks_for_sign_in_instead_of_backing_off_forever(self):
-        # Codex reports a revoked login as "failed to fetch codex rate limits ... 401 token_revoked";
-        # reading that as a rate limit kept the account on "Reading..." indefinitely.
         server='''import json,sys
 for line in sys.stdin:
     request=json.loads(line)

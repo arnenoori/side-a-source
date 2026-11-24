@@ -16,7 +16,6 @@ import Testing
     var code = PairingCode(code: "K7Q29XMD", now: 0)
     #expect(code.submit("K7Q2-9XMA", now: 1) == .wrong(triesLeft: 4))
     for left in [3, 2, 1] { #expect(code.submit("AAAAAAAA", now: 1) == .wrong(triesLeft: left)) }
-    // The fifth wrong try burns it; the right code is no use after.
     #expect(code.submit("AAAAAAAA", now: 1) == .expired)
     #expect(code.submit("K7Q29XMD", now: 1) == .expired)
     var late = PairingCode(code: "K7Q29XMD", now: 0)
@@ -49,11 +48,9 @@ import Testing
     var code = PairingCode(code: "K7Q29XMD", now: 0)
     for left in [4, 3, 2, 1] { #expect(code.submit("AAAAAAAA", now: 1, source: "10.0.0.9") == .wrong(triesLeft: left)) }
     #expect(code.submit("AAAAAAAA", now: 1, source: "10.0.0.9") == .expired)
-    // That address is done, right code or not; the phone on another still pairs.
     #expect(code.submit("K7Q29XMD", now: 1, source: "10.0.0.9") == .expired && !code.burned)
     #expect(code.triesLeft("100.64.0.7") == 5)
     #expect(code.submit("K7Q29XMD", now: 2, source: "100.64.0.7") { "a1" } == .accepted(attempt: "a1"))
-    // Twenty wrong in all, from however many addresses, void it.
     var many = PairingCode(code: "K7Q29XMD", now: 0)
     for index in 0..<19 { _ = many.submit("AAAAAAAA", now: 1, source: "10.0.\(index / 4).\(index % 4)") }
     #expect(!many.burned && many.submit("AAAAAAAA", now: 1, source: "10.9.9.9") == .expired && many.burned)

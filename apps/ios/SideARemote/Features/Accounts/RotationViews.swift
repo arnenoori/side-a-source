@@ -2,20 +2,16 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// The words rotation shows, apart from the views so each can be tested.
 enum RotationText {
-    /// "Work back 4:10 PM", or "back by" when the Mac only knows the longest it could take.
     static func back(_ account: String, at: Timestamp, worstCase: Bool = false, now: Date) -> String {
         "\(account) back \(worstCase ? "by " : "")\(Formatting.at(Date(timeIntervalSince1970: at), now: now))"
     }
 
-    /// "3 waiting · Work back 4:10 PM".
     static func waiting(count: Int, summary: WaitingSummary?, now: Date) -> String {
         let back = summary.flatMap { $0.at > now.timeIntervalSince1970 ? Self.back($0.account, at: $0.at, worstCase: $0.worstCase, now: now) : nil }
         return ["\(count) waiting", back].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// "Next: Personal · at 95% · ~40m". With several logins in use, each says which it is.
     static func next(_ move: NextMove, several: Bool) -> String {
         let lead = several ? "\(move.from) → \(move.to ?? "none free")" : "Next: \(move.to ?? "none free")"
         guard move.to != nil else { return lead }
@@ -23,12 +19,10 @@ enum RotationText {
         return ([lead, "at \(move.atPercent)%"] + [move.minutes.map(estimate)].compactMap { $0 }).joined(separator: " · ")
     }
 
-    /// "~40m", "~1h 20m": the Mac's reading of the pace, never a promise.
     static func estimate(_ minutes: Int) -> String {
         minutes < 60 ? "~\(minutes)m" : minutes.isMultiple(of: 60) ? "~\(minutes / 60)h" : "~\(minutes / 60)h \(minutes % 60)m"
     }
 
-    /// "41% left · runs out Thu". The date only when the Mac could work one out.
     static func room(_ room: UsageOutlook.Room, named: Bool, now: Date) -> String {
         let left = "\(named ? "\(room.provider.title) " : "")\(room.weeklyLeft)% left"
         guard let runsOut = room.runsOut, runsOut > now.timeIntervalSince1970 else { return left }
@@ -43,7 +37,6 @@ enum RotationText {
         return "\(Int(capacity))x"
     }
 
-    /// What's keeping Autopilot off an account, and whether it already is.
     static func issue(_ issue: AccountIssue, now: Date) -> (text: String, alarm: Bool)? {
         switch issue.kind {
         case .signedOut: return ("Signed out", true)
@@ -71,14 +64,12 @@ enum RotationText {
 }
 
 extension RemoteSession {
-    /// Stopped on a limit that hasn't reset yet.
     func waitingOnLimit(at now: Date) -> Bool {
         guard let limit else { return false }
         return (limit.until ?? .infinity) > now.timeIntervalSince1970
     }
 }
 
-/// The top of Accounts: who's waiting, what's left altogether, and where sessions go next. A section for a `List`.
 struct RotationSummarySection: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -118,7 +109,6 @@ struct RotationSummarySection: View {
     }
 }
 
-/// The sessions stopped on a limit, from the row at the top of Accounts.
 struct WaitingSessionsView: View {
     @Environment(AppModel.self) private var model
 
@@ -137,7 +127,6 @@ struct WaitingSessionsView: View {
     }
 }
 
-/// An account's plan size, as a small badge beside its name.
 struct PlanBadge: View {
     let text: String
 
@@ -153,7 +142,6 @@ struct PlanBadge: View {
     }
 }
 
-/// First, Normal or Last, and whether Autopilot may use it. Each change waits on Face ID, so a cancel leaves it as it was.
 struct RotationControls: View {
     @Environment(AppModel.self) private var model
     let account: RemoteAccount

@@ -40,7 +40,6 @@ private let watches: [B.Watch] = [.receipts, .unchecked, .carried(with: "w", unc
     }
 }
 
-// Every watch × event, for a stage of each kind: still sending, waiting on a receipt, queued, and read.
 @Test func everyWatchEventFromEveryWatch() {
     let events: [B.Event] = [.gaveBack, .withdrawn, .receiptsLost, .carry(with: "x"), .uncarry,
                              .restarted(withSending: true, received: false), .restarted(withSending: true, received: true),
@@ -92,6 +91,5 @@ private let watches: [B.Watch] = [.receipts, .unchecked, .carried(with: "w", unc
             #expect(B(stage, watch: watch).unchecked == expected, "\(stage) \(watch)")
         }
     }
-    // A receipt that moves an unchecked bubble on keeps what it watches, which the stage then no longer asks.
     #expect(B(.sent, watch: .unchecked).next(.progress(.read)) == .stays(B(.read, watch: .unchecked)))
 }

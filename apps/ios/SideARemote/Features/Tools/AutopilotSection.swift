@@ -2,8 +2,6 @@ import SafariServices
 import SideAProtocol
 import SwiftUI
 
-/// Autopilot under the accounts: on or off, a move it's holding with Move Now, then its
-/// decisions, newest first, each opening to the sessions it moved. A section for a `List`.
 struct AutopilotLiveSection: View {
     @Environment(AppModel.self) private var model
     @State private var confirming = false
@@ -15,7 +13,6 @@ struct AutopilotLiveSection: View {
 
     private var state: AutopilotState? { model.tools.autopilot }
 
-    /// The holds, then what happened; a hold's wait in the log is that same hold.
     private func rows(_ state: AutopilotState) -> [AutopilotDecision] {
         let held = state.held ?? []
         return held + state.decisions.filter { row in !(row.kind == .waiting && held.contains { $0.from == row.from && $0.to == row.to }) }
@@ -28,7 +25,7 @@ struct AutopilotLiveSection: View {
             Section {
                 if let state {
                     if canToggle {
-                        Toggle("Autopilot", isOn: Binding(get: { state.enabled }, set: { toggle($0) }))
+                        Toggle("Switch by Itself", isOn: Binding(get: { state.enabled }, set: { toggle($0) }))
                             .disabled(toggling)
                     }
                     if model.tools.can(.autopilotAnswers), let answers = state.answersRecommended {
@@ -101,7 +98,6 @@ struct AutopilotLiveSection: View {
         do { try await model.tools.loadAutopilot(); error = nil } catch { self.error = MacTools.message(error) }
     }
 
-    /// After Face ID either way; a cancel leaves the switch where it was.
     private func toggle(_ enabled: Bool) { change { try await model.tools.setAutopilot(enabled) } }
 
     private func toggleAnswers(_ enabled: Bool) { change { try await model.tools.setAnswersRecommended(enabled) } }
@@ -172,12 +168,10 @@ private struct AutopilotDecisionRow: View {
         }
     }
 
-    /// A move's reason is a few words, so it reads on the same line: "Work → Personal · 5-hour 96%".
     private var inline: Bool { decision.kind == .moved && decision.reason.count <= 32 }
 
     private var headline: Text {
         guard inline, !decision.reason.isEmpty else { return Text(decision.title).font(.subheadline.weight(.medium)) }
-        // Non-breaking, so a wrap moves the whole reason down instead of splitting "5-hour".
         let reason = decision.reason.replacingOccurrences(of: " ", with: "\u{00A0}").replacingOccurrences(of: "-", with: "\u{2011}")
         return Text(decision.title).font(.subheadline.weight(.medium))
             + Text(" · \(reason)").font(.subheadline).foregroundStyle(.secondary)
@@ -205,8 +199,6 @@ private struct AutopilotDecisionRow: View {
     }
 }
 
-/// While a provider's status page reports an incident: a row at the top of Sessions and Accounts that
-/// opens the status page. A row for a `List`.
 struct IncidentBanner: View {
     @Environment(AppModel.self) private var model
     @State private var opened: Incident?
@@ -240,7 +232,6 @@ struct IncidentBanner: View {
     }
 }
 
-/// A provider's status page, in Safari's own view.
 private struct SafariView: UIViewControllerRepresentable {
     let url: URL
     func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }

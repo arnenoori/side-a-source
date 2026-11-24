@@ -13,7 +13,6 @@ private final class Clock: @unchecked Sendable {
     }
 }
 
-/// A connected engine whose queue holds `held`, claimed by another process (the notification extension) at 1000.
 private func connected(holding id: String, path: String = "/v1/sessions/a/reply", clock: Clock) async throws -> (SyncEngine, Outbox, FakeMac) {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -28,8 +27,6 @@ private func connected(holding id: String, path: String = "/v1/sessions/a/reply"
     return (sync, outbox, mac)
 }
 
-/// Row O2 of docs/remote/sync-state-machine.md: the drain ended with nothing it may take, and nothing looked again when the
-/// claim that kept it from the item lapsed, so the row said Sending… until a reconnect, a new item or the item's expiry.
 @Test func anItemBehindALapsedClaimIsSentOnceItLapses() async throws {
     let clock = Clock(1000)
     let (sync, _, mac) = try await connected(holding: "held", clock: clock)
@@ -45,7 +42,6 @@ private func connected(holding id: String, path: String = "/v1/sessions/a/reply"
     await sync.stop()
 }
 
-/// The other process gave it back before the claim lapsed (it couldn't reach the Mac in its ten seconds).
 @Test func anItemAnotherProcessGivesBackIsSent() async throws {
     let clock = Clock(1000)
     let (sync, outbox, _) = try await connected(holding: "held", clock: clock)
@@ -55,7 +51,6 @@ private func connected(holding id: String, path: String = "/v1/sessions/a/reply"
     await sync.stop()
 }
 
-/// The other process delivered it: the row doesn't say Sending… until the item's own expiry.
 @Test func anItemAnotherProcessDeliveredLeavesPending() async throws {
     let clock = Clock(1000)
     let (sync, outbox, mac) = try await connected(holding: "held", clock: clock)
@@ -67,7 +62,6 @@ private func connected(holding id: String, path: String = "/v1/sessions/a/reply"
     await sync.stop()
 }
 
-/// What sits behind the held item waits for it, and goes after it, in order.
 @Test func itemsBehindAHeldOneGoAfterIt() async throws {
     let clock = Clock(1000)
     let (sync, _, mac) = try await connected(holding: "held", clock: clock)

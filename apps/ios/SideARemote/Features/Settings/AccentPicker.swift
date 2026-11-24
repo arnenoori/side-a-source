@@ -1,9 +1,8 @@
 import SideARemoteShared
 import SwiftUI
 
-/// Seven swatches in a row, as in Settings › Accessibility › Display: the picked one ringed with a check.
 struct AccentPicker: View {
-    @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
+    @AppStorage(Accent.key, store: SharedStorage.defaults) private var accent = Accent.blue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {

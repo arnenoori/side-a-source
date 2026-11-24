@@ -15,13 +15,11 @@ describe('a challenge proves one token', () => {
     await putDevice(mac, phone);
     const first = apns.last(phone.apnsToken)!.body.verify.challenge;
 
-    // Within the minute between challenges, the phone swaps in token B.
     const replacement = hexToken();
     expect(await (await phoneCall(phone, 'PUT', '/v1/device/tokens', { apnsToken: replacement })).json()).toEqual({ verified: false });
     expect((await phoneCall(phone, 'POST', '/v1/device/verify', { challenge: first })).status).toBe(403);
     expect((await (await call(await signed(mac, 'POST', '/v1/send', alert(phone)))).json() as any).results[0].result).toBe('unverified');
 
-    // B got its own challenge straight away, and that one works.
     const second = apns.last(replacement)!.body.verify.challenge;
     expect(second).not.toBe(first);
     expect((await phoneCall(phone, 'POST', '/v1/device/verify', { challenge: second })).status).toBe(204);

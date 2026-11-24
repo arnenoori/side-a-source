@@ -20,7 +20,6 @@ const server = await createServer({
         for await (const chunk of req) chunks.push(chunk);
         const width = Number(req.headers['x-width']), height = Number(req.headers['x-height']);
         const source = sharp(Buffer.concat(chunks));
-        // 2x for the largest stage, 1x for small screens; rendered at 4x and downsampled.
         for (const [scale, name] of [[2, 'poster'], [1, 'poster-small']]) {
           const size = { width: width * scale, height: height * scale };
           await source.clone().resize(size).avif({ quality: 62, effort: 4 }).toFile(new URL(`${name}.avif`, out).pathname);

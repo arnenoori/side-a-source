@@ -1,9 +1,7 @@
 import Foundation
 import SideAProtocol
 
-/// The follow-ups waiting for a session's turn to end, as a phone lists, edits and removes them.
 extension Island {
-    /// A phone's session rows carry the queue.
     func queuedChanged() { (watcher as? RemoteEvents)?.liveChanged() }
 
     /// Its id is its text's hash and which of the replies with that text it is, so it survives other replies going
@@ -43,7 +41,6 @@ extension Island {
         }
     }
 
-    /// Puts new text in a waiting reply's place, with whoever sent the new text as its sender.
     func replaceQueued(_ session: String, id: String, with text: String, from origin: QueuedFollowUp.Origin?) -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let index = waiting(session).firstIndex(where: { $0.id == id }) else { return false }

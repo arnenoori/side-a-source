@@ -39,13 +39,11 @@ import Testing
     let reported = try fixture("Endpoints.lans", as: Endpoints.self)
     let updated = endpoint.updated(with: reported)
     #expect(updated.addresses.map { $0.host! } == ["100.101.12.4", "192.168.1.20", "10.0.0.7"])
-    // An older Mac sends only `lan`.
     let older = endpoint.updated(with: try fixture("Endpoints.lan", as: Endpoints.self))
     #expect(older.addresses.map { $0.host! } == ["100.101.12.4", "192.168.1.20"])
 }
 
 @Test func aCodeWithoutTheMacsIdIsRefused() throws {
-    // Nothing would tie the answer to a Mac: `wait` couldn't tell a paired Mac's id from any other.
     for fragment in ["v=2&a=100.101.12.4:47800&fp=pin&n=MacBook%20Pro&c=K7QF-29XM", "v=2&a=100.101.12.4:47800&fp=pin&m=&c=K7QF-29XM"] {
         #expect(PairingClient.Invitation(url: try #require(URL(string: "https://getsidea.com/pair#" + fragment))) == nil)
     }
@@ -68,7 +66,6 @@ import Testing
 }
 
 @Test func anInvitationWithoutAKeyHashIsRefused() throws {
-    // Pairing is QR-only: a code without the Mac's key hash can't be paired with.
     for fragment in ["v=2&a=100.101.12.4:47800&c=K7QF-29XM", "v=2&a=100.101.12.4:47800&fp=&c=K7QF-29XM"] {
         #expect(PairingClient.Invitation(url: try #require(URL(string: "https://getsidea.com/pair#" + fragment))) == nil)
     }

@@ -2,7 +2,6 @@ import SideAProtocol
 import SwiftUI
 
 struct ModelEffortSheet: View {
-    /// The other agent's models, for a running session that can be handed off: picking one is only a draft.
     struct OtherAgent {
         let agent: AgentProvider
         let models: [ModelOption]
@@ -10,6 +9,13 @@ struct ModelEffortSheet: View {
         @Binding var modelID: String?
         @Binding var effort: Effort?
         @Binding var accountID: String?
+    }
+
+    struct ModeRow {
+        let offered: [PermissionMode]
+        let current: PermissionMode
+        let busy: Bool
+        let set: (PermissionMode) -> Void
     }
 
     let models: [ModelOption]
@@ -20,10 +26,11 @@ struct ModelEffortSheet: View {
     var canChangeEffort: (ModelOption) -> Bool = { _ in true }
     var note: String?
     var other: OtherAgent?
-    /// A running session's change goes to the Mac once, on Done, not once per stop dragged past.
+    var mode: ModeRow?
     var apply: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var pickedMode: PermissionMode?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsStops = false
     @Namespace private var focus
@@ -38,7 +45,6 @@ struct ModelEffortSheet: View {
                 ScrollView {
                     VStack(spacing: Space.xxs) {
                         if offersDefault { defaultRow }
-                        // The session's own model stays tappable, so a handoff picked below can be undone here.
                         ForEach(models, id: \.id) { option in
                             row(option, selected: !handingOff && option.id == modelID, effort: $effort, canChange: canChangeModel || option.id == modelID,
                                 canChangeEffort: canChangeEffort(option)) { pick(option.id) }
@@ -47,6 +53,7 @@ struct ModelEffortSheet: View {
                     .padding(.horizontal, Space.m)
                     .padding(.top, Space.xs)
                     if let other { otherSection(other) }
+                    if let mode { modeSection(mode) }
                     if let note {
                         Text(note)
                             .font(.footnote)
@@ -69,7 +76,11 @@ struct ModelEffortSheet: View {
                         Button("Cancel", systemImage: "xmark") { dismiss() }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done", systemImage: "checkmark") { apply(); dismiss() }
+                        Button("Done", systemImage: "checkmark") {
+                            apply()
+                            if let mode, let pickedMode, pickedMode != mode.current { mode.set(pickedMode) }
+                            dismiss()
+                        }
                             .keyboardShortcut(.defaultAction)
                     }
                 } else {
@@ -80,11 +91,10 @@ struct ModelEffortSheet: View {
                 }
             }
         }
-        .presentationDetents(other == nil ? [.medium] : [.medium, .large])
+        .presentationDetents(other == nil && mode == nil ? [.medium] : [.medium, .large])
         .presentationContentInteraction(.scrolls)
         .sensoryFeedback(.selection, trigger: modelID)
         .sensoryFeedback(.selection, trigger: other?.modelID)
-        // With one model, effort is the only thing there is to change.
         .onAppear { showsStops = (chosen?.efforts.count ?? 0) > 1 && models.count == 1 }
     }
 
@@ -109,7 +119,7 @@ struct ModelEffortSheet: View {
     /// The other agent under its own heading.
     private func otherSection(_ other: OtherAgent) -> some View {
         VStack(alignment: .leading, spacing: Space.xxs) {
-            Text(other.agent.title).font(.headline)
+            Text("Hand Off to \(other.agent.title)").font(.headline)
             .padding(.horizontal, Space.m * 2)
             .padding(.top, Space.l)
             .padding(.bottom, Space.xs)
@@ -135,6 +145,22 @@ struct ModelEffortSheet: View {
             }
             .padding(.horizontal, Space.m)
         }
+    }
+
+    private func modeSection(_ mode: ModeRow) -> some View {
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text("Mode").font(.headline)
+                .padding(.horizontal, Space.m)
+                .accessibilityAddTraits(.isHeader)
+            Picker("Mode", selection: Binding(get: { pickedMode ?? mode.current }, set: { apply == nil ? mode.set($0) : (pickedMode = $0) })) {
+                ForEach(mode.offered, id: \.self) { Text($0.brief).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .disabled(mode.busy)
+        }
+        .padding(.horizontal, Space.m)
+        .padding(.top, Space.l)
+        .sensoryFeedback(.selection, trigger: pickedMode ?? mode.current)
     }
 
     private func pickOther(_ option: ModelOption, in other: OtherAgent) {
@@ -228,7 +254,6 @@ private struct EffortStops: View {
     @Binding var effort: Effort?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// The Mac's default until one is picked; with none, the middle stop.
     private var index: Int {
         (effort ?? recommended).flatMap(efforts.firstIndex(of:)) ?? efforts.count / 2
     }
@@ -237,7 +262,6 @@ private struct EffortStops: View {
         let shown = efforts[index]
         VStack(spacing: Space.s) {
             VStack(spacing: 1) {
-                // Kept in place when it doesn't apply, so the name under it doesn't hop.
                 Text("Recommended")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(.tint)
@@ -282,7 +306,6 @@ private struct EffortTrack: View {
     @Environment(\.isEnabled) private var isEnabled
     @ScaledMetric(relativeTo: .body) private var scaled: CGFloat = 44
 
-    /// The thumb's trailing end while a finger has it; nil at rest on `index`.
     @State private var end: CGFloat?
     @State private var grab: CGFloat = 0
     @State private var touchedAt = Date.distantPast
@@ -327,7 +350,6 @@ private struct EffortTrack: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// Stop centres sit half a thumb in from each end, so a thumb on the first stop is a circle.
     private func stop(_ index: Int, width: CGFloat) -> CGFloat {
         count > 1 ? height / 2 + CGFloat(index) * (width - height) / CGFloat(count - 1) : width / 2
     }
@@ -346,10 +368,8 @@ private struct EffortTrack: View {
                 }
                 guard abs(value.translation.width) > 2 || end != nil else { return }
                 var next = value.location.x + grab
-                // Past either end it gives, a quarter as much, up to a few points.
                 if next > high { next = high + min((next - high) * 0.25, 8) }
                 if next < low { next = low - min((low - next) * 0.25, 8) }
-                // Caught while still settling: eased onto the finger for an instant instead of jumping there.
                 if Date.now.timeIntervalSince(touchedAt) < 0.15 {
                     withAnimation(.interactiveSpring(duration: 0.15)) { end = next }
                 } else {
@@ -378,8 +398,19 @@ private struct EffortTrack: View {
     }
 }
 
+extension PermissionMode {
+    /// One word, to fit a segment.
+    var brief: String {
+        switch self {
+        case .default: "Ask"
+        case .acceptEdits: "Edits"
+        case .bypassPermissions: "Bypass"
+        default: title
+        }
+    }
+}
+
 extension ModelOption {
-    /// "Opus 5.5 · High". Auto says nothing the model's name doesn't.
     static func chipText(_ model: ModelOption?, effort: Effort?) -> String {
         guard let model else { return "Default model" }
         let shown = (effort ?? model.defaultEffort).flatMap { $0 == .auto ? nil : $0.title }

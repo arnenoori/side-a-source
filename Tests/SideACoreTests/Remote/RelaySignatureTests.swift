@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 @testable import SideACore
 import SideAProtocol
@@ -22,7 +26,6 @@ private let installID = "XsFDif2r-oebU07VsxiVgA"
     #expect(header.hasPrefix(prefix))
     let signature = try #require(Data(base64URL: String(header.dropFirst(prefix.count))))
     #expect(signature.count == 64 && key.publicKey.isValidSignature(signature, for: signed))
-    // A random nonce is 16 bytes, as the relay's id pattern wants.
     let random = try RelaySignature.authorization(key, method: "GET", path: "/v1/x", body: Data(), ts: 1)
     let nonce = try #require(random.split(separator: ",").first { $0.contains("nonce=") }?.split(separator: "=").last)
     #expect(nonce.count == 22)

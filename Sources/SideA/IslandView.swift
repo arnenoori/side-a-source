@@ -113,7 +113,6 @@ struct IslandRoot: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
 
-    /// The window is made on the first show; starting at rest lets that first show grow out of the notch too.
     @State private var appeared: Bool
 
     init(island: Island, settled: Bool = false, hit: @escaping (CGRect) -> Void = { _ in }) {
@@ -921,7 +920,6 @@ private struct ReadyRow: View {
     }
 }
 
-/// One question at a time once there are several, so a long form never runs past the island's fixed window.
 private struct QuestionForm: View {
     let island: Island
     let item: Island.Pending
@@ -942,7 +940,6 @@ private struct QuestionForm: View {
     private var last: Bool { step == questions.count - 1 }
     private var question: IslandQuestion { questions[min(step, questions.count - 1)] }
 
-    /// A lone question too long to be the headline; it scrolls with its options instead.
     static func inline(_ action: IslandAction) -> Bool {
         guard case .question(let questions) = action, questions.count == 1 else { return false }
         return questions[0].question.count > 140
@@ -1050,7 +1047,6 @@ private struct QuestionForm: View {
     private func pick(_ question: IslandQuestion, _ label: String) {
         if single { return island.answer(.answers([question.question: label], input: item.request.input), item.id) }
         answers.pick(label, in: question)
-        // A single choice settles its question; let the pick show for a beat, then turn the page.
         if paged, !question.multiSelect, !last {
             let from = step
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { if step == from { go(from + 1) } }
@@ -1113,7 +1109,6 @@ private struct OptionRow: View {
     }
 }
 
-/// The plan as Claude wrote it: headings bold, lists and inline Markdown kept, long plans scroll.
 private struct PlanText: View {
     let plan: String
 

@@ -4,12 +4,10 @@ import SideAProtocol
 import SideAProtocolFixtures
 import Testing
 
-/// The phone says it can show rotation pushes, in every `hello`.
 @Test func theClientAdvertisesRotation() {
     #expect(ClientInfo.current.capabilities.contains(.rotation))
 }
 
-/// And that it reads a grouped Ready, so the Mac may send it one.
 @Test func theClientAdvertisesReadyGroups() {
     #expect(ClientInfo.current.capabilities.contains(.readyGroups))
     #expect(Capability.readyGroups.rawValue == "ready.groups")
@@ -28,14 +26,12 @@ import Testing
     socket.push(42, .autopilotUpdate(state))
     try await until("update") { await sync.state.seq == 42 }
     #expect(await sync.state.autopilot == state)
-    // An event this build doesn't know moves the seq, and nothing else.
     socket.push(43, .unknown(type: "rotation.tomorrow"))
     try await until("unknown") { await sync.state.seq == 43 }
     #expect(await sync.state.autopilot == state && mac.sockets.count == 1)
     await sync.stop()
 }
 
-/// Each signed change goes to its route, with its signature and an idempotency key.
 @Test func signedChangesCarryTheirSignature() async throws {
     let mac = FakeMac()
     let accounts = try Fixtures.data("AccountList.basic")

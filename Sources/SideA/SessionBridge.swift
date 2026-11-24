@@ -20,7 +20,6 @@ actor SessionBridge {
         try Self.decode(try await send(args, timeout: timeout), as: type)
     }
 
-    /// The raw reply, for callers that keep a copy to decode later.
     func data(_ args: [String], timeout: Duration = .seconds(30)) async throws -> Data {
         try await send(args, timeout: timeout)
     }

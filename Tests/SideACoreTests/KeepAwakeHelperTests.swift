@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Security
 import SideAKeepAwakeCore
@@ -118,3 +119,4 @@ private func compiles(_ requirement: String) -> Bool {
     #expect(!state.owned)
     #expect(state.request(1, disabled: true, systemDisabled: false) == .disable)
 }
+#endif

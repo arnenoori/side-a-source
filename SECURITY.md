@@ -340,7 +340,14 @@ connection that presents another key, so nothing else on the network can stand i
   marked recommended is answered after a minute. The agent writes that mark itself, so plans are
   never approved this way, and the answer tells the agent you haven't seen the question.
 - **The log.** `remote.log` is readable only by you, holds one line per event, and shows a paired
-  device's name with its control characters escaped.
+  device's name with its control characters escaped. Each push decision is one line (`push kind=request
+  id=5e6f7a8b device=ab12cd decision=suppressed reason=watching`, or `decision=sent … relay=ok`), with the
+  kind, a short id, the first six characters of the device id, the reason and the relay's word; never a
+  token, a key or any words from a session.
+- **Pending pushes.** `remote/pending-pushes.json` (mode 0600, in Side A's data folder) lists which paired
+  phones show a request, question or plan notification, by its collapse id and device id, so a relaunch can
+  replace notifications nothing can answer. It holds no words from a request and is removed once they are
+  replaced.
 - **Previews.** Previewing a session's dev server makes Side A forward requests to that one port on
   `127.0.0.1`, through its own pinned listener, never Tailscale Serve. Each preview has a random
   credential in its URL, which becomes a `Secure; HttpOnly; SameSite=Strict` cookie. The

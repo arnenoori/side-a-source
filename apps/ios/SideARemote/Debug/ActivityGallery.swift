@@ -53,7 +53,6 @@ struct ActivityGallery: View {
                                    startPoint: .top, endPoint: .bottom).ignoresSafeArea())
     }
 
-    /// The pill around the camera: leading, the cutout, trailing.
     private func compact(_ state: State) -> some View {
         HStack(spacing: 0) {
             ActivityDisc(waiting: state.waiting > 0).padding(.leading, 10)
@@ -86,7 +85,6 @@ struct ActivityGallery: View {
         .environment(\.colorScheme, .dark)
     }
 
-    /// The Service Extension's decrypted payloads the cases point at.
     private static func seed() {
         let payloads = [
             PushPayload(t: "request", mac: "demo", sent: 0, rid: "g-unlock", title: "Allow Bash", subtitle: "side-a · Work",

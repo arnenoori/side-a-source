@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// A handoff carries photos the phone uploaded itself, and only those, before anything starts or ends.
 @MainActor
 private final class HandoffScene {
     let store = AccountStore(demo: true)
@@ -67,6 +66,5 @@ private final class HandoffScene {
     let scene = try HandoffScene()
     let mine = try await scene.upload(device: "handoff-own-phone")
     let (status, reason) = try await scene.restart(photos: [mine], device: "handoff-own-phone")
-    // The demo Mac has no tmux to start the other agent in, so it answers after the photos were accepted.
     #expect(reason != "unknown_upload" && reason != "too_many" && status != 201, "\(status) \(reason ?? "")")
 }

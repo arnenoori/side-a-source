@@ -35,8 +35,6 @@ final class ForegroundPresentationTests: XCTestCase {
         link.apply(state)
     }
 
-    /// A Mac is live while a link's socket is: stopping or replacing the link takes it out at once, and an old link
-    /// stopping after its replacement went live leaves the new one live.
     func testALinkIsLiveUntilItDropsStopsOrIsReplaced() throws {
         let mac = "live-\(UUID().uuidString)"
         let first = try link(mac)

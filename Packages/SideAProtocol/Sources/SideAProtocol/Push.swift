@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 
 /// A push category: the relay's allowlist, each with a fixed `loc-key` shown when the Service Extension can't run.
@@ -166,7 +170,6 @@ public struct PushKey: Sendable, Equatable {
 /// `base64url(0x02 ‖ keyID(4) ‖ nonce(12) ‖ ciphertext ‖ tag(16))`, ChaCha20-Poly1305 under the device's push key,
 /// with `AAD = 0x02 ‖ keyID ‖ category ‖ collapseID ‖ deviceID`, each of the three as a 2-byte big-endian length and its
 /// UTF-8, so the relay can't move a payload to another category, request or device, nor shift bytes between fields.
-/// Version 1 joined the fields bare; its envelopes no longer open.
 public enum PushEnvelope {
     public enum Failure: Error, Equatable { case format, version, key }
 

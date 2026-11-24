@@ -1,6 +1,5 @@
 import { Box3, Matrix4, Vector3 } from 'three';
 
-/** Fit the current pose in camera space, including every part of the moving lid. */
 export function createPlayerFraming(camera, player) {
   const bounds = new Box3();
   const point = new Vector3();

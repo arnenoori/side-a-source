@@ -2,9 +2,6 @@ import SideACore
 import SideAProtocol
 import SwiftUI
 
-/// New Session: the phone's choices (agent, folder, model, effort, account, worktree, first prompt) from the same
-/// lists, started by the same command. Account and worktree need Side A's hosting; without it the agent opens in a
-/// terminal tab with Side A's usual account.
 struct NewSessionSheet: View {
     let model: SessionStore
     @Environment(\.dismiss) private var dismiss

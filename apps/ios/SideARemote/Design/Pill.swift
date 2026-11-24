@@ -15,18 +15,14 @@ final class Pill {
         let undo: (() -> Void)?
         /// Runs once the Undo can no longer be taken: for work held back until then, like deleting a discarded draft's photos.
         var expired: (() -> Void)?
-        /// A spinner leads and the pill stays until its work reports (`Pill.working`).
         var working = false
     }
 
     private(set) var current: Item?
-    /// Set by the tab view while the waiting accessory shows, so the pill sits above it rather than on it.
     var aboveAccessory = false
-    /// Where a composer at the bottom of the screen starts, in global coordinates, while one shows: the pill sits above it.
     var composerTop: CGFloat?
     @ObservationIgnored private var hiding: Task<Void, Never>?
 
-    /// Shows `text` for 2 s, or 5 s with an Undo to reach for.
     static func show(_ text: String, undo: (() -> Void)? = nil) { _ = shared.show(text, undo: undo) }
 
     /// The Undo notice. `expired` runs if Undo isn't taken, including when another notice replaces this one or `end` takes
@@ -88,7 +84,6 @@ final class Pill {
     }
 }
 
-/// Where the pill shows: above the bottom bars, over every screen.
 struct PillOverlay: View {
     @State private var pill = Pill.shared
     @State private var bottom: CGFloat = 0
@@ -113,11 +108,9 @@ struct PillOverlay: View {
                 }
                 .padding(.horizontal, Space.l)
                 .frame(minHeight: 44)
-                // Tinted near-opaque: rows behind it mustn't read through.
                 .glassEffect(.regular.tint(Color(.tertiarySystemBackground).opacity(0.9)).interactive(), in: .capsule)
                 .shadow(color: .black.opacity(0.18), radius: 14, y: 4)
                 .padding(.horizontal, Space.l)
-                // 12 pt clear of the tab bar's top, or of the accessory's, or of a composer.
                 .padding(.bottom, pill.composerTop.map { max(bottom - $0, 0) + 12 } ?? (pill.aboveAccessory ? 117 : 61))
                 .id(item.id)
                 .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
@@ -138,7 +131,6 @@ struct PillOverlay: View {
 }
 
 extension View {
-    /// For a composer pinned to the bottom of the screen: the pill sits above it while it shows.
     func pillClearance() -> some View {
         onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { Pill.shared.composerTop = $0 }
             .onDisappear { Pill.shared.composerTop = nil }

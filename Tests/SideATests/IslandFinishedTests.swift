@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// Stop hooks talk to a real IslandServer over its socket, so a release or follow-up is what the hook would read.
 @MainActor private final class Hooks {
     let store: AccountStore
     var island: Island { store.island }
@@ -16,7 +15,6 @@ import Testing
         store.island.start()
     }
 
-    /// A Stop hook arriving.
     func stop(_ session: String, waits: Bool = true, agent: String = "claude") throws {
         let path = store.root.appendingPathComponent("runtime/island.sock").path
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -36,7 +34,6 @@ import Testing
         _ = message.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 
-    /// What the hook for `session` has been told, once it has.
     func answer(_ session: String) async throws -> String? {
         let fd = try #require(fds[session])
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
@@ -69,7 +66,6 @@ import Testing
 }
 
 @MainActor struct IslandFinishedTests {
-    /// ⌃⌥G used to take the row and leave its hook waiting: the phone offered a follow-up that was then refused.
     @Test func goingToAFinishedSessionEndsItsStopHook() async throws {
         let hooks = Hooks()
         try hooks.stop("s1")
@@ -82,7 +78,6 @@ import Testing
         #expect(hooks.island.remoteFollowUp(session: "s1", turnID: nil, text: "next") == .noWaiter)
     }
 
-    /// Finishing again used to leave `.expired` set for the next change, whatever made it.
     @Test func aRowSaysWhyItLeftAndNotWhyTheOneBeforeIt() async throws {
         let hooks = Hooks()
         let heard = Heard()
@@ -117,7 +112,6 @@ import Testing
         #expect(heard.queued.map(\.1) == [.delivered])
     }
 
-    /// A Stop hook that doesn't wait can't take it, and saying nothing would leave the phone showing Queued for good.
     @Test func aTurnEndingWithAHookThatCantWaitDropsWhatWasQueued() async throws {
         let hooks = Hooks()
         let heard = Heard()
@@ -135,7 +129,6 @@ import Testing
         #expect(island.queue("s1", "one") && island.queue("s1", "two") && island.queue("s2", "kept"))
         let start = Date()
         island.liveSessions(["s2"], now: start)
-        // A blip off the list isn't the session ending.
         island.liveSessions(["s1", "s2"], now: start + 30)
         island.liveSessions(["s2"], now: start + 40)
         island.liveSessions(["s2"], now: start + 40 + Island.queuedGrace - 1)
@@ -145,7 +138,6 @@ import Testing
         #expect(heard.queued.map(\.0) == ["one", "two"] && heard.queued.allSatisfy { $0.1 == .dropped(.sessionEnded) })
     }
 
-    /// What a phone queued is only as good as what it proved: a removed phone's goes, and so does one the session has outgrown.
     @Test func aQueuedFollowUpOutlivesNeitherItsPhoneNorItsProof() async throws {
         let hooks = Hooks()
         let heard = Heard()
@@ -156,14 +148,12 @@ import Testing
         #expect(hooks.island.queued["s1"] == [.waiting("from the other", from: other)] && hooks.island.queued["s2"] == [.waiting("from the Mac")])
         #expect(heard.queued.map(\.0) == ["from the phone"] && heard.queued.map(\.1) == [.dropped(.revoked)])
 
-        // A session whose mode can't be read asks Face ID: an unlock's proof is too little, Face ID's enough.
         #expect(hooks.island.queue("s3", "unlocked", from: phone) && hooks.island.queue("s3", "faced", from: other))
         try hooks.stop("s3")
         #expect(try await hooks.answer("s3") == "faced")
         #expect(heard.queued.map(\.1).contains(.dropped(.outranked)) && heard.queued.map(\.0).contains("unlocked") && !heard.queued.contains { $0.0 == "unlocked" && $0.1 == .delivered })
     }
 
-    /// A file from before follow-ups said who sent them can't say who authorized them, so none of it is sent, and the user hears.
     @Test func anOldQueueFileIsSetAsideAndSaidOutLoud() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidea-queue-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -184,8 +174,6 @@ import Testing
         if Island.on { #expect(island.event?.title == "A queued reply wasn't sent" && island.event?.detail.contains("after this") == true) }
     }
 
-    /// The phone is told live only if it's listening, so what was given up on stays for the next snapshot, across a relaunch,
-    /// for as long as a phone has to come back; a removed phone's goes with it.
     @Test func whatWasGivenUpOnSurvivesARelaunchForPhonesToFetch() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidea-queue-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -220,7 +208,6 @@ import Testing
         #expect(after.droppedForPhones().isEmpty, "a phone removed with one queued gets nothing back")
     }
 
-    /// The Stop hook outlasts the app, so what's queued does too, only readable by this user, and gone once settled.
     @Test func theQueueSurvivesARelaunch() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidea-queue-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -236,7 +223,6 @@ import Testing
         after.queuedFile = file
         after.loadQueued()
         #expect(after.queued["s1"] == [.waiting("after this")] && after.queued["s9"] == [.waiting("from the phone", from: phone)])
-        // It keeps its promise after the relaunch too: lost means reported, not forgotten.
         let heard = Heard()
         after.watcher = heard
         let start = Date()
@@ -246,7 +232,6 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
-    /// Old phones must keep decoding the event and the push that say so.
     @Test func aDropIsSaidInWordsEveryPhoneDecodes() throws {
         #expect(Island.ReadyReason.queueDropped.rawValue == ServerEvent.finishedQueueDropped)
         let event = ServerEvent.finishedResolve(sessionID: "s1", reason: ServerEvent.finishedQueueDropped)

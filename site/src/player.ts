@@ -23,7 +23,6 @@ export async function startPlayer() {
   const scene = new THREE.Scene();
   if (!environmentResponse.ok || !environmentResponse.body) throw new Error('Lighting unavailable');
   const environmentData = await new Response(environmentResponse.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
-  // Precomputed RoomEnvironment PMREM avoids rendering and blurring its cube maps on every visit.
   const environment = new THREE.DataTexture(new Uint16Array(environmentData), environmentSize.width, environmentSize.height, THREE.RGBAFormat, THREE.HalfFloatType);
   environment.mapping = THREE.CubeUVReflectionMapping;
   environment.minFilter = THREE.LinearFilter;
@@ -65,7 +64,6 @@ export async function startPlayer() {
     else if (item.name === 'Disc' || item.name.startsWith('Disc groove') || item.name === 'Disc label') { mesh.userData.action = 'spin'; disc.add(mesh); }
     else player.add(mesh);
     controls.push(mesh);
-    // Yield between batches so setup/download controls remain responsive during geometry creation.
     if (controls.length % 10 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
   }
   const lcdCanvas = document.createElement('canvas');
@@ -144,7 +142,6 @@ export async function startPlayer() {
     if (!target) return;
     down = { x: event.clientX, y: event.clientY, rotation: targetRotation };
     canvas.setPointerCapture(event.pointerId);
-    // Easter egg: hold play for two seconds to toggle repeat-one.
     heldLong = false;
     if (target.userData.action === 'play') holdTimer = window.setTimeout(() => { heldLong = true; repeatOne = !repeatOne; lcdUpdate(); schedule(); }, 2000);
   });
@@ -159,12 +156,10 @@ export async function startPlayer() {
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
   });
   canvas.addEventListener('pointercancel', () => { clearTimeout(holdTimer); down = null; });
-  // Easter egg: the Konami code anywhere on the page flips the player to Side B.
   const code = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
   let progress = 0;
   addEventListener('keydown', event => {
     const pressed = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-    // Extra ups keep the first two; any other miss restarts.
     progress = pressed === code[progress] ? progress + 1 : pressed === 'ArrowUp' ? (progress === 2 ? 2 : 1) : 0;
     if (progress < code.length) return;
     progress = 0; sideB = !sideB; open = sideB; playing = sideB; held = false;

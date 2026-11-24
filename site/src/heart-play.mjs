@@ -1,4 +1,3 @@
-// State is mutated in place so the frame loop allocates nothing.
 export const PLAY = {
   impulse: 9,
   maxSpin: 34,
@@ -108,7 +107,6 @@ export function stepStory(c, dt) {
   c.real += dt;
   const room = c.budget - c.paused;
   const wantsPause = c.held || c.real - c.touched < PLAY.grace;
-  // Leave enough budget for the rate to spring back up, so the cap is never overrun.
   const target = wantsPause && room > 0.4 ? 0 : 1;
   if (room <= 0) { c.rate = 1; c.rateV = 0; } else {
     const k = PLAY.rateSpring;

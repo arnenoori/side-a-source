@@ -45,7 +45,6 @@ private func status(_ text: String) -> Int? {
     #expect(filler(16 << 10).utf8.count == 16 << 10)
     #expect(status(filler(16 << 10)) == nil)
     #expect(status(filler((16 << 10) + 1)) == 431)
-    // Without an end in sight, the parser stops reading at the limit.
     var parser = HTTPParser()
     #expect(parser.feed(Data((line + String(repeating: "X: y\r\n", count: 3000)).utf8)).first.map { (try? $0.get()) == nil } == true)
     #expect(status("GET /" + String(repeating: "a", count: 9000) + " HTTP/1.1\r\n") == 414)

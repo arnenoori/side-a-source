@@ -2,7 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// A fenced code block: language and Copy in the header, folded past 20 lines.
 struct CodeBlockView: View {
     let payload: CodePayload
     static let foldAfter = 20
@@ -41,7 +40,6 @@ struct CodeBlockView: View {
     }
 }
 
-/// Copy that turns into a checkmark for 1.5 s.
 struct CopyButton: View {
     let text: String
     var label = "Copy"
@@ -68,9 +66,7 @@ struct CopyButton: View {
     }
 }
 
-/// An Edit or Write as a card: file, parent path, +/− counts, then the first hunks.
 struct DiffCard: View {
-    /// What the full diff's page zooms out of.
     let sourceID: String
     let diff: FileDiff
     var sessionID: SessionKey?
@@ -129,14 +125,12 @@ struct DiffHeader: View {
         .contentShape(.rect)
     }
 
-    /// "side-a/Sources" from an absolute path: the last two parent folders.
     static func parent(_ path: String) -> String {
         let parts = (path as NSString).deletingLastPathComponent.split(separator: "/")
         return parts.suffix(2).joined(separator: "/")
     }
 }
 
-/// Hunks with an old/new gutter, tinted lines, and a quiet "Lines 120–134" divider between hunks.
 struct DiffHunks: View {
     let diff: FileDiff
     var maxHunks = Int.max
@@ -155,7 +149,6 @@ struct DiffHunks: View {
                 }
                 lines(hunk)
             }
-            // The Mac left the rest out (over 2,000 lines); a view showing less links to the whole instead.
             if diff.truncated, diff.hunks.count <= maxHunks, diff.hunks.reduce(0, { $0 + $1.lines.count }) <= maxLines {
                 Label("Cut short", systemImage: "scissors")
                     .font(.caption)
@@ -209,7 +202,6 @@ private struct HunkLines: View {
         if wrap {
             content
         } else {
-            // Tints run the card's full width even when every line is shorter than it.
             ScrollView(.horizontal, showsIndicators: false) {
                 // Each line at its own height, whatever the scroll view is offered, or the bars (maxHeight .infinity)
                 // stretch to the measured height and feed it back.
@@ -269,7 +261,6 @@ private struct DiffLineView: View {
     }
 }
 
-/// A file the session wrote or attached: type tile, name with a dimmed extension, size (Grok Bot).
 struct FileChip: View {
     let sessionID: SessionKey
     let tool: TranscriptTool
@@ -329,8 +320,6 @@ struct FileChip: View {
     }
 }
 
-/// Thumbnails in a row, each sized to its image so nothing letterboxes; scrolls sideways when
-/// they don't fit. Each zooms into the image viewer.
 struct ImageTiles: View {
     let sessionID: SessionKey
     let images: [ImageRef]
@@ -368,7 +357,6 @@ struct ImageTiles: View {
 }
 
 extension ImageRef {
-    /// Width over height, clamped so a panorama or a long scroll capture stays a tile.
     var aspect: CGFloat {
         guard let width, let height, width > 0, height > 0 else { return 1 }
         return min(max(CGFloat(width) / CGFloat(height), 0.4), 2)
@@ -388,8 +376,6 @@ extension ImageRef {
     }
 }
 
-/// The user's turn: right-aligned, at most 80% wide, no avatar, pasted images above. Long-press selects part of it;
-/// a tap offers Copy and Edit & Resend, which starts a new message from it (the agents can't rewrite history).
 struct UserBubble: View {
     let sessionID: SessionKey
     let message: TranscriptMessage
@@ -403,7 +389,6 @@ struct UserBubble: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
-    /// The commands in what was sent, tinted as they were in the composer.
     private func highlights(in text: String) -> [NSRange] {
         guard let agent = model.sessions.session(sessionID)?.agent else { return [] }
         return CommandHighlight.ranges(in: text, agent: agent, commands: model.tools.agent(agent)?.commands ?? [])
@@ -432,8 +417,6 @@ struct UserBubble: View {
     }
 }
 
-/// Offers its one child at most `fraction` of the width it's given, so a bubble hugs short text
-/// and wraps long text at 80%.
 struct MaxWidthFraction: Layout {
     let fraction: CGFloat
 
@@ -450,8 +433,6 @@ struct MaxWidthFraction: Layout {
     }
 }
 
-/// Under a message the Mac cut at 6,000 characters: fetches the rest as it shows, and says so meanwhile; Try Again
-/// if it wouldn't load. Nothing once it's whole.
 struct CutMessageFooter: View {
     let sessionID: SessionKey
     let message: TranscriptMessage

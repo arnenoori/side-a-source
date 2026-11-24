@@ -8,7 +8,6 @@ tag="v$(plutil -extract CFBundleShortVersionString raw scripts/Info.plist)"
 build="$(plutil -extract CFBundleVersion raw scripts/Info.plist)"
 git fetch -q origin main
 [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]] || { echo "Check out an up-to-date main first." >&2; exit 1; }
-# The site is built and published from the working tree, not from the commit.
 if [[ -n "$(git status --porcelain -- site)" ]]; then
   echo "site/ has uncommitted changes, and ship.sh publishes the site from the working tree. Commit or discard them first." >&2
   exit 1
@@ -24,7 +23,6 @@ mkdir "$work/source"
 git archive HEAD | tar -x -C "$work/source"
 python3 scripts/scan-public-source.py "$work/source"
 
-# Signs, notarizes and publishes the binary and then the feed, on the Mac's one-job runner.
 release() {
   # The release runner is one-job (ephemeral), so each release registers it again; a missing runner
   # otherwise leaves the job queued with no error.
@@ -33,7 +31,6 @@ release() {
     # Outside ~/scratch, which is cleared out from time to time. No spaces: the runner's scripts don't quote paths.
     runner="${SIDEA_RUNNER_DIR:-$HOME/.local/share/side-a/release-runner}"
     if [[ ! -x "$runner/run.sh" ]]; then
-      # GitHub's own runner, checked against the SHA-256 its release notes publish for this Mac's architecture.
       arch=$([[ "$(uname -m)" == arm64 ]] && echo osx-arm64 || echo osx-x64)
       latest=$(gh api repos/actions/runner/releases/latest)
       version=$(jq -r .tag_name <<<"$latest")
@@ -62,7 +59,6 @@ release() {
   before="$(runs)"
   if [[ -n "$run" ]]; then echo "Release run $run for $commit is already going; watching it."
   else gh workflow run local-release.yml --ref main -f tag="$tag"; fi
-  # Otherwise the run this dispatch made is the new one; it has to build the commit checked above.
   for _ in $(seq 60); do
     [[ -n "$run" ]] && break
     sleep 3
@@ -124,9 +120,7 @@ elif [[ "$pushed" != "$(git rev-parse "refs/tags/$tag")" ]]; then
   echo "origin's tag $tag differs from the local one. Stopping." >&2
   exit 1
 fi
-# publish-source.sh also says so and stops when the mirror has the tag; this skips its clone.
 if git ls-remote -q --exit-code "$remote" "refs/tags/$tag" >/dev/null; then echo "Source for $tag is already public."
 else ./scripts/publish-source.sh "$tag"; fi
-# Least important, so last: publish-site.py does nothing when the mirror is current.
 npm --prefix site ci && npm --prefix site run build && python3 scripts/publish-site.py
 echo "Shipped $tag. Running copies of Side A show \"Update to ${tag#v}\" in the menu."

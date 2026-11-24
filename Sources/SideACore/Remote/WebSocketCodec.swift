@@ -65,7 +65,6 @@ public enum WebSocketCodec {
                 out.append(message)
                 if case .failure = message {
                     failed = true
-                    // Drops whatever was buffered behind the failure.
                     frames = WebSocketFrames(role: .server, maxMessage: 0, strict: true)
                     return out
                 }

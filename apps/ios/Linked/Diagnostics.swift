@@ -13,7 +13,6 @@ nonisolated enum Diagnostics {
 
     nonisolated(unsafe) private static var monitor: NWPathMonitor?
 
-    /// The app's network path as it changes: status, interfaces, and whether it's expensive or constrained.
     static func watchNetwork() {
         guard monitor == nil else { return }
         let monitor = NWPathMonitor()

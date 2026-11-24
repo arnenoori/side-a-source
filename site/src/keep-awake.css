@@ -1,4 +1,3 @@
-/* Keep awake: a MacBook whose lid closes into a night scene, agents that keep going, a Mac that sleeps when they finish. */
 .desk.ka { container-type: inline-size; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 18px; padding: 28px 22px 22px; transition: color 600ms ease; }
 .ka-sky { position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity 900ms ease;
   background:
@@ -14,7 +13,6 @@
 .ka-moon { position: absolute; top: 22px; right: 26px; width: 30px !important; height: 30px !important; color: #f6eccb; filter: drop-shadow(0 0 16px #f6eccb73); opacity: 0; transform: translateY(14px) rotate(-12deg); transition: opacity 900ms ease 150ms, transform 1400ms var(--m-glide) 150ms; }
 .ka.night .ka-sky, .ka.night .ka-moon { opacity: 1; }
 .ka.night .ka-moon { transform: none; }
-/* Night turns the glass dark, as macOS does. */
 .ka.night { --m-ink: rgba(255, 255, 255, .92); --m-2: rgba(255, 255, 255, .6); --m-3: rgba(255, 255, 255, .4); --m-4: rgba(255, 255, 255, .14); --m-line: rgba(255, 255, 255, .12); --m-accent: #0a84ff; --m-green: #30d158; }
 .ka .glass { transition: background-color 600ms ease, box-shadow 600ms ease; }
 .ka.night .glass { background: rgba(30, 34, 58, .5); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .14), inset 0 1px 0 rgba(255, 255, 255, .12), 0 0 0 .5px rgba(0, 0, 0, .4), 0 24px 60px rgba(0, 0, 0, .35); }
@@ -24,7 +22,6 @@
 .ka.night .ka-lid { background: rgba(255, 255, 255, .14); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 0 0 .5px rgba(255, 255, 255, .22), 0 2px 8px rgba(0, 0, 0, .3); }
 @media (hover: hover) and (pointer: fine) { .ka.night .ka-lid:hover { background: rgba(255, 255, 255, .22); } }
 
-/* The MacBook: a lid hinged on a deck, drawn in 3D so it really closes. */
 .ka-stage { display: flex; flex-direction: column; align-items: center; gap: 24px; }
 .lap { --w: 292px; --h: 186px; --f: 0; position: relative; width: var(--w); height: calc(var(--h) + 34px); perspective: 1100px; perspective-origin: 50% 0%; cursor: grab; touch-action: none; -webkit-user-select: none; user-select: none; }
 .lap.dragging { cursor: grabbing; }
@@ -50,13 +47,11 @@
 .lap-back { display: grid; place-items: center; transform: rotateY(180deg); background: linear-gradient(180deg, #e3e5e8, #b9bdc3); box-shadow: inset 0 0 0 .5px #ffffffb0, inset 0 -1px 0 #8d9198; }
 .lap-logo { width: 22px; height: 22px; border: 1.5px solid #9599a0; border-radius: 50%; position: relative; }
 .lap-logo::after { content: ""; position: absolute; inset: 6px; border: 1.5px solid #9599a0; border-radius: 50%; }
-/* The deck lies flat toward you; its front edge is the lip you would open the lid by. */
 .lap-base { top: calc(var(--h) + 2px); height: var(--h); transform-origin: 50% 0; transform: rotateX(90deg); border-radius: 0 0 12px 12px; background: linear-gradient(180deg, #a9adb3, #d6d9dd 60%, #e4e6e9); box-shadow: inset 0 0 0 .5px #ffffff90; }
 .lap-lip { position: absolute; left: 0; right: 0; bottom: 0; height: 9px; transform-origin: 50% 100%; transform: rotateX(90deg); border-radius: 0 0 9px 9px; background: linear-gradient(#c3c6cb, #8f949b); }
 .lap::after { content: ""; position: absolute; left: 4%; right: 4%; bottom: -6px; height: 18px; border-radius: 50%; background: radial-gradient(closest-side, #1a203a55, #1a203a00); z-index: -1; }
 .ka-lid { position: relative; z-index: 3; min-width: 128px; }
 
-/* Agents and the setting, side by side when there is room. */
 .ka-cards { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
 .ka-card { padding: 12px 14px; border-radius: 16px; }
 .how .desk .ka-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; font-size: 12px; }
@@ -86,7 +81,6 @@
 .ka-settings .switch:disabled { opacity: .4; cursor: default; }
 .ka-settings .ka-head + .f-row { border-top: 0; }
 
-/* Asleep, the whole room dims a little; the controls stay usable. */
 .ka::after { content: ""; position: absolute; inset: 0; z-index: 2; background: #05081a; opacity: 0; pointer-events: none; transition: opacity 1400ms ease; }
 .ka.asleep::after { opacity: .22; }
 

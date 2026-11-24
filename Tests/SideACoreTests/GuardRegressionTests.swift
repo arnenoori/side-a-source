@@ -56,7 +56,6 @@ func anOrdinaryCommandIsNot(_ command: String) {
     }
 }
 
-/// Finding 5: Codex trims headers, so an indented or CRLF one is still a file it writes.
 @Test func aHiddenFileInAPatchIsSeen() throws {
     let indented = try patch("*** Begin Patch\n*** Add File: notes.md\n+x\n  *** Add File: .git/hooks/pre-commit\n+y\n*** End Patch")
     guard case .patch(let files, _) = indented.action else { Issue.record("not a patch"); return }
@@ -64,14 +63,12 @@ func anOrdinaryCommandIsNot(_ command: String) {
     #expect(indented.risk == .destructive && AllowGate.of(indented, projects: ["/r/app"]) == .biometric)
     let crlf = try patch("*** Begin Patch\r\n*** Add File: notes.md\r\n+x\r\n*** Add File: .git/hooks/pre-commit\r\n*** End Patch")
     #expect(crlf.risk == .destructive)
-    // A header nobody can be sure of, on files that look harmless, is not a Lock Screen allow.
     let odd = try patch("*** Begin Patch\n*** Add File: notes.md\n+x\n***  Add File: other.md\n*** End Patch")
     #expect(AllowGate.of(odd, projects: ["/r/app"]) == .unlock)
     let plain = try patch("*** Begin Patch\n*** Add File: notes.md\n+x\n*** End Patch")
     #expect(AllowGate.of(plain, projects: ["/r/app"]) == .unlock)
 }
 
-/// No file can be told harmless by its name once an agent can write it: `requirements.txt` installs, `.agents/skills/x.md` instructs.
 @Test(arguments: ["Cargo.toml", "scripts/test.sh", "vite.config.ts", "src/main.rs", "README.md", "docs/plan.txt", ".hidden.md", "CLAUDE.md",
                   "requirements.txt", "CMakeLists.txt", "constraints.txt", ".agents/skills/x.md"])
 func everyEditTakesAnUnlockedPhone(_ path: String) {
@@ -106,7 +103,6 @@ func aReadIsALockScreenAllowOnlyForAPlainlySafeFile(_ path: String, _ locked: Bo
     #expect((try? RemoteAnswers.resolve(edit, .allow(confirmDestructive: false), gate: .lockScreen, proven: .none).get()) != nil)
 }
 
-/// Finding 7: what's hidden shows, and rates higher; what runs doesn't change.
 @Test func hiddenCharactersShowAndRaiseTheGate() {
     #expect(DisplayText.escaped("rm\u{202E}x\u{200B}\u{1B}[2J") == "rm⟦U+202E⟧x⟦U+200B⟧⟦U+001B⟧[2J")
     #expect(DisplayText.escaped("a\r\nb\tc") == "a\nb\tc")
@@ -124,7 +120,6 @@ func aReadIsALockScreenAllowOnlyForAPlainlySafeFile(_ path: String, _ locked: Bo
     #expect(command == "ls\u{202E}" && input?.input.isEmpty == false)
 }
 
-/// Finding 8: an agent writes its own mark, so a plan never passes on it, and a question's answer says it was automatic.
 @Test func anAutomaticAnswerNeverApprovesAPlanAndSaysItWasAutomatic() throws {
     let plan = IslandRequest(agent: .claude, cwd: "/r/app", tool: "ExitPlanMode", action: .plan("# Delete everything"))
     #expect(plan.recommendedAnswer == nil)
@@ -134,7 +129,6 @@ func aReadIsALockScreenAllowOnlyForAPlainlySafeFile(_ path: String, _ locked: Bo
     #expect(answers["Which?"]?.hasPrefix("A (Recommended)") == true && answers["Which?"]?.contains("Side A") == true)
 }
 
-/// Finding 5: a diff never fits a card, so its notification offers only Open.
 @Test func anEditsPushOffersOnlyOpen() {
     func request(_ action: IslandAction) -> RemoteRequest {
         RemoteRequest(id: "r", agent: .claude, tool: "Edit", action: action, risk: .normal, answers: [.allow, .deny, .terminal], title: "t", arrivedAt: 0, gate: .lockScreen)
@@ -144,7 +138,6 @@ func aReadIsALockScreenAllowOnlyForAPlainlySafeFile(_ path: String, _ locked: Bo
     #expect(RemotePushPayload.request(request(.read(path: "a.md")), mac: "m", now: 0).payload.full != false)
 }
 
-/// A command padded past the card with blanks that aren't spaces, or wrapped past it on one line.
 @Test(arguments: ["\u{2003}", "\u{A0}", "\u{2800}", "\t", "\u{3000}", "\u{3164}"])
 func blanksOfAnyKindCanHideTheRestOfACommand(_ blank: String) throws {
     let command = "ls" + String(repeating: blank, count: 400) + "; python3 x"

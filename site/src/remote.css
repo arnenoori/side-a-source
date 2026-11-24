@@ -9,7 +9,6 @@
 .remote-soon svg, .remote-beta svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
 .remote-store img { display: block; height: 40px; width: auto; }
 
-/* The phone overlaps the Mac's lower right corner, as on Apple's Continuity pages. */
 .remote-demo { position: relative; width: min(880px, 100%); margin: 56px auto 0; padding: 2% 0 36px; }
 .remote-mac { width: 78%; }
 .remote-mac .screen { height: auto; aspect-ratio: 16 / 10; }
@@ -41,7 +40,6 @@
   .remote-points { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 32px; }
 }
 @media(max-width:600px) {
-  /* The phone outgrows the Mac here, so the Mac starts lower to keep it clear of the copy. */
   .remote-demo { margin-top: 24px; padding: 30% 0 24px; }
   .remote-mac { width: 92%; }
   .remote-term { left: 5%; width: 70%; top: 17%; padding: 0 10px; font-size: 8px; }

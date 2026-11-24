@@ -3,7 +3,6 @@ import Foundation
 import SideAProtocol
 import Testing
 
-/// An `@` that starts a word asks for files; one inside a word (an address) doesn't.
 @MainActor @Test func anAtWordAtTheCaretNamesAFile() {
     let text = "look at @Sour and mail me@example.com"
     let found = FileMentions.word(in: text, caret: 13)
@@ -14,7 +13,6 @@ import Testing
     #expect(FileMentions.word(in: "@a b", caret: 4) == nil)
 }
 
-/// Claude gets `@path`, Codex the bare path, and a path with a space stays one word.
 @MainActor @Test func aChosenFileTakesTheWordsPlace() {
     let range = NSRange(location: 8, length: 5)
     var applied = FileMentions.apply("Sources/App/Main.swift", agent: .claude, to: "look at @Sour and", at: range)

@@ -15,7 +15,6 @@ export function createLinger({ delay = 4500, onFire, schedule = setTimeout, canc
   };
 }
 
-// iMessage's own gesture: a long press on Send. Moving past `slop` means the finger is scrolling, so it cancels.
 export function createPress({ delay = 700, slop = 10, onStart = () => {}, onCancel = () => {}, onFire, schedule = setTimeout, cancel = clearTimeout }) {
   let timer = null;
   let origin = null;

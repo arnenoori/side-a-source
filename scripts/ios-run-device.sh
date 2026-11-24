@@ -13,7 +13,6 @@ fi
 
 xcodegen --quiet
 
-# Built for any iPhone first, so a signing problem shows before a phone is needed.
 derived=build/device
 xcodebuild -project SideARemote.xcodeproj -scheme SideARemote -configuration Debug \
     -destination 'generic/platform=iOS' -derivedDataPath "$derived" -allowProvisioningUpdates \

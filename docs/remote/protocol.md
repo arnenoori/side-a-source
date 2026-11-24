@@ -273,8 +273,12 @@ public struct SessionAbility: OpenEnum { public let rawValue: String }
 // .replyTyped (idle in a terminal the Mac can type into, its own tmux pane or a Ghostty tab, with no hook
 // waiting and no app server: a reply is typed there as the user's own message and submitted),
 // .settingsModel "settings.model", .settingsEffort "settings.effort", .settingsMode "settings.mode",
-// .settingsFast "settings.fast" (POST …/settings takes that field now), .turnDiff (GET …/turns/{turnID}/diff),
-// .compact and .review (idle only; Codex thread/compact/start and review/start)
+// .settingsFast "settings.fast" (POST …/settings takes that field now; Claude: model, effort and mode
+// while idle, in a session Side A hosts or one in a pane on the user's own tmux server, through Claude
+// Code's /model picker, /effort slider and Shift+Tab, for this session only; never fast; never a Ghostty
+// tab outside tmux, whose screen can't be read), .turnDiff (GET …/turns/{turnID}/diff),
+// .compact and .review (idle only; Codex thread/compact/start and review/start; Claude's compact only
+// in a session Side A hosts)
 
 public struct RemoteSession: Codable, Hashable, Sendable, Identifiable {
     public let id: SessionKey
@@ -390,7 +394,9 @@ public struct MailState: Codable, Hashable, Sendable {
   `.interrupt` for a Codex session outside Side A's panes needs `.replyTerminal`.
 - **`abilityReasons`** names why an ability is off in plain words ("Claude is working. Try when
   it's idle.", "Codex has no fast mode."). The phone shows the control disabled with that line;
-  an ability with no reason is simply not offered.
+  an ability with no reason is simply not offered. A Claude session's settings say "Changing the
+  model here needs the session to run in tmux or in Side A." in a Ghostty tab outside tmux, and
+  "Changing settings needs a session Side A hosts." anywhere else Side A can't type.
 - **`settings`** is what the session runs with now. Claude: model, `effort.level` and `fast_mode`
   from the side-a-live statusline, mode from the transcript's `permission-mode` record or the
   hooks' `permission_mode`. Codex: `ThreadSettings` (`thread/settings/updated`, `thread/read`).
@@ -460,7 +466,10 @@ public struct AnswerKind: OpenEnum { public let rawValue: String }
 public struct RemoteSuggestion: Codable, Hashable, Sendable, Identifiable {
     public let id: String        // first 16 hex of SHA-256 of the suggestion's rule JSON
     public let title: String     // "Always allow Bash(npm run test:*) in this project"
+    public let scope: SuggestionScope?   // .session (until the session ends) or .saved (a settings file); absent for a mode switch and from an older Mac
 }
+// After the agent's own suggestions the Mac lists each allow rule narrowed to the session, so a phone can offer
+// "Allow for Session"; the first suggestion stays the agent's own.
 
 public struct RemoteRequest: Codable, Hashable, Sendable, Identifiable {
     public let id: RequestID
@@ -1380,7 +1389,7 @@ Notes per endpoint:
   (setup, After pairing and Diagnostics). `push` describes the calling device only.
 - **`/diagnostics/push`** sends one push of category `TEST` (no actions, collapsed by its id) to
   the calling device through the relay and returns the relay's result. `…/received` records a phone's
-  receipt, but the phone doesn't call it. The Mac's per-phone Send Test
+  receipt: the phone's Notification Service Extension calls it with the push's collapse id when a test push arrives. The Mac's per-phone Send Test
   Notification uses the same path internally.
 - **Transcript paging.** No cursor: the newest `limit` messages. `before=c`: messages with seq
   below `c`, newest first then returned ascending. `after=c`: messages above `c`, ascending, plus
@@ -1800,8 +1809,23 @@ Like every tagged union here, a client message is `{"type": "subscribe", "data":
 - `presence` is sent on connect, on every foreground or background change, on every change of the
   open session, and every 30 seconds as a lease. The server forgets a device's presence 45 seconds
   after its last `presence` or when its socket closes.
-- While a device is foreground and `viewing` a session, the Mac sends no push for that session to
-  that device.
+- While a device is foreground and `viewing` a session, and its `NotificationPrefs.suppressWhileWatching`
+  is on (an absent registration counts as on), the Mac holds that session's push back from that
+  device. A push about no one session (a limit, Autopilot, a Ready group) is held while the device is
+  foreground at all. A device in the foreground on another session, or on the list, gets the push.
+  A held request is sent to the device once it stops watching (it leaves the foreground, opens
+  another session, closes its socket or its lease runs out) if nobody has answered it by then.
+  Finished, health and limit pushes held this way are not sent late.
+- The Mac sends every push for one collapse id in order, so a dismiss never overtakes its alert, and
+  tries an alert again (2, 8 and 30 seconds later, or the relay's `Retry-After` up to 60) when the
+  relay is unreachable, answers 5xx or 429, or reports a device `retry`. A 4xx, `gone` or `rejected`
+  is final. A request answered meanwhile is not sent again.
+- A request that ends with nobody answering it (`handedBack`, `turnFinished`, `sessionEnded`) does
+  not get the relay's "Answered". The Mac replaces its notification, under the same collapse id,
+  with a `health` push whose `body` says what happened. A Ready row that expired or was released
+  leaves its notification as it is. The Mac keeps which phones show a request, question or plan in
+  `remote/pending-pushes.json`; after a restart it replaces those notifications with a `health` push
+  that says the request closed.
 
 ### Keepalive and backpressure
 
@@ -2043,7 +2067,7 @@ and `Envelope.*.bin` with a known key (v2 is current; the v1 vector stays to che
 | `ROTATION` | `PUSH_ROTATION_FALLBACK` | `rotation` (`title` "Now on Personal", "All out", "Fable out" or "Work is full"; `body` a reason, or `account` and `resetsAt` for who is back. Account names and a limit's numbers only) |
 | `TEST` | `PUSH_TEST_FALLBACK` | `test` (Test Connection; no actions) |
 | `ANSWERED` (relay `kind: "dismiss"` only) | `PUSH_ANSWERED` | none: no envelope, replaces the collapse id |
-| `MAC_QUIET` (the relay's own; the Mac can't send it) | `PUSH_MAC_QUIET` ("Your Mac has gone quiet"), `PUSH_MAC_ASLEEP` ("Your Mac has been asleep for a day"), `PUSH_MAC_BACK` ("Your Mac is back") | none: no envelope, no `mutable-content`, so the Service Extension never runs. `q` = the Mac's `macID` (the Live Activity's), which the phone matches to a paired Mac and opens. Collapse id `mac-quiet`, so the all-clear replaces the alert |
+| `MAC_QUIET` (the relay's own; the Mac can't send it) | `PUSH_MAC_QUIET` ("Your Mac has gone quiet"), `PUSH_MAC_ASLEEP` ("Your Mac has been asleep for a day") | none: no envelope, no `mutable-content`, so the Service Extension never runs. `q` = the Mac's `macID` (the Live Activity's), which the phone matches to a paired Mac and opens. Collapse id and `thread-id` `mac-quiet-<macID>`, one per Mac. The all-clear is not an alert: a background push (`content-available`, `apns-push-type: background`, priority 5, no collapse id) with `back` = the Mac's `macID`, which the app answers by removing the delivered `mac-quiet-<macID>` notice and showing nothing. An older phone ignores it, so its notice stays until it is swiped away |
 
 - The phone registers local categories with the same names, plus two that never travel.
   `REQUEST_SAFE`: the Service Extension switches a `REQUEST` to it only when the decrypted,
@@ -2420,8 +2444,8 @@ A scripted `Transport` fake plays REST responses and socket frames.
    phone keeps its own. Sharing drafts (a `PUT /v1/requests/{rid}/draft` and a `request.draft`
    event) is left out of v1.
 2. **Slash commands through a Stop hook.** Whether `/model …` sent as a follow-up wakes Claude Code
-   as a command or as plain text. Until checked, `/model` and `/effort` are offered only for hosted
-   sessions.
+   as a command or as plain text. Until checked, `/model` and `/effort` are offered only where Side A
+   can read the screen: hosted sessions and ones in the user's own tmux.
 3. **Session keys that change.** `/clear` gives a session a new conversation id under the same
    process. The spec replaces the row (`session.remove{replacedBy}`); the phone could instead keep
    the row and show the history as a fold. Decide with the transcript design.

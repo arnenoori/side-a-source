@@ -4,8 +4,6 @@ import SideAProtocol
 import SwiftUI
 import UIKit
 
-/// The picture in a scroll view, which gives pinch, pan, momentum and rubber-banding. Taps, holds and two-finger drags
-/// become clicks, right clicks and scrolls while controlling; points go out from 0 to 1 across the picture.
 final class ScreenCanvas: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     final class Video: UIView {
         override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
@@ -22,7 +20,6 @@ final class ScreenCanvas: UIScrollView, UIScrollViewDelegate, UIGestureRecognize
     var scrolled: ((CGPoint, CGVector) -> Void)?
     var controlling = false {
         didSet {
-            // Controlling, two fingers belong to the Mac's scroll; one still pans the zoomed picture.
             panGestureRecognizer.maximumNumberOfTouches = controlling ? 1 : 2
             scroller.isEnabled = controlling
             holder.isEnabled = controlling
@@ -144,7 +141,6 @@ final class ScreenCanvas: UIScrollView, UIScrollViewDelegate, UIGestureRecognize
             pending.dx += (translation.x - lastTranslation.x) / video.bounds.width
             pending.dy += (translation.y - lastTranslation.y) / video.bounds.height
             lastTranslation = translation
-            // The Mac takes about 30 input events a second; more would be dropped there.
             if Date().timeIntervalSince(lastSent) >= 0.035 { flush(gesture) }
         default:
             if scrolling == true { flush(gesture) }
@@ -228,7 +224,6 @@ final class ScreenDecoder {
         guard CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format, sampleCount: 1, sampleTimingEntryCount: 0,
                                         sampleTimingArray: nil, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample) == noErr,
               let sample else { return nil }
-        // No timing: each frame shows the moment it arrives.
         if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true), CFArrayGetCount(attachments) > 0 {
             let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
             CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
@@ -252,7 +247,6 @@ final class ScreenModifiers {
     }
 }
 
-/// The software keyboard's target: what is typed goes to the Mac as text, or as a shortcut with a modifier armed.
 final class ScreenKeyCatcher: UIView, UIKeyInput {
     var pressed: ((ScreenKeyPress) -> Void)?
     var typed: ((String) -> Void)?
@@ -280,7 +274,6 @@ final class ScreenKeyCatcher: UIView, UIKeyInput {
     func deleteBackward() { pressed?(ScreenKeyPress(key: .delete, modifiers: modifiers.take())) }
 }
 
-/// The keys a phone keyboard lacks, riding it: Esc, Tab, sticky ⌘ ⌥ ⌃ ⇧, the arrows and Return.
 struct ScreenKeyBar: View {
     let modifiers: ScreenModifiers
     let press: (ScreenKeyPress) -> Void

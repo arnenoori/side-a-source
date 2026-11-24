@@ -60,7 +60,6 @@ struct SettingsEntry: Hashable {
         let title = Self.words(title)
         let fields = [(title, 30), (Self.words(tab.title), 10), (Self.words(words), 0)]
         var best = fields.compactMap { field, bonus in field.compactMap { Self.quality(term, $0) }.max().map { $0 + bonus } }.max()
-        // "menubar" for "menu bar".
         if term.count >= 4, title.count > 1, title.joined().contains(term) { best = max(best ?? 0, 50 + 30) }
         return best
     }
@@ -71,10 +70,8 @@ struct SettingsEntry: Hashable {
         if word.hasPrefix(term) { return 80 }
         if term.count >= 3, word.contains(term) { return 50 }
         let allowed = term.count >= 8 ? 2 : term.count >= 4 ? 1 : 0
-        // A typo rarely lands on the first letter, and holding to it keeps short words from matching everything.
         guard allowed > 0, word.first == term.first else { return nil }
         if abs(word.count - term.count) <= allowed, distance(term, word, within: allowed) { return 30 }
-        // Still typing the word, with a slip already in it.
         if word.count > term.count, distance(term, String(word.prefix(term.count)), within: allowed) { return 25 }
         return nil
     }
@@ -98,7 +95,6 @@ struct SettingsEntry: Hashable {
         return last[b.count] <= limit
     }
 
-    /// The title with what was typed in bold, where it appears as typed.
     func highlighted(_ query: String) -> AttributedString {
         var text = AttributedString(title)
         for term in Self.words(query) {
@@ -161,7 +157,6 @@ struct SettingsEntry: Hashable {
 
 struct SettingsResults: View {
     let query: String
-    /// The row the arrow keys are on; Return opens it.
     let selected: Int
     let pick: (SettingsTab) -> Void
 
@@ -169,7 +164,6 @@ struct SettingsResults: View {
         let results = SettingsEntry.matching(query)
         ScrollViewReader { scroll in
             List {
-                // In the list, so nothing found reads where results would, not in the middle of the window.
                 if results.isEmpty { Text("No Results").foregroundStyle(.secondary) }
                 ForEach(Array(results.enumerated()), id: \.element) { index, entry in
                     Button { pick(entry.tab) } label: {

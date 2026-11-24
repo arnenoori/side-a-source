@@ -1,3 +1,4 @@
+#if canImport(Network)
 import Foundation
 
 /// Each pool account's token and the one bridge read renewing it, for the app and the helper alike.
@@ -41,3 +42,4 @@ import Foundation
         reads[account] = nil
     }
 }
+#endif

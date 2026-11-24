@@ -3,7 +3,6 @@ import Foundation
 import SideACore
 import Testing
 
-/// One hung step used to stop every reading, the usage report and Autopilot until Side A was restarted.
 @MainActor @Test func theLoopGoesOnWithoutAStepThatNeverComesBack() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("sa-\(UUID().uuidString.prefix(8))")
     let store = AccountStore(demo: true, root: root)
@@ -12,7 +11,6 @@ import Testing
     var reads = 0
     store.testBridge = { _ in
         reads += 1
-        // The first read never answers, and ignores being cancelled, as a wedged helper would.
         if reads == 1 { await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in } }
         throw BridgeFailure(stderr: "Side A[signin]: Sign in to Studio again.")
     }
@@ -20,7 +18,6 @@ import Testing
     let log = try String(contentsOf: root.appendingPathComponent("runtime/autopilot.log"), encoding: .utf8)
     #expect(log.contains("A background check stopped at its start and didn't come back"))
 
-    // The read it was in the middle of doesn't hold the next one back.
     #expect(await store.watched(limit: .seconds(5)) { await $0.refreshUsage(studio.id) })
     #expect(reads == 2 && store.health[studio.id] == .signIn())
 }

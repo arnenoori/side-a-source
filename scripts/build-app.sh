@@ -19,7 +19,6 @@ mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources"
 cp "$bin_dir/SideA" "$app_path/Contents/MacOS/SideA"
 cp "$bin_dir/SideAKeepAwake" "$app_path/Contents/MacOS/SideAKeepAwake"
 cp "$bin_dir/SideAPool" "$app_path/Contents/MacOS/SideAPool"
-# Hosted sessions run on this tmux, so they never need Homebrew; it is already universal.
 tmux_build="$(./scripts/build-tmux.sh | tail -n 1)"
 mkdir -p "$app_path/Contents/Helpers"
 cp "$tmux_build" "$app_path/Contents/Helpers/tmux"
@@ -37,8 +36,6 @@ cp bridge/*.py "$app_path/Contents/Resources/bridge/"
 cp Sources/SideA/Resources/discman.json "$app_path/Contents/Resources/discman.json"
 ditto Sources/SideA/Resources/AppIcons "$app_path/Contents/Resources/AppIcons"
 cp scripts/Info.plist "$app_path/Contents/Info.plist"
-# Local builds get their own identity and no updater, so they never install updates over themselves
-# or collide with an installed copy's updater. Release builds opt in; verify-bundle.py rejects anything else.
 if [[ "${SIDEA_RELEASE_BUILD:-}" != 1 ]]; then
   plist="$app_path/Contents/Info.plist"
   plutil -replace CFBundleIdentifier -string com.arnenoori.sidea.dev "$plist"

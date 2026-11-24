@@ -9,7 +9,6 @@ import UniformTypeIdentifiers
 enum RemoteUploads {
     static let longSide = 2048
     static let keepFor: TimeInterval = 7 * 86_400
-    /// What one phone may hold on the Mac until its photos expire: hundreds of full-size photos, not the disk.
     static let perDevice = 500 << 20
 
     enum Failure: Error, Equatable { case unsupported, unreadable, full }
@@ -23,7 +22,6 @@ enum RemoteUploads {
         folder(root).appendingPathComponent(devicePrefix + IDs.hashed(device))
     }
 
-    /// The day folders, the Mac's own and each phone's.
     private static func dayFolders(_ root: URL) -> [URL] {
         let top = folder(root)
         let names = (try? FileManager.default.contentsOfDirectory(atPath: top.path)) ?? []
@@ -56,7 +54,6 @@ enum RemoteUploads {
         return nil
     }
 
-    /// Stores one photo. The same photo twice is the same upload. `device` is the phone it came from, held to `cap`; the Mac's own have none.
     static func store(_ data: Data, root: URL, device: String? = nil, cap: Int = perDevice, now: Date = Date()) throws(Failure) -> Upload {
         guard sniff(data) != nil else { throw .unsupported }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
@@ -65,7 +62,6 @@ enum RemoteUploads {
                                                                           kCGImageSourceThumbnailMaxPixelSize: longSide] as CFDictionary) else {
             throw .unreadable
         }
-        // Screenshots with transparency stay PNG; everything else is a JPEG.
         let alpha = ![.none, .noneSkipFirst, .noneSkipLast].contains(image.alphaInfo)
         let type = alpha ? UTType.png : UTType.jpeg
         let out = NSMutableData()

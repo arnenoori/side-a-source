@@ -38,7 +38,6 @@ struct TokensChart: View {
     }
 }
 
-/// Chart rows with model ids shortened and everything past the most used models folded into one "Other" series.
 struct TokenSeries: Equatable {
     static let rest = "Other"
     /// Series names, most used first, "Other" last.
@@ -67,7 +66,6 @@ struct TokenSeries: Equatable {
     }
 }
 
-/// Lays children out left to right and starts a new line when the next one would not fit.
 struct WrappingRow: Layout {
     var spacing: CGFloat = 8
     var lineSpacing: CGFloat = 4
@@ -86,7 +84,6 @@ struct WrappingRow: Layout {
     private func frames(in width: CGFloat, _ subviews: Subviews) -> [CGRect] {
         var x: CGFloat = 0, y: CGFloat = 0, line: CGFloat = 0
         return subviews.map { subview in
-            // No child is ever wider than the row, so a long name truncates instead of running past the edge.
             let ideal = subview.sizeThatFits(.unspecified)
             let size = CGSize(width: min(ideal.width, width), height: ideal.height)
             if x > 0, x + size.width > width { x = 0; y += line + lineSpacing; line = 0 }

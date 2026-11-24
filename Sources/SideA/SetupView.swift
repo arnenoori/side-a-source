@@ -44,7 +44,8 @@ struct SetupSettings: View {
     @State private var health: [String: String] = [:]
     @State private var checking = false
     @State private var cleaning = false
-    @AppStorage("setupInventoryShown") private var inventory = false
+    @AppStorage(Self.inventoryKey) private var inventory = false
+    private static let inventoryKey = "setupInventoryShown"
 
     var body: some View {
         Form {
@@ -65,7 +66,6 @@ struct SetupSettings: View {
                 }
                 Toggle(isOn: Binding(get: { store.hostTerminal }, set: { value in Task { await store.setHostTerminal(value) } })) {
                     Text("Host terminal sessions")
-                    // tmux is only looked for once hosting is wanted, so before then the switch is offered.
                     Text(store.hosted.available || store.hostTerminal || !store.hostingWanted
                          ? "claude and codex typed in a terminal run in Side A's tmux, so your phone can join and closing the tab leaves them running; sidea attach brings one back. The tab's scrollback no longer holds the conversation. Adds a second line to ~/.zshrc."
                          : "Needs tmux 3.4 or later: brew install tmux, then reopen Side A.")

@@ -3,9 +3,6 @@ import Observation
 import SideAProtocol
 import SideARemoteKit
 
-/// One History list from the Mac, the past conversations or the archive, paged by the
-/// Mac's cursors. Pins, titles and archives are the Mac's; each change replaces the row with its answer.
-/// The demo lists its own sample and changes it here only.
 @Observable
 final class HistoryList {
     nonisolated deinit {}
@@ -44,7 +41,6 @@ final class HistoryList {
         }
     }
 
-    /// The next page, when the last row shows.
     func loadMore() async {
         guard let next, !loading else { return }
         loading = true
@@ -60,7 +56,6 @@ final class HistoryList {
         }
     }
 
-    /// Sends a change and shows the Mac's answer; a row archived or restored leaves this list.
     @discardableResult func change(_ session: PastSession, _ change: HistoryChange) async throws -> PastSession {
         let updated: PastSession
         if demo != nil {
@@ -82,7 +77,6 @@ final class HistoryList {
     }
 }
 
-/// Typing in the Search tab: the Mac's index of asks, replies and commands (`GET /v1/search`), paged.
 @Observable
 final class HistorySearch {
     nonisolated deinit {}
@@ -98,7 +92,6 @@ final class HistorySearch {
 
     init(tools: MacTools, demo: HistoryStore?) { self.tools = tools; self.demo = demo }
 
-    /// From the field, after a pause in typing; a newer query cancels this one.
     func search(_ text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text != query else { return }
@@ -148,7 +141,6 @@ final class HistorySearch {
 }
 
 extension PastSession {
-    /// A change as the demo makes it.
     func applying(_ change: HistoryChange) -> PastSession {
         let custom = change.title.map { $0.isEmpty ? nil : $0 } ?? customTitle
         return PastSession(id: id, agent: agent, title: custom ?? title, project: project, cwd: cwd, branch: branch,

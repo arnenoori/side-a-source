@@ -32,7 +32,6 @@ enum WarpFocus {
         }
         let app = AXUIElementCreateApplication(host.pid)
         let windows = attribute(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
-        // A title only counts when one window has it; a common one could belong to another tab.
         if let title = title?.trimmingCharacters(in: .whitespaces), !title.isEmpty {
             let titled = windows.filter { (attribute($0, kAXTitleAttribute) as? String)?.localizedCaseInsensitiveContains(title) == true }
             if titled.count == 1 {

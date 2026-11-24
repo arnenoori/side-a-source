@@ -14,7 +14,6 @@ final class TunnelClient: @unchecked Sendable {
         case waiting(String)
     }
 
-    /// Streams the Mac takes from one phone socket, and from all of them: well inside the server's 64 connections.
     static let perSlot = 8
     static let total = 24
     static let pingEvery: TimeInterval = 25
@@ -29,7 +28,6 @@ final class TunnelClient: @unchecked Sendable {
     private let key: Curve25519.Signing.PrivateKey
     private let session: URLSession
     private let register: @Sendable () async throws -> Void
-    /// The loopback port to splice a new stream to, asked per stream: it changes if the listener restarts.
     private let target: @Sendable (@escaping @Sendable (UInt16?) -> Void) -> Void
     var statusChanged: (@Sendable (Status) -> Void)?
 
@@ -39,16 +37,12 @@ final class TunnelClient: @unchecked Sendable {
     private var running = false
     private var attempt = 0
     private var skew = 0
-    /// The `ts` the latest upgrade was signed with.
     private var signed = 0
-    /// Set once a clock refusal has been retried at once; cleared when a socket connects.
     private var reclocked = false
     private var registered = false
     /// Nil until the Mac can read its list: the relay keeps the one it has rather than being told nobody is paired.
     private var devices: [TunnelControl.Device]?
-    /// The open pairing sheet's ticket.
     private var ticket: Data?
-    /// Frames for streams whose loopback connection is still being made.
     private var opening: [UInt32: [TunnelFrame]] = [:]
     private var retry: DispatchWorkItem?
     private var pinger: DispatchSourceTimer?
@@ -101,7 +95,6 @@ final class TunnelClient: @unchecked Sendable {
         }
     }
 
-    /// Who may connect: every paired device's id and secret hash. Sent now and on every reconnect.
     func setDevices(_ devices: [TunnelControl.Device]) {
         queue.async { [self] in
             self.devices = devices
@@ -113,7 +106,6 @@ final class TunnelClient: @unchecked Sendable {
     /// lives exactly as long as the sheet, give or take this much if the Mac vanishes with the sheet open.
     static let ticketWindow: TimeInterval = 120
 
-    /// The pairing sheet's ticket while it's open; nil once it closes.
     func setPairing(ticket: Data?) {
         queue.async { [self] in
             self.ticket = ticket
@@ -127,7 +119,6 @@ final class TunnelClient: @unchecked Sendable {
                              expiresAt: Date().timeIntervalSince1970 + Self.ticketWindow)
     }
 
-    /// A network change or a wake: a socket that's waiting tries now; a live one proves itself with a ping.
     func networkChanged() {
         queue.async { [self] in
             guard running else { return }
@@ -143,8 +134,6 @@ final class TunnelClient: @unchecked Sendable {
     }
 
     var streams: Int { queue.sync { mux.count } }
-
-    // MARK: Socket
 
     static func describe(_ status: Status) -> String {
         switch status {
@@ -264,7 +253,6 @@ final class TunnelClient: @unchecked Sendable {
         abs(relay.timeIntervalSince1970 - Double(signed)) > clockWindow - 2
     }
 
-    /// Drops the socket and every stream on it, then tries again after a backoff.
     private func fail(_ reason: String, unregistered: Bool, wait: TimeInterval? = nil) {
         drop()
         if unregistered { registered = false }
@@ -316,11 +304,8 @@ final class TunnelClient: @unchecked Sendable {
         }
     }
 
-    // MARK: Frames
-
     private func control(_ text: String) {
         guard text != "pong", let control = TunnelControl(text: text) else { return }
-        // Relay input never traps: a slot out of range is ignored.
         if control.type == "gone", let value = control.slot, let slot = UInt32(exactly: value), slot <= 0xffff {
             let gone = opening.keys.filter { $0 >> 16 == slot }
             for id in gone { opening[id] = nil }
@@ -332,7 +317,6 @@ final class TunnelClient: @unchecked Sendable {
         guard let frame = TunnelFrame(data) else { return }
         guard frame.kind == .open else {
             guard var waiting = opening[frame.stream] else { return mux.received(frame) }
-            // What a phone may send before the stream is spliced: its credit window, the same as after.
             guard waiting.reduce(frame.payload.count, { $0 + $1.payload.count }) <= TunnelMux.Tuning().window, waiting.count < 64 else {
                 opening[frame.stream] = nil
                 return send(.data(TunnelFrame.reset(frame.stream, "over credit").encoded))

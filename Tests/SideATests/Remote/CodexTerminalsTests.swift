@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// The harness's staged two-way rows behave as L8's phone tests expect, through the real routes.
 @MainActor @Test func theHarnessTwoWayRowsAnswerLikeTheirDaemons() async throws {
     let store = AccountStore(demo: true)
     HarnessScene.twoWay(store)
@@ -43,7 +42,6 @@ import Testing
     #expect(try await reply("claude-inbox") == (200, "inbox"))
 }
 
-/// A Claude turn's diff comes from the bridge's reading of its transcript; compact and review say why not.
 @MainActor @Test func claudeSessionsDiffTheirTurnsAndSayWhyTheyCantCompactOrReview() async throws {
     let store = AccountStore(demo: true), id = "c1a00000-0000-4000-8000-000000000000"
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("claude-turns-\(UUID().uuidString)")

@@ -6,7 +6,6 @@ import SideAProtocolFixtures
 import SideARemoteKit
 import Testing
 
-/// What came in on the events socket.
 private actor Inbox {
     var events: [ServerEvent] = []
     func add(_ event: ServerEvent) { events.append(event) }
@@ -34,8 +33,6 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     try handle.close()
 }
 
-/// A phone subscribed to a session gets what it missed at once, then each new message as the transcript grows,
-/// through the real listener, the hub and the bridge.
 @MainActor @Test func aSubscribedPhoneCatchesUpThenHearsNewMessages() async throws {
     let keychain = try TestKeychain()
     let home = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sidea-stream-\(UUID().uuidString)")
@@ -62,7 +59,6 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     defer { server.stop() }
     await eventually { server.listenerStates.values.first == .ready }
 
-    // The cursor the phone holds; then a message arrives while it's away.
     let page = try RemoteTranscript.page(try await store.sessions.remoteReply(["show", "--format", "remote", "--limit", "50", "--", "t1"]))
     try say("Away message", uuid: "u9", session: "t1", to: home)
 
@@ -87,12 +83,10 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     let live = await eventually { await inbox.appended == ["Away message", "Live message"] }
     let heard = await inbox.events
     #expect(live, "\(heard)")
-    // Each delta's cursor is what the phone pages from next: nothing past it.
     let after = try #require(await inbox.cursor)
     let rest = try RemoteTranscript.page(try await store.sessions.remoteReply(["show", "--format", "remote", "--after", after.raw, "--", "t1"]))
     #expect(rest.messages.isEmpty && !rest.reset)
 
-    // A transcript rewritten from its head is a new view: the phone starts over.
     var lines = TranscriptFixture.lines(session: "t1", cwd: "/tmp/app", day: TranscriptFixture.today)
     lines[0]["uuid"] = "u0-rewritten"
     try TranscriptFixture.write(lines, session: "t1", home: home)
@@ -100,7 +94,6 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     socket.close(code: 1000, reason: nil)
 }
 
-/// Twenty 64 KiB rows go out as two appends; a phone cut off after the first resumes from before the page.
 @MainActor @Test func onlyAPagesLastEventCarriesItsCursor() throws {
     var page = try #require(try JSONSerialization.jsonObject(with: Fixtures.data("TranscriptPage.after-replaced")) as? [String: Any])
     let row = try #require((page["messages"] as? [[String: Any]])?.first)
@@ -120,7 +113,6 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     #expect(cursors == [from, from, decoded.after])
 }
 
-/// A snapshot too big for the socket comes over REST instead of closing it with 4008 again and again.
 @MainActor @Test func aLargeSnapshotIsLeftForGETState() async throws {
     let keychain = try TestKeychain()
     let identity = try #require(try keychain.store.identity())
@@ -157,20 +149,17 @@ private func say(_ text: String, uuid: String, session: String, to home: URL) th
     #expect(await !inbox.events.contains { if case .snapshot = $0 { true } else { false } })
 }
 
-/// A cursor goes to the bridge as an argument: one that could read as an option is never sent, as the REST route refuses it.
 @MainActor @Test func aPhonesCursorIsCheckedBeforeTheBridgeSeesIt() {
     #expect(TranscriptStream.catchUp(after: Cursor("a41f09c2e7b3.813.0")) == ["--after", "a41f09c2e7b3.813.0", "--limit", "200"])
     #expect(TranscriptStream.catchUp(after: Cursor("--root=/etc")) == nil)
     #expect(TranscriptStream.catchUp(after: Cursor("")) == nil)
 }
 
-/// Two `hello`s in a row, the second before the first's welcome: one welcome.
 @MainActor @Test func aSecondHelloGetsNoSecondWelcome() async throws {
     let keychain = try TestKeychain()
     let identity = try #require(try keychain.store.identity())
     let server = RemoteServer(identity: identity, epoch: "e1") { _, _ in HTTPResponse(status: 404) }
     let hub = EventHub(queue: server.queue, epoch: "e1", snapshot: { { seq, epoch in StateSnapshot(seq: seq, epoch: epoch) } }, hello: {
-        // The first welcome takes its time on the main actor, so the second hello lands before it.
         // swiftlint:disable:next sleep_as_sync_in_tests -- the slow welcome is the point
         Thread.sleep(forTimeInterval: 0.3)
         return Hello(app: "", build: 0, mac: MacInfo(id: "", name: ""), capabilities: [], epoch: "e1", serverTime: 0, remoteOn: true,

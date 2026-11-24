@@ -11,7 +11,6 @@ final class PreferencesMirror {
         var valid: (PreferenceValue) -> Bool = { _ in true }
     }
 
-    /// Set values from a preferences domain, and when that domain was last written.
     struct Domain {
         let values: [String: Any]
         let modified: Double
@@ -46,12 +45,10 @@ final class PreferencesMirror {
             return false
         })
     ]
-    /// What a shared setting reads as until someone sets it.
     static func fallback<Value>(_ key: String) -> Value {
         guard let value = shared[key]?.fallback.raw as? Value else { preconditionFailure("\(key) isn't a shared \(Value.self) setting") }
         return value
     }
-    /// A shared setting as set here, else its fallback.
     static func value<Value>(_ key: String, in defaults: UserDefaults = .standard) -> Value {
         defaults.object(forKey: key) as? Value ?? fallback(key)
     }
@@ -161,7 +158,6 @@ final class PreferencesMirror {
         syncing?.cancel()
     }
 
-    /// Sync was turned on or off, or the app started.
     func syncChanged() {
         guard !frozen, !stopped else { return }
         guard let folder = syncFolder() else { watcher = nil; return }
@@ -282,7 +278,6 @@ final class PreferencesMirror {
         savePending()
     }
 
-    /// Remove Side A. This Mac's file leaves iCloud Drive with it; other Macs keep their own.
     func deleteFiles() {
         let folder = syncFolder(), machine = machineID()
         stop()

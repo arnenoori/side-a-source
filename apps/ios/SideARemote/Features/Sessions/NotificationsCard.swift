@@ -2,8 +2,6 @@ import SwiftUI
 import UIKit
 import UserNotifications
 
-/// Once, above Sessions after pairing (setup, "After pairing"): what notifications are for, shown
-/// with a rendered sample, while the system hasn't asked yet. Acting on it removes it for good.
 struct NotificationsCard: View {
     let done: () -> Void
 
@@ -30,7 +28,6 @@ struct NotificationsCard: View {
         }
     }
 
-    /// Shown while the system hasn't asked yet.
     static func undetermined() async -> Bool {
         await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .notDetermined
     }
@@ -43,14 +40,18 @@ struct NotificationsCard: View {
     static func offersSettings(_ status: UNAuthorizationStatus) -> Bool { status == .denied }
 
     private func turnOn() async {
-        // Time Sensitive comes from the entitlement, not an option here.
-        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
-        UIApplication.shared.registerForRemoteNotifications()
+        await Self.requestAccess()
         done()
+    }
+
+    /// Asks iOS, which shows its prompt once; where "Not Now" on the card left it, Settings and Test Connection ask again.
+    static func requestAccess() async {
+        // Time Sensitive comes from the entitlement, not an option here; the badge is never set, so it isn't asked for.
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+        UIApplication.shared.registerForRemoteNotifications()
     }
 }
 
-/// Notifications denied in iOS Settings.
 struct NotificationsOffSection: View {
     let done: () -> Void
 
@@ -63,7 +64,6 @@ struct NotificationsOffSection: View {
     }
 }
 
-/// This app's notification page in iOS Settings.
 struct OpenNotificationSettings: View {
     @Environment(\.openURL) private var openURL
 
@@ -74,7 +74,6 @@ struct OpenNotificationSettings: View {
     }
 }
 
-/// A notification as the Lock Screen draws it, so the card shows what the user is agreeing to.
 private struct SampleNotification: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {

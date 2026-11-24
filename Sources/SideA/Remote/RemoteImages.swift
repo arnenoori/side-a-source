@@ -23,7 +23,6 @@ enum RemoteImages {
 
     /// The bridge's own file limit.
     static let maxBytes = 50 << 20
-    /// Sharp on a 3x screen at the size the phone shows it.
     static let thumbPixels = 640
 
     static func isID(_ text: String) -> Bool { text.count == 40 && text.allSatisfy { "0123456789abcdef".contains($0) } }
@@ -74,14 +73,12 @@ enum RemoteImages {
         defer { try? handle.close() }
         guard let size = try? handle.seekToEnd(), offset >= 0, UInt64(offset) <= size else { return nil }
         let count = length ?? Int(size) - offset
-        // Base64 is a third larger than the bytes it holds.
         guard count >= 0, count <= maxBytes * 4 / 3 + 4 else { return nil }
         try? handle.seek(toOffset: UInt64(offset))
         guard let data = try? handle.read(upToCount: count), data.count == count else { return nil }
         return data
     }
 
-    /// A JPEG at most 640 pixels on its long side, written once next to the others.
     static func thumbnail(_ data: Data, id: String, folder: URL) -> Data? {
         let url = folder.appendingPathComponent(id + ".jpg")
         if let cached = try? Data(contentsOf: url) { return cached }

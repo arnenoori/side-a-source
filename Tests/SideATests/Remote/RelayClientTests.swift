@@ -20,20 +20,17 @@ import Testing
     let question = RemotePushPayload.request(try request("question-multi"), mac: "m", now: 1)
     #expect(question.category == .question && question.payload.full == true && question.payload.questions?.isEmpty == false)
 
-    // A plan too long to show whole goes without it, so the notification offers Open.
     let long = try JSONSerialization.jsonObject(with: Fixtures.data("RemoteRequest.plan")) as? [String: Any] ?? [:]
     var big = long
     big["action"] = ["kind": "plan", "plan": String(repeating: "Step. ", count: 1000)]
     let plan = RemotePushPayload.request(try JSONDecoder().decode(RemoteRequest.self, from: JSONSerialization.data(withJSONObject: big)), mac: "m", now: 1)
     #expect(plan.category == .plan && plan.payload.full == false && plan.payload.plan == nil)
 
-    // A long command is cut to fit, with an ellipsis.
     var bash = try JSONSerialization.jsonObject(with: Fixtures.data("RemoteRequest.bash")) as? [String: Any] ?? [:]
     bash["detail"] = String(repeating: "echo hi && ", count: 400)
     let cut = RemotePushPayload.request(try JSONDecoder().decode(RemoteRequest.self, from: JSONSerialization.data(withJSONObject: bash)), mac: "m", now: 1)
     #expect(RemotePushPayload.encoded(cut.payload).count <= PushPayload.budget && cut.payload.body?.hasSuffix("…") == true)
     #expect(RemotePushPayload.encoded(cut.payload).count > PushPayload.budget - 40)
-    // A command the card can't show whole is never Allowed from it: cut, over eight lines, or truncated on the Mac.
     #expect(cut.payload.full == false)
     func full(_ change: (inout [String: Any]) -> Void) throws -> Bool? {
         var object = try JSONSerialization.jsonObject(with: Fixtures.data("RemoteRequest.bash")) as? [String: Any] ?? [:]
@@ -64,7 +61,6 @@ import Testing
     #expect(RemotePush.batches(["a"]) == [["a"]] && RemotePush.batches([]).isEmpty)
 }
 
-/// A full context shows on the session's row but never notifies; the other health flags still do.
 @Test func aBloatedContextDoesntNotify() {
     #expect(!RemotePush.notifies(SessionFlag(kind: .bloated, text: "Context is 182k tokens")))
     for kind: SessionFlag.Kind in [.stuck, .loop, .failing, .unsent] { #expect(RemotePush.notifies(SessionFlag(kind: kind, text: ""))) }

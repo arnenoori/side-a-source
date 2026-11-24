@@ -104,7 +104,6 @@ private struct RequestPanel: View {
                 if request.offersAlways, let suggestion = request.suggestions.first {
                     Button(request.agent == .codex ? "This session" : "Always") { island.answer(.always(suggestion), item.id) }.help(suggestion.title)
                 }
-                // Allow and switch mode, as the phone offers it: Claude's own edits that aren't destructive.
                 if RemoteAnswers.modes(request).contains(.acceptEdits) {
                     Button("Allow + Accept Edits") { island.answer(.allowMode(PermissionMode.acceptEdits.rawValue), item.id) }
                         .help("Allow this, and let it make the rest of its edits without asking")

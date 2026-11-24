@@ -5,8 +5,6 @@ extension Color {
     static let deckOrange = Color(red: 0.88, green: 0.29, blue: 0.10)
 }
 
-/// The device is the entire idle interface. Setup appears only when requested
-/// through OPEN; account and session state live on the physical LCD.
 struct PlayerView: View {
     @Bindable var store: AccountStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -40,7 +38,6 @@ struct PlayerView: View {
     private var guideControl: String? {
         guard !store.isDemo, !store.held, !store.startupError else { return nil }
         if store.config.accounts.isEmpty || store.selected?.ready != true { return "open" }
-        // Codex is never switched, so PLAY only applies to Claude accounts.
         return store.selected.map { !store.isActive($0) && $0.provider == .claude } == true ? "play" : nil
     }
 

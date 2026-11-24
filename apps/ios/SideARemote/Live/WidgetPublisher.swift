@@ -3,9 +3,6 @@ import SideAProtocol
 import SideARemoteShared
 import WidgetKit
 
-/// Keeps `snapshot.json` in step with what the app shows, and reloads the widgets only when it
-/// changes. Live data refreshes `updatedAt` at least every 10 minutes, so a quiet Mac doesn't read
-/// as stale on the Home Screen.
 @MainActor
 final class WidgetPublisher {
     nonisolated deinit {}
@@ -13,10 +10,8 @@ final class WidgetPublisher {
     static let shared = WidgetPublisher()
     private var last: WidgetSnapshot?
 
-    /// Every paired Mac's model, from `AppRoot`.
     var sources: () -> [AppModel] = { [] }
 
-    /// Every Mac in one snapshot: what needs you anywhere first, then what's working.
     func refresh(now: Date = .now) {
         let macs = sources().filter { $0.isDemo || $0.mac.state == .live || !$0.sessions.sessions.isEmpty }
         guard !macs.isEmpty else { return }
@@ -36,7 +31,6 @@ final class WidgetPublisher {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
-    /// Unpaired or forgotten: the widgets ask to pair rather than show a Mac that's gone.
     func clear() {
         last = nil
         WidgetSnapshot.remove()
@@ -45,8 +39,6 @@ final class WidgetPublisher {
 }
 
 extension WidgetSnapshot {
-    /// Several Macs: counts add up, needs-you rows from every Mac come before working ones, and each row
-    /// keeps its Mac for its link.
     init(_ macs: [AppModel], now: Date = .now) {
         let each = macs.map { WidgetSnapshot($0, macID: $0.macID, now: now) }
         guard var merged = each.first else {
@@ -64,7 +56,6 @@ extension WidgetSnapshot {
         merged.top = each.lazy.compactMap(\.top).first
         merged.tightest = each.compactMap(\.tightest).max { $0.percent < $1.percent }
         merged.sessions = Array((rows.filter { $0.phase == .needsYou } + rows.filter { $0.phase == .working }).prefix(7))
-        // The same account seen from two Macs shows once.
         var seen = Set<String>()
         merged.accounts = Array(each.flatMap(\.accounts).filter { seen.insert($0.id).inserted }.prefix(4))
         self = merged

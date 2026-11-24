@@ -92,7 +92,7 @@ Notification Service Extension can't run:
 | `PLAN` | `PUSH_PLAN_FALLBACK` |
 | `FINISHED` | `PUSH_FINISHED_FALLBACK` |
 | `LIMIT` | `PUSH_LIMIT_FALLBACK` |
-| `HEALTH` (always passive) | `PUSH_HEALTH_FALLBACK` |
+| `HEALTH` (passive or active, as the Mac asks; never time-sensitive) | `PUSH_HEALTH_FALLBACK` |
 | `TEST` (always passive, 5 an hour per install) | `PUSH_TEST_FALLBACK` |
 | `ANSWERED` (from `kind: "dismiss"`) | `PUSH_ANSWERED` |
 | Live Activity start (title, body) | `ACTIVITY_START_TITLE`, `ACTIVITY_START_BODY` |

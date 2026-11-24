@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// The Mac chip's sheet: status, power, memory, Keep Awake, Quit Idle, Clean Up.
 struct MacSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -63,7 +62,6 @@ struct MacSheet: View {
         .presentationDetents([.medium, .large])
     }
 
-    /// The Mac's own setting: shown flipped at once, and set back if the Mac says no.
     private var keepAwake: Binding<Bool> {
         Binding { model.mac.keepAwake ?? false } set: { on in
             let mac = model.mac, tools = model.tools

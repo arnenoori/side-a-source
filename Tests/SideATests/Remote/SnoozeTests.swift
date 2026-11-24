@@ -24,7 +24,6 @@ private func row(_ status: SessionStatus = .working, requests: [RequestID] = [],
     let snoozed = row()
     #expect(store.snooze(snoozed, .threeHours, until: now.timeIntervalSince1970 + 3 * 3600, now: now) != nil)
     #expect(store.current(snoozed, now: now)?.choice == .threeHours)
-    // Working on, finishing: still asleep; a timed snooze sleeps through the end of a turn, quietly.
     #expect(store.current(row(.idle), now: now) != nil && store.quiets("s1"))
     #expect(store.current(row(.waiting, requests: ["r1"]), now: now) == nil, "an open request wakes it")
     #expect(store.entries.isEmpty)
@@ -54,7 +53,6 @@ func eachEarlyWakeBringsItBack(_ cause: String) {
     #expect(store.current(row())?.until == nil && !store.quiets("s1"))
     #expect(store.current(row(.idle)) == nil)
 
-    // Snoozed while idle, it stays asleep idle.
     store.snooze(row(.idle), .needsMe, until: nil)
     #expect(store.current(row(.idle)) != nil)
     store.wake("s1")

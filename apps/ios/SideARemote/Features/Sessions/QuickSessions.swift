@@ -5,7 +5,6 @@ extension EnvironmentValues {
     @Entry var openSession: ((Route) -> Void)?
 }
 
-/// New Session's touch-and-hold menu. New Session comes last so it sits nearest the thumb.
 struct QuickSessionsMenu: View {
     let newSession: () -> Void
     @Environment(AppRoot.self) private var root
@@ -35,7 +34,6 @@ struct QuickSessionsMenu: View {
         }
     }
 
-    /// Every paired Mac, not only those the list shows: a shortcut shouldn't depend on the filter.
     static func picks(_ macs: [AppModel]) -> [(session: RemoteSession, mac: AppModel)] {
         let all = macs.flatMap { mac in mac.sessions.sessions.map { (session: $0, mac: mac) } }
         func rank(_ phase: SessionPhase) -> Int {

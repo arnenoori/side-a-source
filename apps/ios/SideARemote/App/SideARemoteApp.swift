@@ -12,7 +12,8 @@ struct SideARemoteApp: App {
     @State private var root: AppRoot
     @State private var lock = AppLock()
     @State private var keys = KeyRequests()
-    @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
+    @AppStorage(Accent.key, store: SharedStorage.defaults) private var accent = Accent.blue
+    @AppStorage(Theme.key, store: SharedStorage.defaults) private var theme = Theme.system
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -35,15 +36,14 @@ struct SideARemoteApp: App {
                 }
                 #endif
                 .overlay { PillOverlay() }
-                // The lock itself is in `LockWindow`, above every sheet; this keeps the first frame covered until it's up.
                 .overlay {
                     if lock.locked { Color(.systemBackground).ignoresSafeArea() }
                 }
                 .accessibilityHidden(lock.covered)
                 .onChange(of: lock.covered, initial: true) { LockWindow.shared.update(lock) }
-                // Past xxLarge the layouts break apart, so type stops growing there; smaller sizes scale as usual.
                 .dynamicTypeSize(...DynamicTypeSize.xxLarge)
                 .tint(accent.color)
+                .preferredColorScheme(theme.scheme)
         }
         .commands { RemoteCommands(keys: keys, lock: lock) }
         .onChange(of: scenePhase, initial: true) { _, phase in
@@ -54,34 +54,21 @@ struct SideARemoteApp: App {
     }
 }
 
-/// The paired Macs, one model each, or none yet; Debug builds launched with `--demo` show sample data for
-/// screenshots (`--demo-macs 2` adds a second Mac), and App Review's code opens the same demo in any build
-/// (`ReviewDemo`). Pairing adds a Mac, Forget removes one.
 @Observable
 final class AppRoot {
     nonisolated deinit {}
 
-    /// In the order they were paired; empty before pairing.
     private(set) var macs: [AppModel] { didSet { publishWidgets() } }
-    /// Sessions, Accounts and Search show this Mac only; nil shows every Mac. Only matters with more than one. Kept
-    /// across launches, except while the demo stands in for the paired Macs.
     var shown: String? { didSet { if shown != oldValue, !model.isDemo { ListPrefsStore.setShown(shown) } } }
-    /// New Session's draft, kept between openings of the sheet.
     var newSession = NewSessionForm()
-    /// Bumped when the app's whole state changes (paired the first Mac, left the demo, forgot the last Mac),
-    /// so nothing carries over.
     private(set) var epoch = 0
-    /// Opened by App Review's code: the demo says so on screen, and Settings offers Leave Demo.
     private(set) var reviewing = false
     private let unpaired = AppModel.unpaired()
 
-    /// The first Mac's model, for screens about the app rather than one Mac; unpaired when there's none.
     var model: AppModel { macs.first ?? unpaired }
 
-    /// The shown Mac, or the first.
     var current: AppModel { shown.flatMap(model(for:)) ?? model }
 
-    /// The Macs a screen shows: the one picked, or all of them.
     var visible: [AppModel] { shown.flatMap(model(for:)).map { [$0] } ?? macs }
 
     var canStartSession: Bool { visible.contains { $0.tools.can(.hosted) } }
@@ -90,7 +77,6 @@ final class AppRoot {
 
     func model(for macID: String) -> AppModel? { macs.first { $0.macID == macID } }
 
-    /// What waits on every Mac, oldest first.
     var waiting: [RemoteRequest] {
         macs.count == 1 ? model.requests.open : macs.flatMap(\.requests.open).sorted { $0.arrivedAt < $1.arrivedAt }
     }
@@ -99,7 +85,6 @@ final class AppRoot {
         macs.first { $0.requests.request(request) != nil }
     }
 
-    /// The Mac a session is on, by its id.
     func model(owning session: SessionKey) -> AppModel? {
         macs.first { $0.sessions.session(session) != nil } ?? macs.first { $0.transcripts.messages[session] != nil }
     }
@@ -118,7 +103,6 @@ final class AppRoot {
             }
             if arguments.contains("--demo-stream") { DemoStream.start(model) }
             if arguments.contains("--demo-activity") { DemoActivity.start() }
-            // `--attention trust|unsent|screen`: a hosted.attention on Add LAN mode's terminal.
             if let index = arguments.firstIndex(of: "--attention"), index + 1 < arguments.count {
                 let kind = HostedAttention.Kind(rawValue: arguments[index + 1])
                 let text = switch kind {
@@ -128,19 +112,16 @@ final class AppRoot {
                 }
                 macs[0].tools.show(HostedAttention(name: "sa-side-a-91be", kind: kind, text: text))
             }
-            // `--pill Archived`: the pill with Undo, for screenshots.
             if let index = arguments.firstIndex(of: "--pill"), index + 1 < arguments.count {
                 let text = arguments[index + 1]
                 Launch.afterFirstFrame { Pill.show(text) {} }
             }
-            // `--clipboard-image`: a picture on the clipboard, to try pasting into the composer.
             if arguments.contains("--clipboard-image") {
                 UIPasteboard.general.image = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 400)).image { context in
                     UIColor.systemOrange.setFill()
                     context.fill(CGRect(x: 0, y: 0, width: 600, height: 400))
                 }
             }
-            // `--mac-state stale|offline|tailscale|revoked|key`: the demo in a connection state, for screenshots.
             if let index = arguments.firstIndex(of: "--mac-state"), index + 1 < arguments.count {
                 let mac = macs[macs.count - 1].mac
                 mac.lastSeen = .now.addingTimeInterval(-4 * 60)
@@ -166,7 +147,6 @@ final class AppRoot {
         ListPrefsStore.shown().flatMap { id in macs.contains { $0.macID == id } ? id : nil }
     }
 
-    /// The demo fills the widgets with its own sessions; unpaired clears them; live Macs publish as their data arrives.
     private func publishWidgets() {
         if model.isDemo || !macs.isEmpty {
             WidgetPublisher.shared.refresh()
@@ -183,7 +163,6 @@ final class AppRoot {
         if foreground { Launch.afterFirstFrame { Task { await Revocations.run() } } }
     }
 
-    /// What a notification couldn't send goes into its session's field, after anything already typed there.
     func takeNotificationDrafts() {
         for mac in macs where !mac.isDemo {
             for (session, text) in NotificationDrafts.take(mac: mac.macID) {
@@ -201,8 +180,6 @@ final class AppRoot {
         }
     }
 
-    /// A new pairing, or Pair Again: that Mac's old link stops and its new one takes its place; other Macs carry on.
-    /// Pairing from the demo leaves it.
     func paired(_ mac: PairedMac) {
         let id = mac.endpoint.macID
         if model.isDemo {
@@ -221,12 +198,9 @@ final class AppRoot {
             macs.append(.live(mac))
         }
         macs.last?.link?.setForeground(true)
-        // The record this one replaces under another id: the same Mac, which had moved on from the id it was paired under.
         for stale in macs where stale.macID != id && stale.tools.answersAs == id { forget(stale.macID) }
     }
 
-    /// App Review's code: the demo in place of any paired Mac, whose links stop until Leave Demo. Notifications are
-    /// asked for now, while the reviewer is in the app, and the Live Activity starts at once.
     func openDemo() {
         for mac in macs { mac.link?.stop() }
         macs = [.demo()]
@@ -239,7 +213,6 @@ final class AppRoot {
         }
     }
 
-    /// Settings › Leave Demo: back to the paired Macs, or to the welcome.
     func leaveDemo() {
         ReviewDemo.end()
         reviewing = false

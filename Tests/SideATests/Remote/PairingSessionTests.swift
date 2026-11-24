@@ -20,7 +20,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     let code = session.code.code
     let pending = try session.submit(request(code, phone: phone), spki: spki).get()
     let attempt = try #require(session.attempt)
-    // The phone computes the same six digits from what the Mac sent it.
     let macKey = try #require(Secret.base64url(pending.macPublicKey))
     #expect(try PairingTranscript.display(PairingTranscript.comparisonCode(code: code.lowercased(), nonce: pending.nonce, macPublicKey: pending.macPublicKey,
                                                                             devicePublicKey: phone.publicKey.rawRepresentation.base64URL,
@@ -31,7 +30,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     await settle()
     session.decide(.pair)
     #expect(await decision == .pair)
-    // The sheet says Paired only once the phone has its token.
     #expect(session.phase == .pairing(attempt))
     session.decide(.mismatch)
     #expect(session.phase == .pairing(attempt))
@@ -45,7 +43,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
                                        deviceID: attempt.request.deviceID)
     #expect(approved.id == pending.attemptID && key == phoneSide)
     #expect(session.takeApproved(pending.attemptID) == nil)
-    // Single use.
     #expect(throws: PairingSession.Refusal.expired) { try session.submit(request(code), spki: spki).get() }
 }
 
@@ -66,7 +63,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     pending = try session.submit(request(session.code.code), spki: spki).get()
     session.tick(now: Date().addingTimeInterval(PairingSession.confirmTime + 1))
     #expect(session.phase == .stopped(.timeout) && session.knows(pending.attemptID))
-    // A stopped sheet's later ticks change nothing.
     session.tick(now: Date().addingTimeInterval(10_000))
     #expect(session.phase == .stopped(.timeout))
 }
@@ -121,7 +117,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     #expect(session.renewed == 6 && codes.count == 7 && session.phase == .code)
     session.tick(now: now.addingTimeInterval(301))
     #expect(session.phase == .stopped(.expired))
-    // Start Again keeps renewing.
     session.restart()
     #expect(session.renewing && session.renewed == 0 && session.phase == .code)
 }
@@ -129,7 +124,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
 @MainActor @Test func thePhonesCancelOrAVanishedWaitPutsANewCodeUp() async throws {
     let session = PairingSession()
     defer { session.end() }
-    // Long enough that a loaded machine still polls again within it.
     session.dropGrace = .milliseconds(600)
     let first = session.code.code
     let pending = try session.submit(request(first), spki: spki).get()
@@ -142,7 +136,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     #expect(session.phase == .code && session.code.code != first)
     #expect(throws: PairingSession.Refusal.wrong) { try session.submit(request(first), spki: spki).get() }
 
-    // A dropped connection that polls again in time keeps the attempt.
     let second = try session.submit(request(session.code.code), spki: spki).get()
     async let dropped = session.wait(second.attemptID, connection: 2)
     await settle()
@@ -151,7 +144,6 @@ private func request(_ code: String, saw key: Data = spki, phone: Curve25519.Key
     async let again = session.wait(second.attemptID, connection: 3)
     await settle()
     #expect(session.attempt?.id == second.attemptID)
-    // One that doesn't loses it.
     session.dropped(connection: 3)
     #expect(await again == .cancel)
     await eventually { session.attempt == nil }

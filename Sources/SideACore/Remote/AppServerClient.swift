@@ -1,6 +1,21 @@
 import Foundation
-import Network
 
+public enum AppServerFailure: Error, Equatable, LocalizedError {
+    case noSocket, refused, closed, timedOut
+    case rpc(CodexAppServer.RPCError)
+    public var errorDescription: String? {
+        switch self {
+        case .noSocket: "Codex's app server isn't running."
+        case .refused: "Codex's app server refused the connection."
+        case .closed: "The connection to Codex's app server closed."
+        case .timedOut: "Codex's app server didn't answer."
+        case .rpc(let error): error.message
+        }
+    }
+}
+
+#if canImport(Network)
+import Network
 /// One connection to a Codex app-server daemon: a WebSocket over its Unix socket (URLSession can't reach a socket
 /// file, and Network.framework's WebSocket can't either), `initialize` with the experimental API, then calls and the
 /// daemon's own requests and notifications. A closed connection stays closed; `CodexTerminals` makes a new client.
@@ -11,19 +26,7 @@ public final class AppServerClient: @unchecked Sendable {
         case closed
     }
 
-    public enum Failure: Error, Equatable, LocalizedError {
-        case noSocket, refused, closed, timedOut
-        case rpc(CodexAppServer.RPCError)
-        public var errorDescription: String? {
-            switch self {
-            case .noSocket: "Codex's app server isn't running."
-            case .refused: "Codex's app server refused the connection."
-            case .closed: "The connection to Codex's app server closed."
-            case .timedOut: "Codex's app server didn't answer."
-            case .rpc(let error): error.message
-            }
-        }
-    }
+    public typealias Failure = AppServerFailure
 
     public let socket: String
     private let queue = DispatchQueue(label: "com.arnenoori.sidea.codex-app-server")
@@ -79,7 +82,6 @@ public final class AppServerClient: @unchecked Sendable {
         }
     }
 
-    /// Answers a request from the daemon.
     public func respond(_ id: CodexAppServer.JSON, _ result: CodexAppServer.JSON) {
         queue.async { [self] in if open, !ended { send(.text, CodexAppServer.response(id: id, result: result)) } }
     }
@@ -174,3 +176,7 @@ public final class AppServerClient: @unchecked Sendable {
         }
     }
 }
+#else
+/// Where Network.framework is missing (Linux), the Codex app-server client is not ported yet; only its failure type is.
+public enum AppServerClient { public typealias Failure = AppServerFailure }
+#endif

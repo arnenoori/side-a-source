@@ -2,7 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// Open Terminal, for a session the Mac hosts and serves a terminal for; nothing otherwise.
 struct TerminalButton: View {
     let session: RemoteSession?
     var title = "Terminal"
@@ -16,7 +15,6 @@ struct TerminalButton: View {
     }
 }
 
-/// Show on Mac: the hosted session's terminal tab comes forward on the Mac, or one opens there.
 struct ShowOnMacButton: View {
     let name: String?
     @Environment(AppModel.self) private var model
@@ -32,7 +30,6 @@ struct ShowOnMacButton: View {
     }
 }
 
-/// Continue on iPhone, where the Mac offers it for this session.
 struct ContinueButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -46,7 +43,6 @@ struct ContinueButton: View {
     }
 }
 
-/// Restart Fresh…, where the Mac can draft a handoff.
 struct RestartButton: View {
     let session: RemoteSession?
     var title = "Restart Fresh…"
@@ -63,24 +59,23 @@ struct RestartButton: View {
     }
 }
 
-/// Quit Session: asked first only when the session is at work (`SessionActions.quitAsks`); headless sessions are the Mac's own and stay.
 struct QuitButton: View {
     let session: RemoteSession?
     var title: String?
+    var undoable = false
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
 
     var body: some View {
         if let session, !session.headless, model.tools.can(.quit) {
             Button(title ?? (SessionActions.quitAsks(session) ? "Quit Session…" : "Quit Session"), systemImage: "xmark.circle", role: .destructive) {
-                actions.on(model).requestQuit(session)
+                actions.on(model).requestQuit(session, undoable: undoable)
             }
                 .disabled(actions.isBusy(session.id))
         }
     }
 }
 
-/// Preview :port and Stop Server on :port…, for each port the session listens on.
 struct PortButtons: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -100,7 +95,6 @@ struct PortButtons: View {
     }
 }
 
-/// Quit Idle…, when any session has sat idle for half an hour.
 struct QuitIdleButton: View {
     var title = "Quit Idle Sessions…"
     @Environment(AppModel.self) private var model
@@ -115,7 +109,6 @@ struct QuitIdleButton: View {
     }
 }
 
-/// Fork: a new hosted session from where this one is now.
 struct ForkButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -129,8 +122,6 @@ struct ForkButton: View {
     }
 }
 
-/// Fork from Here, for a message's long-press menu. The Mac forks only from the latest state, so this
-/// shows on the session's last message alone and nowhere else.
 struct ForkFromHereButton: View {
     let sessionID: SessionKey
     let message: TranscriptMessage
@@ -146,7 +137,6 @@ struct ForkFromHereButton: View {
     }
 }
 
-/// Reply…, for a session that finished its turn and takes a follow-up.
 struct ReplyButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -159,7 +149,6 @@ struct ReplyButton: View {
     }
 }
 
-/// Pin or Unpin the conversation in History; Side A keeps it.
 struct PinButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -174,7 +163,6 @@ struct PinButton: View {
     }
 }
 
-/// Rename…: Side A's own title for the conversation.
 struct RenameButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -190,7 +178,6 @@ struct RenameButton: View {
     }
 }
 
-/// Review Changes, where the session takes it (Codex `review/start`, idle).
 struct ReviewButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model
@@ -204,7 +191,6 @@ struct ReviewButton: View {
     }
 }
 
-/// Compact, where the session takes it (idle).
 struct CompactButton: View {
     let session: RemoteSession?
     @Environment(AppModel.self) private var model

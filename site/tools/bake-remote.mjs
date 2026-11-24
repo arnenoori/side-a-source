@@ -9,7 +9,6 @@ const write = (image, name) => Promise.all([
   image.clone().avif({ quality: 60, effort: 6 }).toFile(new URL(`${name}.avif`, out).pathname),
   image.clone().webp({ quality: 86, effort: 6 }).toFile(new URL(`${name}.webp`, out).pathname),
 ]);
-// 2x of the largest phone on the page (300 CSS px); every screen shares the iPhone's 1206x2622 shape.
 for (const arg of process.argv.slice(2)) {
   const [name, file] = arg.split('=');
   if (!/^[a-z]+$/.test(name) || !file) throw new Error(`Expected name=file.png, got ${arg}`);
@@ -18,5 +17,4 @@ for (const arg of process.argv.slice(2)) {
   await write(sharp(file).resize({ width: 600 }), name);
   console.log(`${name} <- ${file}`);
 }
-// The Mac icon's artwork, cropped from its transparent margin, at 2x of 64 px.
 await write(sharp(new URL('../../design/icon.png', import.meta.url).pathname).trim().resize({ width: 128 }), 'icon');

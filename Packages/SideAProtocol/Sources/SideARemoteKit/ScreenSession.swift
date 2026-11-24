@@ -27,14 +27,23 @@ public actor ScreenSession {
     }
 
     public func open(_ mode: ScreenMode, hello: ScreenHello) async throws {
+        // Face ID and the connection are awaited, and this actor lets another call in meanwhile: the newest open wins and an
+        // older one that wakes up later drops out, or it would leave a socket the Mac has already replaced as the phone's own.
         close()
-        guard let header = await confirm?(mode) else { throw Unsigned() }
-        let socket = try await client.socket("/v1/ws/screen/\(mode.rawValue)", confirm: header)
-        self.socket = socket
-        connection += 1
         let current = connection
-        try await send(.hello(hello), on: socket)
+        guard let header = await confirm?(mode) else { throw Unsigned() }
+        guard connection == current else { return }
+        let socket = try await client.socket("/v1/ws/screen/\(mode.rawValue)", confirm: header)
+        guard connection == current else { return socket.close(code: 1000, reason: nil) }
+        // Read first: a Mac that refuses (Screen off, no permission) says why and closes the moment the socket opens, which can
+        // be before the hello goes out. Failing here would send the phone round its retry loop instead of showing the reason.
         reader = Task { await self.read(socket, current) }
+        do { try await send(.hello(hello), on: socket) } catch {
+            KitLog.log(.transport, "screen hello not sent: \(error)")
+        }
+        // Published after the hello: a goodbye or a feedback report sent first would be the Mac's "hello first" and end it.
+        guard connection == current else { return socket.close(code: 1000, reason: nil) }
+        self.socket = socket
     }
 
     /// Dropped while no socket is open: the phone's input never waits to land later on a Mac that moved on.
@@ -46,10 +55,17 @@ public actor ScreenSession {
     }
 
     public func close() {
+        connection += 1
         reader?.cancel()
         reader = nil
         socket?.close(code: 1000, reason: nil)
         socket = nil
+    }
+
+    /// No one will read this session again: its events end, so whoever waits on them can let go.
+    public func finish() {
+        close()
+        continuation.finish()
     }
 
     /// Says goodbye first, so the Mac stops capturing at once rather than when the socket times out.

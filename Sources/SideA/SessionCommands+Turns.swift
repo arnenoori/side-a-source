@@ -1,8 +1,6 @@
 import Foundation
 import SideAProtocol
 
-/// What a turn changed, and compact and review, by agent. Codex sessions on its app server are here; Claude's are in
-/// SessionCommands+ClaudeTurns.swift.
 extension SessionCommands {
     func turnDiff(_ id: String, turn: String) async throws(Failure) -> TurnDiff {
         guard let target = Target(id, store: store), let live = target.live else { throw .noSession }
@@ -37,7 +35,6 @@ extension SessionCommands {
         }
     }
 
-    /// A 409 that says why, for what an agent can't do.
     static func cannot(_ message: String) -> Failure {
         Failure(status: 409, code: .cannotDeliver, message: message, details: ["hint": "unsupported"])
     }

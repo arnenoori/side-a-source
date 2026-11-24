@@ -5,7 +5,6 @@ struct DependencyReport: Sendable {
     var python = Dependency(name: "Python 3.9+")
     var claude = Dependency(name: "Claude Code")
     var codex = Dependency(name: "Codex CLI")
-    /// Optional: hosted sessions need it, nothing else does. The app ships its own (Contents/Helpers/tmux).
     var tmux = Dependency(name: "tmux")
     func agent(_ provider: AgentProvider) -> Dependency { provider == .claude ? claude : codex }
     func ready(for provider: AgentProvider) -> Bool { python.state == .ready && agent(provider).state == .ready }
@@ -51,7 +50,6 @@ enum DependencyCheck {
         }
         return fallback ?? Dependency(name: name, state: found ? .incompatible : .missing)
     }
-    /// Apple's installer for the Command Line Tools, which include Python 3.9 or later.
     static func installCommandLineTools() {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcode-select")

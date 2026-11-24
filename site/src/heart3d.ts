@@ -17,7 +17,6 @@ function studio(renderer: THREE.WebGLRenderer) {
     scene.add(mesh);
     return mesh;
   };
-  // Broad, soft, red-tinted lights: the reference's lacquer shows red streaks and a soft sheen, not white windows.
   panel(9, 4, 3.2, [-4.5, 5.5, 7], 0xff5048).rotateZ(-0.5);
   panel(4.4, 3.4, 6.5, [3.8, 3.6, 7.5], 0xff3a30);
   panel(1.2, 9, 11, [7, 0.5, -3.5], 0xff3028);
@@ -74,7 +73,6 @@ export function createHeartStage(canvas: HTMLCanvasElement) {
   };
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.y = -height / 2;
-  // Pointer hits test a coarse twin: the rendered mesh has up to 110k triangles, the twin 2k.
   const coarse = heartGeometry(12);
   const proxy = new THREE.Mesh(coarse.geometry, material);
   proxy.position.y = -coarse.height / 2;
@@ -214,7 +212,6 @@ export async function playHeart(source: HTMLElement) {
         setSpin(spin, wx, wy, 0);
         throwFling(fling, vx, vy);
       }
-      // The press was the heart's, so the click that follows must not reach the page under it.
       addEventListener('click', swallowClick, { capture: true, once: true });
       setTimeout(() => removeEventListener('click', swallowClick, true), 0);
     }
@@ -251,7 +248,6 @@ export async function playHeart(source: HTMLElement) {
     const dx = pointerX - lastX, dy = pointerY - lastY, d = Math.hypot(dx, dy);
     const dt = Math.max(1, e.timeStamp - lastAt) / 1000;
     if (grabbed && d > 0) {
-      // A trackball: the point under the pointer follows it over a sphere the heart's size.
       const radius = Math.max(24, heartPx / 2);
       rotateBy(spin.q, dy, dx, 0, d / radius);
       const a = 1 - Math.exp(-dt / 0.05);
@@ -308,11 +304,9 @@ export async function playHeart(source: HTMLElement) {
         view.phone = unit; view.width = width; view.height = height;
         heartTip(l, flight, view, tip);
         heartPx = l.width * unit;
-        // Held, it bobs, and only upward, so its tip never dips behind the bubble.
         const bob = 0.5 * (1 - Math.cos(story.real * 2.4)) * Math.min(8, 0.03 * heartPx) * (1 - story.rate);
         heartX = tip.x; heartY = tip.y - bob;
         stage.heart.visible = l.visible;
-        // Once played with it can be swung and thrown anywhere, so it is no longer cut off at the bubble's top.
         stage.cutBelow(played && l.sink === 0 ? Infinity : cut);
         stage.place(heartX, heartY, heartPx, boing.x);
         stage.pose(spin.q, l.pitch, l.yaw, l.roll);

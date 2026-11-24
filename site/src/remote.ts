@@ -1,6 +1,5 @@
 import './remote.css';
 
-// The phone's screens stack and cross-fade, so a tab never shows an empty frame while the next one decodes.
 export function mountRemote(section: HTMLElement) {
   const panel = section.querySelector<HTMLElement>('.phone-screen')!;
   const screens = [...panel.querySelectorAll<HTMLElement>('[data-screen]')];

@@ -4,15 +4,12 @@ import SideARemoteShared
 import SwiftUI
 import UIKit
 
-/// Session images for the tiles and the viewer: memory first, then the App Group's disk cache, then
-/// the Mac. One fetch per id at a time, however many views ask.
 @MainActor
 final class ImageStore {
     nonisolated deinit {}
 
     typealias Fetch = @Sendable (_ id: String, _ thumbnail: Bool) async throws -> Data
 
-    /// Nil in the demo, which draws its images instead.
     var fetch: Fetch?
     private let isDemo: Bool
     private let disk: ImageCache
@@ -22,7 +19,6 @@ final class ImageStore {
     init(isDemo: Bool, disk: ImageCache = .shared) {
         self.isDemo = isDemo; self.disk = disk
         memory.totalCostLimit = 96 * 1024 * 1024
-        // Every Mac's model and the demo share the folder: one scan a launch is enough.
         if Self.trimmed.insert(disk.folder).inserted {
             Task.detached(priority: .background) { disk.trim() }
         }
@@ -30,7 +26,6 @@ final class ImageStore {
 
     private static var trimmed: Set<URL> = []
 
-    /// Already decoded, for the first frame of a view.
     func cached(_ ref: ImageRef, thumbnail: Bool) -> UIImage? {
         if isDemo { return DemoImages.image(for: ref) }
         return memory.object(forKey: key(ref.id, thumbnail))
@@ -56,7 +51,6 @@ final class ImageStore {
         return image
     }
 
-    /// The original bytes, for Share and Save to keep the file's own format.
     func data(_ ref: ImageRef) async -> Data? {
         if isDemo { return DemoImages.image(for: ref)?.pngData() }
         let id = ref.id
@@ -66,7 +60,6 @@ final class ImageStore {
         return fresh
     }
 
-    /// Bytes fetched some other way, kept under their SHA-1 as the Mac's images are, so the viewer can show them.
     func keep(_ data: Data, mime: String, name: String) async -> ImageRef? {
         guard let image = await Self.decode(data) else { return nil }
         let id = Insecure.SHA1.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -83,7 +76,6 @@ final class ImageStore {
     }
 }
 
-/// An image from the session, the thumbnail or the original; a quiet glyph until it arrives.
 struct SessionImage: View {
     let ref: ImageRef
     var thumbnail = true

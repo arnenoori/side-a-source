@@ -1,9 +1,6 @@
 import Foundation
 import SideACore
 
-/// The files of a session's folder, for `@` mentions from the phone. Git lists them where it can, so ignored files
-/// stay out; elsewhere the folder is walked, past hidden folders and the usual build output. A listing is kept for
-/// half a minute, since each letter typed asks again.
 actor FileMentions {
     static let shared = FileMentions()
     static let most = 50_000
@@ -39,7 +36,6 @@ actor FileMentions {
         return found.filter { FileReads.listable($0, root: root, home: home) }
     }
 
-    /// Tracked and untracked files git doesn't ignore, at most `most`; nil when git can't list the folder.
     static func gitListed(_ folder: String, timeout: TimeInterval) async -> [String]? {
         // -z: names as they are, NUL between them, so one with a newline or a quote is still one name.
         let git = await ProcessRunner.run("/usr/bin/git", ["-C", folder, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], timeout: timeout)
@@ -78,7 +74,6 @@ enum FileReads {
         case refused(Refusal)
     }
 
-    /// `path` as the agent wrote it: relative to the folder, absolute, or under `~`.
     static func read(_ path: String, in folder: String) async -> Result<Data, Failure> {
         let expanded = (path as NSString).expandingTildeInPath
         let asked = expanded.hasPrefix("/") ? expanded : (folder as NSString).appendingPathComponent(expanded)
@@ -145,8 +140,6 @@ enum FileReads {
         return path(of: fd)
     }
 
-    /// Tools' sign-in folders: refused by name anywhere in a path (`secretFolders`), and directly under home whatever
-    /// the folder (`personalFolders`).
     static let signInFolders = [".ssh", ".aws", ".gnupg", ".docker", ".kube", ".codex"]
     static let secretFolders = Set(signInFolders + [".git", ".azure", ".gcloud", ".terraform"])
     static let secretNames: Set<String> = [
@@ -159,7 +152,6 @@ enum FileReads {
     ]
     static let secretPrefixes = ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".env", "credentials.", ".credentials", "service-account", "secrets."]
 
-    /// A path under `root` the route would serve by name. Every part counts: a tracked `.aws/config` has an innocent last name.
     static func listable(_ path: String, root: String, home: String?) -> Bool {
         !secret(path.split(separator: "/").map(String.init)) && !personal(root + "/" + path, home: home)
     }

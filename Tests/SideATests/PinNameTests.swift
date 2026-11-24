@@ -2,7 +2,6 @@ import Foundation
 @testable import SideA
 import Testing
 
-/// Open Terminal exports SIDE_A_PIN, and the shell line finds the account by the file the bridge's pin_name wrote.
 @Test @MainActor func aTerminalsPinNamesTheFileTheBridgeWrote() throws {
     let names = ["Work", "My Account!", "Straße", "Rene\u{301}", "Ren\u{E9}", "ﬁnance", "İstanbul", "日本", "  --a--b  ", "Ω team", "K\u{212A}"]
     let process = Process()

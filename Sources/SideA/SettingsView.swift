@@ -6,7 +6,6 @@ import SwiftUI
 /// In tab order; ⌘1–⌘7 follow it.
 enum SettingsTab: String, CaseIterable { case accounts, autopilot, usage, notifications, remote, setup, general }
 
-/// The one place to manage accounts and preferences; the menu bar and player link here.
 struct SettingsView: View {
     @Bindable var store: AccountStore
     @ObservedObject var updates: Updates
@@ -186,7 +185,6 @@ struct AddAccountSheet: View {
             }
             .formStyle(.grouped)
             .scrollDisabled(true)
-            // Accounts shows errors behind this sheet, where they can't be seen while it's open.
             if let error = store.error {
                 Text(error).font(.caption).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20)
             }
@@ -244,7 +242,6 @@ struct AccountSettingsRow: View {
                     Button("Renew") { Task { await store.wake(account.id) } }
                         .help("Has Claude Code renew this login; no model runs and no quota is used")
                 case .inUse:
-                    // Which login new commands use; every signed-in account is healthy.
                     Text("In use").font(.caption.weight(.medium)).foregroundStyle(.green)
                         .padding(.horizontal, 8).padding(.vertical, 3)
                         .background(.green.opacity(0.12), in: .capsule)
@@ -326,7 +323,6 @@ struct UsageSettings: View {
                     HStack(spacing: 10) {
                         let days = Dictionary(report.days.map { ($0.date ?? "", $0.total) }, uniquingKeysWith: +)
                         let sum = { (range: ClosedRange<Int>) in range.reduce(0) { $0 + (days[MenuPlayer.day(-$1)] ?? 0) } }
-                        // Early in the day, compare with what is usually used by this hour, not a whole day.
                         StatTile(title: "Today", value: sum(0...0), baseline: Double(sum(1...29)) / 29 * Self.shareOfDayByNow(report.activity),
                                  comparison: "usual by \(Date().formatted(.dateTime.hour()))")
                         StatTile(title: "7 days", value: sum(0...6), baseline: Double(sum(7...13)), comparison: "the week before")
@@ -355,7 +351,6 @@ struct UsageSettings: View {
                 let rows = report.dayModels ?? []
                 Section {
                     DisclosureGroup("Projects") { shares(report.projects.prefix(6).map { (URL(fileURLWithPath: $0.project ?? "").lastPathComponent, $0.total) }) }
-                    // Per agent, so a smaller Codex share is not crowded out by Claude.
                     ForEach(AgentProvider.allCases) { provider in
                         let models = report.models.filter { ModelName.provider($0.model) == provider }
                         if !models.isEmpty {
@@ -430,7 +425,6 @@ struct UsageSettings: View {
     }
 }
 
-/// Weekly use against how much of the week has passed, with what that pace means.
 struct PaceRow: View {
     let account: Account
     let usage: AccountUsage
@@ -450,7 +444,6 @@ struct PaceRow: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary)
                     Capsule().fill(used >= Planner.limited ? Color.red : .accentColor).frame(width: proxy.size.width * used / 100)
-                    // Where usage would be by now if this week follows your usual rhythm.
                     Rectangle().fill(.primary.opacity(0.55)).frame(width: 1.5, height: 10).offset(x: proxy.size.width * (forecast?.expectedNow ?? 0) - 0.75)
                 }
             }.frame(height: 6)
@@ -469,7 +462,6 @@ struct PaceRow: View {
     }
 }
 
-/// Plain-words limit summaries shared by the Usage and Accounts tabs.
 enum LimitText {
     /// "Fable" for "Weekly Fable".
     static func name(_ window: UsageWindow) -> String {
@@ -512,7 +504,6 @@ struct StatTile: View {
     }
 }
 
-/// Responses per hour of the day over the report period, as a heat strip.
 struct HourStrip: View {
     let activity: [ActivitySpan]
     var body: some View {
@@ -607,7 +598,6 @@ struct AutopilotSettings: View {
                 Toggle("Continue sessions once a limit lifts",
                        isOn: Binding(get: { store.config.continueStopped != false }, set: { store.setContinueStopped($0) }))
                     .task { await store.remote.inbox.refresh() }
-                // Without its hook, a Claude session in a plain terminal tab can't be sent anything.
                 if store.config.continueStopped != false, store.island.installed[.claude] == true, !store.remote.inbox.installed {
                     LabeledContent("Messages to Claude in a terminal") {
                         Button("Turn On") { Task { await store.remote.inbox.set(true) } }
@@ -647,7 +637,6 @@ struct AutopilotSettings: View {
     }
 }
 
-/// What is left across the pool, what it last did, and a check of every login that spends no quota.
 struct PoolHealthRows: View {
     @Bindable var store: AccountStore
 
@@ -702,7 +691,6 @@ struct PoolHealthRows: View {
     }
 }
 
-/// Claude accounts ranked the way Autopilot ranks them, with the score that decides.
 struct UpNext: View {
     @Bindable var store: AccountStore
     var body: some View {
@@ -731,7 +719,6 @@ struct UpNext: View {
     }
 }
 
-/// The learned working day on a 24-hour strip: activity, working hours, warm-up start and now.
 struct DayTimeline: View {
     @Bindable var store: AccountStore
     var body: some View {
@@ -837,7 +824,6 @@ struct GeneralSettings: View {
     }
 }
 
-/// Everything that can interrupt you: the notch, banners and sounds.
 struct NotificationSettings: View {
     @Bindable var store: AccountStore
     @AppStorage(Sounds.enabledKey) private var sounds: Bool = PreferencesMirror.fallback(Sounds.enabledKey)

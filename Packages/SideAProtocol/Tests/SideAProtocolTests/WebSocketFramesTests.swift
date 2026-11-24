@@ -4,7 +4,6 @@ import Testing
 
 typealias Frames = WebSocketFrames
 
-/// Any frame, legal or not; `mask` nil sends it unmasked.
 private func raw(_ opcode: UInt8, _ payload: Data, fin: Bool = true, mask: [UInt8]? = nil, rsv: UInt8 = 0) -> Data {
     var out = Data([(fin ? 0x80 : 0) | rsv | opcode])
     let bit: UInt8 = mask == nil ? 0 : 0x80
@@ -18,7 +17,6 @@ private func raw(_ opcode: UInt8, _ payload: Data, fin: Bool = true, mask: [UInt
     return out + mask + payload.enumerated().map { $0.element ^ mask[$0.offset & 3] }
 }
 
-/// What a decoder for `role` sends back for a peer's frame.
 private func peer(_ role: Frames.Role) -> Frames.Role { role == .server ? .client : .server }
 private func peerMask(_ role: Frames.Role) -> [UInt8]? { role == .server ? [0x37, 0xFA, 0x21, 0x3D] : nil }
 
@@ -63,7 +61,6 @@ func refusesTheWrongMasking(role: Frames.Role) {
     let wrong: [UInt8]? = role == .server ? nil : [1, 2, 3, 4]
     for strict in [true, false] {
         #expect(violation(role, strict: strict, raw(1, Data("hi".utf8), mask: wrong)) == .masking)
-        // Decided from the first two bytes.
         #expect(violation(role, strict: strict, raw(1, Data("hi".utf8), mask: wrong).prefix(2)) == .masking)
     }
 }
@@ -97,12 +94,11 @@ func refusesOrphanAndInterleavedFragments(role: Frames.Role, strict: Bool) {
     #expect(violation(role, strict: strict, raw(0, Data("x".utf8), mask: mask)) == .orphanContinuation)
     var frames = Frames(role: role, maxMessage: 1 << 20, strict: strict)
     frames.append(raw(1, Data("a".utf8), fin: false, mask: mask) + raw(2, Data("b".utf8), mask: mask) + raw(1, Data("c".utf8), mask: mask))
-    // A violation drops what was buffered behind it.
     #expect(drain(&frames) == [.failure(.interleaved)])
 }
 
 @Test func oversizeIsRefusedFromTheHeader() {
-    let header = Data([0x82, 0x80 | 127, 0, 0, 0, 0, 0, 0x10, 0, 1])
+    let header = Data([0x82, 0x80 | 127, 0, 0, 0, 0, 0, 0x10, 0, 1] as [UInt8])
     for strict in [true, false] { #expect(violation(.server, strict: strict, header) == .tooLarge) }
     #expect(violation(.client, strict: false, Data([0x82, 127, 0, 0, 0, 0, 0, 0x10, 0, 1])) == .tooLarge)
     #expect(violation(.client, strict: false, Data([0x82, 127, 0x80, 0, 0, 0, 0, 0, 0, 1])) == .malformedLength)
@@ -149,7 +145,6 @@ func refusesOrphanAndInterleavedFragments(role: Frames.Role, strict: Bool) {
     #expect(Frames.closePayload(4401, "", maxReason: 123) == Data([0x11, 0x31]))
     #expect(Frames.closePayload(1000, String(repeating: "é", count: 100), maxReason: 120).count == 122)
     #expect(Frames.frame(.close, Frames.closePayload(1000, "", maxReason: 123), from: .server) == Data([0x88, 2, 0x03, 0xE8]))
-    // Client masks differ frame to frame.
     let masks = Set((0..<8).map { _ in Frames.frame(.ping, Data(), from: .client).suffix(4) })
     #expect(masks.count > 1)
 }

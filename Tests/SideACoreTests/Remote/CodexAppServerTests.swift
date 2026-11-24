@@ -64,7 +64,6 @@ private typealias JSON = CodexAppServer.JSON
     var parser = CodexAppServer.Frames.Parser()
     let long = Data(repeating: 0x61, count: 70_000)
     let medium = Data(repeating: 0x62, count: 300)
-    // A text frame split across a continuation, fed one byte at a time, then a 16-bit and a 64-bit length.
     var first = CodexAppServer.Frames.frame(.text, Data("{\"id\":".utf8), mask: mask); first[0] &= 0x7F
     var second = CodexAppServer.Frames.frame(.continuation, Data("1}".utf8), mask: mask); second[0] = 0x80
     var out: [(WebSocketCodec.Opcode, Data)] = []
@@ -186,7 +185,6 @@ private func json(_ text: String) throws -> JSON { try JSONDecoder().decode(JSON
                                                                          lines: [" ten", "+eleven", "\\ No newline at end of file"]))
     #expect((files[0].additions, files[0].deletions, files[1].deletions) == (2, 1, 1))
     #expect(files[2].oldPath == "old name.txt" && files[2].hunks.isEmpty)
-    // Past the cap: counted in full, kept in part.
     let long = "diff --git a/big b/big\n--- a/big\n+++ b/big\n@@ -0,0 +1,2001 @@\n" + (1...2_001).map { "+\($0)" }.joined(separator: "\n")
     let big = try #require(CodexAppServer.fileDiffs(long).first)
     #expect(big.additions == 2_001 && big.truncated && big.hunks.first?.lines.count == 2_000)

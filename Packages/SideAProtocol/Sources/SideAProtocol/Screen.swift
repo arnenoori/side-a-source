@@ -49,7 +49,7 @@ public struct ScreenLimits: Codable, Hashable, Sendable {
     }
 
     public static let direct = ScreenLimits(fps: 30, longEdge: 1600, bitrate: 8_000_000, floor: 400_000)
-    /// One relay socket per Mac carries every phone, under a daily budget per install (protocol.md, Screen budget).
+    /// One relay socket per Mac carries every phone, under a daily budget per install.
     public static let relay = ScreenLimits(fps: 15, longEdge: 1280, bitrate: 1_500_000, floor: 150_000)
 
     public static func on(_ route: ScreenRoute) -> ScreenLimits { route == .relay ? .relay : .direct }

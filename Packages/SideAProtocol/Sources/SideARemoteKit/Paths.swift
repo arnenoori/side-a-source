@@ -38,8 +38,7 @@ public actor Paths {
         public var promoteAfter = 2
         /// After a race finds nothing, no new race for 1 s, doubling to this; a network change or the foreground ends the wait.
         public var quietCap: TimeInterval = 30
-        /// A relay that doesn't answer sits out races for 5 s, doubling to this. Short: for a Mac with no address this
-        /// phone can reach, the relay is the only way in, and a minute is as long as "offline" may outlast it.
+        /// A relay that doesn't answer sits out races for 5 s, doubling to this.
         public var relayQuietCap: TimeInterval = 60
         /// After a network change, how long a relay that doesn't answer is asked once more instead of sitting out: its
         /// socket may still be on the interface that went, as when Wi-Fi hands over to cellular.
@@ -115,8 +114,6 @@ public actor Paths {
         if monitorNetwork { Task { await self.watchNetwork() } }
     }
 
-    // MARK: Shared
-
     private static let lock = NSLock()
     nonisolated(unsafe) private static var shared: [String: Paths] = [:]
 
@@ -167,9 +164,6 @@ public actor Paths {
         return "Bearer d1.\(relay.installID).\(device).\(secret.base64URL)"
     }
 
-
-    // MARK: Choosing
-
     /// The path to use now, racing for one when there is none.
     public func path() async -> Path? {
         guard !stopped else { return nil }
@@ -191,7 +185,6 @@ public actor Paths {
     @discardableResult public func choose() async -> Path? {
         guard !stopped else { return nil }
         if let race { return await race.value }
-        // The Mac didn't answer a moment ago: fail now rather than wait out the same timeouts again.
         if let quietUntil, quietUntil > .now { return nil }
         let task = Task { await self.run(self.candidates) }
         race = task
@@ -235,8 +228,7 @@ public actor Paths {
         await choose()
     }
 
-    /// Test Connection: the path in use, or a fresh race with the relay back in, whatever the backoff says. A test opened
-    /// because the Mac dropped would otherwise find the race resting and report it unreachable without trying.
+    /// Test Connection: the path in use, or a fresh race with the relay back in, whatever the backoff says.
     public func retest() async -> Path? {
         guard !stopped else { return nil }
         // A race already running may have left the relay out; let it finish, then race with everything.
@@ -255,7 +247,6 @@ public actor Paths {
             return await choose()
         }
         KitLog.log(.transport, "path \(path) lost a connection, racing again")
-        // What's kept on it went the same way; a request on one would wait out its timeout.
         if path.isRelay { relayTransport?.reset() } else { direct.reset() }
         current = nil
         return await choose()
@@ -307,7 +298,6 @@ public actor Paths {
 
     private enum Outcome: @unchecked Sendable { case answered(Path, Error?), patience }
 
-    /// A relay that didn't answer rests, longer each time, so a relay that isn't there costs no connect per race.
     private func relayAnswered(_ answered: Bool) {
         if answered {
             relayMisses = 0
@@ -320,8 +310,6 @@ public actor Paths {
         }
     }
 
-    /// Every candidate at once. The first direct address to answer wins at once, the others' probes cancelled; the relay
-    /// waits `preferDirect` for a direct answer before it wins.
     private func run(_ candidates: [Path]) async -> Path? {
         let start = ContinuousClock.now
         let (winner, failures) = await race(candidates)
@@ -336,8 +324,6 @@ public actor Paths {
     private func race(_ candidates: [Path]) async -> (Path?, [Path: Error]) {
         let relay = candidates.contains(.relay) ? await relayTransportReady() : nil
         let timing = timing
-        // No direct address answered last time (Tailscale stopped on the Mac, a LAN left behind): the relay doesn't
-        // wait for them again, unless the network just changed and one may answer now.
         let patience = directMissed && !settling ? 0 : timing.preferDirect
         return await withTaskGroup(of: Outcome.self) { group -> (Path?, [Path: Error]) in
             for candidate in candidates {
@@ -362,7 +348,6 @@ public actor Paths {
             for await outcome in group {
                 switch outcome {
                 case .answered(.direct(let url), nil):
-                    // The losers' connections are cancelled with their tasks, so this returns now.
                     group.cancelAll()
                     return (.direct(url), [:])
                 case .answered(.relay, nil):
@@ -381,7 +366,6 @@ public actor Paths {
                     return (.relay, [:])
                 case .answered(let path, let error?):
                     failures[path] = error
-                    // A relay that is there and says the Mac isn't costs nothing to ask, and says when the Mac comes.
                     let macAway = bridge?.current == .open(mac: false)
                     if path.isRelay, !macAway, Self.relayRests(after: error, settling: settling) { self.relayAnswered(false) }
                 }
@@ -390,7 +374,6 @@ public actor Paths {
         }
     }
 
-    /// Within `Timing.settle` of a network change.
     private var settling: Bool { networkChangedAt.map { Date.now.timeIntervalSince($0) < timing.settle } ?? false }
 
     /// Whether a relay probe's failure sends the relay to sit out races. Not when the probe was cancelled because a direct
@@ -472,8 +455,6 @@ public actor Paths {
         }
     }
 
-    // MARK: Network
-
     private func watchNetwork() {
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
@@ -498,14 +479,10 @@ public actor Paths {
         await networkChanged()
     }
 
-    // MARK: Sessions
-
     nonisolated func transport(_ path: Path) async -> NWTransport? {
         path.isRelay ? await relayTransportReady() : direct
     }
 
-    /// The relay path: the same pinned TLS, dialled to the bridge's loopback port, which hands each connection to the
-    /// tunnel as a stream.
     private func relayTransportReady() async -> NWTransport? {
         // Asked every time: a proxy that stopped listening starts again here, on another port.
         guard let bridge, (try? await bridge.port()) != nil else { return nil }

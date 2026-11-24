@@ -1,3 +1,4 @@
+#if canImport(Network)
 import Foundation
 import Network
 
@@ -48,7 +49,6 @@ public struct PoolGate: Sendable {
     /// The real peer of a connection that reached the listener through a splice, by its loopback port: the one the
     /// splice recorded, never the loopback relay. Nil for a listener clients reach directly.
     public var peer: (@Sendable (UInt16) -> String?)?
-    /// How long a client has to send its whole request.
     public var patience: TimeInterval = PoolProxy.requestTime
 
     public init(key: String, admit: (@Sendable (String) async -> Bool)?, peer: (@Sendable (UInt16) -> String?)? = nil,
@@ -463,3 +463,4 @@ private final class Once: @unchecked Sendable {
         body()
     }
 }
+#endif

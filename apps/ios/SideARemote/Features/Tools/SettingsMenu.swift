@@ -2,16 +2,11 @@ import SideAProtocol
 import SideARemoteKit
 import SwiftUI
 
-/// Model, Effort and Mode in the session's menu, in the Mac chip's order, and Fast mode where the session takes it. Each is
-/// a picker when the session takes that change, else its value and the Mac's reason. A mode that raises asks for Face ID.
-/// The ⋯ menu and the + drawer's settings sheet both show this, so neither has what the other lacks.
 struct SettingsMenu: View {
-    /// Rows of a menu, or of a form where each picker is a row that opens its own menu.
     enum Style { case menu, form }
 
     let session: RemoteSession?
     var style: Style = .menu
-    /// Set where the page can show `ModelEffortSheet`: Model and Effort become one row that opens it.
     var chooseModel: (() -> Void)?
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
@@ -55,7 +50,6 @@ struct SettingsMenu: View {
                     .disabled(busy)
                 }
             } footer: {
-                // A form says once why nothing here changes; a menu says it on each row.
                 if style == .form, !session.takesModelSettings,
                    let reason = session.reason(.settingsModel) {
                     Text(reason)
@@ -97,7 +91,6 @@ struct SettingsMenu: View {
         }
     }
 
-    /// A picker when the session takes the change; else its value, if the Mac read one, with the reason.
     @ViewBuilder
     private func setting(_ title: String, symbol: String, ability: SessionAbility?, value: String?, session: RemoteSession,
                          @ViewBuilder picker: () -> some View) -> some View {
@@ -117,7 +110,6 @@ struct SettingsMenu: View {
         }
     }
 
-    /// The Model row, first in the menu, already gives this reason, so Effort and Mode don't say it again.
     private func modelRowSaysIt(_ reason: String, _ session: RemoteSession) -> Bool {
         !session.abilities.contains(.settingsModel) && session.reason(.settingsModel) == reason
     }
@@ -127,8 +119,6 @@ struct SettingsMenu: View {
     }
 }
 
-/// New Session's model sheet on a running session. Model and effort go as one change, so a model and an effort picked
-/// together reach the Mac together and Face ID, when the Mac asks, is asked once.
 struct LiveModelSheet: View {
     let session: RemoteSession
     let models: [ModelOption]
@@ -165,12 +155,21 @@ struct LiveModelSheet: View {
                          canChangeModel: session.abilities.contains(.settingsModel),
                          canChangeEffort: { session.abilities.contains(.settingsEffort) && $0.canChangeEffortMidSession != false },
                          note: session.reason(.settingsModel) ?? session.reason(.settingsEffort),
-                         other: other, apply: apply)
+                         other: other, mode: mode, apply: apply)
+    }
+
+    /// The modes that lift every check stay in the session's menu, where each asks for Face ID.
+    private var mode: ModelEffortSheet.ModeRow? {
+        guard session.abilities.contains(.settingsMode) else { return nil }
+        let current = model.tools.settings(of: model.sessions.session(session.id) ?? session).mode ?? .default
+        let offered = PermissionMode.offered(session.agent, current: current).filter { !$0.raises || $0 == current || $0 == .auto }
+        return .init(offered: offered, current: current, busy: actions.isBusy("settings-\(session.id)")) { mode in
+            actions.on(model).change(session, SettingsChange(mode: mode), title: mode.title)
+        }
     }
 
     private func apply() {
         if let agent = other?.agent, let otherModelID {
-            // Only a draft: Send is what hands it off, and the Mac hears nothing until then.
             model.handoffs.move(session.id, .picked(HandoffDraft(agent: agent, modelID: otherModelID, effort: otherEffort, accountID: otherAccountID)))
             return
         }
@@ -182,8 +181,28 @@ struct LiveModelSheet: View {
     }
 }
 
+private struct LiveModelSheetPresenter: ViewModifier {
+    @Binding var isPresented: Bool
+    let session: RemoteSession?
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) {
+            if let session {
+                LiveModelSheet(session: session, models: model.tools.models(for: session), settings: model.tools.settings(of: session),
+                               draft: model.handoffs[session.id])
+            }
+        }
+    }
+}
+
+extension View {
+    func liveModelSheet(isPresented: Binding<Bool>, session: RemoteSession?) -> some View {
+        modifier(LiveModelSheetPresenter(isPresented: isPresented, session: session))
+    }
+}
+
 extension PermissionMode {
-    /// The Mac chip's modes and order for each agent, and the session's own if it's another.
     static func offered(_ agent: AgentProvider, current: PermissionMode?) -> [PermissionMode] {
         let modes: [PermissionMode] = agent == .codex ? [.default, .plan] : [.default, .acceptEdits, .plan, .auto, .bypassPermissions]
         guard let current, !modes.contains(current) else { return modes }
@@ -192,12 +211,10 @@ extension PermissionMode {
 }
 
 extension SessionSettings {
-    /// These, with `other`'s fields over them.
     func merging(_ other: SessionSettings) -> SessionSettings {
         SessionSettings(model: other.model ?? model, effort: other.effort ?? effort, mode: other.mode ?? mode, fast: other.fast ?? fast)
     }
 
-    /// The fields `row` doesn't say yet; nil once it says them all.
     func pending(over row: SessionSettings?) -> SessionSettings? {
         let left = SessionSettings(model: model == row?.model ? nil : model, effort: effort == row?.effort ? nil : effort,
                                    mode: mode == row?.mode ? nil : mode, fast: fast == row?.fast ? nil : fast)
@@ -206,16 +223,23 @@ extension SessionSettings {
 }
 
 extension MacTools {
-    /// A session with no model set runs whatever its agent defaults to, which is "Default" here, not a guess at its name.
+    /// The folders used last, newest first; one that was never used sorts after those that were.
+    var recentProjects: [RemoteProject] { Array(projects.sorted { ($0.lastUsedAt ?? 0) > ($1.lastUsedAt ?? 0) }.prefix(5)) }
+
     func modelTitle(of session: RemoteSession) -> String {
         guard let id = settings(of: session).model else { return "Default" }
         return models(for: session).first { $0.id == id || $0.title == id }?.title ?? ModelName.short(id)
     }
 }
 
-/// As the Mac names a model id it has no title for.
 enum ModelName {
-    /// "claude-opus-5-5-20260101" reads as "Opus 5.5", "gpt-6.1-sol" as "GPT-6.1 Sol".
+    static func brief(_ name: String) -> String {
+        let plain = name.split(whereSeparator: { "[(".contains($0) }).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? name
+        let named = plain.contains("-") && plain == plain.lowercased() ? short(plain) : plain
+        let title = named.hasPrefix("Claude ") ? String(named.dropFirst(7)) : named
+        return title.hasPrefix("GPT") ? title : String(title.split(separator: " ").first ?? Substring(title))
+    }
+
     static func short(_ id: String) -> String {
         if id.hasPrefix("gpt-") {
             let parts = id.dropFirst(4).split(separator: "-").map(String.init)

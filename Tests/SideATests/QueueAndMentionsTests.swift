@@ -12,7 +12,6 @@ import Testing
     return store
 }
 
-/// What waits for a session's turn to end is listed on its row, and a reply there can be reworded in place or taken out.
 @MainActor @Test func aQueuedReplyCanBeSeenRewordedAndRemoved() async throws {
     let store = try working()
     let commands = SessionCommands(store: store)
@@ -26,13 +25,11 @@ import Testing
     edit.replaces = queued[1].id
     #expect(try await commands.reply("s-busy", edit).delivery == .queued)
     #expect(store.island.waiting("s-busy").map(\.text) == ["run the tests", "then commit and push", "run the tests"])
-    // The id named the old words, so a second edit from a stale list is refused rather than landing on another reply.
     await #expect(throws: SessionCommands.Failure.queueChanged) { try await commands.reply("s-busy", edit) }
 
     queued = store.island.waiting("s-busy")
     #expect(store.island.removeQueued("s-busy", id: queued[0].id) && !store.island.removeQueued("s-busy", id: queued[0].id + "x"))
     #expect(store.island.waiting("s-busy").map(\.text) == ["then commit and push", "run the tests"])
-    // Of two alike, the one left is now the first with those words; the other reply kept its id.
     #expect(store.island.waiting("s-busy").map(\.id) == [queued[1].id, queued[0].id])
     #expect(!store.island.removeQueued("s-busy", id: queued[2].id))
     #expect(store.island.removeQueued("s-busy", id: queued[1].id) && store.island.removeQueued("s-busy", id: queued[0].id))
@@ -40,7 +37,6 @@ import Testing
     #expect(RemoteController.capabilities.isSuperset(of: [.repliesQueue, .files]))
 }
 
-/// A folder's files as an @ mention offers them: git's own list where there is one, so ignored files stay out.
 @Test func aFoldersFilesAreListedWithoutWhatGitIgnores() async throws {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sa-files-\(UUID().uuidString.prefix(8))")
     defer { try? FileManager.default.removeItem(at: folder) }
@@ -49,7 +45,6 @@ import Testing
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("x".utf8).write(to: url)
     }
-    // No repository: walked, past hidden files and build output.
     #expect(Set(FileMentions.walk(folder.path)) == ["Sources/App/Main.swift", "Sources/App/odd name's.swift", "README.md"])
     #expect(Set(await FileMentions.list(folder.path)) == ["Sources/App/Main.swift", "Sources/App/odd name's.swift", "README.md"])
 
@@ -71,7 +66,6 @@ import Testing
 
 private func code(_ object: [String: Any]) -> String? { (object["error"] as? [String: Any])?["code"] as? String }
 
-/// The same over the wire: a phone rewords one queued reply, removes one, and asks for files.
 @MainActor @Test func aPhoneEditsTheQueueAndAsksForFiles() async throws {
     let store = try working()
     store.remote.confirmCheck = { _, _, _, _, _ in nil }

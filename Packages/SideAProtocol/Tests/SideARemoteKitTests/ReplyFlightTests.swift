@@ -20,7 +20,6 @@ import Testing
     #expect(!flight("status 7.0").movedOn(["status 7.0"]) && flight("status 7.0").movedOn(["status 8.0"]))
 }
 
-// Every phase × event of a reply's flight. Missing: the event leaves the phase as it was.
 @Test func everyEventFromEveryFlightPhase() {
     typealias P = ReplyFlight.Phase
     let states: [P] = [.signing, .resigning, .queued(resigned: false), .queued(resigned: true), .unsent(reason: "Old."), .waiting]

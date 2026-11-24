@@ -7,8 +7,6 @@ import SideARemoteKit
 import SideARemoteShared
 import UIKit
 
-/// One pairing attempt from a scanned code or a pairing link (setup, "Pairing"): reach the Mac, check
-/// its key, show the comparison code while the user clicks Pair on the Mac, then keep the token.
 @Observable
 final class PairingRun {
     nonisolated deinit {}
@@ -19,7 +17,6 @@ final class PairingRun {
 
     enum Phase: Equatable {
         case running(Step)
-        /// "482 913", until the Mac answers or the deadline passes.
         case comparing(code: String, deadline: Date)
         case paired(PairedMac)
         case failed(PairingFailure)
@@ -27,17 +24,13 @@ final class PairingRun {
 
     let invitation: PairingClient.Invitation
     private(set) var phase: Phase = .running(.reaching)
-    /// The name the Mac gives in its hello, for a code that carries none.
     private(set) var reportedName: String?
     @ObservationIgnored private var task: Task<Void, Never>?
-    /// The code posted and waiting for Pair on the Mac, so Cancel can void it there too.
     @ObservationIgnored private var pending: (client: PairingClient, attempt: PairingClient.Attempt)?
-    /// Paired on the Mac but not yet kept here, when the keychain refused it; Try Again saves it again.
     @ObservationIgnored private var unsaved: PairingClient.Paired?
 
     init(invitation: PairingClient.Invitation) { self.invitation = invitation }
 
-    /// A code without a name shows the address, which reads at the start of a sentence too.
     var macName: String {
         invitation.macName ?? reportedName ?? invitation.address.split(separator: ":").first.map(String.init) ?? invitation.address
     }
@@ -57,7 +50,6 @@ final class PairingRun {
         task = Task { await run(replacing: old) }
     }
 
-    /// Stops here and voids the attempt on the Mac, so its Pair button can't pair a phone that left.
     func cancel() {
         task?.cancel()
         if let (client, attempt) = pending {
@@ -67,7 +59,6 @@ final class PairingRun {
     }
 
     #if DEBUG
-    /// A run held at one phase, for previews and screenshots.
     static func sample(_ phase: Phase) -> PairingRun {
         let run = PairingRun(invitation: PairingClient.Invitation(address: "100.101.12.4:47800", fp: String(repeating: "A", count: 43), macName: "MacBook Pro", macID: "sample", code: "ABCD2345"))
         run.phase = phase
@@ -79,7 +70,6 @@ final class PairingRun {
         let info = ClientInfo.current
         let device = DeviceInfo(name: Self.deviceName, model: Self.model, system: "iOS \(UIDevice.current.systemVersion)",
                                 app: info.version, build: info.build, capabilities: info.capabilities)
-        // Two Secure Enclave keys for this Mac, so it can ask for Face ID or an unlocked phone behind the token.
         let keys = invitation.macID.flatMap(DeviceKeys.create(for:))
         if keys == nil { RemoteLog.error(.pairing, "pairing without device keys") }
         let client = PairingClient(invitation: invitation, device: device, replaces: old?.deviceID,
@@ -89,7 +79,6 @@ final class PairingRun {
         do {
             // Reaching the Mac and settling its key spend nothing; check versions before the code is posted.
             let probe = try await client.probe(info: info)
-            // An unauthenticated hello may leave the name out; then the address stands in until paired.
             reportedName = probe.hello.mac.name.isEmpty ? nil : probe.hello.mac.name
             if let failure = PairingFailure(probe.hello, macName: macName, clientBuild: info.build) {
                 phase = .failed(failure)
@@ -106,12 +95,10 @@ final class PairingRun {
         } catch is CancellationError {
         } catch let error as URLError where error.code == .cancelled && Task.isCancelled {
         } catch {
-            // The Mac voids a code whose comparison ran out, so retrying it can only fail.
             let spent = pending != nil
             pending = nil
             RemoteLog.error(.pairing, "failed: \(KitLog.describe(error))")
             var failure = await PairingFailure(error, macName: macName, codeSpent: spent)
-            // What each address did, under whatever Details already says.
             let tried = client.probeLog.lines
             if !tried.isEmpty {
                 failure.detail = ([failure.detail].compactMap { $0 } + tried).joined(separator: "\n")
@@ -135,7 +122,6 @@ final class PairingRun {
         }
     }
 
-    /// "iPhone18,1".
     private static var model: String {
         var system = utsname()
         uname(&system)
@@ -143,18 +129,15 @@ final class PairingRun {
     }
 }
 
-/// A failure card's words and its one primary action (setup, "Failure cards").
 struct PairingFailure: Equatable {
     enum Action: Equatable {
         case tryAgain, scanAgain, scanNewCode, openTailscale, openSettings, appStore
     }
 
     var title: String
-    /// What went wrong underneath, behind Details; never the headline.
     var detail: String?
     var primary: Action
     var secondary: Action?
-    /// 429: Try Again waits this long.
     var retryAfter: Double?
 
     init(title: String, detail: String? = nil, primary: Action, secondary: Action? = nil, retryAfter: Double? = nil) {
@@ -178,7 +161,6 @@ struct PairingFailure: Equatable {
         }
     }
 
-    /// Before the code is posted: Remote off, or a version either side must update past.
     init?(_ hello: Hello, macName mac: String, clientBuild: Int) {
         switch hello.needsUpdate(clientBuild: clientBuild) {
         case .client: self.init(title: "Update Side A Remote to pair with this \(hello.mac.kind.noun).", primary: .appStore)
@@ -194,7 +176,6 @@ struct PairingFailure: Equatable {
         case .noPairing:
             Self(title: "Click Pair iPhone on your Mac, then scan the new code.", primary: .scanNewCode)
         case .badCode:
-            // The code no longer matches: it was replaced on the Mac.
             Self(title: "Scan the current code on your Mac.", primary: .scanNewCode)
         case .codeExpired:
             Self(title: "This code has expired.", primary: .scanNewCode)
@@ -223,11 +204,9 @@ struct PairingFailure: Equatable {
         let host = error.failingURL?.host() ?? ""
         switch error.code {
         case .cancelled:
-            // The pinning delegate cancels a key it can't read; a readable wrong key arrives as ServerKeyChanged.
             return Self(title: "This isn't the Mac that showed the code.", primary: .scanAgain)
         case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate,
              .serverCertificateNotYetValid, .serverCertificateHasUnknownRoot, .clientCertificateRejected:
-            // The key may well be right: this is TLS itself failing, so the code goes in Details.
             let stream = error.userInfo["_kCFStreamErrorCodeKey"] as? Int
             return Self(title: "Couldn't connect securely to \(mac).",
                         detail: "TLS error \(error.code.rawValue)\(stream.map { " (\($0))" } ?? "")", primary: .tryAgain)
@@ -259,14 +238,12 @@ enum LocalNetwork {
     }
 }
 
-/// What the phone can learn about Tailscale: whether the app is there, and whether a VPN is up.
 enum Tailscale {
     static let app = URL(string: "tailscale://")!
     static let appStore = URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!
 
     static var installed: Bool { UIApplication.shared.canOpenURL(app) }
 
-    /// A tailnet address: 100.64.0.0/10 or a MagicDNS name. Wi-Fi and loopback addresses don't need Tailscale.
     static func isTailnet(_ host: String) -> Bool {
         if host.hasSuffix(".ts.net") { return true }
         let parts = host.split(separator: ".").compactMap { Int($0) }

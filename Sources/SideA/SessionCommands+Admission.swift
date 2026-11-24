@@ -2,9 +2,7 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// Whether a reply still answers where its session stands, and Send Now's queued reply until it is delivered or back.
 extension SessionCommands {
-    /// A reply admitted with a `seen`, for `ReplyAdmission.chain`.
     struct Delivered {
         let seen: String
         let device: String?
@@ -16,12 +14,10 @@ extension SessionCommands {
     }
 
     @MainActor static var delivered: [SessionKey: [Delivered]] = [:]
-    /// Promotions in `waiting`, by queue id, with what puts each back.
     @MainActor static var promoting: [String: (putBack: () -> Void, at: Date)] = [:]
     /// `send` follows `plan` at once; one that never came (Side A quitting between the two) mustn't lose the reply.
     nonisolated static let promotionPatience: TimeInterval = 30
 
-    /// Send Now's queued reply, from `plan` taking it out of the queue until it is delivered or back in the queue.
     enum Promotion: Equatable {
         case takenOut
         /// Typing still to do: `send` takes it from here, or `promotionPatience` puts it back.
@@ -104,7 +100,6 @@ extension SessionCommands {
                               chained: chained(seen, target: target, device: device))
     }
 
-    /// Records the turn a reply turns out to have started, so it chains for `ReplyAdmission.chainKept`.
     private func chained(_ seen: String, target: Target, device: String?) -> Bool {
         let earlier = Self.delivered[target.key, default: []].enumerated().filter { $0.element.seen == seen && $0.element.device == device }
         guard !earlier.isEmpty, let live = target.live, let now = store.remote.receipts.turn(live) else { return false }

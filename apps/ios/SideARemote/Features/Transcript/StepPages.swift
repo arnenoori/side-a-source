@@ -3,7 +3,6 @@ import SideARemoteShared
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The page a tool row zooms into: content by tool.
 struct ToolStepPage: View {
     let sessionID: SessionKey
     let tool: TranscriptTool
@@ -112,7 +111,6 @@ struct MonoBlock: View {
     }
 }
 
-/// v0's console: a selectable mono log, full height.
 struct ConsoleLog: View {
     let text: String
     let failed: Bool
@@ -154,7 +152,6 @@ private struct LabeledBlock: View {
     }
 }
 
-/// Grep output grouped by file: `path:line` lines become a file header and its line numbers.
 struct GroupedMatches: View {
     let output: String
 
@@ -180,7 +177,6 @@ struct GroupedMatches: View {
         var lines: [String: [String]] = [:]
         for line in output.split(separator: "\n") {
             let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            // A line of only ":" splits to nothing.
             guard let file = parts.first else { continue }
             if lines[file] == nil { order.append(file); lines[file] = [] }
             if parts.count > 1 { lines[file]?.append(parts[1]) }
@@ -198,7 +194,6 @@ private struct EmptyOutput: View {
     }
 }
 
-/// The full diff, with a Wrap toggle.
 struct DiffPage: View {
     let diff: FileDiff
     var sessionID: SessionKey?
@@ -230,7 +225,6 @@ struct DiffPage: View {
     }
 }
 
-/// Perplexity's full-screen code page: large mono text, Wrap, Copy and Share in a glass bottom bar.
 struct CodePage: View {
     let payload: CodePayload
     @State private var wrap = false
@@ -260,9 +254,6 @@ struct CodePage: View {
     }
 }
 
-/// A file the session wrote or named, fetched from the Mac: Markdown rendered with the transcript's views, text as code,
-/// images in the photo viewer, anything else in Quick Look. The step's own text shows until the file arrives, and stays
-/// with the reason when it can't.
 struct FilePage: View {
     @Environment(AppModel.self) private var model
     let sessionID: SessionKey
@@ -273,7 +264,6 @@ struct FilePage: View {
     @State private var attempt = 0
 
     private var name: String { (path as NSString).lastPathComponent }
-    /// Where it lives, by its nearest two folders: enough to tell two README.md apart under the name.
     private var folder: String {
         (path as NSString).deletingLastPathComponent.split(separator: "/").suffix(2).joined(separator: "/")
     }
@@ -303,7 +293,6 @@ struct FilePage: View {
             .navigationSubtitle(folder)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // The image viewer brings its own Copy, Save and Share.
                 if !showsImage {
                     ToolbarItemGroup(placement: .bottomBar) {
                         if let text { CopyAllButton(text: text) }
@@ -368,7 +357,6 @@ struct FilePage: View {
             return
         }
         do {
-            // A subagent's chip names its parent's key and the agent's; the Mac knows the parent.
             let url = try await model.tools.file(SubagentRef(key: sessionID)?.parent ?? sessionID, path: path)
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
             let type = UTType(filenameExtension: (path as NSString).pathExtension)
@@ -383,7 +371,6 @@ struct FilePage: View {
     }
 }
 
-/// Readable stand-ins for files the demo sessions wrote.
 enum DemoFiles {
     static func text(for path: String) -> String? {
         guard path.hasSuffix("cache-plan.md") else { return nil }

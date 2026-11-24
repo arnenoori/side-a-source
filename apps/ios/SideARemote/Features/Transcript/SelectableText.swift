@@ -13,9 +13,7 @@ struct SelectableText: UIViewRepresentable {
         var monospaced = false
         var secondary = false
         var lineSpacing: CGFloat = 3
-        /// False for code: lines keep their length and the view grows sideways, inside a horizontal scroll.
         var wraps = true
-        /// UTF-16 ranges tinted with the accent: the commands in a message the user sent.
         var highlights: [NSRange] = []
     }
 
@@ -28,14 +26,13 @@ struct SelectableText: UIViewRepresentable {
 
     let text: AttributedString
     var style = Style()
-    /// What a tap offers; none, and a tap does nothing.
     var menu: [Action] = []
 
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.openURL) private var openURL
     @Environment(\.openFile) private var openFile
     /// UIKit doesn't see SwiftUI's tint: the selection handles and highlight take the accent from here.
-    @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
+    @AppStorage(Accent.key, store: SharedStorage.defaults) private var accent = Accent.blue
 
     func makeUIView(context: Context) -> UITextView {
         let view = UITextView(usingTextLayoutManager: true)
@@ -86,12 +83,10 @@ struct SelectableText: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    /// Drops every selection on screen, as a tap elsewhere in the transcript does.
     static func clearSelection(except keep: UITextView? = nil) {
         NotificationCenter.default.post(name: .selectableTextClear, object: keep)
     }
 
-    /// SwiftUI's Markdown attributes (inline code, emphasis, links) as UIKit's, at the environment's type size.
     static func render(_ text: AttributedString, style: Style, size: DynamicTypeSize, accent: UIColor = .tintColor) -> NSAttributedString {
         let traits = UITraitCollection(preferredContentSizeCategory: UIContentSizeCategory(size))
         let base = UIFont.preferredFont(forTextStyle: style.textStyle, compatibleWith: traits)
@@ -118,7 +113,6 @@ struct SelectableText: UIViewRepresentable {
                 }
                 if intent.contains(.strikethrough) { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             }
-            // Only http(s) links and FileLinks reach here (MarkdownParser drops the rest); see primaryActionFor.
             if let link = run.link {
                 attributes[.link] = link
                 attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
@@ -151,7 +145,6 @@ struct SelectableText: UIViewRepresentable {
             view.resignFirstResponder()
         }
 
-        /// One selection at a time, as in Notes.
         func textViewDidChangeSelection(_ textView: UITextView) {
             guard textView.selectedRange.length > 0 else { return }
             SelectableText.clearSelection(except: textView)
@@ -183,7 +176,6 @@ struct SelectableText: UIViewRepresentable {
             return UIAction { [parent] _ in parent.openURL(url) }
         }
 
-        /// A file's long-press offers the viewer and its path, never the system's Open Link or Share.
         func textView(_ textView: UITextView, menuConfigurationFor textItem: UITextItem, defaultMenu: UIMenu) -> UITextItem.MenuConfiguration? {
             guard case .link(let url) = textItem.content, let path = FileLink.path(url) else { return UITextItem.MenuConfiguration(menu: defaultMenu) }
             var actions = [UIAction(title: "Copy Path", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.string = path }]
@@ -219,8 +211,6 @@ private extension UIContentSizeCategory {
     }
 }
 
-/// A tap or long-press on the content shows `menu` as an edit-menu callout, the way SelectableText's tap does,
-/// for rows with no text of their own to select.
 struct EditMenuArea: UIViewRepresentable {
     let menu: [SelectableText.Action]
 

@@ -34,10 +34,8 @@ struct AppIconChoice: Identifiable, Hashable {
         return url.flatMap { NSImage(contentsOf: $0) }
     }
 
-    /// What the picker draws.
     @MainActor var preview: NSImage? { image ?? Self.bundleIcon }
 
-    /// Puts the saved choice on the running app. Called at launch and whenever the picker changes it.
     @MainActor static func apply(in defaults: UserDefaults = .standard) {
         _ = bundleIcon
         NSApp?.applicationIconImage = saved(in: defaults).image

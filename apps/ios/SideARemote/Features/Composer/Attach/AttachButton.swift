@@ -14,7 +14,7 @@ enum AttachAction: Hashable {
         case .paste: "Paste Photo"
         case .sessionFile: "File from This Session"
         case .screen: "Mac's Screen"
-        case .options: "Model & Commands"
+        case .options: "Commands"
         }
     }
 
@@ -26,7 +26,7 @@ enum AttachAction: Hashable {
         case .paste: "doc.on.clipboard"
         case .sessionFile: "at"
         case .screen: "display"
-        case .options: "slider.horizontal.3"
+        case .options: "command"
         }
     }
 }
@@ -41,6 +41,7 @@ struct AttachButton: View {
     var diameter: CGFloat = 48
     var glyph: CGFloat = 19
     var label = "Add"
+    var bare = false
     var onSessionFile: (() -> Void)?
     var offersScreen = false
     var hosted: String?
@@ -65,7 +66,6 @@ struct AttachButton: View {
         let open = surface.drawer.isOpen || surface.strip.isShown
         Image(systemName: "plus")
             .font(.system(size: glyph, weight: .medium))
-            // The + turns to an ×: the same button puts the keyboard back, or puts the strip away.
             .rotationEffect(.degrees(open ? 45 : 0))
             .animation(Motion.snappy(reduceMotion), value: open)
             .frame(width: diameter, height: diameter)
@@ -80,7 +80,7 @@ struct AttachButton: View {
                 sheetHeld?.wrappedValue = false
             }
             .popover(isPresented: $showsMenu, arrowEdge: .bottom) { menu }
-            .glassEffect(.regular.interactive(), in: .circle)
+            .glassEffect(bare ? .identity : .regular.interactive(), in: .circle)
             .fullScreenCover(item: $screen) { screen in
                 ScreenScreen(screen: screen).environment(model)
             }
@@ -94,8 +94,6 @@ struct AttachButton: View {
                 Task { await hold(fingerDown: false) }
             }
     }
-
-    // MARK: Tap and hold
 
     private var pressGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .global)
@@ -150,7 +148,6 @@ struct AttachButton: View {
         openMenu()
     }
 
-    /// The strip, or the menu wherever the strip would be a dead end: no room in the tray, or no photos to show.
     private func hold(fingerDown: Bool) async {
         if surface.drawer.isOpen {
             pressed(.gaveUp, at: .zero)
@@ -166,8 +163,6 @@ struct AttachButton: View {
             openMenu()
         }
     }
-
-    // MARK: Menu
 
     private func openMenu() {
         var attach: [AttachAction] = []
@@ -224,7 +219,6 @@ struct AttachButton: View {
 }
 
 extension EnvironmentValues {
-    /// Set by a sheet holding a composer, which it keeps from being dragged while the + holds the finger.
     @Entry var attachHeld: Binding<Bool>?
 }
 

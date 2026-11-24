@@ -51,7 +51,6 @@ export function mountAppMock(desk: HTMLElement) {
   const tabs = $$<HTMLButtonElement>('[role=tab]');
   const title = $('.mw-title');
   const sessions = document.getElementById('mp-sessions');
-  // Sessions is its own window in the app; the mock's window switches between it and Settings.
   const selectTab = (name: string, focus = false) => {
     const own = name === 'sessions';
     win.dataset.mode = own ? 'sessions' : 'settings';
@@ -278,7 +277,6 @@ function mountEasterEggs(desk: HTMLElement, showWindow: (how: WindowState) => vo
     showWindow('closed');
     item.classList.add('gone');
     item.disabled = true;
-    // Open at login is on, so Side A is straight back, just not in front.
     window.setTimeout(() => { item.classList.remove('gone'); item.disabled = false; }, 1800);
   });
 

@@ -99,7 +99,6 @@ public actor Outbox {
     /// A claim older than this is free again: its process died or was suspended mid-send.
     public static let claimLifetime: Double = 30
 
-    /// Owns the connection so it closes with the actor.
     private final class Handle: @unchecked Sendable {
         let pointer: OpaquePointer
         init(_ pointer: OpaquePointer) { self.pointer = pointer }
@@ -120,7 +119,6 @@ public actor Outbox {
             throw Failure.open(message)
         }
         handle = Handle(pointer)
-        // Another process may hold the write lock for a moment; wait for it instead of failing.
         sqlite3_busy_timeout(pointer, busyTimeout)
         for statement in ["PRAGMA journal_mode=WAL",
                           """
@@ -235,8 +233,6 @@ public actor Outbox {
         return done && removed
     }
 
-    // MARK: Reply flights
-
     /// A reply's record beside its item, by that item's id; nil removes it.
     public func setFlight(_ flight: ReplyFlight?, item: String, mac: String) {
         attempt("flight") {
@@ -262,8 +258,6 @@ public actor Outbox {
         attempt("flights") { try run("DELETE FROM reply_flight WHERE mac = ?", .text(macID)) }
     }
 
-    // MARK: Terminal input
-
     /// Unacked input frames of one terminal view, with the epoch they were sent under; oldest first.
     public func terminalInput(viewer: String) -> [(seq: UInt32, epoch: String, bytes: Data)] {
         var rows: [(UInt32, String, Data)] = []
@@ -287,8 +281,6 @@ public actor Outbox {
             else { try run("DELETE FROM terminal_input WHERE viewer = ?", .text(viewer)) }
         }
     }
-
-    // MARK: SQLite
 
     private enum Value { case text(String), real(Double), int(Int64), blob(Data) }
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

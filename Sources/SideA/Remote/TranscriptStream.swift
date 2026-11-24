@@ -9,7 +9,6 @@ import SideAProtocol
 @MainActor
 final class TranscriptStream {
     static let maxCatchUp = 200
-    /// Rows per event, encoded; one big row travels alone.
     static let packBytes = 900 * 1024
 
     private weak var store: AccountStore?
@@ -40,7 +39,6 @@ final class TranscriptStream {
         hub.subscribed = nil
     }
 
-    /// Transcript files that changed: the subscribed sessions they belong to update together, 250 ms later.
     func changed(_ paths: [String]) {
         guard !paths.isEmpty, let store else { return }
         for session in hub.subscriptions {
@@ -74,7 +72,6 @@ final class TranscriptStream {
         let groups = Dictionary(grouping: hub.cursors(session)) { $0.value }.mapValues { $0.map(\.key) }
         for (cursor, clients) in groups {
             guard let cursor else {
-                // Nothing held: start from the newest row, and send only what comes after it.
                 if let page = try? await page(store, id, ["--limit", "1"]) { hub.advance(clients, session: session, from: nil, to: page.after) }
                 continue
             }
@@ -110,7 +107,6 @@ final class TranscriptStream {
         }
     }
 
-    /// Rows in order, split so each event stays under `packBytes`.
     static func pack(_ messages: [TranscriptMessage]) -> [[TranscriptMessage]] {
         var groups: [[TranscriptMessage]] = []
         var current: [TranscriptMessage] = []

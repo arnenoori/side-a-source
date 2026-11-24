@@ -151,7 +151,6 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(shown['messages'][2], {'role': 'tool', 'text': '', 'tools': [f'Bash: echo {n}' for n in range(12)], 'uuid': 'a1',
                                                 'ts': shown['messages'][2]['ts'], 'inherited': False, 'model': None})
         self.assertEqual(set(shown['messages'][0]), {'role', 'text', 'tools', 'uuid', 'ts', 'inherited', 'model'})
-        # The remote rows split a long run of calls so no row grows past what the wire carries.
         self.assertEqual([len(m['tools']) for m in self.page('s')['messages'] if m['role'] == 'tools'], [8, 4])
 
     def test_tool_results_are_kept_and_cut(self):
@@ -217,7 +216,6 @@ class RemoteTests(unittest.TestCase):
                          result('r5', 'toolu_5', "The user doesn't want to proceed with this tool use.", 'User rejected tool use', error=True),
                          result('r4', 'toolu_4', '')])
         newest = sessions.turn_diff(self.root, 's')
-        # Two edits to one file stay two diffs, as each saw the file; the rejected edit and the shell change aren't there.
         self.assertEqual((newest['turn_id'], [d['hunks'][0]['lines'] for d in newest['files']], newest['running'], newest['omitted']),
                          ('u2', [['-b', '+c'], ['-c', '+d']], False, 0))
         self.assertEqual(newest['note'], "Edits made with Claude's file tools; shell changes aren't shown.")
@@ -278,7 +276,6 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual([(t['input']['command'], t['status'], t['parent']) for t in (first, second)],
                          [('pytest -k upload', 'ok', 'call_1'), ('ruff check', 'failed', 'call_1')])
         self.assertEqual(messages[2]['text'], 'Stream disconnected')
-        # The Mac's viewer still shows the exec call as one line.
         self.assertEqual(sessions.show(self.root, 'thread-1')['messages'][1]['tools'], ['exec: run("pytest")'])
 
     def test_a_command_written_after_its_exec_output_still_folds_under_it(self):
@@ -312,7 +309,6 @@ class RemoteTests(unittest.TestCase):
                          [('t1', 6000, True, 12500), ('t2', 0, False, 2000), ('t3', 0, False, 4000)])
         self.assertEqual(sessions.message(self.root, 's', thinking[0]['seq'], page['generation'])['text'], long)
         self.assertIsNone(page['messages'][0]['duration_ms'])
-        # The viewer never sees thinking, and the calls on either side of it still read as one run.
         shown = sessions.show(self.root, 's')['messages']
         self.assertEqual([m['role'] for m in shown], ['user', 'assistant', 'tool'])
         self.assertEqual(shown[2]['tools'], ['Bash: ls', 'Bash: pwd'])
@@ -332,7 +328,6 @@ class RemoteTests(unittest.TestCase):
                         reply(f'a{n}', f'Answer {n}', [(f'toolu_{n}_{k}', 'Bash', {'command': f'echo {k}'}) for k in range(10)])]
         self.write('s', entries)
         whole = sessions.show(self.root, 's')
-        # Each turn is a prompt, a reply and one line of ten calls, though Remote holds five rows for it.
         self.assertEqual((len(whole['messages']), whole['truncated'], whole['later']), (90, 0, 0))
         self.assertEqual(self.page('s')['count'], 150)
         newest = sessions.show(self.root, 's', limit=10)
@@ -453,7 +448,6 @@ class RemoteTests(unittest.TestCase):
             self.assertEqual([s.split(' SET')[0] for s in statements if s.startswith(('BEGIN IMMEDIATE', 'UPDATE', 'INSERT', 'DELETE'))], ['UPDATE view_state'])
 
     def test_mains_version_5_index_gains_the_remote_tables(self):
-        # main's version 5 has neither view revisions nor images, so the same number can't be trusted.
         self.write('s', [user('u0', 'Keep the tapir searchable')])
         sessions.index(self.root)
         db = sessions.connect(self.root)
@@ -498,7 +492,6 @@ class RemoteTests(unittest.TestCase):
             stream.seek(located['data_offset'])
             self.assertEqual(base64.b64decode(stream.read(located['data_length'])), image)
         self.assertEqual(sessions.image(self.root, '0' * 40), {'error': 'gone'})
-        # The file rewritten under the same name: the recheck finds the bytes moved or gone.
         self.write('s', [user('u9', 'No pictures now, and a longer line than before')])
         self.assertEqual(sessions.image(self.root, sha1(image), recheck=True), {'error': 'gone'})
 
@@ -567,7 +560,7 @@ class RemoteTests(unittest.TestCase):
                          'CREATE TABLE views(session TEXT, seq INTEGER, uuids TEXT, data TEXT, PRIMARY KEY(session, seq)) WITHOUT ROWID;'
                          'CREATE TABLE view_state(session TEXT PRIMARY KEY, path TEXT, offset INTEGER, head TEXT, count INTEGER, used REAL);')
         for path, state in db.execute('SELECT path, state FROM files').fetchall():
-            state = json.loads(state); state.pop('img', None)  # noqa: PLW2901 -- normalizes the loop value in place
+            state = json.loads(state); state.pop('img', None)  # noqa: PLW2901
             db.execute('UPDATE files SET state=? WHERE path=?', (json.dumps(state), path))
         db.execute('PRAGMA user_version=4'); db.commit(); db.close()
         with patch.object(sessions, 'index_claude', side_effect=AssertionError('reindexed')):
@@ -598,8 +591,6 @@ class RemoteTests(unittest.TestCase):
             return [{'type': 'event_msg', 'timestamp': '2026-10-09T10:00:0%dZ' % n, 'payload': payload} for n, payload in enumerate(events)]
         main = self.rollout('thread-1', turn({'type': 'task_started', 'turn_id': 't1', 'started_at': 1791560000}))
         child = self.rollout('thread-2', [], parent_thread_id='thread-1', source={'subagent': 'x'})
-        # Only 100 is a session: an app server, a one-shot exec and a helper aren't, and 104, a Codex that 100
-        # started (under its helper), is part of 100's session, even with the same rollouts open.
         args = {100: '/opt/homebrew/bin/codex --yolo', 101: '/opt/homebrew/bin/codex app-server', 102: 'codex exec hi',
                 103: '/usr/bin/codex-code-mode-host', 104: '/opt/homebrew/bin/codex resume', 200: 'zsh'}
         tree = ({100: 50.0, 101: 1.0, 102: 1.0, 103: 1.0, 104: 1.0, 200: 1.0}, {200: [100], 100: [103], 103: [104]}, {100: 1791559000}, args)
@@ -615,7 +606,6 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual((live()[0]['status'], live()[0]['waitingFor']), ('waiting', 'question'))
         self.rollout('thread-1', turn({'type': 'task_complete', 'turn_id': 't1', 'completed_at': 1791560100}), 'a')
         self.assertEqual((live()[0]['status'], live()[0]['since']), ('idle', 1791560100.0))
-        # A long rollout with no turn event in reach is unknown, never idle.
         self.rollout('thread-1', [response({'type': 'reasoning', 'summary': [], 'text': 'z' * 5000})] * 1000)
         self.assertEqual(live()[0]['status'], 'unknown')
 
@@ -634,7 +624,6 @@ class RemoteTests(unittest.TestCase):
         typed = sessions.epoch('2026-10-09T10:00:05Z')
         self.rollout('thread-1', [event('2026-10-09T10:00:05Z', type='user_message', message='more')], 'a')
         self.assertEqual(live()['promptAt'], typed)
-        # Agent output and tool results after it leave it where it was.
         self.rollout('thread-1', [event('2026-10-09T10:00:09Z', type='agent_message', message='ok'),
                                   response({'type': 'function_call_output', 'call_id': 'c', 'output': 'x'})], 'a')
         self.assertEqual(live()['promptAt'], typed)
@@ -688,7 +677,6 @@ class RemoteTests(unittest.TestCase):
         later = time.time() + 5
         os.utime(state / 's1.hook.json', (later, later))
         self.assertEqual(live()['claude']['effort'], 'max')
-        # Leftovers are swept on the first call and then at most once a minute.
         (state / 'ended.tasks.json').write_text('{}')
         live()
         self.assertTrue((state / 'ended.tasks.json').exists())
@@ -766,7 +754,7 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in thumbs.glob('*.jpg')), [kept.name])
         orphan.write_bytes(b'x')
         sessions.sweep_thumbnails(self.root, db, cap=150)
-        self.assertTrue(orphan.exists())  # swept less than an hour ago
+        self.assertTrue(orphan.exists())
         db.close()
 
 

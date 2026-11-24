@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 
 /// The 8-character code a pairing sheet shows: five minutes, single use, one attempt at a time. Wrong tries count per
@@ -41,7 +45,6 @@ public struct PairingCode: Sendable {
     }
 
     public static func make(now: TimeInterval, random: (Int) -> [UInt8] = Secret.bytes) -> PairingCode {
-        // 32 divides 256, so taking each byte mod 32 has no bias.
         PairingCode(code: String(random(8).map { alphabet[Int($0) % 32] }), now: now)
     }
 
@@ -63,7 +66,6 @@ public struct PairingCode: Sendable {
     /// What `source` has left; the address that used up its five gets nothing more from this code, right or wrong.
     public func triesLeft(_ source: String = "") -> Int { max(0, Self.tries - wrong[source, default: 0]) }
 
-    /// Whether wrong tries, from every address together, voided the code.
     public var burned: Bool { wrongInAll >= Self.totalTries }
 
     public mutating func submit(_ input: String, now: TimeInterval, source: String = "",
@@ -105,9 +107,15 @@ public enum DeviceToken {
 
 public enum Secret {
     public static func bytes(_ count: Int) -> [UInt8] {
+        #if canImport(Darwin)
         var bytes = [UInt8](repeating: 0, count: count)
         precondition(SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess, "The system random generator failed.")
         return bytes
+        #else
+        // SystemRandomNumberGenerator reads getrandom(2) on Linux and traps if it fails.
+        var generator = SystemRandomNumberGenerator()
+        return (0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) }
+        #endif
     }
 
     /// Constant time for equal lengths.

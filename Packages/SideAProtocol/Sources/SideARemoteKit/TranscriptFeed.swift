@@ -22,7 +22,6 @@ public actor TranscriptFeed {
     private let fetch: Fetch
     private let subscribe: @Sendable (SessionKey, Cursor?) async -> Void
     private let unsubscribe: @Sendable (SessionKey) async -> Void
-    /// One per `windows()` stream still open.
     private var watchers: [UUID: AsyncStream<TranscriptWindow>.Continuation] = [:]
     private var before: Cursor?
     /// The latest `after` cursor from a page or a delta; sent back unchanged, never built here.
@@ -165,7 +164,6 @@ public actor TranscriptFeed {
 
     private func repairNow() async {
         defer { if !Task.isCancelled { repair = nil } }
-        // Follow `after` until the server has nothing newer, then apply what arrived meanwhile.
         for _ in 0..<50 {
             do {
                 while let from = cursor {

@@ -1,8 +1,6 @@
 import SideARemoteKit
 import SwiftUI
 
-/// Welcome: the icon, the name and Pair with Your Mac, which opens the scanner (setup, "The phone
-/// flow"). Opened from a pairing link, it goes straight to Pairing.
 struct WelcomeView: View {
     @Environment(AppRoot.self) private var root
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

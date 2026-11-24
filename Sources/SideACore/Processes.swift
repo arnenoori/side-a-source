@@ -1,5 +1,6 @@
-import Darwin
+import Foundation
 
+#if canImport(Darwin)
 /// Checked right before a quit signal, since a pid from the listing may since belong to another process.
 public enum ProcessCheck {
     public static func startTime(_ pid: Int) -> Double? {
@@ -20,6 +21,7 @@ public enum ProcessCheck {
         return abs(now.rounded(.down) - started) <= 1
     }
 }
+#endif
 
 /// How long a bridge run may take. A process can spend most of its time waiting for a CPU, so a limit
 /// that suits a calm Mac stretches with the load instead of reading as a failure.
@@ -31,6 +33,6 @@ public enum BridgeDeadline {
     public static func current(_ base: Double) -> Double {
         var load = [0.0]
         guard getloadavg(&load, 1) == 1 else { return base }
-        return seconds(base, load: load[0], cores: sysconf(_SC_NPROCESSORS_ONLN))
+        return seconds(base, load: load[0], cores: sysconf(Int32(_SC_NPROCESSORS_ONLN)))
     }
 }

@@ -12,7 +12,6 @@ enum ReviewDemo {
     /// SHA-256 of the code in the review notes.
     static let codeHash = "51182f201359c0d73e19e4a02d812f85c0e43010fa846822d719f035d867a811"
 
-    /// A pairing link, in any of its forms, carrying the review code.
     static func matches(_ url: URL) -> Bool {
         guard PairingLink.isForm(url), let fragment = url.fragment(), fragment.hasPrefix("review=") else { return false }
         let code = fragment.dropFirst("review=".count).uppercased()
@@ -30,9 +29,8 @@ enum ReviewDemo {
                     gate: .unlock, agent: .claude)
     }
 
-    /// Asked when the demo opens, while the reviewer is in the app; the Lock Screen request needs it.
     static func askForNotifications() async {
-        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
     }
 
     /// The Live Activity, started locally as a push-to-start would; ActivityKit only starts one in the foreground.
@@ -45,7 +43,6 @@ enum ReviewDemo {
                                   content: ActivityContent(state: state, staleDate: .now.addingTimeInterval(30 * 60)))
     }
 
-    /// A request on the Lock Screen 10 s after the app leaves the screen, with Allow and Deny.
     static func scheduleRequest() {
         let payload = payload
         guard let data = try? JSONEncoder().encode(payload) else { return }
@@ -75,7 +72,6 @@ enum ReviewDemo {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [requestID])
     }
 
-    /// Leave Demo: nothing of it stays on the Lock Screen.
     static func end() {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [requestID])
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [requestID])

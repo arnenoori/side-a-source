@@ -27,7 +27,6 @@ nonisolated(unsafe) private let running: [String: Any] = [
 @Test func eachTailscaleStateHasItsOwnLine() throws {
     var noDNS = running
     noDNS["CurrentTailnet"] = ["Name": "x", "MagicDNSEnabled": false]
-    // MagicDNS off is still ready: Remote needs only the address.
     #expect(try status(noDNS).state == .ready && status(noDNS).dnsName == nil)
     var noIPs = running
     noIPs["Self"] = ["DNSName": "x."]

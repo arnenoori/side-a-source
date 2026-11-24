@@ -7,7 +7,6 @@ import SideARemoteShared
 // The Live Activity's buttons. Compiled into the app and the widgets; a
 // LiveActivityIntent runs in the app's process, which holds the token and the outbox.
 
-/// Deny never needs unlock: it can only stop something.
 struct DenyRequestIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Deny"
     static let isDiscoverable = false
@@ -25,7 +24,6 @@ struct DenyRequestIntent: LiveActivityIntent {
     }
 }
 
-/// Allow for a request the Mac marked `lockScreen`: runs without unlocking.
 struct AllowSafeRequestIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Allow"
     static let isDiscoverable = false
@@ -49,7 +47,6 @@ struct AllowSafeRequestIntent: LiveActivityIntent {
     }
 }
 
-/// Allow for an `unlock` request: iOS asks for Face ID or the passcode first.
 struct AnswerRequestIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Allow"
     static let isDiscoverable = false
@@ -69,7 +66,6 @@ struct AnswerRequestIntent: LiveActivityIntent {
 }
 
 enum LiveActivityAnswer {
-    /// The answered request leaves the activity at once; the Mac's next push confirms the counts.
     static func settle(_ requestID: String) async {
         for activity in Activity<MacActivityAttributes>.activities where activity.content.state.topRequest == requestID {
             var state = activity.content.state

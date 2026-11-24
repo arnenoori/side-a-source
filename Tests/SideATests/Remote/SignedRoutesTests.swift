@@ -5,7 +5,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// Routes with the real signature check behind them, and keys the test holds: a token alone is the caller with no header.
 @MainActor
 private final class Signed {
     let store = AccountStore(demo: true)
@@ -51,7 +50,6 @@ private func level(_ response: HTTPResponse) -> String? {
     return ((object?["error"] as? [String: Any])?["details"] as? [String: String])?["level"]
 }
 
-/// Finding 3: every call that changes what runs answers 401 to a token alone, and passes the check with a signature for it.
 @MainActor @Test func aTokenAloneChangesNothing() async throws {
     let scene = Signed()
     try scene.live(id: "s1", mode: "default")
@@ -77,7 +75,6 @@ private func level(_ response: HTTPResponse) -> String? {
     for (method, path, body, subject) in rows {
         let bare = try await scene.call(method, path, data: body)
         #expect(bare.status == 401, "\(path): \(bare.status)")
-        // For another call, or from before: refused too.
         let other = try await scene.call(method, path, data: body, confirm: try scene.header(.unlock, "nothing"))
         #expect(other.status == 401, "\(path): \(other.status)")
         let signed = try await scene.call(method, path, data: body, confirm: try scene.header(.unlock, subject))
@@ -85,7 +82,6 @@ private func level(_ response: HTTPResponse) -> String? {
     }
 }
 
-/// Finding 3: a reply takes an unlocked phone, or Face ID in a permissive session, a session it can't read, or for a shell escape.
 @MainActor @Test func aReplyProvesWhatItsSessionAsks() async throws {
     let scene = Signed()
     try scene.live(id: "plain", pid: 901, mode: "default", hosted: nil)
@@ -111,15 +107,12 @@ private func level(_ response: HTTPResponse) -> String? {
     let escaped = try await scene.call("POST", "v1/sessions/plain/reply", shell, confirm: try scene.header(.unlock, try subject("plain", shell)))
     #expect(escaped.status == 401 && level(escaped) == "biometric")
 
-    // A signature covers the words: it can't carry other ones.
     let swapped = try await scene.call("POST", "v1/sessions/plain/reply", RemoteReply(text: "rm it all"), confirm: try scene.header(.unlock, try subject("plain", reply)))
     #expect(swapped.status == 401)
     let elsewhere = try await scene.call("POST", "v1/sessions/open/reply", reply, confirm: try scene.header(.confirm, try subject("plain", reply)))
     #expect(elsewhere.status == 401)
 }
 
-/// Continuing stopped sessions types into them unasked, so the phone turns it on or off only with Face ID, and a
-/// signature for Autopilot itself doesn't count.
 @MainActor @Test func continuingStoppedSessionsChangesOnlyWithItsOwnSignature() async throws {
     let scene = Signed()
     let off = AutopilotChange(enabled: false)
@@ -134,7 +127,6 @@ private func level(_ response: HTTPResponse) -> String? {
     #expect(try JSONDecoder().decode(AutopilotState.self, from: answer.body).continuesStopped == false)
 }
 
-/// A note is delivered while the reply is planned, so a refused one must leave nothing behind.
 @MainActor @Test func aRefusedReplyLeavesNoMail() async throws {
     let scene = Signed()
     scene.store.island.installed[.claude] = true
@@ -151,7 +143,6 @@ private func level(_ response: HTTPResponse) -> String? {
     #expect(signed.status == 200 && FileManager.default.fileExists(atPath: mail.path))
 }
 
-/// Finding 2: a destructive request handed back leaves nothing pending, and keys must still prove Face ID.
 @MainActor @Test func keysTakeFaceIDWithNoRequestOpen() async throws {
     let scene = Signed()
     try scene.live(id: "s1", mode: "default")
@@ -167,7 +158,6 @@ private func level(_ response: HTTPResponse) -> String? {
     #expect(shown.status != 401)
 }
 
-/// Finding 1: a prompt that looks like a flag starts nothing; the old way past Face ID was exactly this, with no mode set.
 @MainActor @Test func aPromptCantActAsAFlag() async throws {
     let scene = Signed()
     let project = "/tmp/app"
@@ -179,7 +169,6 @@ private func level(_ response: HTTPResponse) -> String? {
     }
 }
 
-/// Finding 3: a start with no signature is refused before anything runs, and a bad option never reaches a command line.
 @MainActor @Test func aStartIsSignedAndItsOptionsAreOneWord() async throws {
     let scene = Signed()
     let commands = SessionCommands(store: scene.store)
@@ -192,7 +181,6 @@ private func level(_ response: HTTPResponse) -> String? {
     } catch { #expect(error.details?["reason"] == "invalid_option") }
 }
 
-/// Answering: the Mac's own needs decide, and Allow with a mode from a phone that proved nothing goes no further.
 @MainActor @Test func aModeSwitchOnALockScreenRequestIsRefusedUnsigned() async throws {
     let scene = Signed()
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sidea-signed-\(UUID().uuidString)")
@@ -232,7 +220,6 @@ private enum ProofNone { static let none = ConfirmProof.none }
     let text = try String(contentsOf: url, encoding: .utf8)
     #expect(text.split(separator: "\n").count == 1 && text.contains(#"Evil\n2026"#) && text.contains("⟦U+202E⟧"))
     #expect(try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int == 0o600)
-    // A log an older build left open to others closes up too.
     let older = folder.appendingPathComponent("old.log")
     FileManager.default.createFile(atPath: older.path, contents: Data(), attributes: [.posixPermissions: 0o644])
     log.open(older)
@@ -240,14 +227,12 @@ private enum ProofNone { static let none = ConfirmProof.none }
     #expect(try FileManager.default.attributesOfItem(atPath: older.path)[.posixPermissions] as? Int == 0o600)
 }
 
-/// Finding 10: the relay sees collapse ids, and no session or account should be named in one.
 @Test func aCollapseIdNamesNoSession() {
     let id = RemotePush.opaque("health-5f1c2a7e-0000-4000-8000-000000000000")
     #expect(!id.contains("5f1c2a7e") && id.count <= 64 && RemotePush.collapse(id) == id)
     #expect(RemotePush.opaque("limit-acct-weekly") != RemotePush.opaque("limit-acct-daily"))
 }
 
-/// Finding 9: asking whois is what stands between a stranger and the pool.
 @Test func whoisAnswersAreKeptAMinuteAtMost() async {
     #expect(PoolPeers.remembered <= 60)
     let peers = PoolPeers(login: "arne@example.com") { $0 == "100.64.0.1" ? "arne@example.com" : "tagged-devices" }
@@ -256,10 +241,8 @@ private enum ProofNone { static let none = ConfirmProof.none }
     #expect(!(await PoolPeers(login: "tagged-devices") { _ in "tagged-devices" }.admits("100.64.0.3")))
 }
 
-/// No session at the first look means no signature was asked for, so nothing may go on to look again.
 @MainActor @Test func noSessionAtTheLookIsAnAnswerNotASkippedSignature() async throws {
     let scene = Signed()
-    // Empty text is the plan's own refusal: reaching it would mean the route went on with nothing proven.
     let reply = try await scene.call("POST", "v1/sessions/ghost/reply", RemoteReply(text: ""))
     #expect(reply.status == 404)
     let restart = RestartRequest(handoff: Handoff(goal: String(repeating: "g", count: SessionCommands.maxReply + 1), failed: "", next: "", lastMessages: "", cwd: "/tmp/app", project: "app"))
@@ -269,7 +252,6 @@ private enum ProofNone { static let none = ConfirmProof.none }
     #expect(continued.status == 404 && String(decoding: continued.body, as: UTF8.self).contains("session_not_found"))
 }
 
-/// Whoever swaps the push key decides who can read this phone's notifications; the token alone doesn't.
 @MainActor @Test func rekeyingPushTakesAnUnlockedPhone() async throws {
     let scene = Signed()
     let body = RekeyRequest(devicePublicKey: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation.base64URL)

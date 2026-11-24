@@ -5,7 +5,6 @@ import Observation
 import SideACore
 import SideAProtocol
 
-/// One open pairing sheet: its code, and the one attempt that may be waiting for the user's click.
 @MainActor @Observable
 final class PairingSession {
     static let renewals = 6
@@ -15,9 +14,7 @@ final class PairingSession {
         let id: String
         let nonce: Data
         let request: PairRequest
-        /// The six digits the phone shows too.
         let comparison: String
-        /// The phone saw Side A's own key. If not, Pair isn't offered at all.
         let keyMatches: Bool
         let at: Date
         static func == (a: Attempt, b: Attempt) -> Bool { a.id == b.id }
@@ -26,14 +23,11 @@ final class PairingSession {
     enum Phase: Equatable {
         case code
         case confirm(Attempt)
-        /// Pair clicked; the phone hasn't taken its token yet.
         case pairing(Attempt)
         case paired(String)
-        /// Too many wrong codes, a raced code, the renewals used up: the sheet's title says which, with Start Again.
         case stopped(Stop)
     }
 
-    /// Each way a pairing stops; the raw value is the sheet's title.
     enum Stop: String, Sendable {
         case expired = "Code Expired"
         case wrongCodes = "Too Many Wrong Codes"
@@ -54,14 +48,11 @@ final class PairingSession {
     private(set) var phase: Phase = .code
     private(set) var renewed = 0
     @ObservationIgnored private var macKeys: [String: Curve25519.KeyAgreement.PrivateKey] = [:]
-    /// Each open wait with the connection it came on, so a dropped connection can be told apart from a re-poll.
     @ObservationIgnored private var waiters: [String: [(connection: UInt64?, continuation: CheckedContinuation<Decision, Never>)]] = [:]
     @ObservationIgnored private var decided: [String: Decision] = [:]
     @ObservationIgnored private var approved: [String: (attempt: Attempt, key: PushKey?)] = [:]
     @ObservationIgnored private var timer: Task<Void, Never>?
-    /// How long a dropped wait has to come back before its attempt is cancelled: long enough for the phone to re-poll.
     @ObservationIgnored var dropGrace: Duration = .seconds(3)
-    /// The relay install the push key is bound to; nil leaves the phone without push until it rekeys.
     let installID: String?
 
     init(now: Date = Date(), installID: String? = nil) {
@@ -84,7 +75,6 @@ final class PairingSession {
         }
     }
 
-    /// A code that expires unused is replaced, up to six times while the sheet stays open.
     func tick(now: Date = Date()) {
         if case .confirm(let attempt) = phase, -attempt.at.timeIntervalSince(now) >= Self.confirmTime {
             decide(.timeout)
@@ -97,7 +87,6 @@ final class PairingSession {
         log("code renewed (\(renewed) of \(Self.renewals))")
     }
 
-    /// Whether unused codes still renew on their own.
     var renewing: Bool { timer.map { !$0.isCancelled } ?? false }
 
     func restart() {
@@ -109,8 +98,6 @@ final class PairingSession {
         log("started again, code shown")
     }
 
-    /// `spki` is the Mac's own key hash, to compare with the one the phone saw.
-    /// `source` is the address it came from, so one address's wrong tries are its own (PairingCode).
     func submit(_ request: PairRequest, spki: Data, source: String = "", now: Date = Date()) -> Result<PairPending, Refusal> {
         switch code.submit(request.code, now: now.timeIntervalSince1970, source: source) {
         case .wrong(let left):
@@ -121,7 +108,6 @@ final class PairingSession {
             if phase == .code, code.burned { phase = .stopped(.wrongCodes) }
             return .failure(.expired)
         case .busy:
-            // A second phone with the same code: someone raced the user, so neither attempt goes on.
             if case .confirm(let first) = phase { finish(first.id, .cancel) }
             phase = .stopped(.twoDevices)
             log("\(request.device.name) used a code another device already used; stopped")
@@ -149,7 +135,6 @@ final class PairingSession {
 
     func knows(_ attemptID: String) -> Bool { macKeys[attemptID] != nil || decided[attemptID] != nil }
 
-    /// The phone's long poll: the user's click, or a timeout 60 s after the attempt began.
     func wait(_ attemptID: String, connection: UInt64? = nil) async -> Decision {
         if let done = decided[attemptID] { return done }
         if let attempt, attempt.id == attemptID, !attempt.keyMatches { return .mismatch }
@@ -168,8 +153,6 @@ final class PairingSession {
         phase = .code
     }
 
-    /// A connection closed. Its waits are dropped, and an attempt left with none is cancelled unless the phone polls
-    /// again within `dropGrace`: the app was killed, or Cancel didn't reach the Mac.
     func dropped(connection: UInt64) {
         for (id, list) in waiters {
             let gone = list.filter { $0.connection == connection }
@@ -187,8 +170,6 @@ final class PairingSession {
         }
     }
 
-    /// The approved attempt and the push key shared with the phone (relay-and-release, Key exchange). Taken once; the
-    /// X25519 private key is gone after.
     func takeApproved(_ attemptID: String) -> (attempt: Attempt, key: PushKey?)? { approved.removeValue(forKey: attemptID) }
 
     private func pushKey(_ attempt: Attempt) -> PushKey? {
@@ -198,7 +179,6 @@ final class PairingSession {
                                    installID: installID, deviceID: attempt.request.deviceID)
     }
 
-    /// Pair, Codes Don't Match or Cancel on the sheet; or the timeout.
     func decide(_ decision: Decision) {
         guard let attempt, decision != .pair || attempt.keyMatches else { return }
         if decision == .pair { approved[attempt.id] = (attempt, pushKey(attempt)) }
@@ -209,7 +189,6 @@ final class PairingSession {
         phase = decision == .pair ? .pairing(attempt) : .stopped(decision == .mismatch ? .mismatch : decision == .timeout ? .timeout : .cancelled)
     }
 
-    /// The phone took its token, or the Mac couldn't keep the device: only now does the sheet say how it went.
     func finished(_ attemptID: String, saved: Bool) {
         guard case .pairing(let attempt) = phase, attempt.id == attemptID else { return }
         phase = saved ? .paired(attempt.request.device.name) : .stopped(.unsaved)
@@ -221,7 +200,6 @@ final class PairingSession {
         for waiter in waiters.removeValue(forKey: id) ?? [] { waiter.continuation.resume(returning: decision) }
     }
 
-    /// Closing the sheet voids the code and answers anyone still waiting.
     func end() {
         if renewing { log("sheet closed") }
         timer?.cancel()

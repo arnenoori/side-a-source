@@ -7,7 +7,6 @@ struct SnapshotEntry: TimelineEntry {
     /// Nil: no paired Mac, so the widget asks to pair.
     let snapshot: WidgetSnapshot?
 
-    /// "as of 1:02" once the data is 15 minutes old.
     var asOf: String? {
         guard let snapshot, date.timeIntervalSince(snapshot.updatedAt) >= 15 * 60 else { return nil }
         return "as of \(snapshot.updatedAt.formatted(date: .omitted, time: .shortened))"
@@ -33,7 +32,6 @@ struct SnapshotProvider: TimelineProvider {
     }
 }
 
-/// Every widget's empty state before pairing.
 struct PairFirst: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -46,8 +44,6 @@ struct PairFirst: View {
     }
 }
 
-/// Ring colour by how close a window is to its limit, as in the app: label colour, amber from 75%,
-/// red from 97%.
 func limitColor(_ percent: Double) -> Color {
     switch percent {
     case 97...: .red

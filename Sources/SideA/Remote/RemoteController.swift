@@ -7,7 +7,6 @@ import Observation
 import SideACore
 import SystemConfiguration
 
-/// Side A Remote: the switch, paired iPhones and the server they reach.
 @MainActor @Observable
 final class RemoteController {
     static let enabledKey = "remote"
@@ -22,7 +21,6 @@ final class RemoteController {
     var on = RemoteController.enabled
     /// Kept from the device list, so what asks whether Remote is active never reads the Keychain.
     @ObservationIgnored private(set) var hasDevices = false
-    /// Remote is on and has a phone to serve: hooks and Stop waiters stay, and events are recorded.
     var active: Bool { on && hasDevices }
     private(set) var tailscale: TailscaleStatus?
     /// Nil until checked, or when `socketfilterfw` couldn't be read.
@@ -32,30 +30,23 @@ final class RemoteController {
     private(set) var pairing: PairingSession?
     private(set) var keyID: String?
     var error: String?
-    /// Whether the security key signs; nothing listens until it has.
     let key = KeyCheck()
-    /// Every port in the range was busy.
     private(set) var portsRanOut = false
     @ObservationIgnored private(set) var opened = false
-    /// Tests count the probes.
     @ObservationIgnored var probe: @Sendable () async -> TailscaleStatus = { await TailscaleCLI.shared.status() }
-    /// Tests stand in for a signature that takes its time.
     var signs: @Sendable (RemoteKeychain.Identity) -> Bool {
         get { key.signs }
         set { key.signs = newValue }
     }
-    /// Open WebSockets per device, for "Connected now".
     private(set) var connected: [String: Int] = [:]
     private(set) var tunnelStatus: TunnelClient.Status = .off
 
     @ObservationIgnored private(set) weak var store: AccountStore?
-    /// Runs the bridge for Clean Up, which moves and deletes files; tests point it at a throwaway home.
     @ObservationIgnored var cleanupBridge: (@MainActor @Sendable ([String], TimeInterval) async throws -> Data)?
     @ObservationIgnored private(set) lazy var devices = DeviceStore(keychain: keychain)
     @ObservationIgnored private(set) lazy var transcription = RemoteTranscription(keychain: keychain)
     nonisolated let cache = RemoteCache()
     @ObservationIgnored private let keychain: RemoteKeychain
-    /// Set only by the test harness: serve exactly these addresses, with no Tailscale, from any process.
     @ObservationIgnored private let fixed: [String]?
     @ObservationIgnored private var identity: RemoteKeychain.Identity?
     @ObservationIgnored var server: RemoteServer?
@@ -66,7 +57,6 @@ final class RemoteController {
     @ObservationIgnored private(set) var transcripts: TranscriptStream?
     @ObservationIgnored private(set) var events: RemoteEvents?
     @ObservationIgnored private(set) var tunnel: TunnelClient?
-    /// The open pairing sheet's relay ticket, in its QR code.
     @ObservationIgnored private(set) var pairTicket: Data?
     @ObservationIgnored let epoch = String(UInt64.random(in: 1...UInt64.max), radix: 16)
     @ObservationIgnored private var monitor: NWPathMonitor?
@@ -78,14 +68,11 @@ final class RemoteController {
         .appendingPathComponent("remote/approvals.json"))
     @ObservationIgnored lazy var snoozes = Snoozes(url: (store?.root ?? URL(fileURLWithPath: NSTemporaryDirectory())).appendingPathComponent("remote/snoozes.json")) { [weak self] in self?.events?.liveChanged() }
     @ObservationIgnored lazy var pulls = PullRequests { [weak self] in self?.events?.liveChanged() }
-    /// Sparkle's background check, set by the app: whether it could start one now. Nil (the demo, tests) never checks.
     @ObservationIgnored var checkForUpdates: (@MainActor () -> Bool)?
 
-    /// `port`, tests only: one the kernel handed out, so a test never binds the range a real copy uses.
     init(store: AccountStore, keychain: RemoteKeychain, addresses: [String]? = nil, port fixedPort: UInt16? = nil) {
         self.store = store; self.keychain = keychain; fixed = addresses
         let saved = UserDefaults.standard.integer(forKey: Self.portKey)
-        // The harness may use any port, so lanes testing side by side keep out of each other's way.
         let range = addresses != nil ? 1_024...65_535 : Int(Self.basePort)...Int(Self.basePort) + 9
         port = fixedPort ?? (range.contains(saved) ? UInt16(saved) : Self.basePort)
         store.keepAwake.phoneConnected = { [weak self] in self?.connected.values.contains { $0 > 0 } == true }
@@ -98,10 +85,8 @@ final class RemoteController {
         MacInfo(id: Self.macID, name: Self.harness("SIDEA_HARNESS_NAME") ?? Self.macName(Host.current().localizedName ?? "Mac", release: AppCopies.isRelease), os: .macos)
     }
 
-    /// Side A Dev says so, since a phone can pair with both copies on one Mac.
     nonisolated static func macName(_ name: String, release: Bool) -> String { release ? name : name + " Dev" }
 
-    /// Debug builds only: two harnesses on one Mac pass these to look like two Macs (SIDEA_HARNESS_MAC_ID, _NAME).
     static func harness(_ name: String) -> String? {
         #if DEBUG
         return ProcessInfo.processInfo.environment[name].flatMap { $0.isEmpty ? nil : $0 }
@@ -110,7 +95,6 @@ final class RemoteController {
         #endif
     }
 
-    /// The tailnet address first; a Mac without Tailscale is reached on its LAN alone.
     var endpoints: Endpoints? {
         if let fixed, let address = fixed.first {
             let lans = fixed.dropFirst().map { Self.hostPort($0, port) }
@@ -125,13 +109,9 @@ final class RemoteController {
         return Endpoints(tailnet: primary, lan: primary, lans: lans)
     }
 
-    /// Off unless turned on: Tailscale and the relay tunnel reach the Mac from anywhere, so nothing needs a port open to the Wi-Fi.
     var lanOn: Bool { UserDefaults.standard.object(forKey: Self.lanKey) as? Bool ?? false }
 
-    /// Reach this Mac from anywhere: on unless turned off, whenever there's a relay to reach it through.
     var anywhereOn: Bool { UserDefaults.standard.object(forKey: Self.anywhereKey) as? Bool ?? true }
-
-    // MARK: Lifecycle
 
     func start() {
         guard available else { return }
@@ -156,8 +136,6 @@ final class RemoteController {
         refresh()
     }
 
-    /// The log file, the paired devices (a Keychain read) and the network probes wait until Remote is on, so a Mac
-    /// that never turns it on pays for none of them.
     private func open() {
         guard !opened else { return }
         opened = true
@@ -177,16 +155,13 @@ final class RemoteController {
         RemoteLog.shared("Remote turned \(value ? "on" : "off")")
         on = value
         UserDefaults.standard.set(value, forKey: Self.enabledKey)
-        // Remote serves hosted sessions, so Side A's tmux runs while it's on, or while terminal hosting is.
         Task { await store?.syncHosting() }
-        // The helper that reopens Side A after a crash stays for Remote, with pool mode on or off.
         Task { await store?.syncPool() }
         if value {
             bringUp()
             refresh()
         } else {
             tearDown()
-            // The notch keeps its hooks when it is on.
             if !Island.on { Task { await store?.setIsland(nil, "off") } }
         }
         store?.startNotifications()
@@ -203,10 +178,8 @@ final class RemoteController {
         rebind()
     }
 
-    /// Before a Sparkle relaunch: phones reconnect quietly to the new copy.
     func handOff() { server?.goodbye("update") }
 
-    /// Before the Mac sleeps: phones say so instead of guessing, and reconnect when it wakes.
     func macWillSleep() { server?.goodbye(ServerEvent.byeSleep); tunnel?.goodbye(TunnelControl.Goodbye.sleep) }
 
     private func bringUp() {
@@ -257,6 +230,7 @@ final class RemoteController {
             hub.socketsChanged = { [weak self] counts in
                 Task { @MainActor in self?.socketsChanged(counts) }
             }
+            hub.presenceChanged = { [weak self] _ in Task { @MainActor in self?.push.watchingChanged() } }
             let terminals = TerminalHub(queue: server.queue, epoch: epoch) { [weak self] in self?.store?.hosted }
             store?.hosted.onRefresh = { [weak self, weak terminals] in
                 self?.events?.hostedChanged()
@@ -313,8 +287,6 @@ final class RemoteController {
         rebind()
     }
 
-    // MARK: Tunnel
-
     private func startTunnel() {
         guard on, anywhereOn, tunnel == nil, let server, let base = relayURL, let key = installKey else { return }
         let tunnel = TunnelClient(base: base, key: key, register: { try await RelayClient(base: base, key: key).register() }) { [weak server] done in
@@ -347,12 +319,9 @@ final class RemoteController {
 
     static func portBusy(_ port: UInt16) -> String { "Port \(port) is in use by another app." }
 
-    /// Every minute while Remote serves: a pairing whose phone never used its token is revoked (see DeviceStore.orphans).
     @ObservationIgnored private var sweeper: Task<Void, Never>?
-    /// Asks Tailscale again while it's installed but not up; tests shorten the wait.
     @ObservationIgnored private var reprobe: Task<Void, Never>?
     @ObservationIgnored var reprobeAfter: Duration = .seconds(60)
-    /// Asked this many times in a row without finding it up: the wait doubles, to ten times as long.
     @ObservationIgnored private var reprobes = 0
 
     func sweepOrphans(now: Date = Date()) {
@@ -426,13 +395,11 @@ final class RemoteController {
 
     private var interfaces: RemoteAddresses { RemoteAddresses.current(primary: Self.primaryInterface()) }
 
-    /// The interface the default route uses, whose LAN address goes first: the Wi-Fi the phone is likely on.
     private static func primaryInterface() -> String? {
         let global = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
         return global?["PrimaryInterface"] as? String
     }
 
-    /// The tailnet addresses Tailscale reports, cross-checked against the utun interfaces actually holding them.
     var boundTailnet: [String] {
         guard let status = tailscale, status.state == .ready else { return [] }
         let held = interfaces.tailnet
@@ -473,29 +440,23 @@ final class RemoteController {
         }
     }
 
-    /// The port to try when this one stays busy: one up, at most nine above the base. A harness's port may sit anywhere,
-    /// up to the top of the range.
     nonisolated static func nextPort(after port: UInt16, base: UInt16) -> UInt16? {
         port < base + 9 ? port + 1 : nil
     }
 
-    /// Recording, and the live loop behind it, run exactly while Remote is active.
     private func recordIfActive() {
-        if active { events?.start(); codex.start(); Task { await inbox.refresh() } } else { events?.stop(); codex.stop(); push.stopScheduling() }
+        if active { events?.start(); codex.start(); push.sweepStaleAlerts(); Task { await inbox.refresh() } } else { events?.stop(); codex.stop(); push.stopScheduling() }
     }
 
     func socketsChanged(_ counts: [String: Int]) {
         connected = counts
         for id in counts.keys { devices.seen(id) }
+        push.watchingChanged()
     }
-
-    // MARK: Relay
 
     @ObservationIgnored private(set) lazy var push = RemotePush(controller: self)
     @ObservationIgnored private(set) lazy var previews = RemotePreviews(controller: self)
-    /// Codex sessions started in a terminal, reached through Codex's app server.
     @ObservationIgnored private(set) lazy var codex = CodexTerminals(store: store)
-    /// Claude sessions started in a terminal, reached through their inbox hook (opt-in).
     @ObservationIgnored private(set) lazy var inbox = ClaudeInbox(store: store)
     @ObservationIgnored private(set) lazy var receipts = ReplyReceipts(store: store)
     @ObservationIgnored let typer = TerminalTyper()
@@ -506,7 +467,6 @@ final class RemoteController {
         ?? (store?.isDemo != false ? nil
             : URL(string: Bundle.main.bundleIdentifier == AppCopies.releaseID ? "https://push.getsidea.com" : "https://push-staging.getsidea.com"))
 
-    /// Made with the first pairing; the relay learns of it on the first registration.
     var installKey: Curve25519.Signing.PrivateKey? {
         do { return try keychain.installKey() } catch {
             self.error = error.localizedDescription
@@ -516,15 +476,11 @@ final class RemoteController {
 
     var installID: String? { installKey.map { RelaySignature.installID($0.publicKey.rawRepresentation) } }
 
-    // MARK: Pairing
-
-    /// Whether Pair iPhone can open now, and if not, what stands in the way.
     enum PairReadiness: Equatable {
         case ready, starting, keyWaiting, keyBroken, noNetwork, devicesUnreadable
         case cantListen(String)
     }
 
-    /// Ready exactly when a phone could reach the sheet: a listener is up or the relay tunnel is.
     var pairReadiness: PairReadiness {
         if devices.unreadable != nil { return .devicesUnreadable }
         if listening.values.contains(.ready) || tunnel != nil { return .ready }
@@ -557,8 +513,6 @@ final class RemoteController {
         tunnel?.setPairing(ticket: nil)
     }
 
-    /// With the tunnel up, the code also names the relay, so a phone on another network can pair; with no direct address
-    /// at all, the relay is the only way.
     var qrLink: String? {
         guard let pairing, let identity else { return nil }
         var relay: (url: URL, installID: String, ticket: Data)?
@@ -573,8 +527,6 @@ final class RemoteController {
     /// For Copy Diagnostics: a release build's key should say teamid:…, never cdhash:….
     var keyAccess: String { keychain.keyAccess() }
 
-    /// On Pair: a token shown once, its hash kept with the device, the phone's old record dropped.
-    /// A key the phone registers is kept only if it is one: base64url X9.63 P-256, 65 bytes.
     static func p256(_ key: String?) -> String? {
         guard let key, let raw = Secret.base64url(key), raw.count == 65, (try? P256.Signing.PublicKey(x963Representation: raw)) != nil else { return nil }
         return key
@@ -600,16 +552,12 @@ final class RemoteController {
         pairing?.finished(attemptID, saved: true)
         RemoteLog.shared("pairing: paired \(device.name) (device \(device.id.prefix(6)))" + (request.replaces.map { ", replacing \($0.prefix(6))" } ?? ""))
         if let old = request.replaces, old != device.id { invalidate(old) }
-        // Paired again under the same id: what the old token opened goes with it.
         if replacedSameID { invalidate(device.id, keepPush: true) }
         devicesChanged()
-        // A phone that can't be asked anything is no use: Claude Code's hooks come on with the first pairing.
         if store?.island.installed[.claude] != true { Task { await store?.setIsland(.claude, "on") } }
         let relay = key.flatMap { key in installID.flatMap { id in relayURL.map { RelayInfo(url: $0.absoluteString, installID: id, keyID: key.keyID.base64URL) } } }
         return PairResponse(token: token, deviceID: device.id, mac: mac, relay: relay, hello: hello(paired: true))
     }
-
-    // MARK: Devices
 
     func revoke(_ id: String) {
         do { try devices.remove(id) } catch { self.error = error.localizedDescription; return }
@@ -628,8 +576,6 @@ final class RemoteController {
         store?.island.dropQueued(device: id)
     }
 
-    /// A device list that couldn't be read gets another try, at most every few seconds, each time a phone asks and on
-    /// wake and network changes. Nothing was lost meanwhile, so everyone carries on where they were.
     func reloadDevices(now: Date = Date()) {
         guard opened, let was = devices.unreadable, now.timeIntervalSince(lastDeviceReload) >= Self.deviceReloadEvery else { return }
         lastDeviceReload = now
@@ -643,7 +589,6 @@ final class RemoteController {
     nonisolated static let deviceReloadEvery: TimeInterval = 5
     @ObservationIgnored private var lastDeviceReload = Date.distantPast
 
-    /// After "Paired devices couldn't be read": start over with no devices.
     func resetDevices() {
         let gone = devices.devices.map(\.id)
         do { try devices.reset() } catch { self.error = error.localizedDescription; return }
@@ -661,7 +606,6 @@ final class RemoteController {
         refresh()
     }
 
-    /// A new identity: every phone's pin stops matching, so every device goes.
     func makeNewKey() {
         tearDown()
         keychain.deleteIdentity()
@@ -685,7 +629,6 @@ final class RemoteController {
         store?.startNotifications()
     }
 
-    /// Remove Side A: the device item, the identity and the idempotency records go.
     func uninstall() async {
         tearDown()
         if (try? keychain.installKey(create: false)) != nil { await push.deleteInstall() }
@@ -698,11 +641,8 @@ final class RemoteController {
     }
 
     #if DEBUG
-    /// Tests: what checks a signature when no server listens.
     var confirmCheck: (@Sendable (HTTPRequest, String, ConfirmPurpose, String, ConfirmProof) -> HTTPResponse?)?
     #endif
-
-    // MARK: Hello
 
     static let capabilities: Set<Capability> = [.confirmSigned, .confirmActions, .events, .answersQuestions, .answersPlans, .answersMode, .replyFollowUp, .replyNote, .interrupt, .images, .diffs,
                                                 .uploads, .setup, .options, .push, .transcriptStream, .ports, .interruptNextStep,
@@ -710,7 +650,6 @@ final class RemoteController {
                                                 .accountsUse, .worth, .rotation, .repliesDropped, .repliesReceipts, .transcribe,
                                                 .repliesSeen, .repliesPromote, .interruptResend, .screen, .pullRequests, .snooze, .failures]
 
-    /// Remembers what a phone's `hello` said it can show; the keychain is written only when that changes.
     func noteCapabilities(_ device: String, _ capabilities: Set<Capability>) {
         let rotation = capabilities.contains(.rotation), groups = capabilities.contains(.readyGroups)
         guard let known = devices.devices.first(where: { $0.id == device }),
@@ -723,9 +662,7 @@ final class RemoteController {
         } catch { RemoteLog.shared("couldn't save device \(device.prefix(6))'s capabilities: \(error.localizedDescription)") }
     }
 
-    /// Hosting only while tmux is there to host.
     var capabilities: Set<Capability> {
-        // Hosted Claude changes its settings through its own pickers.
         var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .restartAgent, .restartAgentImages, .sessionSettings, .hostedTrust, .hostedShow])
             : Self.capabilities
         if checkForUpdates != nil { capabilities.insert(.updateCheck) }

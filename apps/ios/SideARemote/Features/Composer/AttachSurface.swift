@@ -5,33 +5,23 @@ import SideAProtocol
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Everything a screen needs to attach photos: the drawer, the system pickers it hands over to, the camera, and what the
-/// text field's paste takes. The session composer and the New Session sheet each own one and show the + and the tray
-/// their own way; the photos go into the Mac's `ComposerAttachments` under whatever key the screen names (a session's
-/// id, or a draft's before the session exists).
 @MainActor @Observable
 final class AttachSurface {
     nonisolated deinit {}
 
     let drawer = AttachDrawer()
-    /// The + held: the newest photos in a strip above the field.
     let strip = RecentStrip()
-    /// What the field's paste and the drawer's Paste row read at the moment of pasting, not at the moment they were set up.
     let target = AttachTarget()
     var picks: [PhotosPickerItem] = []
     var showsPicker = false
     var showsFiles = false
 
-    /// Photos the tray takes, 0 when the Mac can't take uploads.
     func room(_ key: SessionKey?, tools: MacTools) -> Int {
         key.flatMap { tools.can(.uploads) ? tools.attachments.room($0) : nil } ?? 0
     }
 
     func add(_ images: [Data], room: Int) { for data in images.prefix(room) { target.add(data) } }
 
-    /// Opens the drawer, or brings the keyboard back in its place. False when there is nothing to attach (a Mac that can't take uploads, a
-    /// full tray, no window yet): the caller does what it did before the drawer. `photosOnly` is the + menu's Photos:
-    /// the library grid at the keyboard's height, without the actions the menu already offered.
     @discardableResult
     func open(key: SessionKey?, tools: MacTools, reduceMotion: Bool, photosOnly: Bool = false) -> Bool {
         guard let key else { return false }
@@ -43,8 +33,6 @@ final class AttachSurface {
         return true
     }
 
-    /// The + menu's Camera: the drawer opens on the grid and the viewfinder grows out of its camera tile, asking for
-    /// the camera first if nobody has. A refusal goes to Settings, as the tile does.
     func openCamera(key: SessionKey?, tools: MacTools, reduceMotion: Bool) {
         guard !drawer.isOpen, open(key: key, tools: tools, reduceMotion: reduceMotion, photosOnly: true) else { return }
         let drawer = drawer
@@ -52,7 +40,6 @@ final class AttachSurface {
             if drawer.camera.access.asksOnTap { await drawer.camera.ask() }
             switch drawer.camera.access {
             case .authorized:
-                // The panel rises first, so the viewfinder has a tile to grow from.
                 try? await Task.sleep(for: .milliseconds(320))
                 drawer.openCamera()
             case .denied: drawer.openSettings()
@@ -68,7 +55,6 @@ final class AttachSurface {
         return pasteClipboard(into: tools.attachments, key: key)
     }
 
-    /// The drawer's Add, for one photo.
     func attach(_ asset: PHAsset, thumbnail: UIImage?, key: SessionKey?, tools: MacTools) {
         guard let key else { return }
         if !hooks(key: key, tools: tools).add(asset, thumbnail: thumbnail ?? UIImage()) { DrawerFeedback.warning() }
@@ -93,13 +79,10 @@ final class AttachSurface {
 }
 
 extension View {
-    /// The presenters and hooks an `AttachSurface` needs from the screen it sits in: the pickers, the camera, and the
-    /// drawer closed whenever the screen goes away, changes key or leaves the foreground.
     func attachments(_ surface: AttachSurface, key: SessionKey?, tools: MacTools) -> some View {
         modifier(AttachPresenters(surface: surface, key: key, tools: tools))
     }
 
-    /// The drawer as a popover from this view, for a screen with no keyboard area to take (an iPad with a hardware keyboard).
     func attachPopover(_ surface: AttachSurface) -> some View {
         modifier(AttachPopover(drawer: surface.drawer))
     }
@@ -117,7 +100,6 @@ private struct AttachPresenters: ViewModifier {
         content
             .modifier(AttachPickers(surface: surface, key: key, tools: tools))
             .background { WindowReader { surface.drawer.window = $0 } }
-            // Escape from a hardware keyboard closes it, with focus in the field or not.
             .background {
                 if surface.drawer.isOpen {
                     Button("Close") { surface.drawer.escape() }
@@ -133,7 +115,6 @@ private struct AttachPresenters: ViewModifier {
                 target.attachments = tools.attachments
                 target.canUpload = tools.can(.uploads)
             }
-            // A different Mac has its own tray.
             .onChange(of: ObjectIdentifier(tools.attachments)) { surface.target.attachments = tools.attachments }
             .onChange(of: tools.can(.uploads)) { _, can in surface.target.canUpload = can }
             .onAppear { KeyboardMetrics.start() }
@@ -147,7 +128,6 @@ private struct AttachPresenters: ViewModifier {
     }
 }
 
-/// The system pickers the drawer hands over to, and the drop of photos from another app.
 private struct AttachPickers: ViewModifier {
     @Bindable var surface: AttachSurface
     let key: SessionKey?
@@ -157,7 +137,6 @@ private struct AttachPickers: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            // Photos dragged in from another app on iPad go in as Files and Paste do.
             .onDrop(of: [.image], delegate: PhotoDrop(room: room) { [surface, key, tools] data in
                 surface.add([data], room: surface.room(key, tools: tools))
             })
@@ -194,8 +173,6 @@ private struct AttachPopover: ViewModifier {
     }
 }
 
-/// Where a paste goes right now: the key the screen attaches under and the Mac's tray, kept current by the screen and
-/// read when the paste happens.
 @MainActor
 final class AttachTarget {
     nonisolated deinit {}
@@ -215,13 +192,10 @@ final class AttachTarget {
     }
 }
 
-/// Photos dropped from another app. A full tray (or a Mac that takes no uploads) doesn't light up under the drag; a
-/// drop of more than fits takes what fits, and says so with the same warning the drawer gives.
 struct PhotoDrop: DropDelegate {
     let room: Int
     let add: @MainActor (Data) -> Void
 
-    /// How many of `count` dropped photos the tray takes.
     static func taken(_ count: Int, room: Int) -> Int { max(min(count, room), 0) }
 
     func validateDrop(info: DropInfo) -> Bool { room > 0 && info.hasItemsConforming(to: [.image]) }
@@ -244,7 +218,6 @@ struct PhotoDrop: DropDelegate {
     }
 }
 
-/// Reports the window the view is in, without taking part in layout.
 struct WindowReader: UIViewRepresentable {
     let onChange: (UIWindow?) -> Void
 

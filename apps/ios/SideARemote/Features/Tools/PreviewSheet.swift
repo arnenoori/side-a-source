@@ -2,8 +2,6 @@ import SideARemoteKit
 import SwiftUI
 import WebKit
 
-/// Preview :port: the dev server through Side A's own listener, in a WebView held to
-/// the Mac's pinned key and to the preview's own address. Closing it takes the preview down.
 struct PreviewSheet: View {
     let port: SessionActions.Port
     @Environment(AppModel.self) private var model

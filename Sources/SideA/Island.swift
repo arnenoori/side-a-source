@@ -29,7 +29,6 @@ final class Island {
         var cwd: String?
     }
 
-    /// A finished turn, and the background Stop hook waiting on it for a follow-up, while it waits.
     struct Ready: Identifiable, Equatable {
         let id = UUID()
         let finish: IslandFinish
@@ -44,7 +43,6 @@ final class Island {
             case sessionEnded
             /// The turn ended with a Stop hook that doesn't wait.
             case cannotWait
-            /// The phone that sent it was removed.
             case revoked
             /// The session asks more now than was proven when it was sent.
             case outranked
@@ -116,12 +114,10 @@ final class Island {
             watcher?.readyChanged(from: oldValue, to: ready, reason: leavingBecause)
         }
     }
-    /// Why rows are going, for the length of the one change `drop` makes.
     @ObservationIgnored private var leavingBecause: ReadyReason = .released
     @ObservationIgnored weak var watcher: Watcher?
     @ObservationIgnored private(set) var resolved: [Pending.ID: (by: Resolution, answer: IslandAnswer?, at: Date)] = [:]
     @ObservationIgnored private var resolvedOrder: [Pending.ID] = []
-    /// The card that took the place of one settled elsewhere, and when.
     @ObservationIgnored private(set) var arrived: (id: Pending.ID, at: Date)?
     /// Seconds a card that slid into a settled one's place ignores the Mac's own answers.
     static let arrivalGuard: TimeInterval = 0.6
@@ -137,16 +133,12 @@ final class Island {
     /// Answers picked so far on each question form, so folding the island or stepping to another request keeps them.
     var drafts: [Pending.ID: Draft] = [:]
     struct Draft { var answers = QuestionAnswers(); var step = 0 }
-    /// The plan whose "What should change?" field is open.
     var revising: Pending.ID?
-    /// The Ready row whose reply field is open.
     var replying: Ready.ID?
     /// Per session, follow-ups queued while it works: on disk, because the Stop hook that takes them can outlast this app.
     @ObservationIgnored var queued: [String: [QueuedFollowUp]] = [:] { didSet { if queued != oldValue { queuedChanged() } } }
     @ObservationIgnored private var queuedGoneSince: [String: Date] = [:]
     @ObservationIgnored lazy var queuedFile: URL? = store.flatMap { $0.isDemo ? nil : $0.root.appendingPathComponent("runtime/queued-followups.json") }
-    /// Tests hold waiters without touching Remote's global state.
-    /// Tests decide for themselves whether finished sessions are held.
     @ObservationIgnored var keepsFinished: (() -> Bool)?
     /// How long a session must stay off the live list before what's queued for it counts as lost.
     static let queuedGrace: TimeInterval = 60
@@ -281,7 +273,6 @@ final class Island {
         }
     }
 
-    /// Answers each request whose minute is up, quietly, and records it; then waits for the next.
     func answerDue(now: Date = Date()) {
         for (id, at) in autoAnswerAt where at <= now {
             autoAnswerAt[id] = nil
@@ -303,7 +294,6 @@ final class Island {
         return item.id
     }
 
-    /// The request was settled elsewhere, as in the terminal, or its source went away.
     func withdraw(_ id: Pending.ID, by: Resolution) {
         responders[id] = nil
         remove(id, by: by)
@@ -415,7 +405,6 @@ final class Island {
         schedule()
     }
 
-    /// Runs what's due; the timer task calls it, and tests call it with their own clock.
     func tick(now: Date = Date()) {
         for action in timers.due(now: now) {
             switch action {
@@ -466,7 +455,6 @@ final class Island {
         let item = pending[position]
         let shown = current?.id
         pending.remove(at: position)
-        // The card on screen stays on screen when one before it goes.
         if position < index { index -= 1 }
         index = min(index, max(pending.count - 1, 0))
         // Settled away from this card: the next one slides in under the pointer, so for a moment a click or ⌃⌥Y meant for
@@ -512,7 +500,6 @@ final class Island {
         finishedRow(finish, title: title, earlier: earlier, waiter: waiter)
     }
 
-    /// The turn's row in Ready, in place of any before it, and its notice.
     private func finishedRow(_ finish: IslandFinish, title: String, earlier: [Ready], waiter: UInt64?) {
         guard (keepsFinished ?? { self.keepsWaiters })() else {
             if let waiter { server?.reply(waiter, IslandFollowUp.line(nil)) }
@@ -543,7 +530,6 @@ final class Island {
         changed()
     }
 
-    /// Opens the session's terminal for its next task; with no argument, the one that finished last.
     func go(_ item: Ready? = nil) {
         guard let item = item ?? ready.first else { return }
         if event?.kind == .finished { event = nil; timers.clearEvent() }
@@ -566,7 +552,6 @@ final class Island {
         leavingBecause = .released
     }
 
-    /// `drop`, then the notch folds if that was the last of what it held.
     private func leave(_ rows: [Ready], _ reason: ReadyReason, followUp: String? = nil) {
         drop(rows, reason, followUp: followUp)
         if ready.isEmpty && pending.isEmpty { expanded = false }
@@ -575,7 +560,6 @@ final class Island {
 
     func clearReady() { leave(ready, .released) }
 
-    /// One finished row whose time in the Done list is up; a row being replied to stays.
     private func clearReady(_ id: Ready.ID) {
         guard replying != id, let row = ready.first(where: { $0.id == id }) else { return }
         leave([row], .expired)
@@ -632,7 +616,6 @@ final class Island {
         return false
     }
 
-    /// What the session's mode asks of a reply right now.
     private func queuedNeeds(_ session: String) -> ConfirmProof {
         guard let store else { return .biometric }
         // swiftlint:disable:next redundant_nil_coalescing -- permissionMode returns a double optional; `?? nil` flattens it.
@@ -814,7 +797,6 @@ final class Island {
         return unsure
     }
 
-    /// Claude Code's registry says these sessions are working again, so they've had their next task.
     func resumed(_ sessions: Set<String>) {
         // Given work in the terminal: a follow-up typed in the island now would arrive mid-turn, so release the wait.
         let working = ready.filter { $0.finish.sessionID.map(sessions.contains) == true }
@@ -841,7 +823,6 @@ final class Island {
     }
 
     private func changed() {
-        // No global shortcuts for a notch that isn't shown.
         let wanted: KeySet = !Self.on ? .none : !pending.isEmpty ? .requests : !ready.isEmpty ? .ready : .none
         if wanted != keys {
             keys = wanted
@@ -896,11 +877,9 @@ final class Island {
     }
 }
 
-/// When the notch opens, folds and lets an event go, as times. Island runs one task to the next of them.
 struct IslandTimers: Equatable {
     enum Action: Equatable { case expand, collapse, dismissEvent }
 
-    /// How long the pointer rests on the folded notch before it opens.
     static let hoverIntent: TimeInterval = 0.15
     /// How long the Ready list waits for the pointer to come back before it folds.
     static let collapseGrace: TimeInterval = 0.3

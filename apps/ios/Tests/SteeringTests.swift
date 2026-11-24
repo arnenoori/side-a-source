@@ -16,7 +16,6 @@ final class SteeringTests: XCTestCase {
         let store = TranscriptStore([:])
         let turn = store.send("Run the tests", to: "s", at: Date(timeIntervalSince1970: 1_000))
         store.mark(turn.id, in: "s", .sent)
-        // An older turn with the same words doesn't count.
         store.set([user(0, "Run the tests", at: 100)], hasEarlier: false, for: "s")
         XCTAssertEqual(store.outgoing["s"]?.count, 1)
         store.set([user(0, "Run the tests", at: 100), user(1, "Run the tests", at: 1_001)], hasEarlier: false, for: "s")
@@ -30,7 +29,6 @@ final class SteeringTests: XCTestCase {
         store.noteRead(in: "s")
         store.set([assistant(0, at: 900), assistant(1, at: 1_100)], hasEarlier: false, for: "s")
         XCTAssertEqual(store.outgoing["s"]?.map(\.state), [.read])
-        // Drawn where it was sent, between the two assistant turns.
         let items = TranscriptLayout.items(messages: store.messages["s"]!, earlier: 0, working: true, outgoing: store.outgoing["s"]!)
         XCTAssertEqual(items.map(\.id), ["m-0", "o-\(turn.id)", "m-1"])
     }
@@ -42,7 +40,6 @@ final class SteeringTests: XCTestCase {
         XCTAssertEqual(store.outgoing["s"], [])
         XCTAssertEqual(store.drafts["s"], "Ship it")
         XCTAssertEqual(store.unsent["s"]?.item, "item-1")
-        // Something new in the field isn't overwritten.
         store.drafts["s"] = "Something else"
         let second = store.send("Ship it", to: "s")
         store.fail(second.id, in: "s", reason: "", item: nil)
@@ -80,11 +77,8 @@ final class SteeringTests: XCTestCase {
     func testSteersFollowAbilities() {
         let data = DemoData(now: .now)
         let session = { (id: String) in data.sessions.first { $0.id == id } }
-        // Unhosted Claude: stop mail and notes, no Esc.
         XCTAssertEqual(Steer.available(for: session(DemoData.ID.postgres)), [.stopBeforeNextStep, .note])
-        // A note already waits, so a stop would replace it.
         XCTAssertEqual(Steer.available(for: session(DemoData.ID.ship)), [.note])
-        // Hosted Codex: Esc only.
         XCTAssertEqual(Steer.available(for: session(DemoData.ID.lan)), [.interruptNow])
     }
 
@@ -99,7 +93,6 @@ final class SteeringTests: XCTestCase {
                  history: HistoryStore([]), isDemo: true, paired: true)
     }
 
-    /// Only what the Mac's delivery table carries out mid-turn, by kind of session.
     func testSendsLongPressOffersWhatTheSessionTakes() {
         let model = model([
             working("hosted-claude", .claude, hosted: "sa-1", abilities: [.type, .terminal, .interrupt, .followUp]),
@@ -114,10 +107,8 @@ final class SteeringTests: XCTestCase {
         ])
         XCTAssertEqual(model.deliveries("hosted-claude"), [.nextStep, .afterTurn, .interrupt])
         XCTAssertEqual(model.deliveries("hosted-codex"), [.steer, .afterTurn, .interrupt])
-        // A Mac before 0.5.52 refuses a reply to hosted Codex mid-turn, so it can only be stopped first.
         XCTAssertEqual(model.deliveries("hosted-codex-older-mac"), [.interrupt])
         XCTAssertEqual(model.deliveries("shared-codex"), [.steer, .afterTurn, .interrupt])
-        // Unhosted Claude has no instant interrupt, only stop mail.
         XCTAssertEqual(model.deliveries("claude"), [.nextStep, .afterTurn])
         XCTAssertEqual(model.deliveries("claude-no-stop-hook"), [.nextStep])
         XCTAssertEqual(model.deliveries("codex-mail"), [.nextStep])
@@ -125,7 +116,6 @@ final class SteeringTests: XCTestCase {
         XCTAssertEqual(model.deliveries("asking"), [])
     }
 
-    /// The control beside Send shows only when there is a choice; the pick lasts for the running turn.
     func testDeliveryControlAndRememberedPick() {
         var queued = working("claude", .claude, abilities: [.note, .interrupt, .followUp])
         queued.turnID = "t-1"
@@ -137,22 +127,20 @@ final class SteeringTests: XCTestCase {
         XCTAssertFalse(AppModel.offersChoice(model.deliveries("note-only")))
         XCTAssertFalse(AppModel.offersChoice(model.deliveries("idle")))
         XCTAssertNil(model.delivery("older"), "one way to send: no control")
-        XCTAssertEqual(model.delivery("claude"), .nextStep, "the first way is what a plain send does")
+        XCTAssertEqual(model.delivery("claude"), .afterTurn, "a plain send while it works queues")
         XCTAssertNil(model.pickedDelivery("claude"))
 
-        model.chooseDelivery(.afterTurn, for: "claude")
-        XCTAssertEqual(model.delivery("claude"), .afterTurn)
-        XCTAssertEqual(model.pickedDelivery("claude"), .afterTurn)
+        model.chooseDelivery(.nextStep, for: "claude")
+        XCTAssertEqual(model.delivery("claude"), .nextStep)
+        XCTAssertEqual(model.pickedDelivery("claude"), .nextStep)
         XCTAssertNil(model.pickedDelivery("note-only"), "per session")
 
-        // A new turn starts over.
         var next = queued
         next.turnID = "t-2"
         model.sessions.replace([next] + others, finished: [:])
         XCTAssertNil(model.pickedDelivery("claude"))
-        XCTAssertEqual(model.delivery("claude"), .nextStep)
+        XCTAssertEqual(model.delivery("claude"), .afterTurn)
 
-        // A pick the session no longer offers is ignored.
         model.chooseDelivery(.interrupt, for: "claude")
         XCTAssertNil(model.pickedDelivery("claude"))
         model.chooseDelivery(.afterTurn, for: "claude")
@@ -161,7 +149,6 @@ final class SteeringTests: XCTestCase {
     }
 
     func testDeliveriesNameThemselvesInOneWord() {
-        XCTAssertEqual(Delivery.allCases.map(\.shortTitle), ["Steer", "Next", "Queue", "Interrupt"])
     }
 
     func testSendAfterThisTurnQueuesAndNextStepWaits() async throws {

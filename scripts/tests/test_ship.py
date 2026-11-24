@@ -10,7 +10,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Answers the gh calls ship.sh and publish-appcast.py make, from state.json, and logs each one.
 FAKE_GH = r'''#!/usr/bin/env python3
 import base64, json, os, sys
 from pathlib import Path

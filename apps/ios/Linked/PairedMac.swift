@@ -3,17 +3,13 @@ import SideAProtocol
 import SideARemoteKit
 import SideARemoteShared
 
-/// The paired Mac as the phone keeps it. It lives in the shared keychain beside the token, so the
-/// notification extensions can answer without the app.
 struct PairedMac: Codable, Hashable {
     var endpoint: Endpoint
     var deviceID: String
-    /// What the Mac calls this iPhone, for "Paired as Arne's iPhone".
     var deviceName: String
     var relayInstallID: String?
     /// The push relay the Mac registered this iPhone with, only ever from the Mac; nil means no relay, so no pushes.
     var relayURL: String?
-    /// The Mac's tailnet from its code (`t=`), for the different-tailnet warning when pairing another Mac.
     var tailnet: String?
     /// From the Mac's last hello. A notification's reply goes without asking the Mac, and may carry only fields it reads:
     /// the signature covers the body, so an older Mac refuses one it doesn't know.
@@ -34,13 +30,10 @@ struct PairedMac: Codable, Hashable {
         all(keychain).first { $0.endpoint.macID == macID }
     }
 
-    /// The pairing a code is for: the same Mac paired before, which Pair Again replaces on the Mac.
     static func matching(_ invitation: PairingClient.Invitation, keychain: SharedKeychain = .shared) -> PairedMac? {
         invitation.macID.flatMap { load($0, keychain: keychain) }
     }
 
-    /// Why a code may not be from the Mac it says it is: it names a paired Mac with a key other than the pinned one, or
-    /// another Mac under a paired Mac's name. Either can be a Mac reset on purpose, so the user decides.
     static func identityWarning(_ invitation: PairingClient.Invitation, keychain: SharedKeychain = .shared) -> String? {
         let macs = all(keychain)
         if let same = macs.first(where: { $0.endpoint.macID == invitation.macID }) {
@@ -54,7 +47,6 @@ struct PairedMac: Codable, Hashable {
         return "\(RequestText.visible(twin.endpoint.name)) is already paired, and this code is from a different \(twin.endpoint.kind.noun) with the same name. Pair only if you meant to add another \(twin.endpoint.kind.noun)."
     }
 
-    /// The paired Mac on another tailnet than the code's, when neither has the relay to reach across.
     static func otherTailnet(_ invitation: PairingClient.Invitation, keychain: SharedKeychain = .shared) -> PairedMac? {
         guard let tailnet = invitation.tailnet, invitation.relay == nil else { return nil }
         return all(keychain).first { mac in
@@ -68,7 +60,6 @@ struct PairedMac: Codable, Hashable {
         return keychain.set(data, for: "macs")
     }
 
-    /// Adds the Mac, or replaces its entry when it was paired before.
     @discardableResult
     private static func upsert(_ mac: PairedMac, _ keychain: SharedKeychain) -> Bool {
         var macs = all(keychain)
@@ -76,8 +67,6 @@ struct PairedMac: Codable, Hashable {
         return store(macs, keychain)
     }
 
-    /// The endpoint names the relay tunnel, so every client of it can fall back to the relay. Records saved before
-    /// the tunnel existed get it from the relay fields they already had.
     var withRelay: PairedMac {
         guard endpoint.relay == nil, let relayURL, let url = URL(string: relayURL), let relayInstallID else { return self }
         var mac = self
@@ -87,7 +76,6 @@ struct PairedMac: Codable, Hashable {
         return mac
     }
 
-    /// The relay's device credential header; `Paths.bearer` makes the same one for the tunnel.
     func relayBearer(install: String, secret: Data) -> String {
         "Bearer d1.\(install).\(deviceID).\(secret.base64URL)"
     }
@@ -100,7 +88,6 @@ struct PairedMac: Codable, Hashable {
         let mac = PairedMac(endpoint: paired.endpoint, deviceID: paired.response.deviceID, deviceName: deviceName,
                             relayInstallID: paired.response.relay?.installID, relayURL: paired.response.relay?.url, tailnet: tailnet).withRelay
         let id = mac.endpoint.macID
-        // The 4-byte key id, then the key.
         let pushKey = paired.pushKey.map { $0.keyID + $0.key.withUnsafeBytes { Data($0) } }
         guard keychain.set(Data(paired.response.token.utf8), for: "token.\(id)"),
               keychain.set(paired.deviceSecret, for: "secret.\(id)"),
@@ -110,7 +97,6 @@ struct PairedMac: Codable, Hashable {
         return mac
     }
 
-    /// The Mac changed its addresses or what it can do: keep them for next launch and for the notification extensions.
     func updating(_ endpoints: Endpoints, capabilities: Set<Capability>, os: HostOS? = nil,
                   keychain: SharedKeychain = .shared) -> PairedMac {
         var mac = self
@@ -120,7 +106,6 @@ struct PairedMac: Codable, Hashable {
         return mac
     }
 
-    /// `X-SideA-Confirm` from this pairing's key: nil when there's no key, the app is locked, or Face ID was declined.
     func sign(_ signer: DeviceKeys.Signer, purpose: ConfirmPurpose, subject: String, reason: String? = nil,
               fromNotification: Bool = false) async -> String? {
         await DeviceKeys.header(signer, macID: endpoint.macID, deviceID: deviceID, purpose: purpose, subject: subject,
@@ -142,7 +127,6 @@ struct PairedMac: Codable, Hashable {
     }
 }
 
-/// The token for `RemoteClient`, from the shared keychain.
 struct KeychainCredentials: CredentialStore {
     func token(for macID: String) async throws -> String? {
         SharedKeychain.shared.data("token.\(macID)").flatMap { String(data: $0, encoding: .utf8) }

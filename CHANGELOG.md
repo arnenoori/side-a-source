@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+## 0.5.59 — 2026-11-24
+
+Side A Remote asks for Face ID once while you use it, as 1.2 meant to, not at every message. Face ID now unlocks the key the way Apple documents for a Secure Enclave key, the app lock's Face ID counts as that first one, and a key that refuses a held Face ID asks once more and keeps the answer. The diagnostics log says why each Face ID prompt appeared.
+
+Relay: a "Didn't send" notice is no longer forced silent. A health alert goes at the level the Mac asks, passive or active, and is never time-sensitive.
+
+Side A Remote, redesigned:
+
+Two tabs and a compose button. Sessions and Accounts sit at the bottom left, New Session is the round button at the bottom right, and Settings and Search open from the top right of Sessions. Settings is a sheet, with the app icons, the notification switches and a terminal font preview on its first page.
+
+The Sessions list says more with less. A working session counts up by the second where the time was, one that needs you says Approval there and shows the command with Allow and Deny on the row, and the chip at the top left shows whether the Mac is a laptop or a desktop and reads "Reconnecting…" while the connection is down, in place of a banner. Swipe right to snooze or allow and left to quit; a quit from a swipe can be undone for five seconds. A Mac that said it went to sleep shows that in place of its list.
+
+A finished turn folds to one line, "Worked for 1m 12s", with its answer under it; tap the line for the steps. The turn in progress reads "Working for 12s" and shows its latest step.
+
+The message field always shows the model. Its second row holds +, the model with its effort, and one button that is the microphone when the field is empty, Send when it has text, a red Stop while the agent works, and Queue when you type while it works. Hold it mid-turn for Queue, Steer Now or Restart Turn. Tap a queued message to edit it in the field, or send it now from its row.
+
+An approval sits right above the message field with Allow Once and Deny, and a reply typed while it waits denies it and tells the agent what to do instead. The model sheet has the permission mode under the models.
+
+Accounts shows the account in use as a card for each of Claude and Codex, with the week's figure large and the other limits as bars, the other accounts as rows with a bar, a percentage and when they reset, and limited accounts folded into one row.
+
+New Session asks "What should we build in side-a?" with your recent folders and the agent as chips above the prompt, and starts on the folder you used last.
+
+An account's page counts what is used, like the list, where it counted what was left. The bar that says a session needs you now shows on Accounts and inside another session, and no longer on the Sessions list, where the row already says it.
+
+New Session is a real button beside the tab bar now: tap it for the sheet, hold it for the folders you used last. It no longer passes through an empty tab on the way.
+
+An approval can be allowed for the rest of the session. Where Claude offers to remember a rule for the project, the phone also offers the same rule kept only until the session ends, as Allow for Session on the card; the sheet lists both.
+
+The magnifier on Sessions searches the list in place, and Search History carries the same words on to past sessions. While the agent works and the field is empty, the microphone sits beside Stop. The reply sheet shows the model too. A sent message always says Sent until the agent has read it. Swipe an account to the right, or hold it, to switch to it. Settings has a Dictation choice between your Mac and the phone itself.
+
+Notifications from the Mac:
+
+"Quiet while I'm watching" now does what it says. The Mac holds a push back only from a phone that is in front with that session open, and sends a request that is still waiting once the phone leaves it; a phone on the list or on another session gets the push. With the setting off, nothing is held.
+
+A notification that fails to go is tried again, up to three times, when the relay or Apple can't take it right then, and a request you answered in the meantime is not sent. Taking a notification away can no longer arrive before the notification it takes away. After Side A restarts, notifications for requests that can no longer be answered are replaced with "Request closed".
+
+A request nobody answered (Codex or a subagent handing it back to the terminal, the turn ending, or the session ending) no longer turns into "Answered" on your phone; the notification says what happened. A Ready notification that ran out its time stays as it was. The limit notification says the percentage, such as "Work is at 92%".
+
+`remote.log` now says why a push did or didn't go: one line per phone with the kind, sent, suppressed or skipped, the reason and the relay's answer, so "why didn't I get a push at 14:02?" has an answer.
+
+When your Mac comes back, the "Your Mac has gone quiet" notice is removed and nothing is shown in its place. Two Macs no longer replace each other's notice.
+
+A plan too long to fit in a notification offers Open, not Approve. A request you answer from a notification that the Mac refuses stays on the Lock Screen with Allow and Deny, and a second notice gives the Mac's reason. Not Now on the notifications card no longer ends it: Settings and Test Connection offer Turn On Notifications until you have answered iOS's prompt. Requests can arrive as Time Sensitive, so a Focus no longer holds them. Side A Remote no longer asks for permission to show a badge.
+
+Settings has a Theme choice: System, Light or Dark, for Side A Remote alone.
+
+Change a Claude session's model, effort and mode from the phone when it runs in your own tmux, not only in Side A's terminals. Side A walks Claude Code's own /model picker, /effort slider and Shift+Tab in that pane, for this session only, while the session is idle and in front in its terminal; a reply typed meanwhile waits its turn. A Claude session in a Ghostty tab outside tmux says why it can't: its screen can't be read.
+
 ## 0.5.58 — 2026-11-23
 
 App icon:

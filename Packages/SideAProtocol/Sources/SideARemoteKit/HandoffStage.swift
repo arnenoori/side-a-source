@@ -64,7 +64,6 @@ public enum HandoffStage: Equatable, Sendable {
             switch event {
             case .arrived(name): return (nil, nil)
             case .ended(name): return (.drafted(draft), message)
-            // The old session is still listed when the Mac couldn't end it, and a new pick there starts afresh.
             case .picked(let draft): return (.drafted(draft), nil)
             case .dropped: return (nil, nil)
             // The row goes as the Mac ends it for the new one.
@@ -80,7 +79,6 @@ public enum HandoffStage: Equatable, Sendable {
         case (.drafted(let old)?, .picked(var draft)):
             draft.handoff = old.handoff
             return .drafted(draft)
-        // Send already took the draft it sends; a refusal comes back to this one.
         case (.sending(let old, let message)?, .picked(var draft)):
             draft.handoff = old.handoff
             return .sending(draft, message: message)

@@ -3,14 +3,10 @@ import Photos
 import SwiftUI
 import UIKit
 
-/// The newest photos in the library, for the drawer's grid. Nothing here runs until the drawer's Photos sheet
-/// opens: reading the authorization status is free, asking is a system alert, and listing needs access.
-/// A limited library lists only what the user shared with Side A Remote, and follows changes to that.
 @Observable
 final class RecentPhotos: NSObject, PHPhotoLibraryChangeObserver {
     nonisolated deinit {}
 
-    /// Newest first.
     private(set) var assets: [PHAsset] = []
     private(set) var access = PhotoAccess(PHPhotoLibrary.authorizationStatus(for: .readWrite))
 
@@ -61,19 +57,16 @@ final class RecentPhotos: NSObject, PHPhotoLibraryChangeObserver {
         }
     }
 
-    /// Forgets the list when the drawer is gone, so nothing of the library is held between openings.
     func reset() {
         assets = []
         result = nil
     }
 
-    /// A thumbnail at `pixels` square, the first one fast and the sharp one after it.
     func thumbnail(for asset: PHAsset, pixels: CGFloat) -> AsyncStream<UIImage> {
         AsyncStream { continuation in
             let options = PHImageRequestOptions()
             options.deliveryMode = .opportunistic
             options.resizeMode = .fast
-            // Scrolling mustn't download from iCloud, least of all over cellular; a photo that isn't here yet stays a grey tile.
             options.isNetworkAccessAllowed = false
             let size = CGSize(width: pixels, height: pixels)
             let id = caching.requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: options) { image, info in
@@ -91,7 +84,6 @@ final class RecentPhotos: NSObject, PHPhotoLibraryChangeObserver {
     /// Fetches run a few at a time so ten picks don't hold ten full-size photos in memory at once.
     static func data(for asset: PHAsset, stall: Duration = .seconds(20)) async -> Data? {
         #if DEBUG
-        // `--fail-photo-load`: every photo fails after its tile was reserved, to see the failed tile.
         if ProcessInfo.processInfo.arguments.contains("--fail-photo-load") {
             try? await Task.sleep(for: .milliseconds(600))
             return nil
@@ -135,7 +127,6 @@ final class RecentPhotos: NSObject, PHPhotoLibraryChangeObserver {
         var idle: TimeInterval { lock.lock(); defer { lock.unlock() }; return Date().timeIntervalSince(last) }
     }
 
-    /// At most three full-size fetches at once.
     private actor FetchGate {
         static let shared = FetchGate()
         private var free = 3

@@ -19,7 +19,6 @@ import subprocess
 import sys
 
 SUBSYSTEM = "com.arnenoori.sidea"
-# Routes that wait on purpose: a pairing attempt held open for the person at the Mac.
 WAITS = ("v1/pair/{attempt}/wait",)
 SLOW = re.compile(r"^slow: (bridge|route) (.+) (\d+) ms$")
 STALL = re.compile(r"^stall: main thread blocked (\d+) ms, during (.*)$")

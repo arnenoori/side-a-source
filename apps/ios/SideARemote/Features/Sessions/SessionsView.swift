@@ -6,31 +6,26 @@ import SwiftUI
 struct SessionsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppRoot.self) private var root
-    @AppStorage("setup.notificationsCardDone") private var notificationsCardDone = false
+    @AppStorage(PrefKey.notificationsCardDone) private var notificationsCardDone = false
     @State private var notificationsUndetermined = false
-    @AppStorage("setup.notificationsOffDone") private var notificationsOffDone = false
+    @AppStorage(PrefKey.notificationsOffDone) private var notificationsOffDone = false
     @State private var notificationsDenied = false
     @Environment(\.scenePhase) private var scenePhase
 
-    /// The Mac Sessions shows, or with several and none picked, the first one, for what's about a single Mac.
     private var model: AppModel { root.current }
-    /// Several Macs and none picked: each Mac gets its own block under its name.
     private var everyMac: Bool { root.macs.count > 1 && root.shown == nil }
 
-    /// Once, after pairing a real Mac; the demo doesn't ask for permissions.
     private var showsNotificationsCard: Bool {
         notificationsUndetermined && !notificationsCardDone
             && (!model.isDemo || ProcessInfo.processInfo.arguments.contains("--setup-cards"))
     }
-    /// Denied in iOS Settings: the way back, until it's turned on or waved away.
     private var showsNotificationsOff: Bool { notificationsDenied && !notificationsOffDone && !model.isDemo }
     @State private var showsMac: MacPick?
     @State private var query = ""
-    /// On iPad's split view, the row open beside the list; a row there selects rather than pushes.
-    @Environment(\.sidebarSelection) private var sidebarSelection
+    @State private var searching = false
+    @Environment(\.searchHistory) private var searchHistory
     @Environment(KeyRequests.self) private var keys: KeyRequests?
 
-    /// Any Mac that can start one.
     private var canStart: Bool { root.canStartSession }
 
     var body: some View {
@@ -59,12 +54,13 @@ struct SessionsView: View {
                 MacSessions(query: query, header: false) {}
                     .environment(model)
             }
+            if !query.isEmpty, !noMatches, let searchHistory {
+                Button("Search History", systemImage: "clock.arrow.circlepath") { searchHistory(query) }
+            }
         }
         .listStyle(.insetGrouped)
-        // Live sessions only; past conversations are the Search tab's.
-        .searchable(text: $query, placement: .navigationBarDrawer, prompt: "Title, project, branch, model")
+        .searchable(text: $query, isPresented: $searching, placement: .navigationBarDrawer, prompt: "Title, project, branch, model")
         .environment(\.defaultMinListRowHeight, 28)
-        // Rows keep their ids across phases, so a change slides them between sections rather than fading out and in.
         .animation(Motion.move(reduceMotion), value: layout)
         .task(id: scenePhase) {
             notificationsUndetermined = await NotificationsCard.undetermined()
@@ -76,7 +72,11 @@ struct SessionsView: View {
         .navigationTitle("Sessions")
         .overlay {
             if noMatches {
-                ContentUnavailableView.search(text: query)
+                ContentUnavailableView {
+                    Label("No Sessions for \u{201C}\(query)\u{201D}", systemImage: "magnifyingglass")
+                } actions: {
+                    if let searchHistory { Button("Search History") { searchHistory(query) }.buttonStyle(.glassProminent) }
+                }
             } else if everyMac {
                 if root.macs.allSatisfy({ $0.sessions.sessions.isEmpty && $0.tools.unlisted(in: []).isEmpty && $0.mac.shown == .live }) {
                     ContentUnavailableView {
@@ -85,6 +85,15 @@ struct SessionsView: View {
                         if canStart { Button("New Session") { keys?.newSession += 1 }.buttonStyle(.glassProminent) }
                     }
                 }
+            } else if model.mac.shown == .offline(.macAsleep) {
+                ContentUnavailableView {
+                    Label("\(model.mac.name) Is Asleep", systemImage: "moon.zzz")
+                } actions: {
+                    if let engine = model.link?.engine {
+                        Button("Try Again") { Task { await engine.reconnectNow() } }.buttonStyle(.glassProminent)
+                    }
+                }
+                .background(Color(.systemGroupedBackground))
             } else if case .offline(let reason) = model.mac.shown, reason.needsPairing, model.sessions.sessions.isEmpty {
                 PairAgainView(reason: reason, mac: model.mac.name)
                     .background(Color(.systemGroupedBackground))
@@ -106,36 +115,10 @@ struct SessionsView: View {
                     MacChip(mac: model.mac) { showsMac = MacPick(id: model.macID) }
                 }
             }
-            // In the iPad sidebar it sits at the column's foot, where the bar can't fold it into an overflow menu.
-            if canStart, sidebarSelection == nil {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        QuickSessionsMenu { keys?.newSession += 1 }
-                    } label: {
-                        Label("New Session", systemImage: "square.and.pencil")
-                    } primaryAction: {
-                        keys?.newSession += 1
-                    }
-                    .menuOrder(.fixed)
-                    .accessibilityHint("Touch and hold for recent sessions")
-                    .needsMac()
-                }
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu("More", systemImage: "ellipsis") {
-                    Picker("Group By", systemImage: "rectangle.3.group", selection: choice(\.groupBy)) {
-                        ForEach(GroupBy.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                    Picker("Sort By", systemImage: "arrow.up.arrow.down", selection: choice(\.sortBy)) {
-                        ForEach(SortBy.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.menu)
-                }
-            }
+            ToolbarItem(placement: .topBarTrailing) { Button("Search", systemImage: "magnifyingglass") { searching = true } }
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+            ToolbarItem(placement: .topBarTrailing) { SheetButton(sheet: .settings) }
         }
-        // A fresh snapshot from each Mac shown; one that dropped tries again now rather than at its next retry.
         .refreshable {
             await withTaskGroup { group in
                 for mac in root.visible {
@@ -156,21 +139,14 @@ struct SessionsView: View {
     }
 
 
-    /// Each row's place, by Mac and phase.
     private var layout: [String] {
         root.visible.flatMap { mac in
             [SessionPhase.needsYou, .working, .ready, .idle].flatMap { phase in
-                // A pinned row has its own section, so a pin slides it up rather than fading it.
                 mac.sessions.sorted(mac.sessions.rows(phase)).map {
                     "\(mac.macID)/\(mac.tools.snooze(of: $0) != nil ? "snoozed" : mac.tools.isPinned($0) ? "pinned" : "\(phase)")/\($0.id)"
                 }
             }
         }
-    }
-
-    /// Each Mac keeps its own; with All Macs shown, a pick applies to every one.
-    private func choice<Value>(_ key: ReferenceWritableKeyPath<SessionsStore, Value>) -> Binding<Value> {
-        Binding { model.sessions[keyPath: key] } set: { value in for mac in root.visible { mac.sessions[keyPath: key] = value } }
     }
 
     private var noMatches: Bool {
@@ -186,8 +162,6 @@ struct MacPick: Identifiable {
     let id: String
 }
 
-/// One Mac's part of Sessions: its banners, then needs-you, working and ready, then the idle fold. With
-/// several Macs, its name heads it; tapping the name opens the Mac's sheet, as the chip does with one Mac.
 private struct MacSessions: View {
     let query: String
     let header: Bool
@@ -256,13 +230,11 @@ private struct MacSessions: View {
         snoozedSection
     }
 
-    /// Pinned from a row's long-press, whatever they're doing, above the rest; each keeps its status glyph.
     private var pinned: [RemoteSession] {
         [SessionPhase.needsYou, .working, .ready, .idle].flatMap { model.sessions.sorted(model.sessions.rows($0)) }
             .filter { model.tools.isPinned($0) && model.tools.snooze(of: $0) == nil && model.sessions.matches($0, query) }
     }
 
-    /// Out of the way until each wakes, folded under the rest; what wakes one sends it back to its place.
     @ViewBuilder private var snoozedSection: some View {
         let snoozed = [SessionPhase.working, .ready, .idle].flatMap { model.sessions.sorted(model.sessions.rows($0)) }
             .filter { model.tools.snooze(of: $0) != nil && model.sessions.matches($0, query) }
@@ -279,7 +251,6 @@ private struct MacSessions: View {
         }
     }
 
-    /// Started a moment ago, here or on the Mac, and not listed by the agent yet: in the list at once, not after it registers.
     @ViewBuilder private var startingSection: some View {
         let starting = model.tools.unlisted(in: model.sessions.sessions).filter {
             Self.matches($0, query, prompt: model.transcripts.firstPrompts[$0.name]?.text)
@@ -313,7 +284,6 @@ private struct MacSessions: View {
         let idle = model.sessions.rows(.idle).filter(shown)
         if !idle.isEmpty {
             Section {
-                // A search opens the fold without changing how it's kept.
                 DisclosureGroup(isExpanded: searching ? .constant(true) : Bindable(model.sessions).idleExpanded) {
                     ForEach(model.sessions.groups(.idle, where: shown), id: \.title) { group in
                         if let title = group.title { ProjectSubheader(title: title, grouping: model.sessions.groupBy) }
@@ -324,7 +294,6 @@ private struct MacSessions: View {
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
-                // It quits every idle session, so not while a search hides some.
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     if !searching { QuitIdleButton(title: "Quit Idle") }
                 }
@@ -334,7 +303,6 @@ private struct MacSessions: View {
     }
 }
 
-/// A hosted session before its agent has a row: the folder, what was asked, and how long ago.
 private struct StartingRow: View {
     let hosted: HostedSession
     let prompt: String?; @Environment(AppModel.self) private var model
@@ -363,7 +331,6 @@ private struct StartingRow: View {
     }
 }
 
-/// The row, pushed into its transcript. A row isn't the same object as a screen, so a plain push.
 private struct SessionLink: View {
     let session: RemoteSession
     @Environment(AppModel.self) private var model
@@ -397,7 +364,6 @@ struct ProjectSubheader: View {
 struct BannerRow: View {
     let symbol: String
     let text: String
-    /// `Formatting.age`, "Updated 12 min ago": stale data says how old it is.
     var age: String?
 
     var body: some View {
@@ -414,8 +380,6 @@ struct BannerRow: View {
     }
 }
 
-/// Revoked, or the Mac's key changed: nothing on this Mac can be trusted until it pairs again.
-/// Shown in place of the list when there's nothing stale to keep visible.
 struct PairAgainView: View {
     let reason: MacConnection.Offline
     let mac: String
@@ -480,26 +444,19 @@ extension MacConnection.Offline {
     }
 }
 
-/// The glass capsule naming the Mac, with its connection dot.
 struct MacChip: View {
     let mac: MacConnection
     let action: () -> Void
     @Environment(\.sidebarSelection) private var sidebarSelection
-    /// A first connect that's quick shows nothing; after 600 ms the chip says it's working on it.
     @State private var slow = false
 
     private var showsProgress: Bool {
-        switch mac.shown {
-        case .reconnecting: true
-        case .connecting: slow
-        default: false
-        }
+        mac.shown == .connecting && slow
     }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                ConnectionDot(state: mac.shown)
+            MacChipLabel(state: mac.shown, symbol: mac.symbol) {
                 MacChipName(name: mac.name, inSidebar: sidebarSelection != nil)
                 if showsProgress {
                     Image(systemName: "ellipsis").font(.caption).symbolEffect(.variableColor.iterative, options: .repeat(.continuous))
@@ -525,9 +482,7 @@ struct MacChip: View {
 
 }
 
-/// The chip with several Macs: which ones a tab shows, each with its status under its name.
 struct MacsMenu: View {
-    /// Search reads one Mac's history at a time, so it has no All Macs.
     var allowsAll = true
     @Environment(AppRoot.self) private var root
     @Environment(\.sidebarSelection) private var sidebarSelection
@@ -543,18 +498,16 @@ struct MacsMenu: View {
             if allowsAll { pick(nil) { Text("All \(root.macs.map(\.mac.kind).shared.titlePlural)") } }
             ForEach(root.macs, id: \.macID) { mac in
                 pick(mac.macID) {
-                    Text(mac.mac.name)
+                    Label(mac.mac.name, systemImage: mac.mac.symbol)
                     Text(mac.mac.status)
                 }
             }
         } label: {
-            HStack(spacing: 6) {
-                ConnectionDot(state: state)
+            MacChipLabel(state: state, symbol: shown.wrappedValue.flatMap(root.model(for:))?.mac.symbol ?? "display.2") {
                 Text(shown.wrappedValue.flatMap(root.model(for:))?.mac.name ?? "All \(root.macs.map(\.mac.kind).shared.titlePlural)")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
                     .contentTransition(.opacity)
-                Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
             }
             .padding(.horizontal, 6)
             // As MacChip: in the iPad sidebar the name gives way so New Session keeps its place in the bar.
@@ -572,16 +525,34 @@ struct MacsMenu: View {
         Toggle(isOn: Binding { shown.wrappedValue == id } set: { if $0 { withAnimation(Motion.smooth(reduceMotion)) { shown.wrappedValue = id } } }, label: label)
     }
 
-    /// Green only when every shown Mac is; red when any is offline.
     private var state: MacConnection.State {
         let states = (allowsAll ? root.visible : [root.current]).map(\.mac.shown)
         if states.allSatisfy({ $0 == .live }) { return .live }
         if let offline = states.first(where: \.isOffline) { return offline }
-        return .connecting
+        return states.first { if case .reconnecting = $0 { true } else { false } } ?? .connecting
     }
 }
 
-/// The connection's dot: filled green when live, a red ring offline, a grey ring in between.
+/// A dropped connection reads in the chip itself; a banner for a blip of a second made the list jump.
+struct MacChipLabel<Name: View>: View {
+    let state: MacConnection.State
+    let symbol: String
+    @ViewBuilder var name: Name
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if case .reconnecting = state {
+                ProgressView().controlSize(.mini)
+                Text("Reconnecting…").font(.subheadline.weight(.medium)).lineLimit(1)
+            } else {
+                Image(systemName: symbol).font(.footnote.weight(.medium)).foregroundStyle(.secondary)
+                name
+                ConnectionDot(state: state)
+            }
+        }
+    }
+}
+
 struct ConnectionDot: View {
     let state: MacConnection.State
 
@@ -605,8 +576,6 @@ extension MacConnection.State {
     }
 }
 
-/// Controls that talk to the Mac: enabled while reconnecting (the outbox holds the action), off
-/// while offline with the reason as their hint.
 private struct NeedsMac: ViewModifier {
     @Environment(AppModel.self) private var model
 

@@ -218,9 +218,7 @@ private struct DictationLink: ViewModifier {
             .onChange(of: session?.id) { link() }
             .onChange(of: project) { link() }
             .onChange(of: shelf) { link() }
-            // New Session's Mac picker: the words go through the Mac that will run the session.
             .onChange(of: ObjectIdentifier(model)) { link() }
-            // A recording that failed after its field closed, while this one was already open.
             .onChange(of: DictationShelf.shared.keys) { dictation.adopt() }
             .onDisappear { dictation.leave() }
             .sensoryFeedback(.start, trigger: dictation.starts)
@@ -236,7 +234,6 @@ private struct DictationLink: ViewModifier {
     }
 }
 
-/// The sheet holds the Dictation, as Start and Cancel depend on it.
 struct PromptDictation: View {
     let dictation: Dictation
     @Binding var text: String
@@ -252,7 +249,6 @@ struct PromptDictation: View {
             if dictation.isActive {
                 DictationBar(dictation: dictation)
                     .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 24, style: .continuous))
-                    // Opens out of the mic it replaces, at the trailing edge.
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96, anchor: .trailing)))
             } else {
                 DictationButton(dictation: dictation)

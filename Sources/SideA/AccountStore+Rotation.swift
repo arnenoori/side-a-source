@@ -21,7 +21,6 @@ struct RotationRecords {
 }
 
 extension AccountStore {
-    /// The live sessions on an account, for a move's record; a folder's name stands in for a title on disk.
     func rotationSessions(on id: String) -> [RotationRecord.Session] {
         sessions.live.filter { $0.provider == .claude && sessions.accountID(of: $0) == id }.map {
             RotationRecord.Session(id: WireBuilders.key($0), project: sessions.project(of: $0.cwd))
@@ -32,7 +31,6 @@ extension AccountStore {
         rotationRecords.add(record)
         remote.events?.autopilotChanged()
         guard record.kind == .moved else { return }
-        // Those of its sessions stopped on a limit can carry on once the trade reaches them.
         let limited = Set(limitHits.values.flatMap(\.sessions))
         let moved = Set(record.sessions.map(\.id))
         let waiting = sessions.live.filter { moved.contains(WireBuilders.key($0)) }.compactMap(\.sessionID).filter(limited.contains)
@@ -113,7 +111,6 @@ extension AccountStore {
         return WaitingSummary(account: account.name, at: at, worstCase: worst)
     }
 
-    /// Why Autopilot skips an account, or is about to.
     func accountIssue(_ account: Account, now: Double) -> AccountIssue? {
         guard account.ready else { return AccountIssue(kind: .signedOut) }
         switch health[account.id] {
@@ -140,9 +137,7 @@ extension AccountStore {
         return tokens
     }
 
-    // MARK: Pushes
 
-    /// A login moved; the phone says where to and why.
     func pushMoved(to: String, reason: String) {
         guard remote.active else { return }
         remote.push.rotation(title: "Now on \(to)", body: reason.isEmpty ? nil : reason, account: nil, resetsAt: nil, blocks: false)

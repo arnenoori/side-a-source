@@ -1,4 +1,9 @@
+#if canImport(Security)
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 import Security
 @testable import SideACore
@@ -14,9 +19,9 @@ import Testing
     #expect(SecCertificateCopySubjectSummary(certificate) as String? == "Side A")
     let copied = try #require(SecCertificateCopyKey(certificate))
     #expect(SecKeyCopyExternalRepresentation(copied, nil) as Data? == point)
-    // CryptoKit's own SPKI encoding is the reference for the pin.
     #expect(SelfSignedCertificate.spki(publicKey: point) == key.publicKey.derRepresentation)
     #expect(SelfSignedCertificate.spkiHash(publicKey: point) == Data(SHA256.hash(data: key.publicKey.derRepresentation)))
     #expect(SelfSignedCertificate.integer(Data([0, 0, 5])) == Data([2, 1, 5]))
     #expect(SelfSignedCertificate.time(Date(timeIntervalSince1970: 2_600_000_000)).first == 0x18)
 }
+#endif

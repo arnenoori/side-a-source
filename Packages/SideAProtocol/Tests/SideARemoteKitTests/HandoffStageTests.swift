@@ -2,7 +2,6 @@ import SideAProtocol
 import SideARemoteKit
 import Testing
 
-// Every stage × event of a handoff picked on the phone.
 @Test func everyEventFromEveryHandoffStage() {
     typealias S = HandoffStage
     let reviewed = Handoff(goal: "Ship it", branch: nil, failed: "", next: "", lastMessages: "", cwd: "/p", project: "p")
@@ -27,7 +26,6 @@ import Testing
     }
 }
 
-// The new session ending before it starts gives the words back and the draft with them, and nothing else does.
 @Test func aHandoffThatEndsBeforeItStartsComesBack() {
     typealias S = HandoffStage
     let draft = HandoffDraft(agent: .codex, modelID: "a"), other = HandoffDraft(agent: .codex, modelID: "b")
@@ -48,7 +46,6 @@ import Testing
     }
 }
 
-// Another set of photos is another request, so it never reuses the first one's idempotency key.
 @Test func aHandoffAttemptWithOtherPhotosIsAnotherAttempt() {
     let draft = HandoffDraft(agent: .codex)
     #expect(HandoffAttempt(draft: draft, message: "m", photos: ["a"]) != HandoffAttempt(draft: draft, message: "m"))

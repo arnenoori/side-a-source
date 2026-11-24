@@ -28,15 +28,22 @@ export const FALLBACK: Record<string, string> = {
 };
 export const ANSWERED = 'PUSH_ANSWERED';
 // The relay's own pushes about a Mac going quiet: no envelope, no mutable-content, words fixed here and in the app's
-// Localizable.strings. The Mac can't ask for any of them, so none is in FALLBACK.
+// Localizable.strings. The Mac can't ask for any of them, so none is in FALLBACK. Each Mac has its own collapse id
+// (`mac-quiet-<macID>`), so two Macs never replace one another's notice and the phone knows which one to remove.
 export const QUIET_CATEGORY = 'MAC_QUIET';
 export const QUIET_COLLAPSE = 'mac-quiet';
-export const QUIET = { quiet: 'PUSH_MAC_QUIET', asleep: 'PUSH_MAC_ASLEEP', back: 'PUSH_MAC_BACK' } as const;
-export type Quiet = keyof typeof QUIET;
+export const QUIET = { quiet: 'PUSH_MAC_QUIET', asleep: 'PUSH_MAC_ASLEEP' } as const;
+export type Quiet = keyof typeof QUIET | 'back';
 const LEVELS = ['passive', 'active', 'time-sensitive'];
-// A stuck session and setup's Test Connection are worth showing, never worth interrupting for.
-const PASSIVE = ['HEALTH', 'TEST'];
-const OPAQUE = /^[A-Za-z0-9_-]{1,64}$/;   // collapse, request and activity ids: random, short
+const PASSIVE = ['TEST'];
+// Health is never time-sensitive: a message that didn't send may be active, the rest the Mac sends passive.
+const CALM = ['HEALTH'];
+
+function levelOf(category: string, asked: string): string {
+  if (PASSIVE.includes(category)) return 'passive';
+  return CALM.includes(category) && asked === 'time-sensitive' ? 'active' : asked;
+}
+const OPAQUE = /^[A-Za-z0-9_-]{1,64}$/;
 
 interface Common {
   devices: string[];
@@ -50,7 +57,7 @@ export interface Alert extends Common {
   collapseId: string;
   sound: boolean;
   level: string;
-  sealed: Record<string, string>;   // per device: the AAD binds each envelope to one deviceId
+  sealed: Record<string, string>;
 }
 
 export interface Dismiss extends Common {
@@ -62,7 +69,7 @@ export interface ContentState {
   working: number;
   waiting: number;
   topRequest?: string | null;
-  soonestReset?: number | null;   // passed through as the Mac encodes it for ActivityKit
+  soonestReset?: number | null;
   tightestPercent?: number | null;
 }
 
@@ -175,7 +182,7 @@ export function alertRequest(send: Alert | Dismiss, deviceId: string, now: numbe
         'mutable-content': 1,
         category: send.category,
         ...(send.sound ? { sound: 'default' } : {}),
-        'interruption-level': PASSIVE.includes(send.category) ? 'passive' : send.level,
+        'interruption-level': levelOf(send.category, send.level),
       }
     : { alert: { 'loc-key': ANSWERED }, category: 'ANSWERED', 'interruption-level': 'passive' };
   const body = send.kind === 'alert' ? { aps, e: send.sealed[deviceId] } : { aps };
@@ -185,17 +192,22 @@ export function alertRequest(send: Alert | Dismiss, deviceId: string, now: numbe
   };
 }
 
-// A Mac went quiet, has slept a day, or is back (which takes the first one's place in Notification Center). `q` is the
-// same macID a Live Activity names, so the phone can open that Mac. Says nothing but what the loc-key says.
+// A Mac went quiet or has slept a day: an alert. When it is back, a silent background push instead: the phone removes
+// that Mac's delivered notice and shows nothing, since an all-clear makes people ask why it was off. `q` and `back` are
+// the same macID a Live Activity names, so the phone can open or match that Mac. Says nothing but what the loc-key says.
 export function quietRequest(kind: Quiet, macID: string, now: number, bundle = DEFAULT_BUNDLE): ApnsRequest {
-  const back = kind === 'back';
+  if (kind === 'back') {
+    return {
+      pushType: 'background', topic: bundle, priority: 5, expiration: now + 3600,
+      payload: JSON.stringify({ aps: { 'content-available': 1 }, back: macID }),
+    };
+  }
+  const collapseId = `${QUIET_COLLAPSE}-${macID}`;
   const aps = {
-    alert: { 'loc-key': QUIET[kind] }, category: QUIET_CATEGORY, 'thread-id': QUIET_COLLAPSE,
-    ...(back ? {} : { sound: 'default' }), 'interruption-level': back ? 'passive' : 'active',
+    alert: { 'loc-key': QUIET[kind] }, category: QUIET_CATEGORY, 'thread-id': collapseId, sound: 'default', 'interruption-level': 'active',
   };
   return {
-    pushType: 'alert', topic: bundle, priority: back ? 5 : 10, collapseId: QUIET_COLLAPSE,
-    expiration: now + (back ? 3600 : 6 * 3600), payload: JSON.stringify({ aps, q: macID }),
+    pushType: 'alert', topic: bundle, priority: 10, collapseId, expiration: now + 6 * 3600, payload: JSON.stringify({ aps, q: macID }),
   };
 }
 

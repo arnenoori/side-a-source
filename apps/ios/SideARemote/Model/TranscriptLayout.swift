@@ -2,15 +2,12 @@ import Foundation
 import SideAProtocol
 import SideARemoteShared
 
-/// One thing the transcript draws, in order. Built by `TranscriptLayout` from the Mac's messages,
-/// so the views never decide grouping or folding themselves.
 enum TranscriptItem: Identifiable, Hashable {
     case earlier(count: Int)
     case separator(Date)
     case user(TranscriptMessage)
     case assistant(TranscriptMessage)
     case tool(TranscriptTool)
-    /// A Task/Agent call: a card that opens the subagent's own transcript.
     case subagent(TranscriptTool)
     case thinking(TranscriptTool)
     case group(StepGroup)
@@ -22,10 +19,9 @@ enum TranscriptItem: Identifiable, Hashable {
     case answered(TranscriptStore.AnsweredRequest)
     case request(RemoteRequest)
     case question(RemoteRequest)
-    /// A turn this phone sent that the Mac's transcript doesn't show yet.
     case outgoing(TranscriptStore.Outgoing)
-    /// Mail on the Mac this phone didn't leave: someone else's note, or a stop.
     case mail(MailState)
+    case turn(TurnFold)
 
     var id: String {
         switch self {
@@ -42,11 +38,11 @@ enum TranscriptItem: Identifiable, Hashable {
         case .request(let r), .question(let r): "r-\(r.id)"
         case .outgoing(let turn): "o-\(turn.id)"
         case .mail: "mail"
+        case .turn(let fold): fold.id
         }
     }
 }
 
-/// Consecutive steps between two pieces of assistant text.
 struct StepGroup: Hashable, Identifiable {
     let id: String
     let tools: [TranscriptTool]
@@ -54,7 +50,6 @@ struct StepGroup: Hashable, Identifiable {
     let ended: Date?
     var running: Bool { tools.contains { $0.status == .running } }
 
-    /// "Worked for 1m 12s · 14 steps".
     var title: String {
         let steps = "\(tools.count) steps"
         guard let started, let ended, let worked = Formatting.duration(ended.timeIntervalSince(started)) else { return steps }
@@ -62,16 +57,13 @@ struct StepGroup: Hashable, Identifiable {
     }
 }
 
-/// One row of the transcript's lazy stack: a message and the steps, cards and requests after it.
 struct TranscriptRow: Identifiable, Hashable {
     var items: [TranscriptItem]
 
-    /// The message's own id, so scrolling to a message finds its row; it stays as steps join.
     var id: String { items[0].id }
 }
 
 extension TranscriptItem {
-    /// Messages start a lazy row, and so does the earlier-page button, which keeps its row to itself.
     var startsRow: Bool {
         switch self {
         case .earlier, .user, .assistant, .notice, .outgoing: true
@@ -84,23 +76,18 @@ struct TurnEnd: Hashable {
     let seq: Int
     let model: String?
     let duration: TimeInterval?
-    /// The reply it ends, for Copy and Share: as the Mac sent it, which may be cut (`TranscriptStore.text(_:in:)`).
     let message: TranscriptMessage
 }
 
 extension [TranscriptItem] {
-    /// The assistant messages a turn-end row follows; that row carries their Copy and Share.
     var endedTurns: Set<Int> {
         Set(compactMap { if case .turnEnd(let end) = $0 { end.seq } else { nil } })
     }
 }
 
 enum TranscriptLayout {
-    /// A run longer than this folds into a step group; v0 shows short runs flat.
     static let flatRun = 3
-    /// Turns further apart than this get a date separator.
     static let separatorGap: TimeInterval = 30 * 60
-    /// Files the transcript shows as a chip rather than a diff, as does any write that has no diff.
     static let documentExtensions: Set<String> = ["md", "markdown", "pdf", "csv", "tsv", "txt", "rtf", "png", "jpg", "jpeg", "gif", "heic", "webp",
                                                   "svg", "json", "html", "htm", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "key", "pages",
                                                   "numbers", "ipynb", "log"]
@@ -135,7 +122,6 @@ enum TranscriptLayout {
             lastAssistant = nil
         }
 
-        // The phone's own turns sit where they were sent: a note the session read stays by the step it came in.
         var sent = outgoing.sorted { $0.at < $1.at }[...]
 
         for (index, message) in messages.enumerated() {
@@ -149,11 +135,9 @@ enum TranscriptLayout {
             case .thinking:
                 let next = messages.dropFirst(index + 1).lazy.compactMap { $0.at ?? $0.tools.first?.startedAt }.first
                 let step = thought(message, endedAt: next, working: working)
-                // Most thinking is redacted; back-to-back thoughts read as one row with their time summed.
                 if let last = run.last, last.name == thinkingTool { run[run.count - 1] = merged(last, step) } else { run.append(step) }
             case .tools:
                 for tool in message.tools {
-                    // Diffs, documents and images are objects: they stand alone and split the run.
                     if let standalone = standalone(tool) {
                         flushRun()
                         items += standalone
@@ -184,7 +168,6 @@ enum TranscriptLayout {
         for request in open {
             if case .question = request.action { items.append(.question(request)) } else { items.append(.request(request)) }
         }
-        // Sent since the last message: after the requests that were already waiting, where the user sees it land.
         items += sent.map(TranscriptItem.outgoing)
         // A note this phone left already says it waits, on its own bubble.
         if let mail, !(mail.kind == .note && outgoing.contains(where: \.isPendingNote)) { items.append(.mail(mail)) }
@@ -210,7 +193,6 @@ enum TranscriptLayout {
         tool.name == thinkingTool ? .thinking(tool) : .tool(tool)
     }
 
-    /// Thinking arrives as its own message; the phone draws it as a step in the run it sits in.
     static let thinkingTool = "Thinking"
 
     static func merged(_ a: TranscriptTool, _ b: TranscriptTool) -> TranscriptTool {
@@ -220,8 +202,6 @@ enum TranscriptLayout {
                               endedAt: b.status == .running ? nil : a.startedAt.map { $0 + total }, output: text)
     }
 
-    /// A thinking message as a step: done once it has a duration or anything follows it, live while
-    /// it's the last thing in a working turn.
     static func thought(_ message: TranscriptMessage, endedAt next: Timestamp?, working: Bool) -> TranscriptTool {
         let live = message.durationMS == nil && next == nil && working
         let ended = message.durationMS.flatMap { ms in message.at.map { $0 + Double(ms) / 1000 } } ?? next ?? message.at.map { $0 + 1 }
@@ -239,7 +219,6 @@ enum TranscriptLayout {
         return nil
     }
 
-    /// Whether a step group starts unfolded: only while its turn runs.
     static func startsExpanded(_ group: StepGroup) -> Bool { group.running }
 }
 

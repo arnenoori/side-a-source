@@ -44,6 +44,5 @@ if not changes:
     raise SystemExit(0)
 new_tree = api("git/trees", {"base_tree": commit["tree"]["sha"], "tree": changes})
 new_commit = api("git/commits", {"message": "site: update the Side A download experience", "tree": new_tree["sha"], "parents": [head]})
-# Reject concurrent branch movement; never overwrite an unrelated public commit.
 api("git/refs/heads/main", {"sha": new_commit["sha"], "force": False}, method="PATCH")
 print("Published built site:", new_commit["sha"])

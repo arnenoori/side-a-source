@@ -1,8 +1,5 @@
 import Foundation
 
-// What only Side A offers (ios-app.md 4.14): history, steering, ports, the Mac itself, Clean Up,
-// Autopilot and incidents. Each is gated by its capability in `Hello`.
-
 public extension Capability {
     static let history = Self(rawValue: "history")
     static let interruptNextStep = Self(rawValue: "interrupt.nextStep")
@@ -102,8 +99,6 @@ public struct RequestSummary: Codable, Hashable, Sendable {
         self.tool = tool; self.headline = headline; self.sessionTitle = sessionTitle; self.agent = agent
     }
 }
-
-// MARK: Steer
 
 /// The body of `POST /v1/sessions/{id}/interrupt`. Missing means `.now`.
 public struct InterruptRequest: Codable, Hashable, Sendable {
@@ -208,8 +203,6 @@ public struct QuitIdleResult: Codable, Hashable, Sendable {
     public init(quit: [SessionKey]) { self.quit = quit }
 }
 
-// MARK: Ports
-
 /// A port a session's process tree listens on.
 public struct ListeningPort: Codable, Hashable, Sendable, Identifiable {
     public var id: Int { port }
@@ -227,8 +220,6 @@ public struct Preview: Codable, Hashable, Sendable {
     public init(url: String) { self.url = url }
 }
 
-// MARK: History
-
 /// `GET /v1/history?cursor=&archived=&project=`: pinned first, then by last activity.
 public struct HistoryPage: Codable, Hashable, Sendable {
     public let sessions: [PastSession]
@@ -243,8 +234,6 @@ public struct HistoryChange: Codable, Hashable, Sendable {
     public let archived: Bool?
     public init(pinned: Bool? = nil, title: String? = nil, archived: Bool? = nil) { self.pinned = pinned; self.title = title; self.archived = archived }
 }
-
-// MARK: The Mac
 
 public struct MacState: Codable, Hashable, Sendable {
     public struct Pressure: OpenEnum {
@@ -277,8 +266,6 @@ public struct MacSettings: Codable, Hashable, Sendable {
     public let keepAwake: Bool?
     public init(keepAwake: Bool? = nil) { self.keepAwake = keepAwake }
 }
-
-// MARK: Clean Up
 
 public struct CleanupReport: Codable, Hashable, Sendable {
     public struct Archivable: Codable, Hashable, Sendable {
@@ -336,8 +323,6 @@ public struct CleanupResult: Codable, Hashable, Sendable {
     public let count: Int
     public init(count: Int) { self.count = count }
 }
-
-// MARK: Autopilot
 
 public struct AutopilotDecision: Codable, Hashable, Sendable, Identifiable {
     public struct Moved: Codable, Hashable, Sendable {
@@ -434,8 +419,6 @@ public struct Worth: Codable, Hashable, Sendable {
     public let currency: String
     public init(days7: Double, days30: Double, currency: String = "USD") { self.days7 = days7; self.days30 = days30; self.currency = currency }
 }
-
-// MARK: Incidents
 
 /// An incident on Anthropic's or OpenAI's status page.
 public struct Incident: Codable, Hashable, Sendable, Identifiable {

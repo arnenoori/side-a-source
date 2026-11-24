@@ -15,9 +15,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     try await until("live") { await sync.state.connection.isLive }
 }
 
-// MARK: The cause survives the other ways a connection ends
-
-/// A goodbye for sleep, then a pong that fails before the close lands: still asleep, not connecting.
 @Test func aMissedPongAfterASleepGoodbyeStillSaysAsleep() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -37,7 +34,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-/// A goodbye for sleep, then a normal close: the loop ends, and the Mac is still asleep.
 @Test func aNormalCloseAfterASleepGoodbyeStillSaysAsleep() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -52,7 +48,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-/// What was said about the Mac before stop() isn't said again by the run after start().
 @Test func aRestartAfterStopDoesNotReportAsleep() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -73,9 +68,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     await sync.stop()
 }
 
-// MARK: The queue
-
-/// An item queued while the drain reads the queue after its empty claim still goes: the drain isn't over yet.
 @Test func anItemQueuedWhileTheQueueIsReadAfterAnEmptyClaimStillGoes() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -92,13 +84,11 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
         await sync?.drain()
     }
     await sync.setAfterEmptyClaim(nil)
-    // Any drain that ends on an empty claim reads the queue; this one starts it.
     await sync.drain()
     try await until("the late item went") { if case .delivered = await sync.state.outcomes["late"] { true } else { false } }
     await sync.stop()
 }
 
-/// A queue that can't be read for a moment doesn't empty the screens' list: the last good one stays.
 @Test func aFailedReadOfTheQueueKeepsThePendingList() async throws {
     let mac = FakeMac()
     let (outbox, file) = try temporaryOutbox()
@@ -116,7 +106,6 @@ private func live(_ sync: SyncEngine, _ socket: FakeSocket) async throws {
     #expect(sqlite3_open(file.path, &db) == SQLITE_OK)
     #expect(sqlite3_exec(db, "ALTER TABLE outbox RENAME TO outbox_away", nil, nil, nil) == SQLITE_OK)
     #expect(await outbox.read(for: "mac1") == nil)
-    // Several rechecks go by with the table unreadable.
     // swiftlint:disable:next sleep_literal_in_tests -- proving several rechecks of an unreadable table leave the item pending
     try await Task.sleep(for: .milliseconds(200))
     #expect(await sync.state.pending.map(\.id) == ["held"])

@@ -41,7 +41,6 @@ public actor TerminalSession {
     /// the Mac hasn't confirmed and nothing is replayed except by `ready` itself.
     private var isReady = false
     private var refusedFull = false
-    /// What the last `open` asked for, to open again the same way when the path moves.
     private var opened: (cols: Int, rows: Int, theme: TermTheme?)?
 
     /// Signs each open (`X-SideA-Confirm`, purpose `.terminal`): the Mac lets only the owner into a terminal.
@@ -117,7 +116,6 @@ public actor TerminalSession {
             guard connection == current else { return }
             self.socket = nil
             isReady = false
-            // The path moved (LAN to relay, say): open again on the new one, which resends what wasn't acked.
             if closed.code == 4008, let opened, (try? await open(cols: opened.cols, rows: opened.rows, theme: opened.theme)) != nil {
                 return
             }
@@ -152,7 +150,6 @@ public actor TerminalSession {
         }
     }
 
-    /// Resend what the Mac didn't apply, or discard it all when delivery can't be known.
     func ready(epoch: String, applied: UInt32?, _ socket: any SocketConnection) async {
         let uncertain = applied == nil || unacked.contains { $0.epoch != epoch } || (self.epoch.map { $0 != epoch } ?? false)
         self.epoch = epoch

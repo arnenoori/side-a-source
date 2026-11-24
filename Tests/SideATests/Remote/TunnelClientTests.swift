@@ -5,13 +5,8 @@ import Network
 import SideACore
 import Testing
 
-/// The Mac's tunnel against a relay on loopback that speaks just enough WebSocket: what a dropped socket, a skewed
-/// clock and a forgotten install each do to the next connect.
 @Suite(.serialized)
 struct TunnelClientTests {
-    /// Accepts an upgrade signed within the relay's 120 seconds and refuses any other with 401 and its `Date`, as
-    /// `Tunnel.acceptMac` does. Its 101s carry the `Date` of `opened` seconds ago, so a socket it drops looks as old as
-    /// one that ran that long. `known` false refuses every upgrade, as for an install the relay has forgotten.
     final class Relay: @unchecked Sendable {
         let listener: NWListener
         let queue = DispatchQueue(label: "TunnelClientTests.Relay")
@@ -21,7 +16,7 @@ struct TunnelClientTests {
         private var live: [NWConnection] = []
         private var _answers: [Int] = []
         var answers: [Int] { lock.withLock { _answers } }
-        let (said, say) = AsyncStream<String>.makeStream()   // every text the Mac sends but its pings, in order
+        let (said, say) = AsyncStream<String>.makeStream()
 
         init(clock: TimeInterval = 0, opened: TimeInterval = 0, known: Bool = true) throws {
             self.clock = clock; self.opened = opened; self.known = known
@@ -44,7 +39,6 @@ struct TunnelClientTests {
             return URL(string: "http://127.0.0.1:\(listener.port!.rawValue)")!
         }
 
-        /// Every open socket ends at once, as when the Mac's network goes away under it.
         func drop() {
             queue.sync {
                 for connection in live { connection.cancel() }
@@ -80,7 +74,6 @@ struct TunnelClientTests {
             }
         }
 
-        /// Answers each text `ping` with `pong`; nothing else the Mac sends matters here.
         private func frames(_ connection: NWConnection, _ buffer: Data) {
             var buffer = buffer
             while let (text, rest) = Self.frame(buffer) {
@@ -93,7 +86,6 @@ struct TunnelClientTests {
             }
         }
 
-        /// One masked client frame off the front of `buffer`: its text, and what's left.
         static func frame(_ buffer: Data) -> (String, Data)? {
             let bytes = [UInt8](buffer)
             guard bytes.count >= 2 else { return nil }
@@ -146,8 +138,6 @@ struct TunnelClientTests {
 
     static let unknown = TunnelClient.Status.waiting("The relay didn't recognise this Mac")
 
-    /// The 10:29 and 10:48 reconnects: a socket that ran past the relay's 120 seconds dropped, and the next upgrade was
-    /// signed with the time its 101 had answered at, so the relay refused it as skewed and the Mac called itself unknown.
     @Test func aSocketThatRanLongReconnectsOnTheFirstTry() async throws {
         let relay = try Relay(opened: 600)
         let seen = Seen()
@@ -162,8 +152,6 @@ struct TunnelClientTests {
         #expect(seen.registers == 1)
     }
 
-    /// The relay watches a Mac only if the Mac says it can be, first of everything; and it doesn't call a Mac that said it
-    /// was leaving quiet.
     @Test func aMacAsksToBeWatchedAndSaysWhyItLeaves() async throws {
         let relay = try Relay()
         let seen = Seen()
@@ -179,8 +167,6 @@ struct TunnelClientTests {
         #expect(await said.next() == #"{"reason":"off","type":"goodbye"}"#)
     }
 
-    /// A Mac whose own clock is off is refused once, takes the relay's time from the refusal and connects straight away,
-    /// still registered and never shown as unknown.
     @Test func aSkewedClockIsCorrectedWithoutCallingTheMacUnknown() async throws {
         let relay = try Relay(clock: 900)
         let seen = Seen()
@@ -194,7 +180,6 @@ struct TunnelClientTests {
         #expect(seen.registers == 1)
     }
 
-    /// A refusal with the clocks in step is the relay not knowing the install: said so, and registered again.
     @Test func aRelayThatForgotTheMacStillSaysSo() async throws {
         let relay = try Relay(known: false)
         let seen = Seen()
@@ -206,7 +191,6 @@ struct TunnelClientTests {
         #expect(relay.answers.allSatisfy { $0 == 401 })
     }
 
-    /// Both at once: the clock refusal is retried at once, and the refusal on the relay's own time names the install.
     @Test func aForgottenMacWithASkewedClockIsStillUnknown() async throws {
         let relay = try Relay(clock: -900, known: false)
         let seen = Seen()

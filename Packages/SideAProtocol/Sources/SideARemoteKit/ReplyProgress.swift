@@ -2,7 +2,6 @@ import Foundation
 import SideAProtocol
 
 /// A message sent from the phone, from the tap until the agent has read it or it is back in the field.
-/// docs/remote/reply-progress.md has the table; `ReplyProgressTests` walks every pair.
 public struct ReplyProgress: Hashable, Sendable {
     public enum Stage: Hashable, Sendable, CaseIterable {
         case sending
@@ -63,7 +62,6 @@ public struct ReplyProgress: Hashable, Sendable {
         case (.note, .takeBack), (.queued, .takeBack): ReplyProgress(.takingBack, before: stage)
         case (.takingBack, .takenBack): ReplyProgress(.withdrawn)
         case (.takingBack, .tooLate): ReplyProgress(.read)
-        // Unanswered, the Take Back leaves what the Mac held where it was.
         case (.takingBack, .keptBack), (.takingBack, .overdue): ReplyProgress(before ?? .note)
         case (.unsent, .retry): ReplyProgress(.sending)
         case (let stage, .overdue) where !overdue && Self.patience(stage) != nil: ReplyProgress(stage, overdue: true, before: before)

@@ -4,8 +4,6 @@ import SideARemoteShared
 import UIKit
 import UserNotifications
 
-/// Notification actions from a banner or the Lock Screen: an answer goes through the
-/// shared outbox, Open goes to the request or session by its deep link.
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     nonisolated deinit {}
 
@@ -34,22 +32,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         RemoteLog.error(.push, "APNs registration failed: \(KitLog.describe(error))")
     }
 
-    /// The relay's silent token check; nothing else arrives without an alert.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
+        if Self.clearQuietNotice(userInfo) { return .noData }
         guard await RelayDevice.answer(userInfo) else { return .noData }
-        // The relay refuses a Live Activity's token until the device is proven.
         await PushRegistrar.shared.reportActivities()
         return .newData
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let content = response.notification.request.content
-        // The relay's own word that a Mac went quiet: nothing sealed, nothing to act on, so it opens that Mac.
         if content.categoryIdentifier == PushCategory.macQuiet.rawValue {
             if let link = Self.quietLink(content.userInfo) { open(link) }
             return
         }
-        // Actions only on a payload this phone opened; anything else just opens the app.
         guard let payload = PushOpener.verified(response.notification.request) else {
             guard let payload = PushPayload(userInfo: content.userInfo) else { return }
             if content.userInfo[Self.composeKey] as? Bool == true, let link = Self.composeLink(for: payload) { return open(link) }
@@ -65,7 +60,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             let answer = RemoteAnswer.answers([QuestionAnswer(question: question.question, picked: [], other: typed)])
             result = await NotificationAnswer.send(answer, to: request, macID: payload.mac, typed: payload.sid.map { (text: typed, session: $0) })
         } else if let typed, !typed.isEmpty, let session = payload.sid {
-            // Face ID's Reply brought the app forward with the words: they wait in the field, where one Face ID sends them.
             if content.categoryIdentifier == PushCategory.finishedFaceID.rawValue {
                 NotificationDrafts.keep(typed, session: session, mac: payload.mac)
                 if let link = Self.composeLink(for: payload) { open(link) }
@@ -80,32 +74,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         case .sent, .answeredElsewhere: break
         case .queued(let mac) where payload.rid == nil:
             await notice("Not confirmed yet: open Side A Remote to see whether your reply reached \(mac).", payload, replacing: identifier)
-        case .queued(let mac): await couldNotReach(mac, payload)
-        // Nothing runs a notification's work later: only the app, once opened, sends it.
         case .held(let mac):
             await notice("Not sent yet: couldn't reach \(mac). Side A Remote sends your reply when you next open it, unless the session has moved on by then.",
                          payload, replacing: identifier)
         case .kept(let message): await notice(message, payload, replacing: identifier, compose: payload.rid == nil)
         case .failed(let message) where response is UNTextInputNotificationResponse: await notice("\(message) Open to send it again.", payload)
-        case .failed, .noMac: await couldNotReach(PairedMac.load(payload.mac)?.displayName ?? PairedMac.all().map(\.endpoint.kind).shared.your(), payload)
+        case .queued, .failed, .noMac:
+            if let reason = Self.failureReason(result, payload: payload) { await keepRequest(response.notification.request, payload, reason: reason) }
         }
     }
 
-    /// The Mac a "gone quiet" push names, `q` being the id its Live Activities carry: its Sessions, where the connection's state is.
     static func quietLink(_ userInfo: [AnyHashable: Any], macs: [PairedMac] = PairedMac.all()) -> URL? {
         guard let named = userInfo["q"] as? String,
               let mac = macs.first(where: { $0.relayInstallID.map(RelayDevice.activityMacID(install:)) == named }) else { return nil }
         return URL(string: "sidea-remote://mac/\(mac.endpoint.macID)")
     }
 
-    /// A notice's tap that opens the session's composer with what the notification couldn't send.
     static let composeKey = "compose"
 
     static func composeLink(for payload: PushPayload) -> URL? {
         payload.sid.flatMap { URL(string: "sidea-remote://compose/\(payload.mac)/\($0)") }
     }
 
-    /// Open and connected to that Mac, the app already shows it: no banner, no sound.
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         Self.presentation(for: PushPayload(userInfo: notification.request.content.userInfo), active: UIApplication.shared.applicationState == .active,
                           live: LiveLink.liveMacs)
@@ -123,18 +113,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     private func open(_ url: URL) { UIApplication.shared.open(url) }
 
-    /// Open's destination: the request, else the session, else for a grouped Ready that Mac's sessions.
     static func link(for payload: PushPayload) -> URL? {
         let path = payload.rid.map { "request/\(payload.mac)/\($0)" } ?? payload.sid.map { "session/\(payload.mac)/\($0)" }
             ?? (PushOpener.grouped(payload) ? "mac/\(payload.mac)" : nil)
         return path.flatMap { URL(string: "sidea-remote://\($0)") }
     }
 
-    /// "Couldn't reach MacBook Pro. Open to answer." in place of the one that failed.
-    private func couldNotReach(_ mac: String, _ payload: PushPayload) async { await notice("Couldn't reach \(mac). Open to answer.", payload) }
-
-    /// `replacing`: the notification acted on, which this takes the place of; `compose` makes its tap open the session's
-    /// composer.
     private func notice(_ body: String, _ payload: PushPayload, replacing identifier: String? = nil, compose: Bool = false) async {
         let content = UNMutableNotificationContent()
         content.title = payload.title ?? "Side A needs you"

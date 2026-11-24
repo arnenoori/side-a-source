@@ -198,7 +198,6 @@ enum OpenAITranscription {
         return body
     }
 
-    /// `{"error": {"message": …}}`, cut short.
     private static func said(_ data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let message = (object["error"] as? [String: Any])?["message"] as? String, !message.isEmpty else { return nil }
@@ -211,8 +210,6 @@ enum OpenAITranscription {
     }
 }
 
-/// What the provider is told to listen for: the agents, the session's project and file names, and the usual words of
-/// a coding conversation. Names it would otherwise spell as English words come out right.
 enum TranscriptionPrompt {
     static let vocabulary = ["Claude", "Claude Code", "Codex", "Side A", "Git", "GitHub", "pull request", "PR", "commit", "rebase", "merge",
                              "Swift", "SwiftUI", "Xcode", "TypeScript", "JavaScript", "Python", "JSON", "API", "CLI", "npm", "README",
@@ -248,8 +245,6 @@ enum TranscriptionPrompt {
     }
 }
 
-/// Encoded as the phone records, so audio the provider refuses from the phone fails the Test too. Silence when the Mac
-/// has no voice still proves the key and the model.
 enum TranscriptionSample {
     static let phrase = "Side A dictation test. Ask Claude to fix the failing build."
     static let rate: Double = 16_000

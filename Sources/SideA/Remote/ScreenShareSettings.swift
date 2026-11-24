@@ -2,7 +2,6 @@ import AppKit
 import SideAProtocol
 import SwiftUI
 
-/// Settings > iPhone > Screen.
 struct ScreenShareSection: View {
     let share: ScreenShare
 

@@ -17,23 +17,16 @@ final class TerminalModel {
     }
 
     let name: String
-    /// What kind of computer the session runs on, for the words that name it; set where the model is made.
     var kind: HostOS = .macos
     private(set) var phase: Phase = .attaching
-    /// The size the Mac renders at, and who set it.
     private(set) var size: (cols: Int, rows: Int, owner: String)?
-    /// The Mac is in tmux copy mode.
     private(set) var copyMode = false
-    /// Shown in the terminal view until dismissed: keys that may not have arrived, a paste too large.
     var notice: String?
-    /// What the session may put on the clipboard (OSC 52): asked once, then kept for this terminal.
     var clipboard: ClipboardPermission = .ask
 
     enum ClipboardPermission { case ask, allowed, denied }
 
-    /// Fed with output; the view sets it.
     @ObservationIgnored var output: ((ArraySlice<UInt8>) -> Void)?
-    /// Asked for the current grid when (re)connecting.
     @ObservationIgnored var grid: () -> (cols: Int, rows: Int) = { (80, 24) }
 
     @ObservationIgnored private let session: TerminalSession?
@@ -52,15 +45,12 @@ final class TerminalModel {
     static let maxWaiting = 64 * 1024
     static let theme = TermTheme(appearance: .dark, fg: "#E6E8E6", bg: "#0F1312")
 
-    /// Nil `session` in the demo: a static screen and no keys go anywhere.
     init(name: String, session: TerminalSession?) {
         self.name = name; self.session = session
         if session == nil { phase = .live }
     }
 
-    /// A UUID per (device, terminal view), kept across launches, so the Mac recognizes this viewer.
     static func viewer(for name: String, mac: String? = nil, defaults: UserDefaults = .standard) -> String {
-        // Two Macs can each host a session of the same name.
         let key = "terminal.viewer.\(mac.map { "\($0)." } ?? "")\(name)"
         if let id = defaults.string(forKey: key) { return id }
         let id = UUID().uuidString.lowercased()
@@ -93,8 +83,6 @@ final class TerminalModel {
         reconnect?.cancel()
         let grid = grid()
         reconnect = Task { [weak self] in
-            // Typing into a session needs its owner: Face ID or the passcode, held for a few minutes, and
-            // asked again on a reconnect after that.
             guard await OwnerAuth.confirm(reason: "Type into \(self?.name ?? "the session") on \(self?.kind.your() ?? HostOS.macos.your())") else {
                 let biometry = Biometry.current
                 self?.phase = .ended(biometry == .passcode ? "Your passcode is needed to use the terminal."
@@ -128,13 +116,11 @@ final class TerminalModel {
             pendingOutput.append(contentsOf: data)
             scheduleFlush()
         case .size(let cols, let rows, let owner):
-            // The first size after `ready`: the Mac confirmed this connection.
             size = (cols, rows, owner)
             if phase != .live {
                 phase = .live
                 attempt = 0
             }
-            // Also after the Kit reopened on a new path by itself, where the phase never left live.
             sendWaiting()
         case .drained: sendWaiting()
         case .copyMode(let on): copyMode = on
@@ -153,7 +139,6 @@ final class TerminalModel {
         }
     }
 
-    /// Output lands on the next frame in one piece, however many socket frames brought it.
     private func scheduleFlush() {
         guard !flushScheduled else { return }
         flushScheduled = true
@@ -167,9 +152,6 @@ final class TerminalModel {
         }
     }
 
-    // MARK: Input
-
-    /// Keys in order. False when the view must stop taking them: too much is waiting.
     @discardableResult func send(_ bytes: Data) -> Bool {
         guard session != nil, !bytes.isEmpty else { return session == nil }
         if case .ended = phase { return false }

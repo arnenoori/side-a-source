@@ -21,8 +21,9 @@ final class EventHub: @unchecked Sendable {
     private let snapshot: @MainActor @Sendable () -> @Sendable (Int, String) -> StateSnapshot
     private let hello: @MainActor @Sendable () -> Hello
     var socketsChanged: (@Sendable ([String: Int]) -> Void)?
+    /// A phone said whether it is in front and which session it has open.
+    var presenceChanged: (@Sendable (String) -> Void)?
     var subscribed: (@Sendable (_ client: UInt64, _ sessions: [SessionKey: Cursor?]) -> Void)?
-    /// A phone's `hello`: what it can do, by its device.
     var greeted: (@Sendable (_ device: String, _ capabilities: Set<Capability>) -> Void)?
 
     private final class Client {
@@ -39,7 +40,6 @@ final class EventHub: @unchecked Sendable {
     var epoch: String { ring.epoch }
     var seq: Int { ring.seq }
 
-    /// The ring's events after `seq`, from off the queue: for tests.
     func recorded(after seq: Int) -> [ServerEvent] {
         queue.sync {
             (ring.replay(epoch: ring.epoch, after: seq, now: Date().timeIntervalSince1970) ?? [])
@@ -54,8 +54,6 @@ final class EventHub: @unchecked Sendable {
         self.snapshot = snapshot
         self.hello = hello
     }
-
-    // MARK: Sockets
 
     func attach(_ peer: WebSocketPeer) {
         let client = Client(peer: peer)
@@ -100,6 +98,7 @@ final class EventHub: @unchecked Sendable {
             client.order.removeAll { sessions.contains($0) }
         case .presence(let foreground, let viewing):
             client.presence = Presence(foreground: foreground, viewing: viewing, at: Date())
+            presenceChanged?(client.peer.device)
         case .unknown:
             break
         }
@@ -141,9 +140,6 @@ final class EventHub: @unchecked Sendable {
 
     static let snapshotLimit = 512 << 10
 
-    // MARK: Events
-
-    /// A state event: sequenced, kept in the ring, sent to every socket past its welcome.
     func record(_ event: ServerEvent, at: Timestamp) {
         let now = Date().timeIntervalSince1970
         var encoded: Data?
@@ -170,7 +166,6 @@ final class EventHub: @unchecked Sendable {
         queue.sync { clients.compactMapValues { $0.ready ? $0.subscriptions[session] : nil } }
     }
 
-    /// A delta went out: the sockets that held `from` now hold `to`. One that resubscribed since keeps its own.
     func advance(_ ids: [UInt64], session: SessionKey, from: Cursor?, to: Cursor) {
         queue.async { [self] in
             for id in ids where clients[id]?.subscriptions[session] == .some(from) { clients[id]?.subscriptions[session] = .some(to) }
@@ -180,7 +175,6 @@ final class EventHub: @unchecked Sendable {
     /// Every session some socket is subscribed to, from the main actor.
     var subscriptions: Set<SessionKey> { queue.sync { Set(clients.values.flatMap(\.subscriptions.keys)) } }
 
-    /// Who is looking at what, for skipping a push the user is already watching.
     /// From the main actor; the hub's state belongs to its queue.
     func presence(_ device: String) -> Presence? {
         queue.sync { current(device) }

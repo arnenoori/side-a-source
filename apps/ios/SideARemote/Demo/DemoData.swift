@@ -1,8 +1,6 @@
 import Foundation
 import SideAProtocol
 
-/// Fictional sessions, requests, transcripts and accounts for `--demo`, previews, screenshots and
-/// App Review. Times are relative to `now`, so the demo never looks stale.
 struct DemoData {
     let now: Date
     let sessions: [RemoteSession]
@@ -40,7 +38,6 @@ struct DemoData {
     let autopilot: [AutopilotDecision]
     let history: [PastSession]
 
-    /// What Autopilot says about these accounts: a move waiting for a pause, and sessions stopped on Studio's limit.
     var rotation: AutopilotState {
         guard let hold = autopilot.first(where: { $0.kind == .waiting }) else { return AutopilotState(enabled: true, answersRecommended: false).continuing(true) }
         let t = now.timeIntervalSince1970
@@ -164,7 +161,7 @@ struct DemoData {
             RemoteRequest(id: ID.syncRequest, sessionID: ID.syncTest, agent: .claude, tool: Self.long.tool,
                           action: Self.long.action, headline: Self.long.headline,
                           reason: "Run the sync tests again after the fix", risk: .normal,
-                          suggestions: [RemoteSuggestion(id: "9f2e4c1a7b3d5e60", title: "Always allow Bash(swift test:*) in this project")],
+                          suggestions: [RemoteSuggestion(id: "9f2e4c1a7b3d5e60", title: "Always allow Bash(swift test:*) in this project", scope: .saved), RemoteSuggestion(id: "1c8a5d2f9e7b3a04", title: "Always allow Bash(swift test:*) for this session", scope: .session)],
                           answers: Self.long.tool == "Edit" ? [.allow, .allowMode, .deny, .terminal] : [.allow, .always, .deny, .terminal],
                           title: "Fix the flaky sync test", project: "side-a", accountName: "Work", arrivedAt: ago(2), gate: .unlock,
                           modes: Self.long.tool == "Edit" ? [.acceptEdits] : nil),
@@ -249,8 +246,6 @@ struct DemoData {
                         snippet: "Power rankings with the group-chat quotes"),
         ]
     }
-
-    // MARK: Transcripts
 
     private static func syncTranscript(now: Date) -> [TranscriptMessage] {
         let t = now.timeIntervalSince1970
@@ -447,7 +442,6 @@ struct DemoData {
 }
 
 extension DemoData {
-    /// What the demo's Mac offers an `@` word.
     static let files = ["Sources/SideA/Island.swift", "Sources/SideA/IslandView.swift", "Sources/SideA/SettingsView.swift", "Sources/SideACore/Models.swift",
                         "Packages/SideAProtocol/Sources/SideAProtocol/Sessions.swift", "README.md", "CHANGELOG.md", "scripts/check.sh", "docs/remote/protocol.md"]
 }

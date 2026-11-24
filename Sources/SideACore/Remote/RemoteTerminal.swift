@@ -29,8 +29,6 @@ public enum RemoteTerminal {
         }
     }
 
-    // MARK: Size
-
     public struct Phone: Sendable, Equatable {
         public let cols: Int
         public let rows: Int
@@ -50,17 +48,13 @@ public enum RemoteTerminal {
         public var owner: String { self == .mac || self == .free ? "mac" : "phone" }
     }
 
-    /// Decision 5: the Mac wins while it's typing. `macActivity` is each Mac client's `client_activity`.
     public static func size(phones: [Phone], macActivity: [TimeInterval], now: TimeInterval) -> Size {
         guard let latest = phones.max(by: { $0.active < $1.active }) else { return .free }
         if let mac = macActivity.max(), now - mac < 60 { return .mac }
         return .phone(cols: latest.cols, rows: latest.rows)
     }
 
-    /// A grid the PTY can be, whatever the phone sent.
     public static func clamp(cols: Int, rows: Int) -> (cols: Int, rows: Int) { (min(max(cols, 10), 500), min(max(rows, 4), 200)) }
-
-    // MARK: Startup queries
 
     /// What tmux asks a new client (DA1, DA2, XTVERSION, the colour scheme, the foreground and background), answered
     /// from the Mac in the first seconds and kept out of what the phone gets, so SwiftTerm never answers twice.
@@ -122,7 +116,6 @@ public enum RemoteTerminal {
             return (Data(forward), Data(replies))
         }
 
-        /// Whatever was held when the query window closes.
         public mutating func flush() -> Data {
             defer { held = [] }
             return Data(held)

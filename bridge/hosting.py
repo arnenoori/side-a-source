@@ -273,7 +273,6 @@ def install(root, bundled=None):
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     (folder / "hosted").mkdir(exist_ok=True, mode=0o700)
     binary = find_tmux(bundled)
-    # Contents/Helpers/tmux -> Contents/Resources/terminfo
     terminfo = Path(binary).parent.parent / "Resources/terminfo" if binary and binary == bundled else None
     write_private(folder / "tmux.conf", config(terminfo))
     write_private(folder / "sidea-tmux", LAUNCHER, 0o700)

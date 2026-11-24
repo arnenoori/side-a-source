@@ -61,7 +61,6 @@ public enum RemotePolicy {
         return (name, port)
     }
 
-    /// A token bucket on a clock the caller passes, so tests run it without waiting.
     public struct TokenBucket: Sendable {
         public let rate: Double
         public let burst: Double

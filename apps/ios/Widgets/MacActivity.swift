@@ -33,8 +33,6 @@ struct MacActivityWidget: Widget {
     }
 }
 
-// The island's regions as views of their own, so the debug gallery draws exactly these.
-
 struct IslandLeading: View {
     let state: MacActivityAttributes.ContentState
 
@@ -130,7 +128,6 @@ struct MinimalActivity: View {
     }
 }
 
-/// What the activity can say about its state, from the push cache and the widget snapshot.
 struct ActivityWords {
     let request: PushPayload?
     let limit: WidgetSnapshot.Limit?
@@ -142,12 +139,10 @@ struct ActivityWords {
         request = state.topRequest.flatMap(PushCache.load).flatMap { try? JSONDecoder().decode(PushPayload.self, from: $0) }
         limit = snapshot?.tightest
         macName = snapshot?.macName
-        // Without the request's words, a tap just opens the app.
         url = request.flatMap { request in request.rid.flatMap { URL(string: "sidea-remote://request/\(request.mac)/\($0)") } }
     }
 }
 
-/// Row 1 counts, row 2 the top request with its buttons, row 3 the tightest limit.
 struct LockScreenActivity: View {
     let state: MacActivityAttributes.ContentState
     let stale: Bool
@@ -241,7 +236,6 @@ private struct RequestButtons: View {
                     .buttonStyle(.borderedProminent)
                     .tint(activityAmber)
             default:
-                // A Face ID request is answered in the app; Open looks like the Allow it stands in for.
                 Link(destination: URL(string: "sidea-remote://request/\(request.mac)/\(requestID)")!) {
                     prominent("Open")
                         .padding(.horizontal, 14)
@@ -258,13 +252,11 @@ private struct RequestButtons: View {
         Text(title).lineLimit(1).fixedSize().frame(maxWidth: compact ? nil : .infinity)
     }
 
-    /// Amber is light in dark mode and dark in light mode, so its text takes the background's colour.
     private func prominent(_ title: String) -> some View {
         label(title).fontWeight(.semibold).foregroundStyle(Color(.systemBackground))
     }
 }
 
-/// "5h 82%" in mono with a 2 pt bar under it.
 private struct LimitReadout: View {
     let limit: WidgetSnapshot.Limit
 
@@ -280,7 +272,6 @@ private struct LimitReadout: View {
     }
 }
 
-/// Side A's amber, from the widgets' own asset catalog (the app compiles this file too).
 let activityAmber = Color("AmberText")
 
 /// The disc, drawn static: Live Activity views are snapshots and can't spin. Amber dot when waiting.
@@ -289,7 +280,6 @@ struct ActivityDisc: View {
 
     var body: some View {
         ZStack {
-            // Primary, so it reads on a light Lock Screen as well as the island's black.
             Circle().fill(.primary.opacity(0.3))
             Circle().strokeBorder(.primary.opacity(0.6), lineWidth: 1.2)
             Circle().fill(.primary).frame(width: 6)

@@ -75,7 +75,6 @@ enum ProcessRunner {
         kill(pid, signal)
     }
 
-    /// Exit, stdout's end and stderr's end, in whatever order they come.
     private final class Run: @unchecked Sendable {
         private let lock = NSLock()
         private let started = Date()

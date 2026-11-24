@@ -80,8 +80,6 @@ private let registration = PushRegistration(apnsToken: "aa", bundleID: "b", apns
     #expect(what())
 }
 
-/// What the phone asked about its Mac going quiet reaches the relay with its registration, and a phone that can't say
-/// leaves the relay as it was.
 @MainActor @Test func aPhonesWishToHearWhenItsMacGoesQuietReachesTheRelay() async throws {
     final class Sent: @unchecked Sendable {
         private let lock = NSLock()

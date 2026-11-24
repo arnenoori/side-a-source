@@ -13,7 +13,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     try await outbox.enqueue(item)
     try await outbox.enqueue(item)
     try await outbox.enqueue(Outbox.Item(id: "b", macID: "mac2", path: "/v1/sessions/s/interrupt", createdAt: 0, expiresAt: 2))
-    // Another process opening the same file sees the same queue.
     let again = try Outbox(file: file)
     #expect(await again.items(for: "mac1") == [item])
     #expect(item.answering == rid)
@@ -26,7 +25,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     #expect(await again.items(for: "mac2").count == 1)
 }
 
-/// Opens a live engine on a snapshot holding the fixture request.
 private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, FakeSocket) {
     let sync = try engine(mac, outbox: outbox)
     await sync.start()
@@ -44,7 +42,6 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     let (sync, _) = try await live(mac, outbox: outbox)
     let item = await sync.answer(rid, .allow(confirmDestructive: false))
     #expect(item.id == "\(rid):allow")
-    // Hidden while pending, even though the Mac hasn't confirmed.
     let optimistic = await sync.state
     #expect(optimistic.requests[rid] == nil && optimistic.pending.map(\.id) == [item.id])
     try await until("retries") { mac.calls.count >= 3 }
@@ -56,7 +53,6 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     mac.respond { _ in .init(body: resolution) }
     try await until("delivered") { await sync.state.outcomes[item.id] == .delivered(resolution) }
     #expect(await sync.state.pending.isEmpty)
-    // The response came before the request's resolve event: it doesn't reappear as waiting in between.
     #expect(await sync.state.requests[rid] == nil)
     #expect(await outbox.items(for: "mac1").isEmpty)
     await sync.stop()
@@ -77,7 +73,6 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     let state = await sync.state
     #expect(state.outcomes[answer.id] == .answeredElsewhere(nil))
     #expect(state.outcomes[reply.id] == .failed(APIError(code: .sessionWaiting, message: "Answer the prompt first.")))
-    // Settled on the Mac: never back in the list as waiting while its event is on the way.
     #expect(state.requests[rid] == nil && state.pending.isEmpty)
     await sync.stop()
 }
@@ -110,7 +105,6 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
 @Test func anExpiredItemSettlesWhereverTheConnectionStopped() async throws {
     let (outbox, _) = try temporaryOutbox()
     try await outbox.enqueue(Outbox.Item(id: "old", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 1))
-    // Never paired: the loop returns at once and drains nothing.
     let sync = try engine(FakeMac(), token: nil, outbox: outbox)
     await sync.start()
     // The outcome is recorded before the item leaves `pending`, so all three are waited for together.
@@ -153,13 +147,11 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     }
     #expect(await one.items(for: "mac1").count == 40)
 
-    // Both drain at once: every item goes to exactly one of them.
     async let a = drainAll(one, owner: "app")
     async let b = drainAll(two, owner: "intent")
     let (claimedByOne, claimedByTwo) = await (a, b)
     #expect(Set(claimedByOne).isDisjoint(with: claimedByTwo) && claimedByOne.count + claimedByTwo.count == 40)
 
-    // A claim older than 30 s is free again: its process died mid-send.
     try await one.enqueue(Outbox.Item(id: "stale", macID: "mac1", path: "/v1/sessions/s/reply", createdAt: 0, expiresAt: 99))
     #expect(await one.claim(for: "mac1", by: "dead", now: 1000)?.id == "stale")
     #expect(await two.claim(for: "mac1", by: "live", now: 1010) == nil)
@@ -204,7 +196,6 @@ private func drainAll(_ outbox: Outbox, owner: String) async -> [String] {
     let broken = json(ErrorBody(error: APIError(code: ErrorCode(rawValue: "internal"), message: "Broke.")))
     mac.respond { request in request.url!.path.hasSuffix("/reply") ? .init(status: 409, body: busy) : .init(status: 500, body: broken) }
     let (sync, _) = try await live(mac, outbox: outbox)
-    // In order: the interrupt is refused and dropped, then the reply keeps retrying.
     let interrupt = await sync.interrupt("s")
     let reply = await sync.reply("s", RemoteReply(text: "go on"))
     try await until("dropped") { await sync.state.outcomes[interrupt.id] == .failed(APIError(code: ErrorCode(rawValue: "internal"), message: "Broke.")) }
@@ -224,7 +215,6 @@ private func drainAll(_ outbox: Outbox, owner: String) async -> [String] {
     let other = await sync.interrupt("b")
     try await until("other session") { if case .delivered = await sync.state.outcomes[other.id] { true } else { false } }
     try await until("retried") { mac.calls.filter { $0.url!.path.contains("/sessions/a/") }.count >= 3 }
-    // Session a's interrupt waits behind its reply, which is all that is retried.
     #expect(mac.calls.allSatisfy { !$0.url!.path.hasSuffix("/sessions/a/interrupt") })
     #expect(await outbox.items(for: "mac1").map(\.id) == [first.id, second.id])
     await sync.stop()
@@ -249,13 +239,11 @@ private func drainAll(_ outbox: Outbox, owner: String) async -> [String] {
     #expect(one.path == first.path && one.body == first.body && one.expiresAt - one.createdAt == first.expiresAt - first.createdAt)
     try await until("r1 unknown") { await sync.state.outcomes[one.id] == .unknown }
 
-    // Retrying the retry counts from the first attempt; the first one landed, so this one finds it answered.
     let two = try #require(await sync.retry(itemID: one.id))
     #expect(two.id == "\(rid):allow:r2" && two.retryOf == first.id)
     try await until("answered") { if case .answeredElsewhere = await sync.state.latestOutcome(of: first.id) { true } else { false } }
     let state = await sync.state
     #expect(state.outcomes[first.id] == .unknown && state.retries[first.id] == [one.id, two.id])
-    // Only a settled-unknown item can be retried, and only by a tap: nothing was sent again on its own.
     #expect(await sync.retry(itemID: two.id) == nil)
     #expect(mac.calls.compactMap { $0.value(forHTTPHeaderField: "Idempotency-Key") } == [first.id, one.id, two.id])
     await sync.stop()
@@ -283,7 +271,6 @@ private func drainAll(_ outbox: Outbox, owner: String) async -> [String] {
     let again = await sync.takeBack(sessionID: "s")
     #expect(back.id.hasPrefix("s:takeback:") && back.id != again.id && back.method == "DELETE" && back.path == "/v1/sessions/s/mail")
     try await until("taken back") { if case .delivered = await sync.state.outcomes[again.id] { true } else { false } }
-    // The note's two refusals and its delivery all come before either Take Back.
     #expect(mac.calls.map { "\($0.httpMethod!) \($0.url!.path)" } == ["POST /v1/sessions/s/reply", "POST /v1/sessions/s/reply", "POST /v1/sessions/s/reply",
                                                                        "DELETE /v1/sessions/s/mail", "DELETE /v1/sessions/s/mail"])
     #expect(mac.calls.last?.value(forHTTPHeaderField: "Idempotency-Key") == again.id)
@@ -313,10 +300,8 @@ private final class Counter: @unchecked Sendable {
     let allow = await sync.answer(rid, .allow(confirmDestructive: true), confirm: "v1.1791559200.c.AAAA")
     try await until("refused") { if case .failed(let error) = await sync.state.outcomes[allow.id] { error.code == .confirmRequired } else { false } }
     #expect(mac.calls.first?.value(forHTTPHeaderField: ConfirmSignature.header) == "v1.1791559200.c.AAAA")
-    // A refused signature isn't a revoked token: the phone stays paired and connected.
     #expect(await sync.state.connection != .unpaired)
 
-    // A retry signs again; the stale signature never goes out twice.
     let deny = await sync.answer(rid, .deny(message: nil), confirm: "v1.1791559200.u.BBBB")
     try await until("unknown") { await sync.state.outcomes[deny.id] == .unknown }
     let again = try #require(await sync.retry(itemID: deny.id, confirm: "v1.1791559300.u.CCCC"))

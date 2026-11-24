@@ -3,7 +3,6 @@ import UIKit
 import XCTest
 @testable import SideARemote
 
-/// Photos in the New Session sheet: held under the sheet's own key, named in the start request, never left out of it.
 @MainActor
 final class NewSessionAttachTests: XCTestCase {
     private let draft = "new-session-test"
@@ -17,7 +16,6 @@ final class NewSessionAttachTests: XCTestCase {
         }
     }
 
-    /// The demo has no Mac, so a photo goes straight to ready once it's prepared.
     private func settled(_ attachments: ComposerAttachments, _ key: String, count: Int) async throws {
         for _ in 0..<100 {
             let items = attachments.items(key)
@@ -27,13 +25,10 @@ final class NewSessionAttachTests: XCTestCase {
         XCTFail("the tray never settled")
     }
 
-    // MARK: Menu
-
     func testTheSheetsMenuHasOnlyWaysToAttach() {
         let rows = DrawerRows.make(canUpload: true, room: 4, hasCamera: true, clipboardHasImage: true)
         XCTAssertEqual(rows.count, 4)
         XCTAssertTrue(rows.attaches)
-        // Nothing to attach: the sheet shows no + at all, rather than an empty menu.
         XCTAssertEqual(DrawerRows.make(canUpload: false, room: 4, hasCamera: true, clipboardHasImage: true).count, 0)
     }
 
@@ -42,8 +37,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertFalse(NewSessionSheet.offersPhotos(canUpload: false, macPicked: true))
         XCTAssertFalse(NewSessionSheet.offersPhotos(canUpload: true, macPicked: false))
     }
-
-    // MARK: Gate
 
     func testStartWaitsForAPhotoOnItsWayAndNeverLeavesAFailedOneOut() async throws {
         let attachments = ComposerAttachments()
@@ -68,15 +61,11 @@ final class NewSessionAttachTests: XCTestCase {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(with)) as? [String: Any])
         XCTAssertEqual(json["attachments"] as? [String], ["0123456789ab", "ba9876543210"])
         XCTAssertEqual(json["prompt"] as? String, "Look at this")
-        // Swapping a photo after Face ID or Unlock would change what the Mac starts with, so the subject changes with them.
         XCTAssertNotEqual(try ConfirmMessage.subject(start: plain), try ConfirmMessage.subject(start: with))
         XCTAssertEqual(try ConfirmMessage.subject(start: with), try ConfirmMessage.subject(start: with))
-        // A start without photos is the body every Mac has taken since the first release.
         let bare = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(plain)) as? [String: Any])
         XCTAssertEqual(bare["attachments"] as? [String], [])
     }
-
-    // MARK: Failure and restore
 
     func testAFailedStartLeavesThePhotosInTheTrayAndASuccessfulOneHandsThemToTheBubble() async throws {
         let attachments = ComposerAttachments()
@@ -84,16 +73,13 @@ final class NewSessionAttachTests: XCTestCase {
         attachments.add(png(), to: draft)
         try await settled(attachments, draft, count: 2)
         let before = attachments.ready(draft)
-        // A refused start reads the ids and changes nothing.
         XCTAssertEqual(attachments.ready(draft), before)
         XCTAssertEqual(attachments.items(draft).count, 2)
-        // A start that went: the tray clears and the first prompt's bubble keeps the pictures.
         XCTAssertEqual(attachments.take(draft, for: "turn-1"), before)
         XCTAssertTrue(attachments.items(draft).isEmpty)
         XCTAssertEqual(attachments.sent["turn-1"]?.count, 2)
     }
 
-    /// Holds preparation until `release()`, so a test sees the tray while a photo is still being cut down.
     private actor Hold {
         private var waiting: [CheckedContinuation<Void, Never>] = []
         private var released = false
@@ -120,7 +106,6 @@ final class NewSessionAttachTests: XCTestCase {
         let hold = Hold()
         held(attachments, hold)
         attachments.add(png(), to: draft)
-        // Right after the pick, before preparation has finished: the tray already holds the photo, uploading.
         XCTAssertEqual(attachments.items(draft).count, 1)
         XCTAssertTrue(attachments.isUploading(draft))
         XCTAssertEqual(attachments.gate(draft), .uploading, "Start waits for a photo that is still being prepared")
@@ -180,12 +165,10 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertTrue(first.items(draft).isEmpty)
         try await settled(second, draft, count: 2)
         XCTAssertEqual(second.items(draft).count, 2)
-        // Into itself is no move.
         second.rehome(draft, to: second)
         XCTAssertEqual(second.items(draft).count, 2)
     }
 
-    /// A photo still being cut down when another Mac is picked is not left behind: it goes to that Mac once it's ready.
     func testAPhotoStillBeingPreparedFollowsToTheOtherMac() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let hold = Hold()
@@ -203,7 +186,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertTrue(first.items(draft).isEmpty, "nothing comes back to the tray it left")
     }
 
-    /// The same for a photo the drawer is still fetching: its bytes report to the tray the drawer was opened on.
     func testAPhotoTheDrawerIsStillFetchingFollowsToTheOtherMac() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let id = try XCTUnwrap(first.reserve(preview: UIImage(), in: draft, refetch: { nil }))
@@ -215,7 +197,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertTrue(first.items(draft).isEmpty)
     }
 
-    /// A drawer fetch that fails reaches the tile where it is now, with Retry.
     func testAFetchThatFailsAfterTheMoveFailsTheTileThere() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let id = try XCTUnwrap(first.reserve(preview: UIImage(), in: draft, refetch: { nil }))
@@ -224,7 +205,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertEqual(second.gate(draft), .failed)
     }
 
-    /// What isn't a photo leaves the tray it moved to, as it would have where it started.
     func testSomethingThatIsNotAnImageLeavesTheOtherMacsTrayToo() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let hold = Hold()
@@ -237,7 +217,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertEqual(second.gate(draft), .ready([]))
     }
 
-    /// The other Mac's tray has room for ten: a photo past that stays behind, as a finished one always has.
     func testOnlyAsManyPhotosFollowAsTheOtherTrayHasRoomFor() async throws {
         let first = ComposerAttachments(), crowded = ComposerAttachments()
         let hold = Hold()
@@ -252,9 +231,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertTrue(first.items(draft).isEmpty)
     }
 
-    // MARK: Which Mac uploads
-
-    /// Stands in for a Mac: counts the photos it was sent and answers an id naming it.
     @MainActor private final class FakeUploads {
         let name: String
         var sent = 0
@@ -274,7 +250,6 @@ final class NewSessionAttachTests: XCTestCase {
         return []
     }
 
-    /// Only the Mac the photo moved to receives it.
     func testOnlyTheMacThePhotoMovedToUploadsIt() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let a = FakeUploads("a"), b = FakeUploads("b")
@@ -290,7 +265,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertEqual(ready(second), ["b-1"])
     }
 
-    /// Switched to the other Mac and back before the photo is ready: it uploads once, to the Mac it ends on.
     func testAPhotoMovedThereAndBackUploadsOnceToTheFirstMac() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let a = FakeUploads("a"), b = FakeUploads("b")
@@ -307,7 +281,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertTrue(second.items(draft).isEmpty)
     }
 
-    /// Discarded on the Mac it moved to, a photo still being prepared goes nowhere.
     func testAPhotoDiscardedAfterTheMoveUploadsNowhere() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let a = FakeUploads("a"), b = FakeUploads("b")
@@ -326,7 +299,6 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertTrue(second.items(draft).isEmpty)
     }
 
-    /// A photo already on its way to one Mac when the other is picked is taken from the first and sent to the second only.
     func testAPhotoMidUploadGoesToTheOtherMacOnly() async throws {
         let first = ComposerAttachments(), second = ComposerAttachments()
         let a = FakeUploads("a"), b = FakeUploads("b")

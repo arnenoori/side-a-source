@@ -4,9 +4,6 @@ import SideAProtocol
 import SideARemoteKit
 import SideARemoteShared
 
-/// One Mac's model, which the app injects with `.environment`; with several Macs, each screen about one Mac
-/// gets its own. Sub-stores are separate observable objects, so a view that reads only `accounts` re-renders
-/// only when accounts change.
 @Observable
 final class AppModel {
     nonisolated deinit {}
@@ -22,21 +19,15 @@ final class AppModel {
     let deliveryChoices = DeliveryChoices()
     let handoffs = HandoffDrafts()
     @ObservationIgnored var stopResends = StopResends()
-    /// Fictional data, no network, nothing written outside the app's own container.
     let isDemo: Bool
     var paired: Bool
-    /// The connection to the paired Mac; nil in the demo and before pairing.
     var link: LiveLink?
-    /// The demo's Macs are named by these.
     private var demoID = NotificationAnswer.demoMac
 
-    /// The pairing this model was built for, kept so a link that failed to open can be built again.
     private(set) var pairing: PairedMac?
 
-    /// Open incidents on the providers' status pages, read from the Mac's latest state; the demo has none.
     var incidents: [Incident] { link?.state.incidents ?? [] }
 
-    /// The Mac's id, as pushes, deep links and the outbox name it.
     var macID: String { link?.mac.endpoint.macID ?? pairing?.endpoint.macID ?? demoID }
 
     init(mac: MacConnection, sessions: SessionsStore, requests: RequestsStore, transcripts: TranscriptStore,
@@ -52,7 +43,6 @@ final class AppModel {
         let model = demo(DemoData(now: now), name: "MacBook Pro", id: NotificationAnswer.demoMac, now: now)
         model.mac.route = .wifi
         #if DEBUG
-        // `--demo-linux`: the demo host is a Linux box, to see the copy that doesn't say Mac.
         if ProcessInfo.processInfo.arguments.contains("--demo-linux") {
             model.mac.reportedName = "build-box"
             model.mac.kind = .linux
@@ -61,7 +51,6 @@ final class AppModel {
         return model
     }
 
-    /// A second demo Mac, for the multi-Mac screens: a few of the first one's sessions on another machine.
     static func demoSecond(now: Date = .now) -> AppModel {
         let model = demo(DemoData(now: now).second, name: "Mac mini", id: "demo-2", now: now)
         model.mac.route = .tailscale
@@ -78,6 +67,7 @@ final class AppModel {
                              isDemo: true, paired: true)
         model.demoID = id
         model.mac.onPower = true
+        model.mac.portable = id == NotificationAnswer.demoMac
         model.mac.memoryUsed = 21.4
         model.mac.memoryTotal = 36
         model.mac.keepAwake = true
@@ -90,8 +80,6 @@ final class AppModel {
     }
 
     #if DEBUG
-    /// `--cut-message`: the sync session's latest answer arrives cut, as the Mac sends one over 6,000 characters, and its
-    /// rest comes a moment later, or never with `--cut-fails`.
     private func cutDemoMessage() {
         let session = DemoData.ID.syncTest
         guard var list = transcripts.messages[session], let index = list.lastIndex(where: { $0.role == .assistant }),
@@ -119,6 +107,7 @@ final class AppModel {
         if let link, let outbox { live = MacTools.Live(engine: link.engine, paired: mac, outbox: outbox) }
         let connection = MacConnection(name: mac.endpoint.name, nickname: MacNicknames.nickname(for: mac.endpoint.macID), state: .connecting, lastSeen: .now)
         connection.kind = mac.endpoint.kind
+        connection.portable = MacShapes.portable(mac.endpoint.macID)
         let model = AppModel(mac: connection, sessions: SessionsStore([], macID: mac.endpoint.macID),
                              requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
                              history: HistoryStore([]), isDemo: false, paired: true, live: live)
@@ -137,7 +126,6 @@ final class AppModel {
         return model
     }
 
-    /// An answered request folds into an "Allowed" line where its card was.
     private func foldAnswers() {
         requests.onResolve = { [weak sessions, weak transcripts] request, outcome in
             guard let id = request.sessionID else { return }
@@ -153,7 +141,6 @@ final class AppModel {
     }
 }
 
-/// One paired Mac. With one Mac, the Mac never appears as a header anywhere.
 @Observable
 final class MacConnection: Identifiable {
     nonisolated deinit {}
@@ -161,14 +148,10 @@ final class MacConnection: Identifiable {
     enum Offline: Equatable {
         case tailscaleOff, macUnreachable, macAsleep, relayRefused, noNetwork, revoked, keyChanged, incompatible(installed: String?), appOutdated
 
-        /// Revoked and a changed key end the pairing: the whole Sessions tab says so, not a banner.
         var needsPairing: Bool { self == .revoked || self == .keyChanged }
 
-        /// What's sent meanwhile waits and goes once the Mac is back; the others need someone to act first.
         var comesBack: Bool { [.tailscaleOff, .macUnreachable, .macAsleep, .relayRefused, .noNetwork].contains(self) }
 
-        /// Not known to end the pairing, but a moved or re-keyed Mac looks like this too. Not for a Mac that said it's
-        /// asleep, or one that only needs updating.
         var offersPairAgain: Bool { self == .tailscaleOff || self == .macUnreachable || self == .relayRefused }
     }
 
@@ -180,8 +163,6 @@ final class MacConnection: Identifiable {
 
     var isOffline: Bool { state.isOffline }
 
-    /// `state` as the screens show it: a drop that's live again within `blip` never shows, so a socket replaced on the
-    /// way back from the background doesn't flash "Reconnecting…".
     private(set) var shown: State
     @ObservationIgnored private var showing: Task<Void, Never>?
     static let blip: Duration = .milliseconds(800)
@@ -195,31 +176,26 @@ final class MacConnection: Identifiable {
     }
 
     let id = UUID()
-    /// What the Mac calls itself, from its pairing and hellos.
     var reportedName: String
-    /// The name given it on this iPhone, which wins everywhere the phone shows the Mac.
     var nickname: String?
     var name: String { nickname ?? reportedName }
-    /// What kind of computer it is, from its pairing and hellos; a Mac until it says otherwise. Words about it come from `kind`.
     var kind: HostOS = .macos
     var state: State {
         didSet { if state != oldValue { settle() } }
     }
     var lastSeen: Date
-    /// nil until the Mac's first `remote.mac` report, so nothing shows a guess.
     var onPower: Bool?
     var battery: Int?
+    var portable = false
     var memoryUsed: Double?
     var memoryTotal: Double?
     var keepAwake: Bool?
-    /// From the path monitor: a VPN interface (Tailscale) is up.
     var vpnUp = true
     var route: Route?
 
     enum Route: Equatable {
         case wifi, tailscale, relay
 
-        /// Any direct address off the tailnet is one the phone can reach only on the Mac's own network.
         init?(_ path: Paths.Path?) {
             switch path {
             case .relay?: self = .relay
@@ -237,7 +213,6 @@ final class MacConnection: Identifiable {
         }
     }
 
-    /// A path `Paths` still holds says nothing while the events socket is down.
     var status: String {
         guard state == .live, let route else { return state.title }
         return "Connected via \(route.title)"
@@ -257,15 +232,12 @@ final class MacConnection: Identifiable {
         }
     }
 
-    /// Renamed on this iPhone, or back to the Mac's own name with nil or blank; kept per Mac across launches.
-    func rename(_ nickname: String?, macID: String, in defaults: UserDefaults = MacNicknames.store) {
+    func rename(_ nickname: String?, macID: String, in defaults: UserDefaults = SharedStorage.defaults) {
         MacNicknames.set(nickname, for: macID, in: defaults)
         let next = MacNicknames.nickname(for: macID, in: defaults)
         if self.nickname != next { self.nickname = next }
     }
 
-    /// Back in front: a drop the app only saw while it was away gets the same minute of "Reconnecting…" as a fresh one,
-    /// so Send isn't held off while the link comes back. A pairing that ended, or a Mac that said it's asleep, stays.
     func foregrounded(now: Date = .now) {
         switch state {
         case .offline(.macUnreachable), .offline(.noNetwork): state = .reconnecting(since: now)
@@ -275,30 +247,51 @@ final class MacConnection: Identifiable {
     }
 }
 
-/// Names given to paired Macs on this iPhone, by Mac id, in the App Group so every part of the app reads the same.
 enum MacNicknames {
-    nonisolated(unsafe) static let store = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard
     static let key = "mac.nicknames"
 
-    static func nickname(for macID: String, in defaults: UserDefaults = store) -> String? {
+    static func nickname(for macID: String, in defaults: UserDefaults = SharedStorage.defaults) -> String? {
         (defaults.dictionary(forKey: key) as? [String: String])?[macID]
     }
 
-    /// Blank or nil goes back to the Mac's own name.
-    static func set(_ nickname: String?, for macID: String, in defaults: UserDefaults = store) {
+    static func set(_ nickname: String?, for macID: String, in defaults: UserDefaults = SharedStorage.defaults) {
         var all = defaults.dictionary(forKey: key) as? [String: String] ?? [:]
         let trimmed = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
         all[macID] = trimmed?.isEmpty == false ? trimmed : nil
         defaults.set(all, forKey: key)
     }
 
-    /// What the phone calls a Mac it only knows the pairing of.
-    static func name(_ reported: String, macID: String, in defaults: UserDefaults = store) -> String {
+    static func name(_ reported: String, macID: String, in defaults: UserDefaults = SharedStorage.defaults) -> String {
         nickname(for: macID, in: defaults) ?? reported
     }
 }
 
+/// Whether a Mac has a battery, kept so its chip shows a laptop while it is out of reach and says nothing.
+enum MacShapes {
+    static let key = "mac.portable"
+
+    static func portable(_ macID: String, in defaults: UserDefaults = SharedStorage.defaults) -> Bool {
+        (defaults.dictionary(forKey: key) as? [String: Bool])?[macID] ?? false
+    }
+
+    static func set(portable: Bool, for macID: String, in defaults: UserDefaults = SharedStorage.defaults) {
+        var all = defaults.dictionary(forKey: key) as? [String: Bool] ?? [:]
+        guard all[macID] != portable else { return }
+        all[macID] = portable
+        defaults.set(all, forKey: key)
+    }
+}
+
+extension MacConnection {
+    var symbol: String {
+        switch kind {
+        case .macos: portable ? "laptopcomputer" : "desktopcomputer"
+        case .windows, .wsl: "pc"
+        default: "server.rack"
+        }
+    }
+}
+
 extension PairedMac {
-    /// Its name as this iPhone shows it.
     var displayName: String { MacNicknames.name(endpoint.name, macID: endpoint.macID) }
 }

@@ -117,8 +117,6 @@ enum RemoteRoutes {
 
     static let badJSON = RemoteServer.error(400, .badJSON, "The request body isn't what this route takes.")
 
-    // MARK: Table
-
     static let routes: [Route] = [
         Route("GET", "v1/hello") { context in
             let caller = context.caller
@@ -132,8 +130,6 @@ enum RemoteRoutes {
             return HTTPResponse(status: 204)
         },
     ] + RemoteRoutes.appRoutes + RemoteRoutes.rotationRoutes
-
-    // MARK: Pairing
 
     @Sendable static func pair(_ context: Context) async -> HTTPResponse {
         guard let request = context.body(PairRequest.self) else { return badJSON }

@@ -3,7 +3,6 @@ import Foundation
 import SideACore
 import Testing
 
-/// Requests settled away from the island: the phone, the terminal, or the session moving on.
 @MainActor private func requests(_ count: Int, in island: Island) throws -> [Island.Pending.ID] {
     try (0..<count).map { n in
         let data = try JSONSerialization.data(withJSONObject: ["v": 1, "agent": "claude", "pid": 960 + n, "slot": "mac", "request": [
@@ -13,7 +12,6 @@ import Testing
     }
 }
 
-/// One answered on the phone before the card on screen leaves that card on screen, not the one after it.
 @MainActor @Test func aRequestSettledElsewhereDoesNotMoveTheCardOnScreen() throws {
     let island = AccountStore(demo: true).island
     let ids = try requests(3, in: island)
@@ -25,8 +23,6 @@ import Testing
     #expect(island.current?.id == ids[1])
 }
 
-/// The card on screen answered on the phone: the next one slides in, and a click or ⌃⌥Y aimed at the old card in that
-/// moment doesn't allow the new one.
 @MainActor @Test func aCardThatSlidInIgnoresTheMacsAnswersForAMoment() throws {
     let island = AccountStore(demo: true).island
     let ids = try requests(2, in: island)
@@ -36,11 +32,9 @@ import Testing
     #expect(!island.respond(.allow, nil, quietly: true))
     #expect(!island.respond(.allow, ids[1], quietly: true))
     #expect(island.pending.map(\.id) == [ids[1]])
-    // The phone answering it is no stale click.
     #expect(island.respond(.deny(nil), ids[1], quietly: true, by: .remote(device: "d1", name: "Pocket")))
 }
 
-/// Answering one on the Mac moves straight on: the next card takes clicks at once.
 @MainActor @Test func afterTheMacsOwnAnswerTheNextCardTakesClicks() throws {
     let island = AccountStore(demo: true).island
     let ids = try requests(2, in: island)
@@ -49,7 +43,6 @@ import Testing
     #expect(island.pending.isEmpty)
 }
 
-/// ⌃⌥N on a plan is Keep Planning, as its button says: the plan stays and its field opens. Anything else is denied.
 @MainActor @Test func controlOptionNOnAPlanKeepsPlanning() throws {
     let island = AccountStore(demo: true).island
     let data = try JSONSerialization.data(withJSONObject: ["v": 1, "agent": "claude", "pid": 970, "slot": "mac", "request": [

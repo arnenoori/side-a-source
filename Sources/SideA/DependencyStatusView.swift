@@ -37,7 +37,6 @@ struct DependencyStatusView: View {
             if store.checkingDependencies { ProgressView().controlSize(.mini) }
             else if dependency.state == .ready { Text(dependency.version ?? "Ready").foregroundStyle(.secondary) }
             else if dependency.name == store.dependencies.python.name {
-                // Apple's tools carry a current Python; python.org stays the alternative.
                 Button("Install Command Line Tools") { DependencyCheck.installCommandLineTools() }
                     .help("Opens Apple's installer. Python 3.9 or later comes with it.")
                 Link("python.org ↗", destination: url)

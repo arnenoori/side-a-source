@@ -21,7 +21,6 @@ private let long = "please refactor the parser so it handles nested quotes"
     #expect(Hosting.prompt(.claude, screen: claude("❯\u{00A0}first line", "  second line")) == "first line\nsecond line")
     #expect(Hosting.prompt(.claude, screen: claude("❯\u{00A0}a", "", "  b")) == "a\n\nb")
     #expect(Hosting.prompt(.claude, screen: claude("❯\u{00A0}one row")) == "one row")
-    // A row at the margin isn't the prompt's, and without the rule under it nothing says where it ends.
     #expect(Hosting.prompt(.claude, screen: claude("❯\u{00A0}a", "b")) == nil)
     #expect(Hosting.prompt(.claude, screen: [rule, "❯\u{00A0}a", "  b"].joined(separator: "\n")) == nil)
     #expect(Hosting.prompt(.claude, screen: claude("❯\u{00A0}\u{1B}[2mTry \"fix the tests\"\u{1B}[0m")) == nil)
@@ -45,6 +44,7 @@ private let long = "please refactor the parser so it handles nested quotes"
     #expect(Hosting.owned(sent: sent, agent: .claude, screen: claude("❯\u{00A0}\u{1B}[2mTry \"fix the tests\"\u{1B}[0m")) == nil)
 }
 
+#if canImport(Network)
 @Test func aPoolRequestIsResentOnlyWhenItCantHaveBeenWritten() {
     let table: [(URLError.Code, unsent: Bool, cutOff: Bool)] = [
         (.notConnectedToInternet, true, false), (.cannotFindHost, true, false), (.dnsLookupFailed, true, false),
@@ -59,3 +59,4 @@ private let long = "please refactor the parser so it handles nested quotes"
     }
     #expect(!PoolProxy.unsent(CancellationError()) && !PoolProxy.cutOff(CancellationError()))
 }
+#endif

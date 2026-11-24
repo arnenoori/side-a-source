@@ -4,7 +4,6 @@ import SideARemoteShared
 import SwiftUI
 import UIKit
 
-/// What the viewfinder can do with the flash, in the order the button cycles through them.
 enum CaptureFlash: String, CaseIterable, Equatable {
     case auto, on, off
 
@@ -35,22 +34,16 @@ enum CaptureFlash: String, CaseIterable, Equatable {
     }
 }
 
-/// Where pictures come from: the device's camera, or in a debug build or a test a stand-in, so everything around it
-/// (the viewfinder's layout and motion, a capture arriving in the tray) can be seen and tested without a camera.
 @MainActor
 protocol CaptureSource: AnyObject {
-    /// The running session, for a preview layer; nil for a stand-in.
     var session: AVCaptureSession? { get }
-    /// What a stand-in's viewfinder shows.
     var testFrame: UIImage? { get }
     var hasFront: Bool { get }
     func hasFlash(front: Bool) -> Bool
-    /// The camera was taken away (a call, another app, multitasking on an iPad) or came back.
     var onInterruption: ((Bool) -> Void)? { get set }
     func start(front: Bool)
     func stop()
     func setZoom(_ factor: CGFloat)
-    /// A photo as JPEG, turned upright for `angle`; nil when none could be taken.
     func capture(angle: CGFloat, flash: CaptureFlash) async -> Data?
 }
 
@@ -89,7 +82,6 @@ final class CameraCapture: CaptureSource, @unchecked Sendable {
     }
 }
 
-/// The session, its photo output and the queue they live on.
 nonisolated final class SessionRunner: @unchecked Sendable {
     let session = AVCaptureSession()
     var onInterruption: (@Sendable (Bool) -> Void)?
@@ -159,7 +151,6 @@ nonisolated final class SessionRunner: @unchecked Sendable {
         }
     }
 
-    /// Puts the camera for `position` on the session, once; false when there is none or it can't be used.
     private func configure(position: AVCaptureDevice.Position) -> Bool {
         if positioned == position { return true }
         guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position),
@@ -177,7 +168,6 @@ nonisolated final class SessionRunner: @unchecked Sendable {
     }
 }
 
-/// Receives one photo and hands over its bytes.
 private nonisolated final class PhotoCatcher: NSObject, AVCapturePhotoCaptureDelegate, @unchecked Sendable {
     private let finish: @Sendable (Data?) -> Void
     private(set) var settled = false
@@ -192,7 +182,6 @@ private nonisolated final class PhotoCatcher: NSObject, AVCapturePhotoCaptureDel
 }
 
 #if DEBUG
-/// `--fake-camera`: a picture where the camera would be, so a simulator can show the tile, the viewfinder and a capture.
 final class FakeCapture: CaptureSource {
     nonisolated deinit {}
 
@@ -226,21 +215,16 @@ final class FakeCapture: CaptureSource {
 }
 #endif
 
-/// The camera's state around the tile and the viewfinder: whether it may be shown, asked for or opened, and what the
-/// viewfinder is doing.
 @MainActor @Observable
 final class CameraModel {
     nonisolated deinit {}
 
     private(set) var access: CameraAccess
-    /// The viewfinder is open: the panel has grown around the tile's preview.
     private(set) var shooting = false
-    /// The viewfinder is on screen, open or still shrinking back into the tile.
     private(set) var showsViewfinder = false
     private(set) var front = false
     private(set) var flash = CaptureFlash.auto
     private(set) var capturing = false
-    /// The camera was taken away (a call, another app, multitasking): the tile and viewfinder show a glyph, not a frozen frame.
     private(set) var interrupted = false
     private(set) var zoom: CGFloat = 1
     @ObservationIgnored let source: CaptureSource?
@@ -253,7 +237,6 @@ final class CameraModel {
         source?.onInterruption = { [weak self] interrupted in self?.interrupted = interrupted }
     }
 
-    /// The device's camera, a stand-in under `--fake-camera`, or none where there is no camera.
     static func makeSource() -> CaptureSource? {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--fake-camera") { return FakeCapture() }
@@ -271,16 +254,13 @@ final class CameraModel {
     var hasCamera: Bool { source != nil }
     var hasFlash: Bool { source?.hasFlash(front: front) ?? false }
     var canFlip: Bool { source?.hasFront ?? false }
-    /// The tile is live and can be opened.
     var isLive: Bool { access.showsPreview && !interrupted }
 
-    /// The drawer opened: look at the permission as it is now, and run the preview if it may run.
     func start() {
         wanted = true
         refresh()
     }
 
-    /// The drawer closed or the app left the foreground.
     func stop() {
         wanted = false
         hiding?.cancel()
@@ -298,7 +278,6 @@ final class CameraModel {
         if wanted, access.showsPreview { source?.start(front: front) }
     }
 
-    /// The first tap: the system's question. Granted, the tile turns live where it is.
     func ask() async {
         _ = await AVCaptureDevice.requestAccess(for: .video)
         refresh()
@@ -310,7 +289,6 @@ final class CameraModel {
         shooting = true
     }
 
-    /// Back into the tile; the viewfinder stays up until it has finished shrinking.
     func close() {
         shooting = false
         zoom = 1
@@ -337,7 +315,6 @@ final class CameraModel {
         source?.setZoom(zoom)
     }
 
-    /// One photo; nil if the camera couldn't take it. One at a time.
     func capture(angle: CGFloat) async -> Data? {
         guard let source, !capturing, shooting else { return nil }
         capturing = true
@@ -348,7 +325,6 @@ final class CameraModel {
     func setInterrupted(_ value: Bool) { interrupted = value }
 }
 
-/// What the camera sees, filling its tile or the viewfinder.
 struct LivePreview: UIViewRepresentable {
     let session: AVCaptureSession
 
@@ -376,7 +352,6 @@ struct LivePreview: UIViewRepresentable {
     }
 }
 
-/// The picture in the tile and the viewfinder: the camera's, or a stand-in's.
 struct CameraSurface: View {
     let camera: CameraModel
 

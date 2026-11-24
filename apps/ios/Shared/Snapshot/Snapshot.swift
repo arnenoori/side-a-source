@@ -33,7 +33,6 @@ public struct WidgetSnapshot: Codable, Hashable, Sendable {
         public var title: String
         public var project: String
         public var phase: Phase
-        /// The step ("Running swift build") or, for needs-you, what it asks ("Allow Bash · npm test").
         public var line: String?
         public var codex: Bool
         /// The Mac it's on, with several paired; nil means the snapshot's.
@@ -43,7 +42,6 @@ public struct WidgetSnapshot: Codable, Hashable, Sendable {
         }
     }
 
-    /// An account's two windows, for the ring pairs.
     public struct Account: Codable, Hashable, Sendable, Identifiable {
         public var id: String
         public var name: String
@@ -55,7 +53,6 @@ public struct WidgetSnapshot: Codable, Hashable, Sendable {
         }
     }
 
-    /// The Mac's name, or "2 Macs" with several.
     public var macName: String
     /// For deep links: `sidea-remote://session/<macID>/<id>`; the first Mac's with several.
     public var macID: String
@@ -91,7 +88,6 @@ public struct WidgetSnapshot: Codable, Hashable, Sendable {
         try JSONEncoder().encode(self).write(to: url, options: .atomic)
     }
 
-    /// Unpaired: the widgets say so instead of showing a Mac that's gone.
     public static func remove() {
         guard let url else { return }
         try? FileManager.default.removeItem(at: url)
@@ -101,7 +97,6 @@ public struct WidgetSnapshot: Codable, Hashable, Sendable {
         URL(string: "sidea-remote://session/\(sessions.first { $0.id == id }?.mac ?? macID)/\(id)")
     }
 
-    /// For widget galleries and previews.
     public static let placeholder = WidgetSnapshot(
         macName: "MacBook Pro", macID: "demo", working: 3, waiting: 1,
         top: Waiting(requestID: "demo", sessionTitle: "Fix the flaky sync test", project: "side-a",

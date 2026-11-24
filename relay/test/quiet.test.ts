@@ -1,6 +1,6 @@
 import { env, runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { macIDFor } from '../src/send';
+import { macIDFor, quietRequest } from '../src/send';
 import { LIMITS, type Install } from '../src/install';
 import { TUNNEL } from '../src/tunnel';
 import { FakeApns, call, newMac, paired, putDevice, register, signed, newPhone, phoneCall, type Mac, type Phone } from './helpers';
@@ -57,7 +57,6 @@ const leave = async (mac: Mac, ws: WebSocket) => { ws.close(1000, 'bye'); await 
 const watch = (mac: Mac, now: number) => runInDurableObject(object(mac), (instance: Install) => instance.watch(now));
 const optIn = async (mac: Mac, phone: Phone) => { expect((await putDevice(mac, phone, { notifyQuiet: true })).status).toBe(200); };
 
-// A Mac with one verified phone that asked to hear.
 async function setup(apns: FakeApns) {
   const { mac, phone } = await paired(apns);
   await optIn(mac, phone);
@@ -78,14 +77,14 @@ describe('a Mac that goes quiet', () => {
 
     expect(await watch(mac, since + TUNNEL.quietAfter)).toBeNull();
     const push = need(apns.last(phone.apnsToken), 'a push');
+    const collapse = `mac-quiet-${await macIDFor(mac.installId)}`;
     expect(push.body).toEqual({
-      aps: { alert: { 'loc-key': 'PUSH_MAC_QUIET' }, category: 'MAC_QUIET', 'thread-id': 'mac-quiet', sound: 'default', 'interruption-level': 'active' },
+      aps: { alert: { 'loc-key': 'PUSH_MAC_QUIET' }, category: 'MAC_QUIET', 'thread-id': collapse, sound: 'default', 'interruption-level': 'active' },
       q: await macIDFor(mac.installId),
     });
-    expect(push.headers).toMatchObject({ 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': 'mac-quiet' });
+    expect(push.headers).toMatchObject({ 'apns-push-type': 'alert', 'apns-priority': '10', 'apns-collapse-id': collapse });
     expect(push.body.aps['mutable-content']).toBeUndefined();
 
-    // Once per outage, however often the alarm looks.
     await watch(mac, since + 2 * TUNNEL.quietAfter);
     await watch(mac, since + 3 * 3_600_000);
     expect(apns.to(phone.apnsToken)).toHaveLength(1);
@@ -173,7 +172,7 @@ describe('a Mac that goes quiet', () => {
     expect(apns.to(phone.apnsToken)).toHaveLength(1);
   });
 
-  it('is cleared when the Mac returns: a passive word in the same place, and none if nothing was said', async () => {
+  it('is cleared when the Mac returns: a silent background push naming the Mac, and none if nothing was said', async () => {
     const apns = new FakeApns();
     const { mac, phone } = await setup(apns);
     await leave(mac, await connect(mac));
@@ -183,19 +182,32 @@ describe('a Mac that goes quiet', () => {
 
     const back = await connect(mac);
     const push = await until(() => apns.to(phone.apnsToken)[1], 'the all-clear');
-    expect(push.body).toEqual({
-      aps: { alert: { 'loc-key': 'PUSH_MAC_BACK' }, category: 'MAC_QUIET', 'thread-id': 'mac-quiet', 'interruption-level': 'passive' },
-      q: await macIDFor(mac.installId),
-    });
-    expect(push.headers).toMatchObject({ 'apns-collapse-id': 'mac-quiet', 'apns-priority': '5' });
+    expect(push.body).toEqual({ aps: { 'content-available': 1 }, back: await macIDFor(mac.installId) });
+    expect(push.headers).toMatchObject({ 'apns-push-type': 'background', 'apns-priority': '5' });
+    expect(push.headers['apns-collapse-id']).toBeUndefined();
     expect((await rowOf(mac)).alerted).toBe(0);
 
-    // Back again with nothing said: quiet.
     await leave(mac, back);
     const again = await connect(mac);
     await settled(mac, { up: 1 });
     expect(apns.to(phone.apnsToken)).toHaveLength(2);
     again.close();
+  });
+});
+
+describe('the quiet notice, per Mac', () => {
+  it('has its own collapse id for each Mac, so two Macs never replace one another', () => {
+    const one = quietRequest('quiet', 'macOne', 0);
+    expect(one.collapseId).toBe('mac-quiet-macOne');
+    expect(quietRequest('quiet', 'macTwo', 0).collapseId).toBe('mac-quiet-macTwo');
+    expect(quietRequest('asleep', 'macOne', 0).collapseId).toBe(one.collapseId);
+  });
+
+  it('is removed by a background push with no alert, which names the Mac', () => {
+    const back = quietRequest('back', 'macOne', 100);
+    expect(back).toMatchObject({ pushType: 'background', priority: 5, expiration: 3700 });
+    expect(back.collapseId).toBeUndefined();
+    expect(JSON.parse(back.payload)).toEqual({ aps: { 'content-available': 1 }, back: 'macOne' });
   });
 });
 

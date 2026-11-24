@@ -5,7 +5,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// A demo store with a real server behind its routes, whose signature check is the one a phone meets.
 @MainActor
 private final class Rotation {
     let store = AccountStore(demo: true)
@@ -48,8 +47,6 @@ private final class Rotation {
 private func code(_ object: [String: Any]) -> String? { (object["error"] as? [String: Any])?["code"] as? String }
 private func details(_ object: [String: Any]) -> [String: String]? { (object["error"] as? [String: Any])?["details"] as? [String: String] }
 
-/// Everything a signed route must refuse: no signature, the unlock key, a signature for another change, another
-/// purpose, another device, an old one, and the same one twice. Nothing changes until the last, good one.
 @MainActor private func checkGate(_ scene: Rotation, path: String, body: [String: Any], subject: String, wrong: String,
                                   unchanged: () -> Bool, changed: () -> Bool) async throws {
     func refused(_ header: String?, _ expected: String, line: String) async throws {
@@ -103,7 +100,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
                         unchanged: { scene.store.config.followFable == nil }, changed: { scene.store.config.followFable == false })
 }
 
-/// A signature for one account never moves another, and a change of account is a new thing to sign.
 @MainActor @Test func aSignatureBindsTheAccount() async throws {
     let scene = try Rotation()
     let first = scene.store.config.accounts[0].id, second = scene.store.config.accounts[1].id
@@ -113,7 +109,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(scene.store.config.accounts[1].priority == nil)
 }
 
-/// Checks that need no key come first, so a bad body never spends a good signature.
 @MainActor @Test func badBodiesAreRefusedBeforeTheSignature() async throws {
     let scene = try Rotation()
     let id = scene.store.config.accounts[1].id
@@ -129,7 +124,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(scene.store.config.swapAt == nil)
 }
 
-/// Pool mode stays on the Mac, whatever a phone signs.
 @MainActor @Test func poolModeIsRefusedHoweverItIsAsked() async throws {
     let scene = try Rotation()
     let before = scene.store.config.pool
@@ -138,12 +132,10 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
         #expect(status == 409 && code(answer) == "cannot_deliver" && details(answer)?["hint"] == "poolOnMac", "\(answer)")
     }
     #expect(scene.store.config.pool == before)
-    // Nor is it in a body that takes something else.
     _ = try await scene.call("POST", "v1/rotation/follow-fable", ["enabled": false, "pool": true], confirm: try scene.signature(ConfirmMessage.subject(followFable: false)))
     #expect(scene.store.config.pool == before)
 }
 
-/// Over the wire: no token gets nothing from any new route, and a removed device's token and signature stop working.
 @MainActor @Test func theServerAsksForATokenAndARemovedDeviceLosesEveryRoute() async throws {
     let scene = try Rotation()
     let server = scene.server, token = scene.token
@@ -164,7 +156,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
         client.send("\(route) HTTP/1.1\r\n\(host)\(auth)\(signed)Idempotency-Key: \(UUID().uuidString)\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)")
         return await client.text(until: "\r\n\r\n")
     }
-    // Refused, or past five tries from one address refused sooner by the stranger limit; never served.
     func refused(_ answer: String) -> Bool { answer.hasPrefix("HTTP/1.1 401") || answer.hasPrefix("HTTP/1.1 429") }
     for route in routes {
         let answer = await ask(route, bearer: nil, confirm: try scene.signature(try ConfirmMessage.subject(account: id, priority: .last)))
@@ -202,7 +193,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(wire[3].issue == AccountIssue(kind: .signedOut))
     #expect(wire[4].issue == AccountIssue(kind: .replaced, replacedBy: "Work"))
     #expect(wire[0].issue == nil)
-    // A sign-in that ends in over three days isn't mentioned yet.
     store.loginEnds[ids[2]] = now + 4 * 86_400
     #expect(WireBuilders.accounts(store)[2].issue == nil)
 }
@@ -214,7 +204,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     let live = try JSONDecoder().decode(LiveSession.self, from: JSONSerialization.data(withJSONObject: ["pid": 1, "id": "s1", "status": "idle", "started": 1, "agent": "claude"]))
     store.sessions.live = [live]
 
-    // A reset known only in words: the reading says the longest it could take, and so does the phone.
     store.usage[work.id] = (store.usage[work.id] ?? AccountUsage(windows: [])).hitting("five_hour", at: now)
     store.usage[work.id]?.windows.removeAll { $0.id == "seven_day" }
     store.usage[work.id]?.windows[0].resetsAt = now + 5 * 3600
@@ -224,20 +213,16 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(limits["s1"] == SessionLimit(window: "five_hour", accountID: work.id, until: now + 5 * 3600, worstCase: true))
     let wire = WireBuilders.session(live, store: store, finished: [])
     #expect(wire.limit?.accountID == work.id)
-    // The first account back is the one sessions can move to, not only their own.
     let waiting = store.waitingSummary(limits: limits, now: now)
     #expect(waiting?.account == studio.name && waiting?.at == now + 3600 && waiting?.worstCase == false)
 
-    // A known reset isn't a worst case.
     store.usage[work.id]?.windows[0].resetsAt = now + 1800
     #expect(store.sessionLimits(now: now)["s1"]?.worstCase == false)
     #expect(store.waitingSummary(limits: store.sessionLimits(now: now), now: now)?.account == work.name)
 
-    // Room again: nobody is waiting, whatever the last reply said.
     store.usage[work.id] = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 10, resetsAt: now + 3600)])
     #expect(store.sessionLimits(now: now).isEmpty)
     #expect(store.waitingSummary(limits: [:], now: now) == nil)
-    // A session that isn't running any more waits for nothing.
     #expect(store.waitingSummary(limits: ["gone": SessionLimit(window: "five_hour", accountID: work.id, until: now + 1)], now: now) == nil)
 }
 
@@ -263,7 +248,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     store.config.swapAt = 80
     #expect(Autopilot.state(store, log: "").swapAt == 80 && store.nextMoves(now: now).allSatisfy { $0.atPercent == 80 })
     store.config.swapAt = nil
-    // Nothing on the wire names a Keychain slot.
     #expect(state.held?.allSatisfy { !$0.id.contains("other") && !$0.id.contains("mac") } == true)
 
     store.setAuto(work.id, false)
@@ -288,7 +272,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     let rows = Autopilot.decisions(log, records: store.rotationRecords.records, store: store)
     #expect(rows[0].kind == .stuck && rows[0].reason == "Weekly 100%")
     #expect(rows[1].title == "Work → Personal" && rows[1].reason == "5-hour 96%" && rows[1].sessions == [.init(sessionID: "s1", title: "side-a")])
-    // The line the record stands for is gone; the quiet seconds count as one wait.
     #expect(rows.filter { $0.kind == .moved }.count == 2)
     #expect(rows.filter { $0.kind == .waiting }.count == 1)
     #expect(rows.first { $0.from == "Old" }?.reason == "")
@@ -308,7 +291,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(mode == 0o600)
 }
 
-/// `autopilot.update` goes out when the state changed, once, and the snapshot has it for a phone starting over.
 @MainActor @Test func aChangeReachesThePhoneAsAnEventAndInTheSnapshot() async throws {
     let store = AccountStore(demo: true)
     let queue = DispatchQueue(label: "test.hub")
@@ -333,8 +315,6 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(events.snapshot()(0, "e1").autopilot?.followFable == false)
 }
 
-/// A rotation push goes only to a phone whose latest hello said it can show one, and which asked for it; what the phone
-/// said is kept, since pushes go out while its socket is closed. The relay sees a category and a sealed blob.
 @MainActor @Test func rotationPushesGoOnlyToPhonesThatAdvertiseThem() async throws {
     let store = AccountStore(demo: true)
     let remote = store.remote
@@ -379,18 +359,15 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     #expect(store.recacheTokens(slot: "../../config") == nil)
 }
 
-/// The room sums what Autopilot may use, and shows no date while the data is thin.
 @MainActor @Test func theOutlookHidesItsDateWhenTheDataIsThin() throws {
     let store = AccountStore(demo: true)
     let now = Date().timeIntervalSince1970
     var outlook = RotationOutlook.build(store, now: now)
     let claude = try #require(outlook.rooms.first { $0.provider == .claude })
     #expect(claude.accounts == 3 && claude.limited == 1)
-    // Never read, in the demo: nothing to take a pace from.
     #expect(claude.runsOut == nil)
     #expect(outlook.rooms.allSatisfy { $0.runsOut == nil })
 
-    // Read just now, with real weeks of activity, and burning fast.
     let claudes = store.config.accounts.filter { $0.provider == .claude }
     let format = Date.ISO8601FormatStyle(timeZone: .current).year().month().day()
     let spans = (0..<30).map { offset in
@@ -407,10 +384,8 @@ private func details(_ object: [String: Any]) -> [String: String]? { (object["er
     let date = try #require(room.runsOut)
     #expect(date > now && date < now + 86_400)
     #expect(date.truncatingRemainder(dividingBy: 900) == 0)
-    // Codex has no activity to take a rhythm from.
     #expect(outlook.rooms.first { $0.provider == .codex }?.runsOut == nil)
 
-    // One account's reading failing or stale takes the date away, not the room.
     store.health[claudes[0].id] = .offline
     #expect(RotationOutlook.build(store, now: now).rooms.first { $0.provider == .claude }?.runsOut == nil)
     store.health[claudes[0].id] = nil

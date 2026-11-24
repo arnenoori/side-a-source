@@ -7,7 +7,6 @@ private actor Counter {
     func next() -> Int { runs += 1; return runs }
 }
 
-/// Requests that arrive together share one run; a kept value lasts its ttl or until the generation moves on.
 @Test func remoteCacheSharesRunsAndExpires() async throws {
     let cache = RemoteCache(), counter = Counter()
     let make: @Sendable () async throws -> Int = {
@@ -26,7 +25,6 @@ private actor Counter {
     #expect(try await cache.value("k", ttl: 60, generation: 1, make) == 5)
 }
 
-/// A run that fails is never served again.
 @Test func remoteCacheDropsFailures() async throws {
     struct Failure: Error {}
     let cache = RemoteCache(), counter = Counter()
@@ -34,7 +32,6 @@ private actor Counter {
     #expect(try await cache.value("k", ttl: 60) { await counter.next() } == 2)
 }
 
-/// Git for many folders runs a few at a time and keeps each folder's answer.
 @Test func projectGitRunsTogetherAndIsKept() async throws {
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("sa-gits-\(UUID().uuidString.prefix(8))")
     defer { try? FileManager.default.removeItem(at: base) }
@@ -54,7 +51,6 @@ private actor Counter {
     let first = await RemoteProjects.gits(paths, cache: cache)
     #expect(first.map(\.branch) == paths.indices.map { $0.isMultiple(of: 2) ? "b\($0)" : nil })
     #expect(first.enumerated().allSatisfy { n, git in (git.root != nil) == n.isMultiple(of: 2) })
-    // Kept: a branch made now shows only once the half minute is up.
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = ["-C", paths[0], "checkout", "-q", "-b", "later"]

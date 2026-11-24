@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// A demo store keeps its config in memory; requests come in through `add`, so their answers are seen here.
 @MainActor
 private final class Overnight {
     let store = AccountStore(demo: true)
@@ -39,13 +38,10 @@ private final class Overnight {
 
     let wire = Island.resolution(item.id, .auto, scene.answers.first, at: Date())
     #expect(wire.by == .autoAnswered && wire.answer == .answers)
-    // The phone's Autopilot list reads it back from the log line.
     let decision = try #require(Autopilot.decision("Auto-answered in app: Which database? Postgres (Recommended)", at: 1))
     #expect(decision.kind == .answered && decision.title == "Answered for you in app" && decision.reason == "Which database? Postgres (Recommended)")
 }
 
-/// An auto-answer settles through the same path as any other: the card that slides in under the pointer ignores a
-/// Mac click for a moment.
 @MainActor @Test func anAutoAnswerGuardsTheCardThatTakesItsPlace() throws {
     let scene = Overnight()
     let item = try scene.question(["Postgres (Recommended)"])
@@ -86,7 +82,6 @@ private final class Overnight {
     let item = try off.question(["Postgres (Recommended)"])
     off.island.answerDue(now: item.arrived.addingTimeInterval(600))
     #expect(off.answers.isEmpty)
-    // Turning it on gives a waiting request its minute from then, not at once.
     off.store.setAnswerRecommended(true)
     let armed = try #require(off.island.autoAnswerAt[item.id])
     #expect(armed.timeIntervalSinceNow > 59)
@@ -94,7 +89,6 @@ private final class Overnight {
     #expect(off.island.autoAnswerAt.isEmpty)
 }
 
-/// The timer itself, shortened: it wakes and answers without anyone calling `answerDue`.
 @MainActor @Test func theTimerFiresByItself() async throws {
     let scene = Overnight()
     scene.island.autoAnswerAfter = 0.05

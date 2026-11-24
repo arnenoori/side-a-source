@@ -58,12 +58,14 @@ with tempfile.TemporaryDirectory() as tmp:
         family = info(bundle).get("UIDeviceFamily")
         check(family == [1, 2], f"{bundle.name}: iPhone and iPad (UIDeviceFamily {family})")
     for key in ("NSMicrophoneUsageDescription", "NSSpeechRecognitionUsageDescription"):
-        check(key not in plist, f"no {key}")
+        check(bool(plist.get(key)), f"{key} (dictation)")
     check(not plist["CFBundleIdentifier"].endswith(".dev"), "release bundle id")
 
     ent = entitlements(app)
     check(ent.get("aps-environment") == "production", f"aps-environment {ent.get('aps-environment')}")
     check("applinks:getsidea.com" in ent.get("com.apple.developer.associated-domains", []), "applinks:getsidea.com")
+    # Without it a request's `time-sensitive` level arrives as an active one, which any Focus holds back.
+    check(ent.get("com.apple.developer.usernotifications.time-sensitive") is True, "time-sensitive notifications entitlement")
 
     for bundle in bundles:
         name = bundle.name

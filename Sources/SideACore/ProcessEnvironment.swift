@@ -1,3 +1,4 @@
+#if canImport(Darwin)
 import Darwin
 import Foundation
 
@@ -90,3 +91,4 @@ public enum ProcessEnvironment {
         return trimmed.count > 1 && trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
     }
 }
+#endif

@@ -9,10 +9,8 @@ public enum RequestText {
         public let escaped: Bool
     }
 
-    /// Enough blank lines or blanks in a row to push the rest of a command off the card.
     static let blankLines = 6
     static let blankRun = 80
-    /// What a notification card shows of a request: lines, and about what fits across one.
     static let cardLines = 8
     static let cardColumns = 40
 
@@ -21,7 +19,6 @@ public enum RequestText {
         return scalars.indices.contains { hidden(scalars, at: $0) } || padded(text)
     }
 
-    /// Laid out to be missed, whatever the Mac said about it.
     public static func padded(_ text: String) -> Bool {
         var newlines = 0, run = 0
         for scalar in text.unicodeScalars where scalar != "\r" {
@@ -72,7 +69,6 @@ public enum RequestText {
         scalar == "\r" ? "\\r" : "\\u{" + String(format: "%04X", scalar.value) + "}"
     }
 
-    /// Draws nothing: every Unicode space separator, tabs, and the Braille and Hangul blanks.
     private static func blank(_ scalar: Unicode.Scalar) -> Bool {
         scalar == "\t" || scalar.properties.generalCategory == .spaceSeparator || [0x115F, 0x1160, 0x2800, 0x3164, 0xFFA0].contains(scalar.value)
     }
@@ -91,7 +87,6 @@ public enum RequestText {
         }
     }
 
-    /// 👩‍💻 needs its joiner, so one between two emoji stays.
     private static func joinsEmoji(_ scalars: [Unicode.Scalar], at index: Int) -> Bool {
         guard index > 0, index + 1 < scalars.count else { return false }
         let before = scalars[index - 1], after = scalars[index + 1]

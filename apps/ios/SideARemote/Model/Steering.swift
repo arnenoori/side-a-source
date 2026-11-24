@@ -4,65 +4,44 @@ import SideAProtocol
 import SideARemoteKit
 import SideARemoteShared
 
-/// A reply typed while the Mac is out of reach waits on the phone and goes once it is back: Send, the line under the
-/// field and the bubble all say so in these words.
 enum SendsWhenConnected {
     static let line = "Sends when connected"
     static let action = "Send When Connected"
     static let symbol = "tray.and.arrow.up"
 }
 
-/// How Send delivers a message to a session mid-turn: the control beside Send, and its long-press.
 enum Delivery: Hashable, CaseIterable {
-    /// Into the running turn: Codex, through its shared server or typed into a Side A terminal.
     case steer
-    /// Read before the agent's next step: Claude's typed input, or a note its hooks read.
     case nextStep
-    /// Once the turn ends.
     case afterTurn
-    /// The turn stopped, then the message as the next prompt.
     case interrupt
 
     var title: String {
         switch self {
-        case .steer: "Steer Now"
-        case .nextStep: "Send at Next Step"
-        case .afterTurn: "Send After This Turn"
-        case .interrupt: "Interrupt and Send"
+        case .steer, .nextStep: "Steer Now"
+        case .afterTurn: "Queue"
+        case .interrupt: "Restart Turn"
         }
     }
 
     var symbol: String {
         switch self {
-        case .steer: "arrow.up"
-        case .nextStep: "clock"
+        case .steer, .nextStep: "arrow.turn.left.up"
         case .afterTurn: "text.append"
-        case .interrupt: "stop.circle"
-        }
-    }
-
-    /// One word, for the control beside Send.
-    var shortTitle: String {
-        switch self {
-        case .steer: "Steer"
-        case .nextStep: "Next"
-        case .afterTurn: "Queue"
-        case .interrupt: "Interrupt"
+        case .interrupt: "arrow.counterclockwise"
         }
     }
 }
 
 extension Delivery {
-    /// Under each way to send in Send's menus, in the bubble's words for when the agent reads it.
     var hint: String {
         switch self {
         case .steer, .nextStep: "Read after the current step"
-        case .afterTurn: "Read after this turn"
-        case .interrupt: "Stops the current step, then sends"
+        case .afterTurn: "Run after the current turn"
+        case .interrupt: "Stop this turn and start over with this message"
         }
     }
 
-    /// The empty field mid-turn: what Send will do, short enough not to be cut off.
     var placeholder: String {
         switch self {
         case .steer, .nextStep: "Send after this step"
@@ -72,7 +51,6 @@ extension Delivery {
     }
 }
 
-/// The delivery picked for each session's running turn; Send uses it until the turn ends.
 @MainActor @Observable
 final class DeliveryChoices {
     nonisolated deinit {}
@@ -84,7 +62,6 @@ final class DeliveryChoices {
         picks[session] = Pick(delivery: delivery, turn: turn)
     }
 
-    /// The pick for this turn, if it is still one of the `offered` ways to send.
     func picked(for session: SessionKey, turn: String?, offered: [Delivery]) -> Delivery? {
         guard let pick = picks[session], pick.turn == turn, offered.contains(pick.delivery) else { return nil }
         return pick.delivery
@@ -93,12 +70,7 @@ final class DeliveryChoices {
     func clear(_ session: SessionKey) { picks[session] = nil }
 }
 
-/// Replies, notes, interrupts and Take Back (sections 4.4 and 4.14). Live they leave through the
-/// link's outbox; the demo plays the Mac's side locally so every state can be seen.
 extension AppModel {
-    /// The composer's send: `mode: auto`, so the Mac's delivery table decides what it becomes. A
-    /// second note while one waits travels with it, since the Mac keeps one note per session.
-    /// `mode` overrides that, for a delivery picked from Send's long-press.
     func reply(_ text: String, to session: SessionKey, mode: ReplyMode? = nil, submit: ReplySubmit? = nil) {
         if (mode ?? predictedMode(session)) == .note, let waiting = transcripts.pendingNote(session), waiting.state == .note,
            let combined = transcripts.merge(text, into: waiting.id, in: session) {
@@ -110,8 +82,6 @@ extension AppModel {
         deliver(text, turn: turn.id, to: session, mode: mode ?? replyMode(session), submit: submit)
     }
 
-    /// The ways Send's long-press offers to deliver a message mid-turn, as the Mac's delivery table and the session's
-    /// abilities allow; empty when it isn't working.
     func deliveries(_ id: SessionKey) -> [Delivery] {
         guard let session = sessions.session(id), session.status == .working || session.status == .starting, !waiting(id) else { return [] }
         let abilities = session.abilities
@@ -144,20 +114,14 @@ extension AppModel {
         session.abilities.contains(.interrupt) && (session.hosted != nil || session.abilities.contains(.replyTerminal))
     }
 
-    /// A control to pick the delivery shows only when there is more than one way to send.
     static func offersChoice(_ offered: [Delivery]) -> Bool { offered.count > 1 }
 
-    /// What Send does now: the pick for this turn, else the first the Mac offers (what a plain tap becomes). Nil when
-    /// there is no choice to make.
     func delivery(_ id: SessionKey) -> Delivery? {
         let offered = deliveries(id)
         guard Self.offersChoice(offered) else { return nil }
-        return pickedDelivery(id) ?? offered.first
+        return pickedDelivery(id) ?? (offered.contains(.afterTurn) ? .afterTurn : offered.first)
     }
 
-    /// What a plain Send does with a message mid-turn, as the field's placeholder says it: the delivery Send uses, or with
-    /// no choice to make, what the Mac's table does with the one way offered. Interrupt and Send is never that: a plain
-    /// Send doesn't stop the turn, so only a pick sends it.
     func sendsAs(_ id: SessionKey) -> Delivery? {
         delivery(id) ?? deliveries(id).first.flatMap { $0 == .interrupt ? nil : $0 }
     }
@@ -171,7 +135,6 @@ extension AppModel {
         deliveryChoices.pick(delivery, for: id, turn: sessions.session(id)?.turnID)
     }
 
-    /// A steer from the stop button, the toolbar or a row; `note` opens the field for a message.
     func steer(_ steer: Steer, _ id: SessionKey, note: () -> Void) {
         switch steer {
         case .interruptNow: interrupt(id)
@@ -180,7 +143,6 @@ extension AppModel {
         }
     }
 
-    /// A delivery picked from the delivery control or Send's long-press.
     func send(_ text: String, to id: SessionKey, as delivery: Delivery) {
         switch delivery {
         case .steer: reply(text, to: id, submit: .steer)
@@ -247,7 +209,6 @@ extension AppModel {
         stopResends.press(id, at: pressed)
     }
 
-    /// A Stop gave the session's replies back unread, their text now in `unsent`.
     func stopGaveBack(_ id: SessionKey) {
         guard stopResends.gaveBack(id) else { return }
         Task { @MainActor in
@@ -265,11 +226,8 @@ extension AppModel {
         }
     }
 
-    /// `auto`, or while a request waits on the session, what it can still take.
     func replyMode(_ session: SessionKey) -> ReplyMode { waiting(session) ? predictedMode(session) : .auto }
 
-    /// Replies that waited for Continue go once their session is listed hosted, whatever page is open; the view
-    /// does the same as it watches.
     func deliverWaitingReplies() {
         for name in transcripts.waitingReplies.keys {
             guard let session = sessions.sessions.first(where: { $0.hosted == name }), let text = transcripts.takeWaitingReply(name) else { continue }
@@ -277,28 +235,21 @@ extension AppModel {
         }
     }
 
-    /// Idle in a terminal Side A doesn't host, with nothing there to take a reply: the Mac refuses one (`continueOnPhone`),
-    /// so the composer's send moves it into Side A's tmux first, then types it there.
     func needsContinue(_ id: SessionKey) -> Bool {
         guard let session = sessions.session(id), session.hosted == nil, session.status == .idle, !session.headless else { return false }
         if !session.abilities.isDisjoint(with: [.replyTerminal, .replyInbox, .replyTyped]) { return false }
         return session.abilities.contains(.continueOnPhone) && tools.can(.continueOnPhone)
     }
 
-    /// A Codex session in a terminal Side A reaches through Codex's shared server: a reply shows there as
-    /// the user's message, steering a turn or starting one.
     func reachesTerminal(_ id: SessionKey) -> Bool {
         sessions.session(id)?.abilities.contains(.replyTerminal) == true
     }
 
-    /// A Claude session in a terminal Side A doesn't host, finished or idle: a reply reaches it through its Stop hook or
-    /// its inbox, which Claude reads as a note rather than the user's own words.
     func arrivesAsNote(_ id: SessionKey) -> Bool {
         guard let session = sessions.session(id), session.agent == .claude, session.hosted == nil else { return false }
         return session.abilities.contains(.replyInbox) || session.status == .finished && session.abilities.contains(.followUp)
     }
 
-    /// A Codex session outside Side A's panes and outside Codex's shared server: what's sent waits for it to finish.
     func outsideSharedServer(_ id: SessionKey) -> Bool {
         guard let session = sessions.session(id) else { return false }
         return tools.can(.replyTerminal) && session.agent == .codex && session.hosted == nil && session.abilities.isDisjoint(with: [.replyTerminal, .replyTyped])
@@ -313,16 +264,12 @@ extension AppModel {
         var quoted = String(flag.text[flag.text.index(after: open)..<close])
         let cut = quoted.hasSuffix("…") || quoted.count >= Self.unsentQuote
         if quoted.hasSuffix("…") { quoted.removeLast() }
-        // A dropped steer never shows in the transcript, so this phone's own turn still holds it.
         if let turn = transcripts.outgoing[id]?.last(where: { $0.text.hasPrefix(quoted) }) { return (turn.text, true, turn.id) }
         return (quoted, !cut, nil)
     }
 
-    /// How much of a dropped reply the Mac quotes.
     static let unsentQuote = 80
 
-    /// Retry for a dropped reply: the full text goes again, and the turn that didn't arrive leaves; a cut quote
-    /// goes back into the field to finish first.
     func retryDropped(_ id: SessionKey) {
         guard let dropped = droppedReply(id) else { return }
         if let turn = dropped.turn { transcripts.withdraw(turn, in: id, restoring: false) }
@@ -333,7 +280,6 @@ extension AppModel {
         }
     }
 
-    /// The note sheet's send: always a note, whatever the session is doing.
     func note(_ text: String, to session: SessionKey) {
         if let waiting = transcripts.pendingNote(session), waiting.state == .note,
            let combined = transcripts.merge(text, into: waiting.id, in: session) {
@@ -344,7 +290,6 @@ extension AppModel {
         deliver(text, turn: turn.id, to: session, mode: .note)
     }
 
-    /// "Not sent · Retry": the same item again under a new key, or when the Mac refused it, again with what it carried.
     func retryUnsent(_ session: SessionKey) {
         guard let unsent = transcripts.unsent[session] else { return }
         transcripts.clearUnsent(session)
@@ -357,18 +302,15 @@ extension AppModel {
         }
     }
 
-    /// `then` hears whether the Mac took it.
     func interrupt(_ session: SessionKey, when: InterruptRequest.When = .now, then: ((Bool) -> Void)? = nil) {
         transcripts.notice(nil, in: session)
         stopResends.cancel(session)
         if let link { link.flights.interrupt(session, when: when, then: then); return }
         guard let current = sessions.session(session) else { return }
-        // The demo's Mac: Esc stops a hosted session at once; anything else leaves stop mail.
         if when == .now && current.hosted != nil { return }
         sessions.setMail(MailState(kind: .stop, at: Date.now.timeIntervalSince1970), for: session)
     }
 
-    /// Withdraws the waiting note or stop. A note this phone left comes back into the field (Edit), or goes (Delete).
     func takeBack(_ session: SessionKey, keepText: Bool = true) {
         transcripts.notice(nil, in: session)
         let note = transcripts.pendingNote(session)
@@ -381,8 +323,6 @@ extension AppModel {
         }
     }
 
-    /// What a typed reply becomes, from the same delivery table the placeholder reads: a note for
-    /// Claude while it waits on a request (hosted or not) or works outside a terminal.
     func predictedMode(_ id: SessionKey) -> ReplyMode {
         guard let session = sessions.session(id), session.agent == .claude else { return .auto }
         if waiting(id) { return .note }
@@ -397,7 +337,6 @@ extension AppModel {
 
     private func deliver(_ text: String, turn: String, to session: SessionKey, mode: ReplyMode, submit: ReplySubmit? = nil) {
         if let link { link.flights.reply(text, turn: turn, to: session, mode: mode, submit: submit); return }
-        // The demo's Mac answers as the real one would, and the answer moves the turn the way a live one does.
         let delivery: ReplyResult.Delivery
         if mode == .note || mode == .auto && predictedMode(session) == .note {
             delivery = .note
@@ -414,7 +353,6 @@ extension AppModel {
     }
 }
 
-/// The messages waiting for a session's turn to end, changed from the phone.
 extension AppModel {
     /// Takes one out. The row and the transcript's own copy of it go at once. True only once the Mac has taken out that
     /// very one; false when it had already gone or changed there (its turn ended and the session took it, or ids moved
@@ -447,7 +385,6 @@ extension AppModel {
         return true
     }
 
-    /// Under the field, since the sheet closes once the queue empties. Refused, the Mac kept it queued.
     func sendNowRefused(_ turn: String, in session: SessionKey, _ error: APIError) {
         transcripts.withdraw(turn, in: session, restoring: false)
         transcripts.notice(error.code == .queueChanged ? error.message : "Not sent now: \(error.message) It's still queued.", in: session)
@@ -464,7 +401,6 @@ extension AppModel {
         sessions.setQueued(state.sessions[session]?.queued ?? [], for: session)
     }
 
-    /// Changes one's words, keeping its turn in the queue.
     func reword(_ reply: QueuedReply, to text: String, in session: SessionKey) async throws {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text != reply.text else { return }

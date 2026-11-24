@@ -14,7 +14,6 @@ private func check(_ fields: [(String, String)]) -> RemotePolicy.Refusal? {
     #expect(check([("Host", "[fd7a:115c:a1e0::1]:47800")]) == nil)
     #expect(check([("Host", "Arnes-Mac.tail1234.ts.net.:47800")]) == nil)
     #expect(check([("Host", "arnes-mac.local:47800")]) == nil)
-    // DNS rebinding sends the attacker's name; a wrong port, no Host or two Hosts are refused too.
     #expect(check([("Host", "evil.example:47800")]) == .host)
     #expect(check([("Host", "100.101.12.4:443")]) == .host)
     #expect(check([]) == .host)
@@ -35,7 +34,6 @@ private func check(_ fields: [(String, String)]) -> RemotePolicy.Refusal? {
     var open = RemotePolicy.TokenBucket(rate: 10.0 / 60, burst: 5, lockout: 60, now: 0)
     for _ in 0..<5 { #expect(open.take(now: 1) == nil) }
     #expect(open.take(now: 1) == 60)
-    // Locked out for the full minute even though tokens came back.
     #expect(open.take(now: 50) == 11)
     #expect(open.take(now: 61) == nil)
 }

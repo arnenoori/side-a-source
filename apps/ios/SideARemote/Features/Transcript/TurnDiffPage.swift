@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// Everything a turn changed (`GET /v1/sessions/{id}/turns/{turnID}/diff`): the Mac's note on what it leaves out,
-/// then each file as the transcript's diff cards show it. A running turn reloads as the session moves.
 struct TurnDiffPage: View {
     let sessionID: SessionKey
     let turnID: String

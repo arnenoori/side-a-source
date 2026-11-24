@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 
 /// The DER for Side A's own P-256 certificate. The phone pins the key, not the certificate, so it carries nothing

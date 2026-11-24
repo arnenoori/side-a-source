@@ -2,8 +2,6 @@ import AppKit
 import SideACore
 import SwiftUI
 
-/// Settings > iPhone, in the order someone sets it up: the switch, their iPhones, what reaches the iPhone, and how
-/// the Mac is reached, with the rarely used tools last.
 struct RemoteSettings: View {
     @Bindable var store: AccountStore
     @State private var revoking: RemoteDevice?
@@ -34,7 +32,6 @@ struct RemoteSettings: View {
         }
         .formStyle(.grouped)
         .task {
-            // Re-read while the tab is open, so a Tailscale that comes up turns the switch on without a click elsewhere.
             while !Task.isCancelled {
                 remote.refresh()
                 try? await Task.sleep(for: .seconds(30))
@@ -60,10 +57,8 @@ struct RemoteSettings: View {
         return nil
     }
 
-    /// What the iPhone gets: requests to answer, messages it can send, and a Mac that stays awake to answer them.
     @ViewBuilder private var onPhone: some View {
         Section("On iPhone") {
-            // The notch and the iPhone share these hooks, so with the notch on they're set once, in Notifications.
             if islandOn {
                 LabeledContent {
                     Button("Show") { store.settingsTab = .notifications }
@@ -81,7 +76,6 @@ struct RemoteSettings: View {
             Toggle("Messages to Claude in a terminal", isOn: Binding(get: { remote.inbox.installed }, set: { value in Task { await remote.inbox.set(value) } }))
                 .disabled(store.island.installed[.claude] != true)
                 .task { await remote.inbox.refresh() }
-            // An iPhone can't reach a Mac that's asleep; the switch itself lives in General.
             if !store.keepAwake.settings.enabled {
                 LabeledContent {
                     Button("Turn On") { store.keepAwake.setEnabled(true) }
@@ -139,7 +133,6 @@ struct RemoteSettings: View {
         }
     }
 
-    /// Pair iPhone… when a phone could reach the sheet; otherwise what's in the way, with the fix beside it.
     @ViewBuilder private var pairRow: some View {
         let none = remote.devices.devices.isEmpty
         switch remote.pairReadiness {
@@ -241,7 +234,6 @@ struct RemoteSettings: View {
             statusLabel(Text("Tailscale has no address yet"), "clock", .secondary)
         case .ready:
             LabeledContent {
-                // The address a phone reaches; on Wi-Fi alone it shows under the Wi-Fi switch instead.
                 if let address = remote.boundTailnet.first, remote.listening.values.contains(.ready) {
                     Text(RemoteController.hostPort(address, remote.port)).monospacedDigit().textSelection(.enabled)
                 }
@@ -252,7 +244,6 @@ struct RemoteSettings: View {
         }
     }
 
-    /// An address that failed while another serves; anything that stops pairing shows with Pair iPhone instead.
     @ViewBuilder private var listenerRow: some View {
         if remote.pairReadiness == .ready,
            let failure = remote.listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first {
@@ -261,7 +252,6 @@ struct RemoteSettings: View {
         }
     }
 
-    /// A status line as System Settings draws one: the symbol carries the color, the words stay primary.
     private func statusLabel(_ text: Text, _ symbol: String, _ color: Color) -> some View {
         Label { text } icon: { Image(systemName: symbol).foregroundStyle(color) }
     }
@@ -322,7 +312,6 @@ struct PairingSheet: View {
         }
     }
 
-    /// Pairing and paired share one key, so the iPhone turns into the check instead of crossfading.
     private static func key(_ phase: PairingSession.Phase) -> String {
         switch phase {
         case .code: "code"
@@ -361,7 +350,6 @@ struct PairingSheet: View {
         }
     }
 
-    /// The content a little above centre, the buttons along the bottom, in the same place in every phase.
     private func frame(@ViewBuilder _ content: () -> some View, @ViewBuilder buttons: () -> some View) -> some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
@@ -433,10 +421,8 @@ struct PairingSheet: View {
         }
     }
 
-    /// Stops that may mean someone else tried to pair.
     static func warns(_ reason: PairingSession.Stop) -> Bool { [.wrongCodes, .twoDevices, .mismatch].contains(reason) }
 
-    /// Only where Start Again alone wouldn't be enough.
     static func advice(_ reason: PairingSession.Stop) -> String? {
         switch reason {
         case .twoDevices: "Scan with one iPhone at a time."
@@ -446,7 +432,6 @@ struct PairingSheet: View {
     }
 }
 
-/// Escape for a phase whose visible buttons mustn't take it.
 private struct Escape: View {
     let action: () -> Void
 
@@ -459,7 +444,6 @@ private struct Escape: View {
     }
 }
 
-/// A phase's symbol, bouncing once as it arrives.
 private struct Hero: View {
     let symbol: String
     let color: Color
@@ -521,7 +505,6 @@ private struct QRCard: View {
         .accessibilityLabel("Pairing QR code")
     }
 
-    /// The largest whole pixels per module that fits `most` points.
     static func image(_ link: String, scale: CGFloat) -> CGImage? {
         guard let modules = PairingSession.qr(link, scale: 1, correction: "H")?.width, modules > 0 else { return nil }
         let perModule = max(1, (most * scale / CGFloat(modules)).rounded(.down))
@@ -529,7 +512,6 @@ private struct QRCard: View {
     }
 }
 
-/// The comparison code as two groups of three in tiles, big enough to check from across a desk.
 private struct Digits: View {
     let code: String
 
@@ -553,7 +535,6 @@ private struct Digits: View {
     }
 }
 
-/// Pair clicked: the iPhone pulses until it has its token, then turns into a check and the sheet closes itself.
 private struct Done: View {
     let name: String
     let paired: Bool

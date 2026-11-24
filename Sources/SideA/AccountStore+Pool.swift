@@ -13,7 +13,6 @@ extension AccountStore: PoolDecisions {
     var poolFiles: PoolFiles { PoolFiles(root: root) }
     var poolFile: URL { poolFiles.pool }
     private var poolKeyFile: URL { poolFiles.key }
-    /// SideAPool: serves the pool on its port while the app isn't running.
     private var poolHelper: SMAppService { Self.poolHelper() }
     /// A local build registers its own, so it never stops or replaces the installed app's.
     nonisolated static func poolHelper() -> SMAppService {
@@ -177,7 +176,6 @@ extension AccountStore: PoolDecisions {
         return try await proxy.start(port: poolPreferredPort)
     }
 
-    /// What the helper serves by while the app is gone, rewritten as accounts and their usage change.
     func writePoolPlan() {
         guard pool != nil, !isDemo, let python, let bridgeURL else { return }
         let members = AgentProvider.allCases.flatMap(poolMembers).filter { health[$0.id]?.takesWork != false }.map { account in
@@ -249,7 +247,6 @@ extension AccountStore: PoolDecisions {
         _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
     }
 
-    /// Accounts the pool may hand `provider`'s requests to.
     func poolMembers(_ provider: AgentProvider) -> [Account] {
         config.accounts.filter { $0.provider == provider && $0.ready && $0.allowAuto }
     }
@@ -276,7 +273,6 @@ extension AccountStore: PoolDecisions {
         return chosen
     }
 
-    /// Whether a request to the pool would find an account now.
     func poolHasRoom(_ provider: AgentProvider, now: Double) -> Bool {
         let planned = provider == .claude ? planning(usage) : usage
         return poolMembers(provider).contains { account in

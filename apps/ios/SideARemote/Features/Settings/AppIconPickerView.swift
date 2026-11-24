@@ -37,57 +37,54 @@ enum AppIconOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// The option for the name iOS reports; one it doesn't know reads as the default.
     init(iconName: String?) {
         self = Self.allCases.first { $0.iconName == iconName } ?? .standard
     }
 }
 
-/// Settings › Appearance › App Icon: every icon masked the way the Home Screen masks it, the current one checked.
-struct AppIconPickerView: View {
+struct AppIconStrip: View {
     @State private var current = AppIconOption(iconName: UIApplication.shared.alternateIconName)
     @State private var failed = 0
-
-    private let columns = [GridItem(.adaptive(minimum: 92, maximum: 120), spacing: Space.m, alignment: .top)]
+    private static let side: CGFloat = 56
 
     var body: some View {
-        Form {
-            Section {
-                LazyVGrid(columns: columns, spacing: Space.m) {
-                    ForEach(AppIconOption.allCases) { option in
-                        Button { choose(option) } label: { cell(option) }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(option.name)
-                            .accessibilityAddTraits(option == current ? .isSelected : [])
-                    }
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: Space.s) {
+                ForEach(AppIconOption.allCases) { option in
+                    Button { choose(option) } label: { cell(option) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(option.name) app icon")
+                        .accessibilityAddTraits(option == current ? .isSelected : [])
                 }
-                .padding(.vertical, Space.xs)
             }
+            .padding(.horizontal, Space.m)
+            .padding(.vertical, Space.xs)
         }
-        .navigationTitle("App Icon")
-        .navigationBarTitleDisplayMode(.inline)
+        .scrollIndicators(.hidden)
+        .listRowInsets(EdgeInsets())
         .sensoryFeedback(.selection, trigger: current)
         .sensoryFeedback(.error, trigger: failed)
     }
 
     private func cell(_ option: AppIconOption) -> some View {
-        VStack(spacing: Space.xs) {
+        let corner = Self.side * 0.2237
+        return VStack(spacing: Space.xxs) {
             Image(option.preview)
                 .resizable()
                 .scaledToFit()
-                .frame(width: 72, height: 72)
-                .clipShape(.rect(cornerRadius: 72 * 0.2237, style: .continuous))
-                .overlay { RoundedRectangle(cornerRadius: 72 * 0.2237, style: .continuous).strokeBorder(.primary.opacity(0.12), lineWidth: 0.5) }
+                .frame(width: Self.side, height: Self.side)
+                .clipShape(.rect(cornerRadius: corner, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(.primary.opacity(0.12), lineWidth: 0.5) }
                 .padding(3)
                 .overlay {
-                    if option == current { RoundedRectangle(cornerRadius: 72 * 0.2237 + 3, style: .continuous).strokeBorder(.tint, lineWidth: 2.5) }
+                    if option == current { RoundedRectangle(cornerRadius: corner + 3, style: .continuous).strokeBorder(.tint, lineWidth: 2.5) }
                 }
-            HStack(spacing: 3) {
-                if option == current { Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundStyle(.tint) }
-                Text(option.name).font(.caption).lineLimit(1)
-            }
+            Text(option.name)
+                .font(.caption2.weight(option == current ? .semibold : .regular))
+                .foregroundStyle(option == current ? .primary : .secondary)
+                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, minHeight: 44)
+        .frame(minWidth: 64, minHeight: 44)
         .contentShape(.rect)
     }
 

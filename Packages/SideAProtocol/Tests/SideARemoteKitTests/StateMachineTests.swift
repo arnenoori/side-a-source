@@ -16,7 +16,6 @@ private func live(_ mac: FakeMac, outbox: Outbox) async throws -> (SyncEngine, F
     return (sync, socket)
 }
 
-/// A Mac whose `IdempotencyStore` keeps every answer it gives, as one from before refusals stopped being stored.
 private final class Replaying: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: [String: FakeMac.Reply] = [:]
@@ -35,10 +34,6 @@ private final class Once: @unchecked Sendable {
     func take() -> Bool { lock.withLock { defer { used = true }; return !used } }
 }
 
-// MARK: Answers
-
-/// The audit's trace: refused, the request reopens, and the second tap lands under a key of its own, whatever the Mac
-/// stored for the first.
 @Test func aTapAfterARefusalGoesUnderItsOwnKeyAndSettlesAlone() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -89,8 +84,6 @@ private final class Once: @unchecked Sendable {
     await sync.stop()
 }
 
-// MARK: Reply flights
-
 private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"], submit: .steer)
 
 @Test func aFlightsNextStepFollowsItsPhase() {
@@ -101,7 +94,6 @@ private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"
     #expect(flight.next(after: .notDelivered) == .unsent(reason: "The Mac couldn't be reached."))
     #expect(flight.next(after: .answeredElsewhere(nil)) == .delivered(nil))
     #expect(flight.next(after: .delivered(Data("x".utf8))) == .delivered(Data("x".utf8)))
-    // A second refusal stands; so does one that needs a new pairing, which no signature here can answer.
     flight.phase = .queued(resigned: true)
     #expect(flight.next(after: .failed(required)) == .unsent(reason: required.message))
     flight.phase = .queued(resigned: false)
@@ -117,7 +109,6 @@ private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"
     #expect(phase(.resigning, inQueue: false) == .unsent(reason: "Not confirmed."))
     #expect(phase(.queued(resigned: false), inQueue: false) == .unsent(reason: "The Mac may not have it."))
     #expect(phase(.queued(resigned: true), inQueue: true) == .queued(resigned: true))
-    // Killed between queueing it and recording that.
     #expect(phase(.signing, inQueue: true) == .queued(resigned: false))
     #expect(phase(.resigning, inQueue: true) == .queued(resigned: true))
     #expect(phase(.unsent(reason: "No."), inQueue: false) == .unsent(reason: "No."))
@@ -152,9 +143,6 @@ private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"
     await sync.stop()
 }
 
-// MARK: The engine's loop
-
-/// The stopped run's socket closes late, after the next run has its own: that close is no business of the new socket.
 @Test func aHaltedRunsLateCloseLeavesTheNewSocketAlone() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -177,14 +165,11 @@ private let body = RemoteReply(text: "Ship it", mode: .note, attachments: ["up1"
     await sync.setViewing("watched")
     #expect(new.sent.contains(.presence(foreground: true, viewing: "watched")))
 
-    // Still this run's generation, so a ping that goes unanswered is noticed.
     new.failPings(URLError(.networkConnectionLost))
     await sync.setForeground(true)
     try await until("noticed") { new.closedByClient == 4008 }
     await sync.stop()
 }
-
-// MARK: The outbox's drain
 
 @Test func anItemQueuedAsTheLastClaimCameBackEmptyStillGoes() async throws {
     let mac = FakeMac()

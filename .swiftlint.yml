@@ -59,6 +59,23 @@ only_rules:
   - function_parameter_count
   - large_tuple
   - nesting
+  # Code that drifts into two shapes of the same thing, or says a thing twice.
+  - private_swiftui_state
+  - shorthand_optional_binding
+  - duplicate_imports
+  - explicit_init
+  - legacy_constructor
+  - prefer_zero_over_explicit_init
+  - identical_operands
+  - duplicate_conditions
+  - duplicate_enum_cases
+  - duplicated_key_in_dictionary_literal
+  - lower_acl_than_parent
+  - no_fallthrough_only
+  - unneeded_break_in_switch
+  - self_binding
+  - redundant_type_annotation
+  - convenience_type
   - custom_rules
 
 todo:
@@ -111,6 +128,44 @@ custom_rules:
     regex: '^\s*(?:await\s+)?try\?\s(?!await\s+Task\.sleep)(?![^\n]*\.removeItem\()'
     match_kinds: [keyword, identifier]
     message: "A bare `try?` discards the error. Handle it, log it, or disable this rule on the line with a reason."
+    severity: error
+
+  # A settings key typed out where it is read gets typed out again where it is read next, and the two drift (a
+  # second spelling, a second default). Name it once: a constant beside its owner, or `PrefKey` on the phone.
+  literal_appstorage_key:
+    name: "Literal @AppStorage key"
+    regex: 'AppStorage\(\s*(?:wrappedValue:[^,]+,\s*)?"'
+    message: "Name the key in a constant (PrefKey on the phone) so every reader shares one spelling."
+    severity: error
+
+  # The phone's settings live in one shared store, SharedStorage.defaults; a second UserDefaults(suiteName:) is a
+  # second place the same setting can be written. A store that must stay apart says why on the line.
+  own_defaults_suite:
+    name: "Own UserDefaults suite"
+    regex: 'UserDefaults\(suiteName:'
+    included: ["apps/ios/(?!Tests/).*\\.swift"]
+    excluded: ["apps/ios/Shared/Storage/SharedStorage\\.swift"]
+    message: "Use SharedStorage.defaults, or disable on the line with the reason this store stays apart."
+    severity: error
+
+  # A sheet presented from two screens with the same body is one sheet: present it through a shared modifier
+  # (`liveModelSheet`), so a change to what it needs is made once.
+  live_model_sheet_inline:
+    name: "LiveModelSheet built inline"
+    regex: 'LiveModelSheet\('
+    included: ["apps/ios/SideARemote/.*\\.swift"]
+    excluded: ["apps/ios/SideARemote/Features/Tools/SettingsMenu\\.swift"]
+    message: "Present it with .liveModelSheet(isPresented:session:)."
+    severity: error
+
+  # A test that writes the test runner's own standard defaults leaves the value behind for every later run on this
+  # Mac: a leftover `island = 1` failed four unrelated tests on every branch. Give the code under test its own
+  # UserDefaults(suiteName:) and remove it in teardown.
+  standard_defaults_written_in_tests:
+    name: "Standard defaults written in a test"
+    regex: 'UserDefaults\.standard\.(?:set|removeObject|register)\('
+    included: ["Tests/.*\\.swift", "Packages/SideAProtocol/Tests/.*\\.swift", "apps/ios/Tests/.*\\.swift"]
+    message: "This outlives the run. Use a UserDefaults(suiteName:) made for the test and removed after it."
     severity: error
 
   print_in_app:

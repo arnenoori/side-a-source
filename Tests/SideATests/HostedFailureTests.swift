@@ -4,7 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// Every hosted failure and what it answers: the phone's status, code, hint and words, and the Sessions window's words.
 @MainActor @Test func everyHostedFailureAnswersWithItsStatusCodeHintAndWords() throws {
     let live = try JSONDecoder().decode(LiveSession.self, from: JSONSerialization.data(withJSONObject: ["pid": 7, "id": "s", "status": "idle", "cwd": "/tmp", "started": 1, "agent": "claude"]))
     struct Row {
@@ -26,9 +25,7 @@ import Testing
         let failure = SessionCommands.Failure.hosted(row.error)
         #expect(failure.status == row.status && failure.code == row.code && failure.message == row.message
                 && failure.details == row.details && failure.retryAfter == row.retryAfter, "\(row.error)")
-        // The Sessions window says the same words, except where the phone's own advice doesn't fit.
         #expect(failure.macMessage == row.message, "\(row.error)")
-        // And the route answers with the same, as bytes.
         let response = RemoteRoutes.hostedError(row.error)
         let body = try JSONDecoder().decode(ErrorBody.self, from: response.body)
         #expect(response.status == row.status && body.error.code == row.code && body.error.message == row.message && body.error.details == row.details, "\(row.error)")

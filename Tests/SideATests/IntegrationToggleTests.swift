@@ -11,7 +11,6 @@ import Testing
     return store
 }
 
-/// Each switch asks the bridge for `<command> on|off` and shows what it says is installed, not what was asked.
 @MainActor @Test func eachIntegrationSwitchShowsWhatTheBridgeInstalled() async {
     var asked: [[String]] = []
     let on = store(installed: true) { asked.append($0) }

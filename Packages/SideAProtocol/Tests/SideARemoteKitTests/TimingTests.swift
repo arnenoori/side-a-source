@@ -3,7 +3,6 @@ import SideAProtocol
 import SideARemoteKit
 import Testing
 
-// Waits on the phone and the Mac that only work in step with each other.
 @Test func waitsOnBothSidesStayInStep() {
     #expect(InterruptTiming.macWaits <= InterruptTiming.phoneWaits && InterruptTiming.phoneWaits < InterruptTiming.carried)
     #expect(SyncTiming().macForgets == SocketTiming.silentFor)

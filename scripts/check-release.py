@@ -16,7 +16,6 @@ if tag != "v" + metadata["CFBundleShortVersionString"]:
 notes = root / "releases" / f"{tag}.md"
 if not notes.is_file() or not notes.read_text().strip():
     raise SystemExit("Public release notes are missing")
-# The changelog names the version in its own section, with what changed in it; "## Unreleased" is renamed at release.
 changelog = (root / "CHANGELOG.md").read_text() if (root / "CHANGELOG.md").is_file() else ""
 version = re.escape(tag[1:])
 section = re.search(rf"^## {version}(?: |$)[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.MULTILINE | re.DOTALL)

@@ -2,9 +2,8 @@ import Foundation
 import SideAProtocol
 import SideARemoteShared
 
-/// What the phone last saw of one Mac: its sessions, accounts and the newest page of the transcripts it opened, so a
-/// launch draws them at once and the Mac's snapshot replaces them when it lands. Open requests are never kept: one
-/// answered from a stale copy could be a request that's gone. In the app's own Caches, never the App Group.
+/// Open requests are never kept: one answered from a stale copy could be a request that's gone. In the app's own
+/// Caches, never the App Group.
 struct StateCache: Codable {
     var sessions: [RemoteSession]
     var finished: [SessionKey: FinishedSession]
@@ -17,7 +16,6 @@ struct StateCache: Codable {
     var projects: [RemoteProject]?
     var options: OptionsList?
 
-    /// Transcripts kept, the sessions most recently active first, and messages kept of each.
     static let keptTranscripts = 12
     static let keptMessages = 60
 
@@ -34,7 +32,6 @@ struct StateCache: Codable {
         return try? JSONDecoder().decode(StateCache.self, from: data)
     }
 
-    /// Encoded here, written off the main thread.
     func save(_ macID: String) {
         guard let url = Self.url(macID), let data = try? JSONEncoder().encode(self) else { return }
         Self.queue.async {
@@ -47,7 +44,6 @@ struct StateCache: Codable {
         }
     }
 
-    /// Forgotten or paired again: nothing of the old pairing shows.
     static func remove(_ macID: String) {
         guard let url = url(macID) else { return }
         queue.async { try? FileManager.default.removeItem(at: url) }
@@ -55,7 +51,6 @@ struct StateCache: Codable {
 }
 
 extension AppModel {
-    /// The cache, drawn before the link has said anything.
     func restore(_ cache: StateCache) {
         sessions.replace(cache.sessions, finished: cache.finished)
         accounts.replace(cache.accounts)
@@ -67,7 +62,6 @@ extension AppModel {
         mac.lastSeen = cache.savedAt
     }
 
-    /// What's on screen now, ready to save.
     func cache(finished: [SessionKey: FinishedSession]) -> StateCache {
         let recent = sessions.sessions.sorted { ($0.statusAt ?? 0) > ($1.statusAt ?? 0) }.map(\.id)
         var kept: [SessionKey: [TranscriptMessage]] = [:]

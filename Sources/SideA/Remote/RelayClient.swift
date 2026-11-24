@@ -16,7 +16,6 @@ final class RelayClient: @unchecked Sendable {
         static let unreachable = Failure(status: 0, code: "unreachable", message: "Side A can't reach the notification relay.")
     }
 
-    /// `PUT /v1/devices/{id}`.
     struct Device: Encodable {
         let apnsToken: String
         let bundleID: String
@@ -24,7 +23,6 @@ final class RelayClient: @unchecked Sendable {
         let secretHash: String
         let pushToStartToken: String?
         let appVersion: String
-        /// Whether the phone asked to hear when this Mac goes quiet; absent from a phone that can't say.
         // swiftlint:disable:next discouraged_optional_boolean -- nil is a phone that can't say, which leaves the relay as it was
         var notifyQuiet: Bool?
     }
@@ -32,7 +30,6 @@ final class RelayClient: @unchecked Sendable {
     /// The most devices one send may name: the relay's MAX_DEVICES.
     static let maxDevices = 10
 
-    /// `POST /v1/send`, an alert or a dismissal.
     struct Send: Encodable, Sendable {
         let devices: [String]
         let kind: String
@@ -45,7 +42,6 @@ final class RelayClient: @unchecked Sendable {
         var sealed: [String: String]?
     }
 
-    /// `POST /v1/send` with `kind: "liveactivity"`.
     struct Activity: Encodable, Sendable {
         let devices: [String]
         let kind = "liveactivity"
@@ -59,7 +55,6 @@ final class RelayClient: @unchecked Sendable {
 
     struct Result: Decodable, Equatable {
         let device: String
-        /// ok, gone, retry, rejected, unverified.
         let result: String
         var after: Double?
         var reason: String?
@@ -84,7 +79,6 @@ final class RelayClient: @unchecked Sendable {
         lock.withLock { registered = true }
     }
 
-    /// Whether the token is already verified; otherwise the relay has sent the phone its challenge.
     func put(_ id: String, _ device: Device) async throws -> Bool {
         struct Verified: Decodable { let verified: Bool }
         return try JSONDecoder().decode(Verified.self, from: try await call("PUT", "/v1/devices/\(id)", device)).verified

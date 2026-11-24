@@ -3,12 +3,8 @@ import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
-/// The glass card that walks through pairing (setup, "Pairing"): "Connecting to MacBook Pro…", the
-/// comparison code to check on the Mac, then "Connected to MacBook Pro" before Sessions takes over.
-/// A failure is one sentence and one button.
 struct PairingCard: View {
     let run: PairingRun
-    /// Back to where the invitation came from: the scanner, or out.
     let back: () -> Void
 
     @Environment(AppRoot.self) private var root
@@ -17,7 +13,7 @@ struct PairingCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var connected = false
     @State private var pairedMac: PairedMac?
-    @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
+    @AppStorage(Accent.key, store: SharedStorage.defaults) private var accent = Accent.blue
 
     var body: some View {
         Group {
@@ -44,11 +40,9 @@ struct PairingCard: View {
         .task(id: run.phase) {
             guard case .paired(let mac) = run.phase else { return }
             withAnimation(Motion.smooth(reduceMotion)) { connected = true }
-            // The first pairing stops here for an accent; pairing again goes straight on.
             guard Accent.chosen else { pairedMac = mac; return }
             try? await Task.sleep(for: .seconds(1.2))
             withAnimation(Motion.smooth(reduceMotion)) { root.paired(mac) }
-            // Another Mac, or Pair Again, leaves the rest of the app as it was: the scanner closes over it.
             dismiss()
         }
     }
@@ -90,7 +84,6 @@ struct PairingCard: View {
 
     private var paired: some View {
         VStack(spacing: Space.s) {
-            // The check draws itself in; its room is kept so nothing below moves when it does.
             ZStack {
                 if connected {
                     Image(systemName: "checkmark.circle.fill")
@@ -113,8 +106,7 @@ struct PairingCard: View {
                     .padding(.top, Space.xs)
                 AccentPicker()
                 Button {
-                    // Stored even when Blue was left as it was, so pairing again doesn't ask.
-                    Accent.store.set(accent.rawValue, forKey: Accent.key)
+                    SharedStorage.defaults.set(accent.rawValue, forKey: Accent.key)
                     withAnimation(Motion.smooth(reduceMotion)) { root.paired(pairedMac) }
                     dismiss()
                 } label: {
@@ -140,7 +132,6 @@ struct PairingCard: View {
     }
 }
 
-/// "0:52", counting down to the Mac's deadline.
 private struct Countdown: View {
     let until: Date
 
@@ -155,7 +146,6 @@ private struct Countdown: View {
     }
 }
 
-/// One failure, one primary action, never an alert (setup, "Failure cards").
 struct FailureCard: View {
     let failure: PairingFailure
     let act: (PairingFailure.Action) -> Void
@@ -194,7 +184,6 @@ struct FailureCard: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// 429's Try Again stays disabled with a countdown.
     private struct PrimaryAction: View {
         let action: PairingFailure.Action
         let waits: Double?
@@ -238,7 +227,6 @@ struct PairingScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var run: PairingRun
     @State private var confirmed = false
-    /// Only the same Mac paired before is replaced; another Mac is added beside the ones there.
     private let current: PairedMac?
     private let otherTailnet: PairedMac?
     private let identityWarning: String?
@@ -269,7 +257,6 @@ struct PairingScreen: View {
     }
 }
 
-/// "Pair with MacBook Pro?", the address it will reach, and which Mac it replaces.
 private struct ConfirmPairing: View {
     let invitation: PairingClient.Invitation
     let name: String
@@ -332,7 +319,6 @@ private struct ConfirmPairing: View {
 }
 
 #if DEBUG
-/// `--pairing-sample comparing|paired|failed`: the card at one phase, for screenshots.
 struct PairingSampleScreen: View {
     let run: PairingRun
 
@@ -341,8 +327,7 @@ struct PairingSampleScreen: View {
         switch arguments[index + 1] {
         case "comparing": run = .sample(.comparing(code: "035 223", deadline: .now.addingTimeInterval(52)))
         case "paired":
-            // The accent step shows only until one is picked; the sample always shows it.
-            Accent.store.removeObject(forKey: Accent.key)
+            SharedStorage.defaults.removeObject(forKey: Accent.key)
             run = .sample(.paired(PairedMac(endpoint: Endpoint(macID: "m", baseURL: URL(string: "https://100.101.12.4:47800")!,
                                                                           serverKeyHash: "", name: "MacBook Pro"),
                                                        deviceID: "d", deviceName: "iPhone")))

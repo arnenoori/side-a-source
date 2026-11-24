@@ -13,7 +13,6 @@ extension Island {
         case refused(String)
     }
 
-    /// What answering a pending request this way must prove, by the gate it has now.
     func remoteNeeds(_ rid: String, _ answer: RemoteAnswer, mode: PermissionMode?) -> (gate: AllowGate, needs: ConfirmProof)? {
         guard let id = UUID(uuidString: rid), let item = pending.first(where: { $0.id == id }) else { return nil }
         let gate = AllowGate.of(item.request, projects: Self.projects(item.request.cwd))
@@ -46,7 +45,6 @@ extension Island {
 
     enum FollowUp: Sendable, Equatable { case sent, noWaiter, turnChanged }
 
-    /// The waiter path of `reply` only: the Mac's clipboard fallback means nothing to a phone.
     func remoteFollowUp(session: String, turnID: String?, text: String) -> FollowUp {
         guard let row = ready.first(where: { $0.finish.sessionID == session }), canReply(row) else { return .noWaiter }
         if let turnID, turnID.lowercased() != row.id.uuidString.lowercased() { return .turnChanged }
@@ -68,7 +66,6 @@ extension Island {
         case .gone: wireBy = .sessionEnded
         case .auto: wireBy = .autoAnswered
         }
-        // Only a person's answer, or the recommended one given for them, has a kind; the island's own hand-backs don't.
         let person: Bool
         switch by { case .mac, .notification, .remote, .auto: person = true; default: person = false }
         return RequestResolution(requestID: id.uuidString.lowercased(), by: wireBy, deviceID: deviceID, deviceName: deviceName,
@@ -87,7 +84,6 @@ extension Island {
         }
     }
 
-    /// The session's folder and its git root: what "inside the project" means for the lock-screen allowlist.
     static func projects(_ cwd: String?) -> [String] {
         guard let cwd, !cwd.isEmpty else { return [] }
         var url = URL(fileURLWithPath: cwd).standardizedFileURL

@@ -6,12 +6,10 @@ import Foundation
 /// handshake: the connection stays preparing on utun until the peer gives up (checked from another tailnet Mac,
 /// Tailscale 1.104.1, firewall permitting both). BSD sockets on the same address work, so the outside faces BSD.
 final class SocketFront: @unchecked Sendable {
-    /// Connections in flight through one front; past it new ones are closed at once.
     static let maxPairs = 64
 
     private let fd: Int32
     private let source: DispatchSourceRead
-    /// The port it listens on, as bound (asking for 0 takes any free one).
     let port: UInt16
     private let pairs = Pairs()
 
@@ -63,7 +61,6 @@ final class SocketFront: @unchecked Sendable {
         source.resume()
     }
 
-    /// Stops listening. Connections already handed over carry on until either end closes.
     func cancel() { source.cancel() }
 
     private static func bind(_ fd: Int32, v4 address: String, port: UInt16) -> Bool {
@@ -84,7 +81,6 @@ final class SocketFront: @unchecked Sendable {
         return withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } } == 0
     }
 
-    /// ("192.168.1.20", "51234") or ("fd7a::1", "51234").
     private static func describe(_ storage: sockaddr_storage) -> (address: String, service: String) {
         var storage = storage
         let length = socklen_t(storage.ss_len)
@@ -99,7 +95,6 @@ final class SocketFront: @unchecked Sendable {
         return (text(host), text(service))
     }
 
-    /// The loopback port this end of the splice uses, which the TLS listener sees as its peer's.
     private static func localPort(_ fd: Int32) -> UInt16? {
         var addr = sockaddr_in()
         var length = socklen_t(MemoryLayout<sockaddr_in>.size)
@@ -133,7 +128,6 @@ final class SocketFront: @unchecked Sendable {
 /// Copies bytes both ways between the phone's socket and the loopback one. Each direction has its own queue and
 /// writes everything it reads before reading more, so a slow reader slows its writer and nothing piles up here.
 private final class Splice: @unchecked Sendable {
-    /// A write that can't move for this long ends the pair; the server's keepalive notices the same phone sooner.
     static let stalledFor: Int32 = 60_000
 
     private let client: Int32

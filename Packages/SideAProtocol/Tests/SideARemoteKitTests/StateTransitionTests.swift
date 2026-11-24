@@ -4,9 +4,6 @@ import SideAProtocol
 import SideAProtocolFixtures
 import Testing
 
-// The transitions of `SyncEngine` and its outbox, one test per row of docs/remote/sync-state-machine.md. Tests that
-// already pinned a row elsewhere are named in the table instead of repeated here.
-
 private let sid = "8c1d2f3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
 private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
 
@@ -42,10 +39,6 @@ private final class Clock: @unchecked Sendable {
     }
 }
 
-// MARK: Start, hello, welcome
-
-/// Row C1: idle -> connecting while the Mac hasn't answered hello; the hello and the address that answered are kept
-/// before the socket opens; the welcome makes it live.
 @Test func startShowsConnectingUntilHelloAnswersThenLiveOnWelcome() async throws {
     let mac = FakeMac()
     let gate = mac.hold("/v1/hello")
@@ -66,14 +59,11 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C2: a welcome that continues the epoch (`replay`) takes events at once; one that doesn't waits for a snapshot,
-/// and so does one for another epoch even when it says replay.
 @Test func aWelcomeThatCannotReplayHoldsEventsUntilTheSnapshot() async throws {
     let mac = FakeMac()
     let (sync, first) = try await snapshotLive(mac)
     first.serverClose(1001)
 
-    // Same epoch, no replay: the events before the snapshot belong to a state the phone doesn't hold.
     let second = try await mac.socket(1)
     second.push(nil, welcome("e5b0c7d2a1f3", seq: 50, replay: false))
     second.push(42, .hostedRemove(name: "sa-app-3f9c"))
@@ -86,7 +76,6 @@ private final class Clock: @unchecked Sendable {
     #expect(await sync.state.hosted.isEmpty)
     second.serverClose(1001)
 
-    // Another epoch that claims a replay is still a new world.
     let third = try await mac.socket(2)
     third.push(nil, welcome("other", seq: 52, replay: true))
     third.push(51, .hostedRemove(name: "x"))
@@ -97,7 +86,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C3: the first event after a snapshot must be the next seq; one behind is ignored, one ahead reconnects.
 @Test func eventsBehindAreIgnoredAndEventsAheadReconnect() async throws {
     let mac = FakeMac()
     let (sync, socket) = try await snapshotLive(mac)
@@ -111,10 +99,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-// MARK: Snapshots over REST
-
-/// Row S1: `refresh()` takes a snapshot of its own epoch only when the stream isn't further along, and one of another
-/// epoch always, since seq starts again there.
 @Test func refreshTakesAnOlderEpochsNewerStateOnlyWhenItIsAhead() async throws {
     let mac = FakeMac()
     let (sync, _) = try await snapshotLive(mac)
@@ -134,8 +118,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row S2: each slice refreshes only when its list is newer than both `seq` and that slice's last refresh; a snapshot
-/// forgets what the slices knew. Only requests and accounts are refreshed over REST.
 @Test func eachSliceTakesOnlyAListNewerThanSeqAndItsOwnLastRefresh() async throws {
     let mac = FakeMac()
     let (sync, socket) = try await snapshotLive(mac)
@@ -163,27 +145,20 @@ private final class Clock: @unchecked Sendable {
     state = await sync.state
     #expect(state.accounts.isEmpty && state.sliceSeq[.accounts] == 45 && state.sliceSeq[.requests] == 44 && state.seq == 41)
 
-    // Events a slice already reflects move seq and change nothing.
     socket.push(42, .requestAdd(try fixture("RemoteRequest.bash", as: RemoteRequest.self)))
     try await until("42") { await sync.state.seq == 42 }
     #expect(await sync.state.requests.isEmpty)
 
-    // A slice no one refreshes over REST has no sliceSeq: its events apply.
     socket.push(43, .sessionRemove(id: sid, replacedBy: nil))
     try await until("43") { await sync.state.seq == 43 }
     #expect(await sync.state.sessions.count == 1)
 
-    // A snapshot starts the slices over.
     socket.push(nil, .snapshot(StateSnapshot(seq: 47, epoch: "e5b0c7d2a1f3")))
     try await until("snapshot") { await sync.state.seq == 47 }
     #expect(await sync.state.sliceSeq.isEmpty)
     await sync.stop()
 }
 
-// MARK: Revoked, key, updates
-
-/// Row C4: a socket close for a revoked token ends the run but keeps the last state on screen; only a foreground
-/// (or a reconnect request) asks the Mac again.
 @Test func revokedAfterGoingLiveKeepsTheStateAndStopsAsking() async throws {
     let mac = FakeMac()
     let (sync, socket) = try await snapshotLive(mac)
@@ -201,7 +176,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C5: a 401 on hello (a Mac that checks the token there) isn't a removal: it is one more failed attempt.
 @Test func aHelloRefusedWith401IsABackoffNotARevocation() async throws {
     let mac = FakeMac()
     mac.hello(.init(status: 401, body: json(ErrorBody(error: APIError(code: .unauthorized, message: "Nope.")))))
@@ -214,8 +188,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C6: the Mac too old for this phone keeps being asked, every `updateCheck`, and keeps saying so in between;
-/// the phone too old for the Mac asks nothing until it is told to.
 @Test func onlyAMacThatIsTooOldIsAskedAgainOnItsOwn() async throws {
     let old = FakeMac()
     old.hello(.init(body: try helloData { $0["maxProtocol"] = 0 }))
@@ -245,7 +217,6 @@ private final class Clock: @unchecked Sendable {
     #expect(new.requests.count == asked)
 }
 
-/// Row C7: a Mac that refuses through its socket says the same, for either side.
 @Test func theSocketsOwnRefusalForAnUpdateEndsOrPollsLikeHelloDoes() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -261,14 +232,10 @@ private final class Clock: @unchecked Sendable {
     let second = try await mac.socket(1)
     second.serverClose(4426, "upgrade_mac")
     try await until("mac") { await sync.state.connection == .needsUpdate(mac: true) }
-    // The Mac's side is asked again by itself, and this time it answers.
     _ = try await mac.socket(2)
     await sync.stop()
 }
 
-// MARK: Waits
-
-/// Row C8: too many connections waits ten seconds with its own reason, and a foreground or network change skips the wait.
 @Test func tooManyConnectionsWaitsAndAForegroundSkipsIt() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -286,7 +253,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C9: a goodbye that isn't sleep, and a plain close, wait with the Mac's words or a code.
 @Test func closeReasonsBecomeTheOfflineReason() async throws {
     let mac = FakeMac()
     var timing = fastTiming
@@ -307,7 +273,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C10: three reconnects in a row that ask for no wait, then the backoff, with the reason saying why.
 @Test func immediateReconnectsGiveWayToABackoffWithItsReason() async throws {
     let mac = FakeMac()
     var timing = fastTiming
@@ -326,8 +291,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C11: a frame with a seq that isn't next, or that arrives while a snapshot is awaited, and doesn't decode,
-/// changes nothing and asks for nothing.
 @Test func anUndecodableFrameOutOfSequenceIsIgnored() async throws {
     let mac = FakeMac()
     let (sync, socket) = try await snapshotLive(mac)
@@ -345,9 +308,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-// MARK: Stop, foreground
-
-/// Row C12: stop() closes the socket normally, leaves the last state on screen, and nothing starts again by itself.
 @Test func stopClosesTheSocketKeepsTheStateAndEndsThePolling() async throws {
     let mac = FakeMac()
     let (sync, socket) = try await snapshotLive(mac)
@@ -360,14 +320,12 @@ private final class Clock: @unchecked Sendable {
     await sync.setForeground(true)
     try await Task.sleep(for: .milliseconds(60))
     #expect(mac.requests.count == asked && mac.sockets.count == 1)
-    // A later start() begins a new run from the held seq.
     await sync.start()
     let again = try await mac.socket(1)
     #expect(again.sent.first == .hello(epoch: "e5b0c7d2a1f3", lastSeq: 41, capabilities: [.events, .transcriptStream]))
     await sync.stop()
 }
 
-/// Row C13: going to the background sends presence and nothing else; the socket stays, and no ping goes out.
 @Test func backgroundingOnlyTellsTheMac() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -382,7 +340,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row C14: coming forward while the loop waits out a backoff skips the wait.
 @Test func aForegroundDuringABackoffSkipsIt() async throws {
     let mac = FakeMac()
     var timing = fastTiming
@@ -401,10 +358,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-// MARK: The flags that sit beside the connection
-
-/// Row F1: what is known about why the Mac can't be reached is one value of the down connection. A sleep goodbye then a
-/// relay's refusals leave it asleep, and it stays shown through the attempts in between instead of reading connecting.
 @Test func theSleepGoodbyeIsNotReplacedByRelayRefusalsOrByAnAttempt() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -420,7 +373,6 @@ private final class Clock: @unchecked Sendable {
     first.push(nil, .bye(reason: ServerEvent.byeSleep))
     first.serverClose(1001, ServerEvent.byeSleep)
     try await until("asleep") { await sync.state.connection.cause == .macAsleep }
-    // Rounds of refusals: enough of them for the relay's own offer, which doesn't replace the sleep.
     // swiftlint:disable:next sleep_literal_in_tests -- proving rounds of refusals leave the sleep cause alone: the window must hold several of them
     try await Task.sleep(for: .milliseconds(400))
     #expect(await sync.state.connection.cause == .macAsleep)
@@ -433,7 +385,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row F2: a hello that answers takes the cause off the down connection at once, before the welcome.
 @Test func aHelloThatAnswersClearsTheCauseBeforeTheWelcome() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -451,7 +402,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row F3: a terminal state doesn't take the sleep flag away, and doesn't get an offline wait over it.
 @Test func aTerminalStateIsNotReplacedByTheWaitsThatFollow() async throws {
     let mac = FakeMac()
     mac.rekeyed(["100.101.12.4", "192.168.1.20"])
@@ -462,9 +412,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-// MARK: Outbox through the engine
-
-/// Row O1: an item another process holds blocks its own target, not the others; it is sent by nobody here meanwhile.
 @Test func anItemAnotherProcessHoldsHoldsBackItsTargetOnly() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -483,8 +430,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row O2: a retryable failure records the attempt and the error on the stored item and gives it back; the next
-/// attempt is the same item under the same key.
 @Test func aFailedAttemptIsRecordedAndTheItemGivenBack() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -499,8 +444,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row O3: a network error is retried like a retryable refusal; both end at `expiresAt` as Not delivered, and the
-/// tapped Retry then sends a new key.
 @Test func anItemThatNeverReachedTheMacExpiresAndRetries() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -526,7 +469,6 @@ private final class Clock: @unchecked Sendable {
     await sync.stop()
 }
 
-/// Row O4: a 401 that isn't about a signature gives the item back, ends the run and says unpaired.
 @Test func aRevokedTokenGivesTheClaimedItemBack() async throws {
     let mac = FakeMac()
     let (outbox, _) = try temporaryOutbox()
@@ -540,10 +482,6 @@ private final class Clock: @unchecked Sendable {
     #expect(left.outcomes[item.id] == nil && left.pending.map(\.id) == [item.id])
 }
 
-// MARK: The outbox itself
-
-/// Row O5: claims. Answers before everything, then oldest first per target; an owner may claim again what it holds; a
-/// fresh claim by another blocks that target; a lapsed one doesn't; a release frees it at once.
 @Test func claimsFollowAnswersFirstThenTheOldestOfEachTarget() async throws {
     let (outbox, _) = try temporaryOutbox()
     func add(_ id: String, _ path: String, at: Double) async throws {
@@ -556,21 +494,17 @@ private final class Clock: @unchecked Sendable {
     try await add("a2", "/v1/requests/r/answer", at: 5)
 
     #expect(await outbox.claim(for: "mac1", by: "app", now: 10)?.id == "a1")
-    // a1 is held, so a2 waits behind it; another process takes the oldest of the other targets.
     #expect(await outbox.claim(for: "mac1", by: "other", now: 10)?.id == "s1")
     #expect(await outbox.claim(for: "mac1", by: "third", now: 10)?.id == "t1")
     #expect(await outbox.claim(for: "mac1", by: "fourth", now: 10) == nil, "s2 and a2 wait behind claimed items")
-    // The owner claims what it holds again; a claim that lapsed, or was released, is anyone's.
     #expect(await outbox.claim(for: "mac1", by: "app", now: 10)?.id == "a1")
     #expect(await outbox.claim(for: "mac1", by: "fourth", now: 41)?.id == "a1")
     await outbox.release("a1")
     #expect(await outbox.claim(for: "mac1", by: "fifth", now: 42)?.id == "a1")
-    // A target in `held` is skipped, with the items behind it.
     #expect(await outbox.claim(for: "mac1", by: "sixth", now: 100, skipping: ["request:r", "session:s"])?.id == "t1")
     #expect(await outbox.claim(for: "mac1", by: "sixth", now: 100, skipping: ["request:r", "session:s", "session:t"]) == nil)
 }
 
-/// Row O6: an expired item is claimable for settling only when nobody holds it, and settling claims it.
 @Test func claimExpiredTakesOnlyWhatNobodyHolds() async throws {
     let (outbox, _) = try temporaryOutbox()
     for id in ["fresh", "held", "free"] {
@@ -583,8 +517,6 @@ private final class Clock: @unchecked Sendable {
     #expect(await outbox.items(for: "mac1").count == 3)
 }
 
-/// Row O7: the stored form of an item is its JSON, and its target and answer column come from its path: rows written
-/// by an older build read back the same.
 @Test func aStoredRowReadsBackAsItWasWritten() async throws {
     let (outbox, _) = try temporaryOutbox()
     let answer = Outbox.Item.answer(rid, .allow(confirmDestructive: false), macID: "mac1", now: 100)

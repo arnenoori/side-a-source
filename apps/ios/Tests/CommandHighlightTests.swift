@@ -12,7 +12,6 @@ final class CommandHighlightTests: XCTestCase {
         AgentOptions.Option(id: "$deploy", label: ""),
     ]
 
-    /// The highlighted words, read back out of the text.
     private func words(_ text: String, _ agent: AgentProvider = .claude) -> [String] {
         let string = text as NSString
         return CommandHighlight.ranges(in: text, agent: agent, commands: commands).map { string.substring(with: $0) }

@@ -37,11 +37,9 @@ def output(answer, agent):
         # Codex fails closed on updatedPermissions, so rules are only ever sent to Claude Code.
         if agent == "claude" and isinstance(answer.get("permissions"), list) and answer["permissions"]:
             decision["updatedPermissions"] = answer["permissions"]
-        # "Allow and switch mode": the session leaves the prompt in that mode, as Shift+Tab would put it.
         mode = answer.get("mode")
         if agent == "claude" and isinstance(mode, str) and 0 < len(mode) <= 32 and mode.isalpha():
             decision["updatedPermissions"] = decision.get("updatedPermissions", []) + [{"type": "setMode", "mode": mode, "destination": "session"}]
-        # Questions and plans are answered by sending their input back with the answer.
         if agent == "claude" and isinstance(answer.get("input"), dict):
             decision["updatedInput"] = answer["input"]
     elif behavior == "deny":

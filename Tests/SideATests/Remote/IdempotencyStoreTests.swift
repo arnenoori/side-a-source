@@ -22,9 +22,7 @@ private func temporary() -> URL {
     let again = IdempotencyStore(url: url)
     #expect(again.begin(device: "d1", key: "done", method: "POST", path: "/v1/requests/r/answer", body: body, now: base + 1)
             == .replay(status: 200, contentType: "application/json", body: Data("{}".utf8)))
-    // The handler never ran to the end: the retry must not run it again.
     #expect(again.begin(device: "d1", key: "crashed", method: "POST", path: "/v1/sessions/s/reply", body: body, now: base + 1) == .unknown)
-    // A 503 promised nothing happened, so its retry runs.
     #expect(again.begin(device: "d1", key: "busy", method: "POST", path: "/v1/x", body: body, now: base + 1) == .run)
     #expect(again.begin(device: "d1", key: "done", method: "POST", path: "/v1/requests/r/answer", body: Data("x".utf8), now: base + 1) == .mismatch)
     #expect(again.begin(device: "d1", key: "done", method: "DELETE", path: "/v1/requests/r/answer", body: body, now: base + 1) == .mismatch)
@@ -52,11 +50,9 @@ private func temporary() -> URL {
     let folder = url.deletingLastPathComponent()
     defer { try? FileManager.default.removeItem(at: folder) }
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    // A folder where the file should be: it can't be opened, and there's no quiet fallback to memory.
     try FileManager.default.createDirectory(at: folder.appendingPathComponent("taken"), withIntermediateDirectories: true)
     let unopened = IdempotencyStore(url: folder.appendingPathComponent("taken"))
     #expect(unopened.begin(device: "d1", key: "k", method: "POST", path: "/v1/x", body: Data(), now: 1) == .unavailable)
-    // A file that opens but can't be written to.
     _ = IdempotencyStore(url: url)
     try FileManager.default.setAttributes([.posixPermissions: 0o400], ofItemAtPath: url.path)
     let readOnly = IdempotencyStore(url: url)
@@ -69,7 +65,6 @@ private func refusal(_ code: String, reason: String? = nil) -> Data {
     return try! JSONSerialization.data(withJSONObject: ["error": error])
 }
 
-/// The proof is in a header, outside the record's hash: a refusal it could change must not answer the retry that has it.
 @Test func aRefusalAProofCouldChangeIsNotReplayed() {
     let store = IdempotencyStore(url: nil)
     let body = Data("{}".utf8)
@@ -83,7 +78,6 @@ private func refusal(_ code: String, reason: String? = nil) -> Data {
     #expect(begin() == .replay(status: 200, contentType: "application/json", body: body))
 }
 
-/// No proof changes these, and a retry must not act on them twice.
 @Test func aRefusalNoProofCanChangeIsStillReplayed() {
     let store = IdempotencyStore(url: nil)
     for (n, (status, refused)) in [(409, refusal("already_resolved")), (409, refusal("turn_changed")), (422, refusal("invalid_answer", reason: "unknown_option"))].enumerated() {

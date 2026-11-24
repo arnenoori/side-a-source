@@ -40,8 +40,6 @@ private func fileData(_ values: [String: Any], extra: [String: Any] = [:]) throw
 
 private let now = Date().timeIntervalSince1970
 
-// MARK: Migration
-
 @MainActor @Test func theFirstRunCollectsSetValuesFromBothCopiesAndNothingElse() throws {
     let rig = Rig()
     rig.domains = [.init(values: [:], modified: now - 10),
@@ -83,7 +81,6 @@ private let now = Date().timeIntervalSince1970
     #expect(try rig.storedValues()["playerEnabled"]?["value"] as? Bool == true)
 }
 
-/// Each shared setting has one default, in its spec, and an unset key reads as it.
 @MainActor @Test func anUnsetSettingReadsAsItsSpecsFallback() {
     let defaults = temporaryDefaults()
     for (key, spec) in PreferencesMirror.shared {
@@ -103,8 +100,6 @@ private let now = Date().timeIntervalSince1970
     defaults.set(0.2, forKey: Sounds.volumeKey)
     #expect(PreferencesMirror.value(Sounds.enabledKey, in: defaults) == false && PreferencesMirror.value(Sounds.volumeKey, in: defaults) as Double == 0.2)
 }
-
-// MARK: Allowlist
 
 @MainActor @Test func theAllowlistIsExactAndLeavesOutPerMacKeys() {
     #expect(Set(PreferencesMirror.shared.keys) == ["island", "islandEvents", "islandWaiting", "islandFinished", "islandFinishedClear",
@@ -129,8 +124,6 @@ private let now = Date().timeIntervalSince1970
     let sent = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: rig.folder!.appendingPathComponent("mac-a.json"))) as? [String: Any])
     #expect((sent["values"] as? [String: Any])?.keys.sorted() == ["soundVolume"])
 }
-
-// MARK: Newest wins
 
 @MainActor @Test func theNewestValueWinsPerKey() throws {
     let rig = Rig()
@@ -188,8 +181,6 @@ private let now = Date().timeIntervalSince1970
     #expect(values["tourSeen"] == nil)
 }
 
-// MARK: Unknown fields
-
 @MainActor @Test func unknownFieldsAndKeysSurviveASave() throws {
     let rig = Rig()
     try fileData(["soundVolume": ["value": 0.2, "at": now - 100, "note": "keep"], "futureKey": ["value": 1, "at": now - 100, "shape": "new"], "odd": "text"],
@@ -221,8 +212,6 @@ private let now = Date().timeIntervalSince1970
     #expect(rig.defaults.bool(forKey: "island") == false)
     #expect(try Data(contentsOf: rig.url) == newer)
 }
-
-// MARK: Corrupt files
 
 @MainActor @Test func aCorruptFileIsIgnoredAndRebuiltFromSetValues() throws {
     for bytes in ["{not json", "[]", "{\"values\": 3}", ""] {
@@ -262,8 +251,6 @@ private let now = Date().timeIntervalSince1970
     #expect(mode == 0o600)
 }
 
-// MARK: Demo and removal
-
 @MainActor @Test func theDemoHasNoMirrorAndWritesNoFile() {
     let store = AccountStore(demo: true)
     #expect(store.preferences == nil)
@@ -292,8 +279,6 @@ private let now = Date().timeIntervalSince1970
     #expect(FileManager.default.fileExists(atPath: other.path))
     #expect(rig.defaults.double(forKey: "soundVolume") == 0.9)
 }
-
-// MARK: Side effects
 
 @MainActor @Test func anArrivingValueFiresItsEffectOnce() async throws {
     let rig = Rig()
@@ -340,7 +325,6 @@ private let now = Date().timeIntervalSince1970
     #expect(rig.effectBatches.isEmpty)
     #expect(rig.defaults.stringArray(forKey: PreferencesMirror.pendingKey) == ["island"])
 
-    // Quit before the bridge was ready: the value is already stored, so only the pending list knows.
     let relaunched = rig.make()
     relaunched.load()
     await relaunched.effectsReady()

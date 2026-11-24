@@ -13,7 +13,6 @@ import Testing
 
 private func logged(_ fragment: String) -> Bool { RemoteLog.shared.recent.contains { $0.contains(fragment) } }
 
-/// A device record the Keychain wouldn't take used to vanish without a word; Remote's log now says so.
 @MainActor @Test func aDeviceRecordTheKeychainWontTakeIsLogged() async throws {
     let keychain = RemoteKeychain.inMemory()
     let remote = try pairedRemote(keychain)
@@ -28,6 +27,5 @@ private func logged(_ fragment: String) -> Bool { RemoteLog.shared.recent.contai
     remote.devices.seen("dz1")
     remote.devices.flush()
     #expect(logged("couldn't save the paired devices"))
-    // The record in memory still moved on, as it did before.
     #expect(remote.devices.devices.first?.lastSeen != nil)
 }

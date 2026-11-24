@@ -33,6 +33,13 @@ import Testing
 /// (replyInbox, delivery inbox). SIDEA_HARNESS_MAC_ID=<16 hex> and SIDEA_HARNESS_NAME=<name> (a second harness looks like another Mac: hello,
 /// invitation m=/n= and confirm signatures all use them).
 
+@MainActor private func crashBeforeRecording(_ remote: RemoteController) {
+    remote.server?.beforeRecording = { request in
+        FileHandle.standardError.write(Data("HARNESS crashing after \(request.method) /\(request.path.joined(separator: "/")) ran, before recording it\n".utf8))
+        _exit(70)
+    }
+}
+
 @MainActor @Test(.enabled(if: ProcessInfo.processInfo.environment["SIDEA_REMOTE_HARNESS"] != nil))
 func remoteHarness() async throws {
     let env = ProcessInfo.processInfo.environment
@@ -41,6 +48,7 @@ func remoteHarness() async throws {
     // The argument domain is never saved, so the switch is on for this process only.
     var defaults: [String: Any] = [RemoteController.enabledKey: true]
     if let port = env["SIDEA_HARNESS_PORT"].flatMap(Int.init) { defaults[RemoteController.portKey] = port }
+    if env["SIDEA_HARNESS_SCREEN"] != nil { defaults[ScreenShare.enabledKey] = true; defaults[ScreenShare.controlKey] = true }
     UserDefaults.standard.setVolatileDomain(defaults, forName: UserDefaults.argumentDomain)
     // Made first: resolving a folder that doesn't exist yet keeps /private, so a second run would name another keychain.
     try env["SIDEA_HARNESS_STATE"].map { try FileManager.default.createDirectory(atPath: $0, withIntermediateDirectories: true) }
@@ -66,7 +74,6 @@ func remoteHarness() async throws {
     if let hosting {
         let bin = hosting.base.appendingPathComponent("bin")
         try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("codex"), withDestinationURL: bin.appendingPathComponent("claude"))
-        // The live rows hostedRows makes, so resuming a conversation that runs gets 409 alreadyLive as in the app.
         store.hosted = HostedSessions(root: hosting.root, environment: hosting.environment, bridge: hosting.bridge,
                                       live: { [weak store] in store?.sessions.live })
         await store.hosted.install()
@@ -99,14 +106,12 @@ func remoteHarness() async throws {
     }
     if scene { HarnessScene.twoWay(store) }
     func say(_ line: String) { FileHandle.standardError.write(Data(("HARNESS " + line + "\n").utf8)) }
+    let screenStand = env["SIDEA_HARNESS_SCREEN"] == nil ? nil : HarnessScreen.install(remote, say: say)
+    defer { ScreenStandIn.current = nil }
+    var watching: ScreenShare.Watcher?
     say("listening \(remote.listening)")
     if let state { say("state \(state.path), \(remote.devices.devices.count) paired") }
-    if env["SIDEA_HARNESS_CRASH"] != nil {
-        remote.server?.beforeRecording = { request in
-            FileHandle.standardError.write(Data("HARNESS crashing after \(request.method) /\(request.path.joined(separator: "/")) ran, before recording it\n".utf8))
-            _exit(70)
-        }
-    }
+    if env["SIDEA_HARNESS_CRASH"] != nil { crashBeforeRecording(remote) }
 
     func invite() {
         remote.beginPairing()
@@ -133,6 +138,7 @@ func remoteHarness() async throws {
             keychain.unlock()
             unlocked = Date()
         }
+        if let screenStand { HarnessScreen.poll(env["SIDEA_HARNESS_SCREEN"], screenStand, remote, watching: &watching, say: say) }
         let now = remote.devices.devices.map(\.name)
         if now != devices {
             say("devices \(now)")
@@ -173,7 +179,6 @@ enum HarnessScene {
 
     static let demo = [("demo-1", cwd), ("demo-2", "/Users/demo/api"), ("demo-3", "/Users/demo/billing")]
 
-    /// A transcript per folder, indexed, so history, search and the project list find them.
     static func transcripts(_ store: AccountStore, home: URL, folders: [(String, String)]) throws {
         for (session, folder) in folders {
             try TranscriptFixture.write(TranscriptFixture.lines(session: session, cwd: folder, day: TranscriptFixture.today), session: session, home: home)
@@ -183,9 +188,6 @@ enum HarnessScene {
         store.sessions.transcriptSource = (home: home, bridge: TranscriptFixture.bridge, python: "/usr/bin/python3", root: index)
     }
 
-    /// Sixty finished conversations across five projects and the last six weeks, so history spans two pages and search has
-    /// something to find, and a fork of `past-03` with a fork of its own, for the phone's parent links. Given the hosted
-    /// folders, the side-a and notes ones live there, so the phone can resume and fork them.
     static func past(home: URL, side: String? = nil, notes: String? = nil) throws {
         let topics = ["Add CSV export to reports", "Fix the login redirect loop", "Speed up the search index", "Write the release notes",
                       "Move settings to a sheet", "Debug the flaky upload test", "Add dark mode to the dashboard", "Rename the billing tables",
@@ -224,7 +226,6 @@ enum HarnessScene {
         var written: [String: [[String: Any]]] = [:]
         for n in 0..<60 {
             let id = String(format: "past-%02d", n)
-            // Newest a few hours ago, oldest about six weeks back.
             written[id] = conversation(id, n, at: now.addingTimeInterval(-Double(n + 1) * 16 * 3600 - Double(n % 3) * 1200))
         }
         let child = conversation("past-03-fork", 3, at: now.addingTimeInterval(-6 * 3600), inherited: written["past-03"]!.prefix(2).map { $0 },
@@ -236,7 +237,6 @@ enum HarnessScene {
         for (id, lines) in written { try TranscriptFixture.write(lines, session: id, home: home) }
     }
 
-    /// Folders that exist, for New Session: a git repo with a commit on main and a second branch, and a plain folder.
     static func projects(in base: URL) async throws -> [(String, String)] {
         let repo = base.appendingPathComponent("side-a"), notes = base.appendingPathComponent("notes")
         for folder in [repo, notes] { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
@@ -260,7 +260,6 @@ enum HarnessScene {
             let pid = pids[pane.name] ?? 95_000 + pids.count
             pids[pane.name] = pid
             let session = pane.sessionID.isEmpty ? "hosted-\(pane.name)" : pane.sessionID
-            // A transcript too, as the agent would write one, for history and Restart Fresh's handoff.
             if let source = store.sessions.transcriptSource {
                 try? TranscriptFixture.write(TranscriptFixture.lines(session: session, cwd: pane.cwd, day: TranscriptFixture.today), session: session,
                                              home: source.home)
@@ -278,9 +277,6 @@ enum HarnessScene {
         store.remote.events?.liveChanged()
     }
 
-    /// Two-way rows for the phone: Codex sessions as if reached through its app server (working, idle, one whose
-    /// message was dropped) and one it can't reach, and a Claude session started in a terminal with its inbox hook
-    /// waiting. Staged on CodexTerminals and ClaudeInbox; no daemon or hook runs behind them.
     static func twoWay(_ store: AccountStore) {
         store.sessions.retainLive("harness")
         let now = Date().timeIntervalSince1970
@@ -314,7 +310,6 @@ enum HarnessScene {
                                            title: "Migrate the billing tables")]
     }
 
-    /// One request at each gate (lock screen, unlock, Face ID), a question and a plan, none with a hook waiting behind it.
     static func requests(_ store: AccountStore) {
         let rule: [String: Any] = ["type": "addRules", "rules": [["toolName": "Bash", "ruleContent": "npm test:*"]], "behavior": "allow",
                                    "destination": "localSettings"]
@@ -334,7 +329,6 @@ enum HarnessScene {
             let message: [String: Any] = ["v": 1, "agent": "claude", "pid": session == "demo-1" ? 90001 : 90002, "slot": "mac",
                                           "request": body.merging(["session_id": session, "cwd": session == "demo-1" ? cwd : "/Users/demo/api"]) { a, _ in a }]
             guard let data = try? JSONSerialization.data(withJSONObject: message), let request = IslandRequest(message: data) else { continue }
-            // The demo's live sessions appear once Remote records; these are their titles.
             let title = ["demo-1": "Polish the island transitions", "demo-2": "Fix the flaky upload test"][session] ?? session
             let item = Island.Pending(connection: nil, request: request, title: title, account: nil, handBackAt: nil)
             store.island.pending.append(item)

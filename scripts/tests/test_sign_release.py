@@ -8,13 +8,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# Every tool that touches a keychain or Apple is a stub: this test never reaches the real ones.
 SECURITY = """#!/bin/bash
 if [[ "$1" == find-identity ]]; then echo "1) ABC \\"$SIGNING_IDENTITY\\""; fi
 if [[ "$1" == list-keychains && "$*" != *" -s "* ]]; then echo '    "/fixture/login.keychain-db"'; fi
 exit 0
 """
-# Reports which keys are on disk, and which secrets the environment still shows, while this step runs.
 STEP = """#!/bin/bash
 {
   echo "step $(basename "$0")"

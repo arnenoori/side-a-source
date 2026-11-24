@@ -1,6 +1,5 @@
 import Foundation
 
-/// The phone's words for times and amounts, one rule each, shared by the app, widgets and intents.
 public enum Formatting {
     /// "now", "2m", "14m", "1h 5m", "3d": how long a row has been in its state.
     public static func elapsed(since start: Date, now: Date = .now) -> String {
@@ -53,12 +52,10 @@ public enum Formatting {
         return String(format: "%.1f GB", Double(bytes) / 1_000_000_000)
     }
 
-    /// "3.1 KB" for file chips.
     public static func size(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
-    /// "162k" context.
     public static func tokens(_ count: Int) -> String {
         count >= 1000 ? "\(count / 1000)k" : "\(count)"
     }

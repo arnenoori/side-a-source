@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 import SideAProtocol
 
@@ -7,7 +11,6 @@ import SideAProtocol
 public enum RemoteAnswers {
     public static let maxText = 2_000
 
-    /// Questions take answers, plans an approval, everything else Allow, and Always when there is a safe rule to keep.
     public static func accepted(_ request: IslandRequest) -> Set<AnswerKind> {
         switch request.action {
         case .question: [.answers, .deny, .terminal]
@@ -51,7 +54,7 @@ public enum RemoteAnswers {
         if case .approvePlan(true) = answer { needs = max(needs, .unlock) }
         if case .always(let id) = answer {
             needs = max(needs, .unlock)
-            if let rule = request.suggestions.first(where: { suggestionID($0) == id }), setsPermissiveMode(rule) { needs = .biometric }
+            if let rule = request.remoteSuggestions.first(where: { suggestionID($0) == id }), setsPermissiveMode(rule) { needs = .biometric }
         }
         return needs
     }
@@ -79,7 +82,7 @@ public enum RemoteAnswers {
             return .success((.allow, proven == .biometric))
         case .always(let id):
             guard gate != .biometric else { return .failure(.notAllowed) }
-            guard let suggestion = request.suggestions.first(where: { suggestionID($0) == id }) else { return .failure(.unknownSuggestion) }
+            guard let suggestion = request.remoteSuggestions.first(where: { suggestionID($0) == id }) else { return .failure(.unknownSuggestion) }
             return .success((.always(suggestion), false))
         case .deny(let message):
             let trimmed = message.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(maxText)) }
@@ -113,7 +116,6 @@ extension AllowGate {
     /// An explicit allowlist, not the risk heuristics: only reads of plainly harmless files and searches inside the project may be
     /// allowed from a locked phone. `projects` are the session's folder and its git root. Every edit, and everything unknown, takes unlock.
     public static func of(_ request: IslandRequest, projects: [String]) -> AllowGate {
-        // Judged again now, not only when it arrived: a link changed since then can make the same request destructive.
         if request.risk == .destructive || request.currentRisk == .destructive { return .biometric }
         if request.hidesText { return .unlock }
         let inside = { (path: String) in safe(path, projects: projects, cwd: request.cwd) }
@@ -143,7 +145,6 @@ extension AllowGate {
         let base = cwd.map { URL(fileURLWithPath: $0, isDirectory: true) }
         let full = IslandRisk.destination((path.hasPrefix("/") ? URL(fileURLWithPath: path) : URL(fileURLWithPath: path, relativeTo: base))
             .standardizedFileURL.path, cwd: nil)
-        // Home and the folders above it are never a project, though a dotfiles repo makes ~ a git root.
         let home = IslandRisk.destination(FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path, cwd: nil)
         let roots = projects.filter { !$0.isEmpty && $0 != "/" }.map { IslandRisk.destination(URL(fileURLWithPath: $0).standardizedFileURL.path, cwd: nil) }
             .filter { home != $0 && !home.hasPrefix($0 + "/") }

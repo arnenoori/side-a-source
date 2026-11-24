@@ -14,9 +14,6 @@ public enum ReplyText {
     /// Claude Code shows such text as `[Pasted text #2 +3 lines]`, not its words.
     public static func long(_ text: String) -> Bool { text.count > 200 || text.contains("\n") }
 
-    // Two placeholder checks, on different input: the composer's own row as drawn, where the placeholder starts it, and a
-    // whole prompt already squashed, where it can sit between replies and only one may be there.
-
     static func startsWithPlaceholder(_ shown: String) -> Bool {
         shown.hasPrefix("[Pasted text #") || shown.hasPrefix("[Pasted Content ")
     }
@@ -25,8 +22,6 @@ public enum ReplyText {
         guard prompt.components(separatedBy: "[Pasted").count == 2 else { return nil }
         return prompt.range(of: #"\[Pasted(text#\d+|Content)[^\[\]]*\]"#, options: .regularExpression)
     }
-
-    // MARK: Transcript lines
 
     static func words(_ content: Any?, blocks: Set<String>) -> String? {
         switch content {

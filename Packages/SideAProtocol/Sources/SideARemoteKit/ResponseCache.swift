@@ -6,20 +6,17 @@ import Foundation
 public final class ResponseCache: @unchecked Sendable {
     public static let shared = ResponseCache()
 
-    /// The reads whose bodies the Mac tags (state, sessions, history, projects, options, accounts).
     static let paths: Set<String> = ["/v1/state", "/v1/sessions", "/v1/history", "/v1/projects", "/v1/options", "/v1/accounts"]
 
     struct Entry { let etag: String; let body: Data }
 
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
-    /// Oldest first, for eviction past `limit`.
     private var order: [String] = []
     let limit: Int
 
     public init(limit: Int = 64) { self.limit = limit }
 
-    /// Nil when the request isn't one the cache keeps.
     static func key(macID: String, _ request: URLRequest) -> String? {
         guard request.httpMethod == "GET", let url = request.url, paths.contains(url.path) else { return nil }
         let token = request.value(forHTTPHeaderField: "Authorization") ?? ""

@@ -54,7 +54,6 @@ while True:
     working = time.time() < busy_until
     ready, _, _ = select.select([0], [], [], 0.2 if working else None)
     if working and time.time() >= busy_until:
-        # The turn ended by itself: what waited goes as the next prompt.
         if queued:
             submit("\n".join(queued))
             queued = []

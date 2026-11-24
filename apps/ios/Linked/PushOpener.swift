@@ -4,10 +4,7 @@ import SideAProtocol
 import SideARemoteShared
 import UserNotifications
 
-/// What the Notification Service Extension does with a sealed push, compiled into the app too so tests
-/// can run it: open it with the pairing's push key, then put the Mac's words on the notification.
 enum PushOpener {
-    /// The demo's payloads name this Mac.
     static let demoMac = "demo"
 
     enum Opened {
@@ -43,10 +40,9 @@ enum PushOpener {
         content.title = shown.title
         content.subtitle = shown.subtitle
         content.body = shown.body
-        // One thread per project: the subtitle reads "side-a · Work".
         content.threadIdentifier = payload.subtitle?.components(separatedBy: " · ").first ?? payload.t
         content.relevanceScore = payload.kind.asks ? 1 : 0.3
-        var local = payload.kind == .request && cutOff(payload) || grouped(payload) ? PushCategory.open : category.local(for: payload)
+        var local = offersOnlyOpen(payload) ? PushCategory.open : category.local(for: payload)
         if local == .finished, payload.faceID == true { local = .finishedFaceID }
         if local == .question, !answersTyped(payload) { local = .questionOpen }
         // Anything hidden in it needs an unlock and a look at the escapes, never the Lock Screen's Allow.
@@ -62,7 +58,6 @@ enum PushOpener {
         let digest = digest(data)
         info["h"] = digest
         content.userInfo = info
-        // An update to a notification already shown: the Mac says it comes without a sound.
         if payload.quiet == true { content.sound = nil }
         // Only what was opened here is acted on: the app and the card look it up by the notification's id, and this
         // notification by its own payload's digest too, which a later push under the same id can't replace.
@@ -86,7 +81,6 @@ enum PushOpener {
         return payload
     }
 
-    /// The payload this phone opened for a request, by its id.
     static func cached(_ id: String) -> PushPayload? {
         PushCache.load(id).flatMap { try? JSONDecoder().decode(PushPayload.self, from: $0) }
     }
@@ -95,16 +89,15 @@ enum PushOpener {
     /// cleartext `userInfo`, which anyone who can send a push could write. Nil when it wasn't opened here, or when the
     /// notification isn't what `fill` made of it: a later push under the same collapse id, with no `mutable-content`,
     /// replaces the words and category without the Service Extension running.
-    static func verified(_ request: UNNotificationRequest) -> PushPayload? {
+    static func verified(_ request: UNNotificationRequest, keychain: SharedKeychain = .shared) -> PushPayload? {
         let info = request.content.userInfo
         #if DEBUG
-        // The demo's pushes are in the clear.
         if let p = info["p"] as? [String: Any], p["mac"] as? String == demoMac,
            let data = try? JSONSerialization.data(withJSONObject: p) { return try? JSONDecoder().decode(PushPayload.self, from: data) }
         #endif
         // A paired Mac's, or the review demo's own request ("demo"): only this app and its Service Extension write the
         // cache, and a sealed push opens only with its own Mac's id, never the demo's.
-        guard let payload = opened(request), payload.mac == demoMac || PairedMac.load(payload.mac) != nil else { return nil }
+        guard let payload = opened(request), payload.mac == demoMac || PairedMac.load(payload.mac, keychain: keychain) != nil else { return nil }
         return shows(payload, on: request.content) ? payload : nil
     }
 
@@ -122,7 +115,6 @@ enum PushOpener {
     /// The only words a notification for this payload may show, on the notification and on its card.
     static func words(_ payload: PushPayload) -> Words {
         var text = body(payload)
-        // A command cut to fit the push can't be allowed from here (it's OPEN): the user hasn't seen all of it.
         if payload.kind == .request, cutOff(payload) { text += "\nOpen to see the full command." }
         return Words(title: RequestText.visible(payload.title ?? defaultTitle(payload)),
                      subtitle: RequestText.visible(payload.subtitle ?? ""), body: RequestText.visible(text))
@@ -133,21 +125,22 @@ enum PushOpener {
         payload.full == false || (payload.kind == .request && !RequestText.fitsCard(payload.body ?? ""))
     }
 
-    /// One question, all of it in the push: a typed answer is the whole answer. A set takes one answer per question.
     nonisolated static func answersTyped(_ payload: PushPayload) -> Bool {
         payload.kind == .question && payload.full != false && payload.questions?.count == 1
     }
 
-    /// Ready for more than one session: no one turn to reply to, so Open only.
+    /// A request or plan whose detail was cut to fit can't be approved from a notification: Approve would sign it unseen.
+    nonisolated static func offersOnlyOpen(_ payload: PushPayload) -> Bool {
+        (payload.kind == .request || payload.kind == .plan) && cutOff(payload) || grouped(payload)
+    }
+
     nonisolated static func grouped(_ payload: PushPayload) -> Bool { payload.kind == .finished && payload.sid == nil }
 
-    /// Whether the Lock Screen may allow it on a locked phone: the Mac's gate says so and nothing is hidden in it.
     nonisolated static func allowsLocked(_ payload: PushPayload) -> Bool {
         payload.gate == .lockScreen && !cutOff(payload)
             && ![payload.title, payload.subtitle, payload.body].contains { $0.map(RequestText.hasEscapes) == true }
     }
 
-    /// The category `fill` gives this payload.
     private static func category(of payload: PushPayload) -> String? {
         switch payload.kind {
         case .request:
@@ -155,7 +148,7 @@ enum PushOpener {
             if payload.gate == .biometric { return PushCategory.requestDestructive.rawValue }
             return (allowsLocked(payload) ? PushCategory.requestSafe : PushCategory.request).rawValue
         case .question: return (answersTyped(payload) ? PushCategory.question : PushCategory.questionOpen).rawValue
-        case .plan: return PushCategory.plan.rawValue
+        case .plan: return (cutOff(payload) ? PushCategory.open : PushCategory.plan).rawValue
         case .finished:
             if grouped(payload) { return PushCategory.open.rawValue }
             return (payload.faceID == true ? PushCategory.finishedFaceID : PushCategory.finished).rawValue
@@ -167,7 +160,6 @@ enum PushOpener {
         }
     }
 
-    /// The Mac's words couldn't be read here: say so plainly, and offer only Open.
     static func generic(_ content: UNMutableNotificationContent, body: String?) {
         content.title = "Side A"
         content.subtitle = ""

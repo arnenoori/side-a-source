@@ -28,7 +28,15 @@
     "import/no-cycle": "error",
     "promise/no-return-wrap": "error",
     "promise/no-nesting": "error",
-    "promise/param-names": "error"
+    "promise/param-names": "error",
+
+    // Size limits, set to the tightest the code passes today; a file that needs more gets a named override below. Split the code before raising a number.
+    "max-lines": ["error", { "max": 189 }],
+    "max-lines-per-function": ["error", { "max": 181 }],
+    "max-params": ["error", { "max": 5 }],
+    "complexity": ["error", { "max": 20 }],
+    "max-depth": ["error", { "max": 4 }],
+    "max-nested-callbacks": ["error", { "max": 3 }]
   },
   "overrides": [
     {
@@ -39,6 +47,26 @@
       // node:test registers each test and the runner awaits it.
       "files": ["tests/**"],
       "rules": { "typescript/no-floating-promises": "off" }
+    },
+    {
+      "files": ["src/heart3d.ts"],
+      "rules": { "max-lines": ["error", { "max": 340 }] }
+    },
+    {
+      "files": ["src/app-mock.ts"],
+      "rules": {
+        "max-lines": ["error", { "max": 301 }],
+        "max-lines-per-function": ["error", { "max": 252 }],
+        "max-nested-callbacks": ["error", { "max": 4 }]
+      }
+    },
+    {
+      "files": ["tests/how.test.mjs"],
+      "rules": { "max-lines": ["error", { "max": 341 }] }
+    },
+    {
+      "files": ["src/effects-core.mjs"],
+      "rules": { "max-params": ["error", { "max": 10 }] }
     }
   ],
   "ignorePatterns": ["dist", "node_modules", "src/generated", "public", ".wrangler"]

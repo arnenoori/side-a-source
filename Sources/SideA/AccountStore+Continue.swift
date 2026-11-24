@@ -3,7 +3,6 @@ import SideACore
 import SideAProtocol
 
 extension AccountStore {
-    /// Asking stopped sessions to carry on, on or off.
     func setContinueStopped(_ enabled: Bool) {
         guard (config.continueStopped != false) != enabled else { return }
         config.continueStopped = enabled ? nil : false; persist()
@@ -11,7 +10,6 @@ extension AccountStore {
 
     var stoppedURL: URL { root.appendingPathComponent("runtime/stopped.json") }
 
-    /// Changes the stopped sessions and saves them when anything changed.
     func stopped<T>(_ change: (inout StoppedSessions) -> T) -> T {
         var next = stoppedSessions
         let result = change(&next)
@@ -27,14 +25,12 @@ extension AccountStore {
     func liftedSessions(now: Double) -> [String: Double] {
         let limited = sessionLimits(now: now)
         var lifted: [String: Double] = [:]
-        // A stale reading is not proof of room, and neither is a model's limit the reading doesn't list.
         for (id, hit) in limitHits {
             guard let value = usage[id], !value.stale, !hit.limit.hasPrefix("model:") || value.windows.contains(where: { $0.id == hit.limit }) else { continue }
             for session in hit.sessions where limited[session] == nil { lifted[session] = hit.at }
         }
         for (session, stall) in stalls {
             switch stall.error {
-            // Cut off by sleep or the network: worth another try a minute on, once there is a network to try on.
             case "server_error": if Online.shared.value, now - stall.at >= StoppedSessions.retry, now - stall.at < StoppedSessions.interrupted { lifted[session] = stall.at }
             // A 429 that names no limit is the pool's, this Mac's or the one it joined, with every account out.
             default: if poolAnswers(now: now) { lifted[session] = stall.at }
@@ -50,10 +46,8 @@ extension AccountStore {
         return remotePool.map { $0.answered == true } ?? true
     }
 
-    /// Sends "Please continue" to each session a limit stopped, once an account can answer it again.
     func continueStopped(now: Double) async {
         guard config.continueStopped != false else { return }
-        // What the helper refused while Side A was closed.
         let left = HelperRefusals(root: root).take()
         if !left.isEmpty { stopped { for (session, refusal) in left { $0.refuse(session, refusal.provider, at: refusal.at) } } }
         let lifted = liftedSessions(now: now)

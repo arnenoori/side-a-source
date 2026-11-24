@@ -54,7 +54,6 @@ func gitAndGhAuthOpenTheTerminal(_ text: String) throws {
     #expect(failure.kind == .gitAuth && !failure.retryable && failure.fix == .terminal)
 }
 
-/// The bridge's STALL_ERRORS are the only errors auto-continue picks up; each must read as retryable, and nothing else may.
 @Test func onlyLimitsAndServerErrorsAreRetried() throws {
     for code in ["rate_limit", "server_error"] {
         #expect(try #require(AgentFailure.classify("API Error: Request was aborted.", code: code)).retryable)

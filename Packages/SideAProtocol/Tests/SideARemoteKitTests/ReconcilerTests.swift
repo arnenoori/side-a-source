@@ -4,8 +4,6 @@ import SideAProtocol
 import SideAProtocolFixtures
 import Testing
 
-// `Reconciler` on its own: no transport, no engine, no clock.
-
 private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
 
 private func snapshot(seq: Int = 41, epoch: String = "e1") throws -> StateSnapshot {
@@ -29,8 +27,6 @@ private func reconciler(seq: Int = 41, epoch: String = "e1") throws -> Reconcile
 
 private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
 
-// MARK: Snapshot
-
 @Test func aSnapshotReplacesTheMergedStateAndStartsTheSequenceOver() throws {
     var value = Reconciler()
     value.awaitingSnapshot = true
@@ -45,8 +41,6 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     value.apply(StateSnapshot(seq: 3, epoch: "e2"))
     #expect(value.state.seq == 3 && value.state.epoch == "e2" && value.state.sessions.isEmpty && value.open.isEmpty)
 }
-
-// MARK: The sequence
 
 @Test func anEventIsAppliedOnlyAsTheNextInSequence() throws {
     var value = try reconciler()
@@ -100,7 +94,6 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     let r10 = value.receive(seq: 42, .requestAdd(bash))
     #expect(r10 == .reflected)
     #expect(value.state.seq == 42 && value.open.isEmpty)
-    // Another slice is not covered by it.
     let r11 = value.receive(seq: 43, .sessionRemove(id: "none", replacedBy: nil))
     #expect(r11 == .applied([]))
     let r12 = value.receive(seq: 44, .requestAdd(bash))
@@ -122,8 +115,6 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     let r17 = value.undecodable(seq: 43)
     #expect(!r17 && value.state.seq == 42)
 }
-
-// MARK: Events
 
 @Test func eventsChangeOnlyTheirOwnPart() throws {
     var value = try reconciler()
@@ -174,8 +165,6 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     #expect(value.state.resolved.count == 50 && value.state.resolved["r9"] == nil && value.state.resolved["r10"] != nil)
 }
 
-// MARK: Snapshots read over REST
-
 @Test func aRestSnapshotIsTakenUnlessTheStreamIsFurtherAlongInTheSameEpoch() throws {
     var value = try reconciler()
     let r18 = value.refreshed(StateSnapshot(seq: 40, epoch: "e1"))
@@ -185,8 +174,6 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     let r20 = value.refreshed(StateSnapshot(seq: 3, epoch: "e2"))
     #expect(r20 && value.state.seq == 3 && value.state.epoch == "e2")
 }
-
-// MARK: REST lists
 
 @Test func aListReplacesItsSliceOnlyWhenNewerThanSeqAndItsLastRefresh() throws {
     var value = try reconciler()
@@ -211,12 +198,9 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     let r30 = value.replace(AccountList(accounts: [], seq: 60), asked: "e1")
     #expect(!r30)
     #expect(value.open.count == 1 && value.state.accounts.count == 1 && value.state.sliceSeq.isEmpty)
-    // Asked before any epoch was known, it can't be told apart, so it is judged by its seq alone.
     let r31 = value.replace(RequestList(requests: [], seq: 60), asked: nil)
     #expect(r31)
 }
-
-// MARK: What the screens see
 
 @Test func requestsWithAnAnswerPendingAreHiddenUntilItSettles() throws {
     var value = try reconciler()

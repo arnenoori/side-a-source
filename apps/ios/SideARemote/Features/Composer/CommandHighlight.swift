@@ -7,10 +7,8 @@ import SideAProtocol
 /// skill in the list, anywhere. The Mac's composer does not tint; these are the same lists its autocomplete offers, held
 /// to where the agents really treat the word as a command. A `/` or `$` anywhere else (a path, an amount) stays plain.
 enum CommandHighlight {
-    /// The slash commands Side A knows when the Mac lists none; the same ones the Add sheet shows.
     static let builtIn = ["/model", "/effort", "/compact", "/clear", "/review"]
 
-    /// The UTF-16 ranges to tint, in order.
     static func ranges(in text: String, agent: AgentProvider, commands: [AgentOptions.Option]) -> [NSRange] {
         let known = Set(commands.isEmpty ? builtIn : commands.map(\.id))
         let string = text as NSString
@@ -32,7 +30,6 @@ enum CommandHighlight {
         return found
     }
 
-    /// The token, or the token without punctuation that closes a sentence ("run $lint, then"), when that is a known word.
     private static func match(_ token: NSRange, in string: NSString, known: Set<String>) -> NSRange? {
         var range = token
         while range.length > 1 {

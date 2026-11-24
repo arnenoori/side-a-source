@@ -12,8 +12,6 @@ enum FakeAgent {
     }
 }
 
-/// Type → Enter, then Stop → take-back, through a real tmux pane: the reply is submitted once, a second one sent while
-/// the turn works is queued, and after Esc puts it back in the prompt the take-back finds exactly it there and clears it.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func hostedFakeClaudeTakesAReplyAndGivesBackWhatAStopLeftQueued() async throws {
@@ -37,7 +35,6 @@ func hostedFakeClaudeTakesAReplyAndGivesBackWhatAStopLeftQueued() async throws {
         try await hosted.interrupt(name, working: true)
         #expect(await hosted.takeBack(name, sent: ["then fix what fails"]) == .cleared(from: 0))
         #expect(Hosting.composer(.claude, screen: await hosted.capture(name)) == .empty)
-        // Submitted once, never the queued one; the Stop was one Esc.
         #expect(fixture.lines() == ["'Run the tests'", "ESC"])
     } catch {
         Issue.record(error)

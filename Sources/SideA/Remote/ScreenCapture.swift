@@ -15,12 +15,10 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     let queue: DispatchQueue
     var captured: (() -> Void)?
     var encoded: ((_ config: ScreenFrame?, _ video: ScreenFrame) -> Void)?
-    /// The stream stopped by itself: the window closed, the display went, or permission was taken back.
     var stopped: ((String) -> Void)?
 
     private var stream: SCStream?
     private var latest: CVPixelBuffer?
-    /// What was encoded last, encoded again for a keyframe while the screen doesn't change.
     private var last: CVPixelBuffer?
     private var encoder: VTCompressionSession?
     private var encoderSize: Size?
@@ -79,9 +77,33 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
     }
 
+    /// Harness only: the stand-in's pictures take the place of ScreenCaptureKit's, through the same `latest`, encoder and
+    /// socket path. A new picture every tick, since a still one would never show the stream is moving.
+    private var ticker: DispatchSourceTimer?
+
+    func start(standIn: ScreenStandIn) {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        var tick = 0
+        timer.schedule(deadline: .now(), repeating: .milliseconds(33))
+        timer.setEventHandler { [weak self] in
+            guard let self, !ended else { return }
+            var buffer: CVPixelBuffer?
+            let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary] as CFDictionary
+            guard CVPixelBufferCreate(nil, size.width, size.height, kCVPixelFormatType_32BGRA, attributes, &buffer) == kCVReturnSuccess, let buffer else { return }
+            tick += 1
+            standIn.draw(buffer, tick, Array(standIn.posted.suffix(40)), standIn.shown)
+            if latest != nil { skips += 1 }
+            latest = buffer
+            captured?()
+        }
+        timer.resume()
+        ticker = timer
+    }
+
     func stop() {
         guard !ended else { return }
         ended = true
+        ticker?.cancel(); ticker = nil
         // Held by the completion until the stream has really stopped, so it isn't freed mid-stop.
         let stream = Unchecked(self.stream)
         do { try stream.value?.removeStreamOutput(self, type: .screen) } catch {
@@ -104,8 +126,6 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         latest = nil; last = nil
         captured = nil; encoded = nil; stopped = nil
     }
-
-    // MARK: Tuning
 
     func set(fps: Int) {
         guard fps != self.fps else { return }
@@ -141,8 +161,6 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
 
     var waiting: Bool { latest != nil }
 
-    // MARK: Frames
-
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, !ended, let buffer = sample.imageBuffer,
               let infos = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
@@ -160,8 +178,6 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
     }
 
-    /// Encodes the newest capture, or the last one again when a keyframe is wanted and nothing new came. False when
-    /// there was nothing to encode or the encoder is still on the previous frame.
     @discardableResult func pull() -> Bool {
         guard !ended, !encoding, let buffer = latest ?? (wantKey ? last : nil) else { return false }
         latest = nil
@@ -227,8 +243,6 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
     }
 
-    // MARK: Encoder
-
     /// Real time, no B-frames and VideoToolbox's low-latency rate control, which holds each frame near the average instead
     /// of letting keyframes spike (WWDC21 "Explore low-latency video encoding"). It is H.264 only, hence H.264.
     private func makeEncoder(_ size: Size) {
@@ -248,7 +262,6 @@ final class ScreenCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_ConstrainedHigh_AutoLevel)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
-        // Keyframes come when the phone asks; this is only the fallback for one that went missing unnoticed.
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, value: 20 as CFNumber)
         VTSessionSetProperty(session, key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, value: kCFBooleanTrue)
         Self.rate(session, bitrate)

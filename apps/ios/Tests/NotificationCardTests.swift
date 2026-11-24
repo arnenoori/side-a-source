@@ -43,7 +43,6 @@ final class NotificationCardTests: XCTestCase {
         XCTAssertEqual(card.picked[0], [])
     }
 
-    /// A set that didn't fit shows Open only, never part of it.
     func testPartialSetOffersNoOptions() throws {
         XCTAssertNil(try card([cache], full: false).question)
     }

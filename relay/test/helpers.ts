@@ -4,8 +4,6 @@ import worker from '../src/index';
 import { installIdFor, signedString } from '../src/auth';
 import { b64url, sha256, utf8 } from '../src/bytes';
 
-// The relay never reads its own hostname; any will do.
-/** The item at `index`, or a failed test when there isn't one. */
 export function nth<T>(items: ArrayLike<T>, index: number): T {
   const item = items[index];
   if (item === undefined) throw new Error(`expected an item at index ${index} of ${items.length}`);
@@ -14,11 +12,9 @@ export function nth<T>(items: ArrayLike<T>, index: number): T {
 
 export const BASE = 'https://relay.test';
 
-// Tests send from one address far faster than any Mac; the per-network request limit has its own tests.
 export const open = { limit: async () => ({ success: true }) };
 export const testEnv = { ...env, REQUEST_LIMIT: open } as unknown as Env;
 
-// Every request's waitUntil work (a verification push, a cleanup) is done before the test looks: no guessing how long.
 export async function call(request: Request): Promise<Response> {
   const ctx = createExecutionContext();
   const response = await worker.fetch(incoming(request), testEnv, ctx);
@@ -26,7 +22,6 @@ export async function call(request: Request): Promise<Response> {
   return response;
 }
 
-// For calling the handler directly with a changed env.
 export const incoming = (request: Request) => request as Request<unknown, IncomingRequestCfProperties>;
 export const context = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
 
@@ -70,7 +65,6 @@ export async function signed(mac: Mac, method: string, path: string, body?: unkn
   });
 }
 
-// Each test Mac gets its own address, so the per-IP registration limit only bites where a test wants it.
 export const randomIp = () => `2001:db8:${Array.from(crypto.getRandomValues(new Uint16Array(2)), word => word.toString(16)).join(':')}::1`;
 
 export const register = async (mac: Mac, ip = randomIp()) =>
@@ -103,7 +97,6 @@ export async function putDevice(mac: Mac, phone: Phone, extra: Record<string, un
   }));
 }
 
-// A pretend APNs. Answers by token, records every request.
 export interface Pushed {
   host: string;
   token: string;
@@ -153,8 +146,6 @@ export class FakeApns {
   }
 }
 
-// Registers, adds a phone, and answers the verification push the way the app would.
-/** Installs the pretend APNs for a test that never looks at what it was sent. */
 export function stubApns(): FakeApns {
   return new FakeApns();
 }

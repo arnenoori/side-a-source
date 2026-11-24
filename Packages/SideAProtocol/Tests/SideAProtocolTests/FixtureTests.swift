@@ -1,10 +1,13 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 import SideAProtocol
 import SideAProtocolFixtures
 import Testing
 
-/// Every wire type with fixtures: decode, then encode again.
 private let wireTypes: [String: @Sendable (Data) throws -> Data] = {
     func entry<T: Codable>(_: T.Type) -> @Sendable (Data) throws -> Data {
         { try encoder.encode(try JSONDecoder().decode(T.self, from: $0)) }
@@ -59,7 +62,6 @@ private let encoder: JSONEncoder = {
     return encoder
 }()
 
-/// The same JSON with sorted keys and no whitespace, so formatting never counts.
 private func canonical(_ data: Data) throws -> String {
     let object = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
     return String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]),
@@ -68,7 +70,6 @@ private func canonical(_ data: Data) throws -> String {
 
 private func type(of name: String) -> String { String(name.split(separator: "/").last!.split(separator: ".")[0]) }
 
-/// `kit/` holds what SideARemoteKit keeps in the shared store; its own tests check those.
 private let current = Fixtures.names().filter { !$0.hasPrefix("future/") && !$0.hasPrefix("kit/") }
 
 @Test(arguments: current)
@@ -96,7 +97,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     #expect(try code("k7q2 9xmd") == known.comparisonCode)
     #expect(try code("K7Q2-9XMD", spki: Data(repeating: 7, count: 32).base64URL) != known.comparisonCode)
     #expect(PairingTranscript.display("042913") == "042 913")
-    // The unlock key alone isn't read as a confirm key.
     let unlockOnly = try JSONDecoder().decode(PairingTranscript.self, from: Fixtures.data("PairingTranscript.unlock-key-only"))
     let swapped = try PairingTranscript.comparisonCode(code: known.code, nonce: known.nonce, macPublicKey: known.macPublicKey,
                                                        devicePublicKey: known.devicePublicKey, serverKeyHash: known.serverKeyHash,
@@ -112,7 +112,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     #expect(TermFrame(input) == .input(seq: 18, bytes: Data("swift test\r".utf8)))
     #expect(TermFrame(input)?.data == input && TermFrame(Data([0x02, 0])) == nil && TermFrame(Data([9])) == nil)
 
-    // A paste over 16 KiB splits on character boundaries, numbered on.
     let paste = Data(String(repeating: "é", count: 9000).utf8)
     let frames = TermFrame.inputs(paste, from: 7)
     let parts = frames.compactMap { frame -> Data? in if case .input(_, let bytes) = frame { bytes } else { nil } }
@@ -120,7 +119,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     #expect(parts.reduce(Data(), +) == paste && frames.last == .input(seq: 8, bytes: parts[1]))
 }
 
-/// A fixture that has shipped never changes; new ones are appended to the manifest.
 @Test func fixturesAreFrozen() throws {
     let listed = try Fixtures.manifest().split(separator: "\n").reduce(into: [String: String]()) { table, line in
         let parts = line.split(separator: " ", omittingEmptySubsequences: true)
@@ -139,7 +137,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     #expect(request.action == .other(tool: "NotebookRun", arguments: #"{"cell":1}"#))
     #expect(request.headline == "Run a notebook cell" && request.answers.contains(AnswerKind(rawValue: "snooze")))
 
-    // A gate this phone doesn't know asks for Face ID; a Mac that sends none asks for an unlocked phone.
     let gated = try JSONDecoder().decode(RemoteRequest.self, from: Fixtures.data("future/RemoteRequest.unknown-gate"))
     #expect(gated.gate?.rawValue == "watchOnly" && gated.allowGate == .biometric)
     #expect(try JSONDecoder().decode(RemoteRequest.self, from: Fixtures.data("RemoteRequest.bash")).allowGate == .unlock)
@@ -148,20 +145,16 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     let bare = try JSONDecoder().decode(IslandAction.self, from: Fixtures.data("future/IslandAction.bare-unknown-kind"))
     #expect(bare == .other(tool: "teleport", arguments: ""))
 
-    // A theme or exit reason this phone doesn't know still decodes, and survives a re-encode.
     let themed = try JSONDecoder().decode(TermControl.self, from: Fixtures.data("future/TermControl.unknown-appearance"))
     #expect(themed == .hello(viewer: "6f1e2d3c-4b5a-4968-8776-655443322110", cols: 80, rows: 24, theme: TermTheme(appearance: .init(rawValue: "sepia"))))
     let exit = try JSONDecoder().decode(TermControl.self, from: Fixtures.data("future/TermControl.exit-unknown-reason"))
     #expect(exit == .exit(status: 137, reason: TermExitReason(rawValue: "evicted")))
     #expect(try JSONDecoder().decode(TermControl.self, from: encoder.encode(exit)) == exit)
-    // A phone from before HEALTH pushes sends no `health`: it gets them.
     #expect(try JSONDecoder().decode(NotificationPrefs.self, from: Fixtures.data("future/NotificationPrefs.before-health")).health)
-    // An effort this phone doesn't know still decodes, and survives a re-encode.
     let model = try JSONDecoder().decode(ModelOption.self, from: Fixtures.data("future/ModelOption.unknown-effort"))
     #expect(model.efforts.last == Effort(rawValue: "turbo") && model.defaultEffort == .ultra)
     #expect(try JSONDecoder().decode(ModelOption.self, from: encoder.encode(model)) == model)
 
-    // A registration from before bundleID keeps its environment under the old key; one with neither is the App Store app.
     let old = try JSONDecoder().decode(PushRegistration.self, from: Fixtures.data("future/PushRegistration.before-bundle"))
     #expect(old.bundleID == "com.arnenoori.sidea.remote" && old.apnsEnvironment == .sandbox)
     let unlabelled = try JSONDecoder().decode(PushRegistration.self, from: Fixtures.data("future/PushRegistration.bare"))
@@ -174,7 +167,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
 
     let session = try JSONDecoder().decode(RemoteSession.self, from: Fixtures.data("future/RemoteSession.new-values"))
     #expect(session.status.rawValue == "napping" && session.abilities.contains(SessionAbility(rawValue: "teleport")))
-    // Unknown open-enum values survive a re-encode.
     let again = try JSONDecoder().decode(RemoteSession.self, from: encoder.encode(session))
     #expect(again == session && again.flag?.kind.rawValue == "haunted")
 
@@ -188,7 +180,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
 
     let account = try JSONDecoder().decode(RemoteAccount.self, from: Fixtures.data("future/RemoteAccount.nulls"))
     #expect(account.usage == nil && account.readAt == nil)
-    // Optional fields are left out, never written as null.
     #expect(!String(decoding: try encoder.encode(account), as: UTF8.self).contains("null"))
 }
 
@@ -207,7 +198,6 @@ func comparisonCodesMatchTheKnownAnswers(_ name: String) throws {
     let future = try decoder.decode(MacInfo.self, from: Data(#"{"id":"a","name":"Box","os":"haiku"}"#.utf8))
     #expect(future.os == HostOS(rawValue: "haiku") && future.kind.rawValue == "haiku" && future.headless == nil)
     #expect(try decoder.decode(MacInfo.self, from: encoder.encode(future)) == future)
-    // A host that sends nothing new writes nothing new.
     #expect(!String(decoding: try encoder.encode(old), as: UTF8.self).contains("os"))
     #expect(Set([HostOS.macos, .linux, .windows, .wsl].map(\.rawValue)) == ["macos", "linux", "windows", "wsl"])
 }

@@ -35,7 +35,6 @@ xcodebuild -project SideARemote.xcodeproj -scheme SideARemote -configuration Rel
     -destination 'generic/platform=iOS' -archivePath "$archive" -allowProvisioningUpdates \
     ${auth[@]+"${auth[@]}"} DEVELOPMENT_TEAM="$team" CURRENT_PROJECT_VERSION="$build" -quiet archive
 
-# mktemp makes its own file; a name built from it with a suffix would be a second one left behind.
 options_dir="$(mktemp -d "${TMPDIR:-/tmp}/export-options.XXXXXX")"
 trap 'rm -rf "$options_dir"' EXIT
 options="$options_dir/ExportOptions.plist"
@@ -59,7 +58,6 @@ PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePat
 
 ipa="$(ls "$export_dir"/*.ipa)"
 python3 -I "$(pwd)/../../scripts/ios-check-ipa.py" "$ipa"
-# Only a build that made it this far takes the number.
 sed -i '' "s/CURRENT_PROJECT_VERSION: \"$current\"/CURRENT_PROJECT_VERSION: \"$build\"/" project.yml
 echo "Ready to upload: $(pwd)/$ipa"
 [ "$build" = "$current" ] || echo "project.yml now says build $build: commit it."

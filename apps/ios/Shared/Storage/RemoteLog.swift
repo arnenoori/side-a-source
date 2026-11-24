@@ -17,7 +17,6 @@ public enum RemoteLog {
 
     private static let queue = DispatchQueue(label: "com.arnenoori.sidea.remote.log")
     private static let loggers = OSAllocatedUnfairLock(initialState: [Category: Logger]())
-    /// "app", "NotificationService", …: which process wrote the line.
     private static let process = Bundle.main.bundleURL.deletingPathExtension().lastPathComponent
     /// ISO8601DateFormatter is thread-safe.
     nonisolated(unsafe) private static let stamp: ISO8601DateFormatter = {
@@ -43,7 +42,6 @@ public enum RemoteLog {
 
     public static func error(_ category: Category, _ message: String) { log(category, message, level: .error) }
 
-    /// Every kept file, oldest first, as one text file for Share Logs.
     public static func export() -> URL? {
         queue.sync {
             guard let folder else { return nil }
@@ -73,7 +71,6 @@ public enum RemoteLog {
         _ = bytes.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 
-    /// remote.log.1 → .2, remote.log → .1; the oldest goes.
     private static func rotate(_ folder: URL) {
         let manager = FileManager.default
         func file(_ index: Int) -> URL {

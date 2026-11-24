@@ -1,7 +1,6 @@
 import SideACore
 import SwiftUI
 
-/// The menu bar is Side A's home: usage for every account and the Mac-wide login.
 struct MenuPlayer: View {
     /// Local calendar date `offset` days from today, in the report's yyyy-MM-dd form.
     static func day(_ offset: Int) -> String {
@@ -12,7 +11,8 @@ struct MenuPlayer: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openURL) private var openURL
-    @AppStorage("tourSeen") private var tourSeen = false
+    @AppStorage(Self.tourSeenKey) private var tourSeen = false
+    private static let tourSeenKey = "tourSeen"
     static let enabledKey = "playerEnabled"
     @AppStorage(MenuPlayer.enabledKey) private var playerEnabled: Bool = PreferencesMirror.fallback(MenuPlayer.enabledKey)
     var body: some View {
@@ -76,7 +76,6 @@ struct MenuPlayer: View {
                 }.help("Download the latest Side A and replace this copy")
             }
             Divider()
-            // Autopilot is on unless turned off in Settings > Autopilot, so the footer carries usage instead of its switch.
             HStack(spacing: 0) {
                 usage
                 Spacer(minLength: 10)
@@ -100,7 +99,6 @@ struct MenuPlayer: View {
             store.showSessions = { openWindow(id: "sessions") }
         }
     }
-    /// "Today 905.7M · 7 days 28.3B", opening Settings > Usage.
     @ViewBuilder private var usage: some View {
         if let report = store.report, !report.days.isEmpty {
             // Calendar days: an idle day counts as zero, not as the last active day.
@@ -154,7 +152,6 @@ struct MenuPlayer: View {
         .buttonStyle(.plain).help(help)
         .accessibilityLabel(label ?? text)
     }
-    /// Opens the conversation that waits longest on you, else the one that finished last.
     private func openSessions() {
         store.openSessions(store.island.pending.first?.request.sessionID ?? store.island.ready.first?.finish.sessionID)
     }
@@ -221,11 +218,9 @@ struct AccountUsageRow: View {
             }
             Spacer(minLength: 4)
             if let usage {
-                // With the week used up nothing else can be spent until it resets, so only the week shows.
                 let weekFull = (usage.weekly?.used(at: Date().timeIntervalSince1970) ?? 0) >= Planner.limited
                 if !weekFull {
                     MiniBar(label: "5h", window: usage.fiveHour)
-                    // A model's own weekly cap only earns space once that model has been used.
                     ForEach(usage.modelLimits.filter { $0.percent >= 1 }, id: \.id) { limit in
                         MiniBar(label: String(limit.label.dropFirst("Weekly ".count).prefix(2)).lowercased(), window: limit)
                             .help(limit.label)
@@ -275,11 +270,9 @@ struct AccountUsageRow: View {
     }
 }
 
-/// A compact labeled meter; the reset time is in the tooltip.
 struct MiniBar: View {
     let label: String
     let window: UsageWindow?
-    /// Shows when the window resets under the bar instead of only in the tooltip.
     var showsReset = false
     var body: some View {
         let now = Date().timeIntervalSince1970

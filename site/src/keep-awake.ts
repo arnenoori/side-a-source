@@ -2,7 +2,6 @@ import './keep-awake.css';
 import { macSleeps } from './demo-core.mjs';
 
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
-// The app's 2-minute grace, told in under 3 seconds.
 const GRACE = 2600;
 
 export function mountKeepAwake(scene: HTMLElement) {

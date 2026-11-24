@@ -55,7 +55,6 @@ final class HandoffLinks {
         prune()
     }
 
-    /// A handoff that never started: its files go and nothing links to it.
     func remove(_ id: String) {
         guard Self.valid(id) else { return }
         for file in [fullFile(id), sentFile(id), recordFile(id)] { try? FileManager.default.removeItem(at: file) }
@@ -92,7 +91,6 @@ final class HandoffLinks {
         return nil
     }
 
-    /// The conversation of `agent` this one was handed off from, for going back to it instead of starting a third.
     func earlier(_ conversation: String, agent: AgentProvider) -> String? {
         guard let record = recorded[conversation], record.fromAgent == agent.rawValue else { return nil }
         return record.fromConversation
@@ -107,7 +105,6 @@ final class HandoffLinks {
         follow(name, store: store)
     }
 
-    /// Up to three minutes for the new agent to register its conversation, which is when the link can be kept for good.
     private func follow(_ name: String, store: AccountStore) {
         Task { [weak self, weak store] in
             for _ in 0..<90 {

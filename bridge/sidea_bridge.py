@@ -64,7 +64,6 @@ def read_json(path: Path, default=None):
 
 
 def account_by_id(config, identifier):
-    # Require canonical UUIDs before using any profile identifier as a path.
     if str(uuid.UUID(identifier)).lower() != identifier.lower():
         raise ValueError("Invalid account identifier")
     return next(a for a in config["accounts"] if a["id"] == identifier)
@@ -136,7 +135,6 @@ def auth_status(root, account, binary=None):
     if not isinstance(data, dict):
         raise ValueError("Claude returned an unsupported account-status shape.")
     logged_in = result.returncode == 0 and data.get("loggedIn") is True
-    # Only subscription OAuth identities belong here. The token, not the config file, names the owner.
     method = data.get("authMethod", "")
     email = token_email(root, read_secret(home_service(root, account))) or data.get("email") or ""
     return {"loggedIn": logged_in and method == "claude.ai" and bool(email),
@@ -162,7 +160,6 @@ class SignInAgain(ValueError):
 
     def __init__(self, message, replaced_by=None):
         super().__init__(message)
-        # Whose login the account's slot holds now, when it holds someone else's.
         self.replaced_by = replaced_by
 
 
@@ -279,8 +276,6 @@ def home_slot(root, account):
     if slot and slot != "mac":
         profile_dir(root, slot)  # validates the id
         return slot
-    # Its own profile may hold a login another account moved in (say its login was in the Mac
-    # item, which was then signed in to someone else); it then takes the slot that account left.
     slot, seen = account["id"], set()
     while slot not in seen:
         seen.add(slot)
@@ -368,7 +363,7 @@ def repair_selection(root, config):
 
 
 def post_json(url, body, headers=None, method="POST"):
-    import urllib.request  # ssl and http.client cost Python's startup a fifth of a second; the session viewer never needs them
+    import urllib.request
     request = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),  # noqa: S310 -- https endpoints the bridge names itself
         method=method, headers={"Content-Type": "application/json", "User-Agent": "claude-cli (side-a)", **(headers or {})})
     # A refresh token is spent once the endpoint answers, so a slow answer is worth waiting for.
@@ -394,7 +389,6 @@ def percent(value):
 def claude_usage(root, config, account):
     blob = owned_login(root, account, idle_ok=True)
     if expired(blob):
-        # Nobody has used this login since it expired, so its last reading still holds.
         raise LoginIdle("Login idle; its last reading still applies.")
     oauth = blob["claudeAiOauth"]
     token = oauth["accessToken"]
@@ -436,7 +430,6 @@ def extra_usage(data):
 
 
 def plan_capacity(oauth):
-    # Relative quota size, so 1% of an Ultra (formerly Max 20x) account outweighs 1% of a Pro account.
     tier = f"{oauth.get('rateLimitTier') or ''} {oauth.get('subscriptionType') or ''}".lower()
     return 20.0 if "20x" in tier or "ultra" in tier else 5.0 if "5x" in tier or "max" in tier else 1.0
 
@@ -515,7 +508,6 @@ def pins_path(root):
 
 def pin_name(name):
     """What `sidea use <name>` accepts for an account: its name, lowercased, dashes for the rest."""
-    # ponytail: two accounts whose names slug alike share one pin; rename one if that ever matters.
     return re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-") or "account"
 
 
@@ -624,12 +616,11 @@ def rewrite_zshrc(root, shell=None, host=None):
         kept.append(line)
     text = "".join(kept)
     if len(kept) < len(lines):
-        # Drop the blank separator line that was added with the function.
         text = text.rstrip("\n") + "\n" if text.strip() else ""
     added = (shell_snippet(root) if shell else "") + (host_snippet(root) if host else "")
     if added:
         text = text.rstrip("\n") + ("\n\n" if text.strip() else "") + added
-    path = path.resolve()  # a symlinked dotfile stays a symlink
+    path = path.resolve()
     temp = path.with_name(".zshrc.side-a")
     temp.write_text(text)
     if path.exists():
@@ -749,7 +740,6 @@ CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 
 SWAP_JOURNAL = "Side A swap journal"
-# The logins a recent trade moved, kept so a trade a session undid can be put right (heal_trades).
 TRADE_WATCH = "Side A trade watch"
 WATCH_SECONDS = 3600
 
@@ -782,7 +772,6 @@ def same_login(root, blob, login):
 
 
 def swap_locks(root, slots):
-    # A lock that can't be taken releases the ones already held.
     with contextlib.ExitStack() as stack:
         for slot in slots:
             stack.enter_context(claude_refresh_lock(slot_selector(root, slot) or str(Path.home() / ".claude")))
@@ -824,7 +813,6 @@ def swap(root, config, slot, other, share=False):
             busy = set(processes.values())
             if target in busy and not share:
                 raise ValueError("A session is using that account now.")
-            # A share hands `other`'s sessions the login whose Fable share is spent: only while none of them runs Fable.
             if share and target in busy:
                 models = slot_models({pid: s for pid, s in processes.items() if s == target}).get(target) or [None]
                 if any(model is None or "fable" in model.lower() for model in models):
@@ -833,8 +821,6 @@ def swap(root, config, slot, other, share=False):
             logins = [read_secret(slot_service(root, slot)), owned_login(root, other)]
             if token_email(root, logins[0]) != account.get("email", "").casefold():
                 raise Unconfirmed("Can't confirm whose login this is yet; retrying later.")
-            # Where each account's own login ends up. A second sign-in of the same account
-            # (not its home) is moved without becoming its home.
             moves = {other["id"]: slot}
             if home_slot(root, account) == slot:
                 moves[account["id"]] = target
@@ -1151,7 +1137,6 @@ def forget_backup(account):
     read_secret.cache_clear()
 
 
-# Why the last process_environment() of each pid came back empty, for the log.
 environment_failures = {}
 
 
@@ -1191,7 +1176,6 @@ def busy_slots(root, config):
 
 # Why slot_processes() last answered None, in words safe for the log.
 listing_problem = ""
-# The pool sessions slot_processes() last saw, by pid. They belong to no login, and can stall like any other.
 pool_processes = {}
 # The first limit suits a calm Mac; under a load of hundreds `ps` needs more.
 PS_LIMITS = (10, 40)
@@ -1865,7 +1849,6 @@ def scan_codex(path, previous=None):
 def recent_model(within=1800):
     """Model of the newest Claude Code response in the last half hour, so Autopilot can plan
     around a model-specific cap. Only the newest session counts."""
-    # ponytail: newest session wins; per-terminal models would need the shell hook to report them.
     cutoff, newest = time.time() - within, None
     folder = Path.home() / ".claude" / "projects"
     for path in folder.glob("*/*.jsonl") if folder.is_dir() else []:
@@ -1980,7 +1963,6 @@ def report(root, days=30, sync=None):
     cache = read_json(cache_path, {}) or {}
     fresh, merged, hours = {}, {}, {}
     import sessions
-    # Codex profiles keep their history in one shared folder beside ~/.codex, as the session index reads it.
     folders = [(Path.home() / ".claude" / "projects", "*/**/*.jsonl", scan_transcript), (root / "conversations", "*/**/*.jsonl", scan_transcript)] + \
               [(folder, "**/*.jsonl", scan_codex) for folder in sessions.codex_session_folders(root)]
     for folder, pattern, scan in folders:
@@ -2023,7 +2005,6 @@ def report(root, days=30, sync=None):
                                        key=lambda row: -(row["input"] + row["output"] + row["cacheWrite"] + row["cacheRead"]))
     return {"days": sorted(rows(by_day, "date"), key=lambda row: row["date"]),
             "projects": rows(by_project, "project"), "models": rows(by_model, "model"),
-            # Each day split by model, for the stacked daily chart.
             "dayModels": sorted(({"date": day, "model": model, **value} for (day, model), value in by_day_model.items() if model),
                                 key=lambda row: (row["date"], row["model"])),
             "activity": [{"date": day, "hours": counts} for day, counts in sorted(hours.items()) if day >= since],
@@ -2258,8 +2239,6 @@ ISLAND_MARK = "side-a-island"
 ISLAND_AGENTS = ("claude", "codex")
 ISLAND_TIMEOUT = 86400
 ISLAND_FOLLOW_UP = 3600
-# Opt-in: phone messages for Claude sessions started in a terminal, waited for in the background from SessionStart and
-# every Stop. Its own mark, so the island's hooks are rewritten without touching it.
 INBOX_MARK = "side-a-inbox"
 INBOX_TIMEOUT = 86400
 # Python exits 2 for a missing script, which asyncRewake would take as a follow-up, so both are tested first.
@@ -2270,7 +2249,6 @@ ISLAND_LAUNCHER = """#!/bin/sh
 exec PYTHON -I -S SCRIPT SOCKET "$@"
 """
 
-# Runs before and after every tool call, so it costs one test until Side A leaves this session mail.
 ISLAND_MAIL_LAUNCHER = """#!/bin/sh
 # side-a-island
 [ -e MAIL/"${CLAUDE_PID:-$PPID}".json ] || exit 0
@@ -2378,7 +2356,6 @@ def set_island(root, agent, enabled):
         mail = island_command(root, agent, island_mail_launcher(root, agent))
         events += [(event, mail, {"timeout": 5}) for event in mail_events(agent)]
         if agent == "claude":
-            # A model changed with /model shows on the session's row now, not at its next reply.
             events.append(("PostModelSwitch", command, {"timeout": 30}) if enabled and model_switch_hook() else ("PostModelSwitch", None, {}))
         for event, command, handler in events:
             group = None
@@ -2709,7 +2686,6 @@ def main():
         swap(root, config, args.slot, account_by_id(config, args.account), share=args.share)
         return
     if args.command == "hosting":
-        # A hosted Codex session on a picked account: the same home and flags Side A runs it with.
         import codex_bridge
         account = account_by_id(config, args.account)
         if provider_of(account) != "codex":

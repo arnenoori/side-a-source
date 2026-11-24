@@ -2,7 +2,6 @@ import AppKit
 import SideACore
 import SwiftUI
 
-/// Sessions in a window of its own, so Settings keeps one size.
 struct SessionsWindow: View {
     let store: AccountStore
     @Environment(\.dismissWindow) private var dismissWindow
@@ -27,7 +26,6 @@ enum Ink {
     static let surface = Color(nsColor: .controlBackgroundColor)
     static let selected = Color.accentColor.opacity(0.13)
     static let branch = Color.purple
-    /// The iPhone's Amber: a session waiting on you.
     static let amber = Color(nsColor: NSColor(name: "SideA.amber") { appearance in
         switch appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
         case .darkAqua: NSColor(srgbRed: 1, green: 0.698, blue: 0.243, alpha: 1)
@@ -40,7 +38,6 @@ enum Ink {
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     static var ease: Animation { reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.3) }
     static var glide: Animation { reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.22) }
-    /// A fade that drifts `y` points, or only fades under Reduce Motion.
     static func rise(_ y: CGFloat) -> AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .offset(y: y)) }
 }
 
@@ -123,7 +120,6 @@ struct SessionsBrowser: View {
     }
 }
 
-/// The session Restart Fresh's sheet is for, as a sheet item.
 private struct Restarting: Identifiable {
     let session: LiveSession
     var id: Int { session.pid }
@@ -215,7 +211,6 @@ struct FilterMenu: View {
     }
 }
 
-/// Only what is applied, each removable, like Linear's filter bar.
 struct ActiveFilters: View {
     @Bindable var model: SessionStore
     var body: some View {
@@ -347,7 +342,6 @@ struct SessionList: View {
                         if !listed.working.isEmpty || !listed.idle.isEmpty {
                             RunningHeader(model: model, title: listed.working.isEmpty ? "Idle" : "Working",
                                           count: listed.working.isEmpty ? listed.idle.count : listed.working.count)
-                            // Project captions only help once sessions span more than one project.
                             let captions = Set((listed.working + listed.idle).map { model.project(of: $0.cwd) }).count > 1
                             ForEach(model.byProject(listed.working)) { group in
                                 if captions { ProjectCaption(name: group.project) }
@@ -422,7 +416,6 @@ struct SessionList: View {
             .onKeyPress(.upArrow) { model.step(-1); return .handled }
             .onKeyPress(.escape) { model.focusSearch += 1; return .handled }
             .onChange(of: model.selectedID) { _, id in
-                // Arrow keys keep working from the list once a row is picked, not only from search.
                 if id != nil && !model.searching { focused = true }
                 if let id, !model.idleOpen, listed.idle.contains(where: { $0.sessionID == id }) { model.idleOpen = true }
                 guard let id, !model.searching, let group = groups.first(where: { $0.rows.contains { $0.session.id == id } }) else {
@@ -549,7 +542,6 @@ struct LiveMark: View {
     }
 }
 
-/// Codex beside a title, with the island's glyph; Claude, the usual case, has none.
 struct CodexMark: View {
     var body: some View {
         Image(systemName: "chevron.left.forwardslash.chevron.right")
@@ -558,7 +550,6 @@ struct CodexMark: View {
     }
 }
 
-/// One line, like a sidebar item: the project is already the group.
 struct SessionRow: View {
     let model: SessionStore
     let session: SessionInfo
@@ -620,7 +611,6 @@ struct WaitingRow: View {
     }
 }
 
-/// Working, or Idle when nothing works, with how many and the memory every live session holds, in one line.
 struct RunningHeader: View {
     let model: SessionStore
     let title: String
@@ -638,7 +628,6 @@ struct RunningHeader: View {
     }
 }
 
-/// A project's name above its running sessions.
 struct ProjectCaption: View {
     let name: String
     var body: some View {
@@ -647,7 +636,6 @@ struct ProjectCaption: View {
     }
 }
 
-/// Idle sessions folded into one row, with those idle half an hour or more a click from quitting.
 struct IdleFold: View {
     @Bindable var model: SessionStore
     let sessions: [LiveSession]
@@ -689,7 +677,6 @@ enum Megabytes {
     }
 }
 
-/// A finished session waiting for its next task; the viewer has the reply box.
 struct FinishedRow: View {
     let model: SessionStore
     let item: Island.Ready
@@ -716,7 +703,6 @@ struct FinishedRow: View {
     }
 }
 
-/// A running session: what it is doing now, or what looks wrong, with a note, a stop and its terminal at hand.
 struct RunningRow: View {
     let model: SessionStore
     let session: LiveSession
@@ -724,14 +710,12 @@ struct RunningRow: View {
     var body: some View {
         let id = session.sessionID ?? ""
         let busy = session.status == "busy"
-        // What the phone offers for this session, and only that.
         let commands = SessionCommands(store: model.store)
         let abilities = commands.abilities(session, status: commands.status(session))
         let noting = abilities.contains(.note)
         let waiting = model.mail[session.pid]
         let stopping = session.provider == .claude && abilities.contains(.interrupt) && waiting == nil
         let escape = (session.hosted != nil || abilities.contains(.replyTerminal)) && abilities.contains(.interrupt)
-        // As on the phone: any interactive session quits; Claude forks a running conversation; Restart Fresh needs a pane.
         let interactive = session.kind.map { $0 == "interactive" } ?? true
         let forks = interactive && session.provider == .claude && session.cwd != nil
         let restarts = interactive && session.cwd != nil && model.store.hostingWanted && model.store.hosted.available
@@ -746,8 +730,6 @@ struct RunningRow: View {
                     if session.provider == .codex { CodexMark() }
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    // Measured at a 96pt title: the title truncates first, then ports, then memory drop out.
-                    // Hovering leaves this alone; the actions cover the end of the row instead of reflowing it.
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 4) { titleSlot(title); ports; memory }
                         HStack(spacing: 4) { titleSlot(title); memory }
@@ -823,7 +805,6 @@ struct RunningRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        // The same actions the row offers, and only those.
         .accessibilityActions {
             if noting { Button("Send a Note…") { model.noting = session } }
             if escape { Button("Stop Now") { model.stop(session, now: true) } }
@@ -847,7 +828,6 @@ struct RunningRow: View {
         }
     }
 
-    /// Only memory worth acting on takes room from the title; the rest is in the row's tooltip.
     @ViewBuilder private var memory: some View {
         if let memory = session.memory, memory >= 1024 {
             Chip(text: Megabytes.text(memory), tint: .orange)
@@ -860,7 +840,6 @@ struct RunningRow: View {
         case "note": Text("Note waits for its next step").foregroundStyle(Color.accentColor)
         case "stop": Text("Stops before its next step").foregroundStyle(Color.accentColor)
         default:
-            // A large context is common enough that it never takes the place of the step a session is on.
             if let flag = session.flag, flag.kind != "bloated" {
                 Label(flag.text, systemImage: Self.symbol(flag.kind)).labelStyle(.titleAndIcon).foregroundStyle(Self.tint(flag.kind))
                     .help(Self.advice(flag.kind))
@@ -899,7 +878,6 @@ struct RunningRow: View {
     }
 }
 
-/// The one badge style for small facts beside a title: ports, memory, markers.
 struct Chip: View {
     let text: String
     var tint: Color?

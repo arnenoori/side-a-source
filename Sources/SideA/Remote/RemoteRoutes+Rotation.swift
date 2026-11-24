@@ -82,15 +82,12 @@ extension RemoteRoutes {
         RemoteServer.error(409, .cannotDeliver, "Pool mode only changes on your Mac.", details: ["hint": "poolOnMac"])
     }
 
-    /// Read-only, like the account list it sums up.
     @Sendable static func outlook(_ context: Context) async -> HTTPResponse {
         await onMain(context) { store in json(200, RotationOutlook.build(store, now: Date().timeIntervalSince1970)) }
     }
 }
 
 enum RotationOutlook {
-    /// As Settings sums up a pool: every account Autopilot may use, through Fable's cap while it follows Fable. Only
-    /// Claude has the activity the weekly rhythm comes from, so Codex shows no date.
     @MainActor static func build(_ store: AccountStore, now: Double) -> UsageOutlook {
         let rooms = AgentProvider.allCases.compactMap { provider -> UsageOutlook.Room? in
             let members = store.config.accounts.filter { $0.provider == provider && $0.ready && $0.allowAuto }

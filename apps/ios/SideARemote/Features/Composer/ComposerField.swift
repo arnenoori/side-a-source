@@ -2,7 +2,6 @@ import SideARemoteShared
 import SwiftUI
 import UIKit
 
-/// A key a hardware keyboard sends the field that the composer answers itself: the suggestion list's, and Return to send.
 enum HardwareKey: Equatable {
     case up, down, tab, escape
     case enter(shift: Bool)
@@ -19,13 +18,10 @@ enum HardwareKey: Equatable {
     }
 }
 
-/// The message field: a text view of our own, so that the attachment panel can take the keyboard's place (it is the
-/// field's input view), a picture can be pasted into it, and the hardware keyboard's keys reach the suggestion list.
 final class ComposerTextView: UITextView {
     nonisolated deinit {}
 
     var onKey: ((HardwareKey) -> Bool)?
-    /// The pasteboard Paste reads. The general one in the app; tests give their own, which doesn't reach the Mac's clipboard.
     var pasteboard: UIPasteboard = .general
     var pasteRoom: () -> Int = { 0 }
     var onPasteImage: (Data) -> Void = { _ in }
@@ -78,14 +74,11 @@ final class ComposerTextView: UITextView {
     }
 }
 
-/// The composer's text field and, with `drawer`, the keyboard's replacement. `selection` is a UTF-16 range, the unit
-/// the suggestion list works in.
 struct ComposerField: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: NSRange
     @Binding var isFocused: Bool
     let placeholder: String
-    /// What VoiceOver calls the field, when it isn't the placeholder.
     var label: String?
     var minLines = 1
     var maxLines: Int? = 6
@@ -93,11 +86,10 @@ struct ComposerField: UIViewRepresentable {
     var drawer: AttachDrawer?
     var paste: AttachTarget?
     var onKey: (HardwareKey) -> Bool = { _ in false }
-    /// The UTF-16 ranges of the text to tint as commands.
     var highlights: (String) -> [NSRange] = { _ in [] }
     @Environment(\.isEnabled) private var isEnabled
     /// UIKit doesn't see SwiftUI's tint: the user's accent comes from here.
-    @AppStorage(Accent.key, store: Accent.store) private var accent = Accent.blue
+    @AppStorage(Accent.key, store: SharedStorage.defaults) private var accent = Accent.blue
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -183,7 +175,6 @@ struct ComposerField: UIViewRepresentable {
 
         var parent: ComposerField
         weak var view: ComposerTextView?
-        /// True while a change of ours is being applied, so the delegate doesn't report it back as the user's.
         private var applying = false
         private var panel: PanelInputView?
         private var focusTask: Task<Void, Never>?
@@ -192,8 +183,6 @@ struct ComposerField: UIViewRepresentable {
             self.parent = parent
             super.init()
         }
-
-        // MARK: Text
 
         func apply(text: String, selection: NSRange, to view: ComposerTextView) {
             applying = true
@@ -220,8 +209,6 @@ struct ComposerField: UIViewRepresentable {
             parent.selection = textView.selectedRange
         }
 
-        // MARK: Focus
-
         func textViewDidBeginEditing(_ textView: UITextView) {
             if !parent.isFocused { parent.isFocused = true }
         }
@@ -241,8 +228,6 @@ struct ComposerField: UIViewRepresentable {
             }
         }
 
-        // MARK: The panel in the keyboard's place
-
         func syncPanel(of view: ComposerTextView, drawer: AttachDrawer?) {
             guard let drawer else { return }
             let wanted = drawer.takesKeyboard
@@ -257,7 +242,6 @@ struct ComposerField: UIViewRepresentable {
                     if view.isFirstResponder {
                         view.reloadInputViews()
                     } else {
-                        // Keyboard down: the panel rises in its place, with the caret in the field.
                         Task { @MainActor [weak view] in _ = view?.becomeFirstResponder() }
                     }
                 }
@@ -271,7 +255,6 @@ struct ComposerField: UIViewRepresentable {
 
         private var tap: UITapGestureRecognizer?
 
-        /// A tap on the field while the panel is up brings the keyboard back in its place.
         private func installTapIfNeeded(on view: ComposerTextView) {
             guard tap == nil else { return }
             let recognizer = UITapGestureRecognizer(target: self, action: #selector(tapped))
@@ -364,7 +347,6 @@ final class PanelInputView: UIInputView, UIGestureRecognizerDelegate {
         let velocity = pan.velocity(in: self)
         guard abs(velocity.y) > abs(velocity.x), !drawer.camera.shooting else { return false }
         if let region = drawer.dragRegion, pan.location(in: self).y > region { return false }
-        // Pulled up, only the top of the grid hands a downward drag to the panel; elsewhere the grid scrolls.
         if drawer.showsGrid { return velocity.y > 0 && drawer.gridScrolled <= 1 }
         return true
     }

@@ -31,7 +31,6 @@ def main():
     executable = contents / "MacOS/SideA"
     architectures = subprocess.check_output(["lipo", "-archs", str(executable)], text=True).split()
     require(set(architectures) == set(args.architectures), f"Unexpected architectures: {architectures}")
-    # The fixed paths AppResources reads; SwiftPM's resource bundle must not ship.
     expected_resources = {f"Resources/bridge/{path.name}": path for path in (root / "bridge").glob("*.py")}
     expected_resources["Resources/discman.json"] = root / "Sources/SideA/Resources/discman.json"
     expected_resources.update({f"Resources/AppIcons/{path.name}": path for path in (root / "Sources/SideA/Resources/AppIcons").glob("*.png")})
@@ -55,7 +54,6 @@ def main():
             "Packaged pool agent differs from release metadata")
     signature = subprocess.run(["codesign", "--display", "--verbose=2", str(pool)], capture_output=True, text=True, check=False).stderr
     require("Identifier=com.sidea.pool" in signature, "Pool helper has the wrong signing identifier")
-    # tmux is built universal (scripts/build-tmux.sh) and goes into both single-architecture apps whole.
     tmux = contents / "Helpers/tmux"
     tmux_architectures = subprocess.check_output(["lipo", "-archs", str(tmux)], text=True).split()
     require({"arm64", "x86_64"} == set(tmux_architectures), f"Unexpected tmux architectures: {tmux_architectures}")

@@ -1,8 +1,3 @@
-// A convolution ("blobby") surface: soft kernels strung from each lobe down to the tip, plus one string down the
-// middle, summed. A sum of smooth kernels has no creases, the strings swell into one dome across the front, and
-// the cleft survives because the field thins between the lobes. Kernels are weighted by their spacing so a string
-// reads as one tube rather than a row of beads. The field falls off with |z| alone, so the z = 0 slice is the front
-// silhouette. The iOS Love heart is a plump balloon: bowed sides and a fat tip kernel keep its bottom blunt.
 export const SHAPE = {
   lobe: { x: 0.5616, y: 0.3697, r: 0.4036, w: 6.3392 },
   tip: { y: -0.7949, r: 0.1724, w: 0.5482 },
@@ -53,7 +48,6 @@ function field(shape) {
   };
 }
 
-// Newton along the ray from a nearby guess, falling back to bisection whenever a step leaves the bracket.
 function surfaceAlong(sample, dx, dy, dz, guess) {
   let inside = 0, outside = 3, r = guess;
   for (let i = 0; i < 40; i++) {

@@ -54,7 +54,6 @@ final class SessionStore {
     }
     /// What each process's environment says about its login, read once per process: a pid reused later starts at another time.
     @ObservationIgnored private var identities: [Int: (started: Double?, slot: String?, codexHome: ProcessEnvironment.CodexHome?)] = [:]
-    /// Sessions that finished and wait for their next task, newest first; the island's Ready list.
     var finished: [Island.Ready] {
         let busy = Set((waiting + running.filter { $0.status == "busy" }).compactMap(\.sessionID))
         return store.island.ready.filter { $0.finish.sessionID.map { !busy.contains($0) } ?? false }
@@ -71,7 +70,6 @@ final class SessionStore {
         command { commands throws(SessionCommands.Failure) in try await commands.quit(WireBuilders.key(session)) }
     }
 
-    /// Quit Idle: those idle half an hour or more, each checked again before it goes.
     func quitStale() {
         guard !store.isDemo else { return }
         let count = stale.count
@@ -97,7 +95,6 @@ final class SessionStore {
         }
     }
 
-    /// Each of `sessions` as `fresh` shows it, when it is still the same process and passes `still`.
     nonisolated static func current(_ sessions: [LiveSession], in fresh: [LiveSession], still: (LiveSession) -> Bool) -> [LiveSession] {
         sessions.compactMap { session in
             fresh.first { $0.pid == session.pid && $0.sessionID == session.sessionID && $0.started == session.started }.flatMap { still($0) ? $0 : nil }
@@ -131,7 +128,6 @@ final class SessionStore {
     /// so ordering by them moved rows out from under the pointer.
     private(set) var running: [LiveSession] = []
 
-    /// The live sections as the list shows them; working and idle are split so idle ones can fold away.
     struct Listed {
         var waiting: [LiveSession] = []
         var finished: [Island.Ready] = []
@@ -218,18 +214,13 @@ final class SessionStore {
     private(set) var mail: [Int: String] = [:] {
         didSet { if mail != oldValue { store.remote.events?.liveChanged() } }
     }
-    /// When each pid's mail was left, for the phone's "Note waiting" line.
     private(set) var mailAt: [Int: Double] = [:]
     var noting: LiveSession?
-    /// The composer's text for each conversation, kept while another one is open.
     var drafts: [String: String] = [:]
-    /// What became of the last thing the composer sent, by conversation.
     var outcomes: [String: ComposerOutcome] = [:]
-    /// Photos waiting to go with the next reply, by conversation: stored as the phone's uploads are.
     var attachments: [String: [Upload]] = [:]
     /// Each agent's commands and skills, for the composer's suggestions; read again at most every half minute.
     var commands: (claude: [AgentOptions.Option], codex: [AgentOptions.Option]) = ([], [])
-    /// Where running sessions live, so Resume opens in the terminal you already use.
     private(set) var usualTerminal = TerminalApp.firstInstalled
     private(set) var liveByID: [String: LiveSession] = [:]
     var detail: SessionDetail?
@@ -240,7 +231,6 @@ final class SessionStore {
     var loading = false
     var error: String?
     var listError: String?
-    /// "Needs you" and "Pinned" step aside while filters narrow the list.
     var showsSections: Bool { !filtered && !searching }
     var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
     var finding = false
@@ -264,7 +254,6 @@ final class SessionStore {
     @ObservationIgnored private var changeTask: Task<Void, Never>?
     @ObservationIgnored private var changed: Set<String> = []
     @ObservationIgnored private var registryChanged = false
-    /// Transcripts changed since the last index pass, and when that pass ran.
     @ObservationIgnored private var unindexed: Set<String> = []
     @ObservationIgnored private var indexedAt = ContinuousClock.now - .seconds(60)
     private static let indexSpacing: Duration = .seconds(2)
@@ -406,7 +395,6 @@ final class SessionStore {
         }
         // Reordering results under the pointer while someone browses a search would be worse than a stale score.
         if !searching { await refresh() }
-        // Its title and cost come from the index.
         if let id = selectedID, batch.contains(where: { $0.contains(id) }) {
             invalidate(id)
             await reloadOpen(batch)
@@ -702,7 +690,6 @@ final class SessionStore {
         identities = next
     }
 
-    /// The phone's own commands, from the Sessions window: a tick once it went, or the words saying why it didn't.
     func command(_ body: @escaping @MainActor (SessionCommands) async throws(SessionCommands.Failure) -> Void) {
         let commands = SessionCommands(store: store)
         Task {
@@ -723,17 +710,14 @@ final class SessionStore {
         command { commands throws(SessionCommands.Failure) in _ = try await commands.interrupt(WireBuilders.key(session), when: now ? .now : .nextStep) }
     }
 
-    /// Review Changes: the agent reviews the uncommitted changes, by the phone's own command.
     func review(_ session: LiveSession) {
         command { commands throws(SessionCommands.Failure) in try await commands.review(WireBuilders.key(session), ReviewRequest()) }
     }
 
-    /// Compact: the session compacts its context, by the phone's own command.
     func compact(_ session: LiveSession) {
         command { commands throws(SessionCommands.Failure) in try await commands.compact(WireBuilders.key(session)) }
     }
 
-    /// The note waiting for a session, while it hasn't read it.
     func noteText(_ session: LiveSession) -> String? {
         guard mail[session.pid] == "note", let file = mailFile(session), let data = try? Data(contentsOf: file) else { return nil }
         return (try? JSONDecoder().decode([String: String].self, from: data))?["text"]
@@ -762,7 +746,6 @@ final class SessionStore {
 
     enum MailError: Error { case hooksOff, notClaude, empty, failed(String) }
 
-    /// The mail itself, shared by the island and the phone.
     func leaveMail(_ kind: String, text: String? = nil, to session: LiveSession) throws(MailError) {
         // Codex takes notes only: it runs the tool a stop's hook answer would hold back.
         guard session.provider == .claude || kind == "note", let file = mailFile(session) else { throw .notClaude }
@@ -795,7 +778,6 @@ final class SessionStore {
     private func pruneMail() {
         struct Taken: Decodable { let since: Double? }
         let running = Set(live.map(\.pid))
-        // Codex's by thread id, for the session that has it.
         let threads = Dictionary(live.filter { $0.provider == .codex }.compactMap { live in live.sessionID.map { ($0, live.pid) } }) { a, _ in a }
         func files(_ folder: URL) -> [URL] {
             ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []).filter { $0.pathExtension == "json" }
@@ -842,7 +824,6 @@ final class SessionStore {
         }
     }
 
-    /// A search hit deep in a long conversation opens on a page around it, not the newest messages.
     private func openAround(_ id: String, _ uuid: String) {
         let key = id + " " + uuid
         if let page = pages[key] {
@@ -884,7 +865,6 @@ final class SessionStore {
         return page
     }
 
-    /// Back from a page in the history to the newest messages.
     func showLatest() {
         guard let id = selectedID else { return }
         focus = nil
@@ -902,7 +882,6 @@ final class SessionStore {
         Task { _ = try? await load(id) }
     }
 
-    /// A raw reply line for the phone's transcript, image and project calls, from the conversation process.
     func remoteReply(_ args: [String]) async throws -> Data {
         if let source = transcriptSource {
             if remoteReader == nil {
@@ -923,7 +902,6 @@ final class SessionStore {
     @ObservationIgnored private(set) var listGeneration = 0
     @ObservationIgnored private var remoteReader: SessionBridge?
 
-    /// The newest messages first: a long conversation opens without decoding and laying out its whole history.
     func loadEarlier() {
         guard let id = selectedID, detail?.session.id == id else { return }
         invalidate(id)
@@ -994,7 +972,7 @@ final class SessionStore {
 
     /// With hosting wanted (terminal hosting or Remote on), starts the session in Side A's tmux server and opens a
     /// tab attached to it, so the phone can join too. Otherwise, or without tmux, it types the command into a new
-    /// login shell, as before hosting.
+    /// login shell.
     func resume(_ session: SessionInfo, fork: Bool, in app: TerminalApp) {
         if let cwd = session.cwd, !FileManager.default.fileExists(atPath: cwd) {
             error = "Its folder no longer exists (\(cwd.replacingOccurrences(of: NSHomeDirectory(), with: "~"))), so it can't be resumed there."
@@ -1068,10 +1046,8 @@ final class SessionStore {
         }
     }
 
-    /// New Session's sheet is open.
     var creating = false
 
-    /// Restart Fresh's sheet: the session it restarts.
     var restarting: LiveSession?
 
     /// Tabs asked for in the last few seconds, by session: tmux lists the client only once the tab has attached.
@@ -1094,7 +1070,6 @@ final class SessionStore {
         open(folder.map { "cd \(Shell.quote($0)) && \(attach)" } ?? attach, bare: attach, cwd: folder, in: app, file: "attach-\(name)")
     }
 
-    /// Today's unhosted launch: a login shell, so Side A's account choice applies to the resumed session.
     private func legacyResume(_ session: SessionInfo, fork: Bool, in app: TerminalApp) {
         Sounds.play(.spinUp)
         let resume = session.isCodex ? "codex resume \(session.id)" : "claude --resume \(session.id)" + (fork ? " --fork-session" : "")
@@ -1182,7 +1157,6 @@ final class SessionStore {
         Task { await showHosted(name, cwd: session.cwd, title: session.title ?? session.name) }
     }
 
-    /// The phone's Show on Mac, for a hosted session that may have no row yet.
     func showOnMac(_ name: String) async {
         let live = self.live.first { $0.hosted == name }
         let cwd = live?.cwd ?? store.hosted.sessions.first { $0.name == name }?.cwd

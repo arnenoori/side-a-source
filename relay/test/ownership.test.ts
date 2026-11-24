@@ -57,11 +57,9 @@ describe('whose Live Activity token it is', () => {
     expect((await phoneCall(phone, 'DELETE', '/v1/device')).status).toBe(204);
     apns.clear();
 
-    // The Mac kept the phone's tokens and registers them again: the challenge reaches a phone that ignores it.
     await putDevice(exPaired, phone);
     expect((await sent(exPaired, start(phone))).result).toBe('unverified');
 
-    // With a phone of its own it proves that one, and still can't reach the old phone's Lock Screen.
     const own = newPhone(exPaired);
     await putDevice(exPaired, own, { pushToStartToken: phone.pushToStartToken });
     await phoneCall(own, 'POST', '/v1/device/verify', { challenge: apns.last(own.apnsToken)!.body.verify.challenge });

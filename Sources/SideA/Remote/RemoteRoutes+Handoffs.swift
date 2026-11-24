@@ -17,7 +17,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// The paths of the photos a handoff names, among what this phone uploaded itself, or the refusal that starts nothing.
     @Sendable static func handoffImages(_ context: Context, _ body: RestartRequest) async -> (paths: [String], refusal: HTTPResponse?) {
         let ids = body.attachments ?? []
         if ids.isEmpty { return ([], nil) }

@@ -2,36 +2,26 @@ import Foundation
 import SideAProtocol
 import SwiftUI
 
-/// The composer's autocomplete, as the Mac's composer does it: a "/" word at the caret (either agent), or a Codex
-/// "$" one, lists the commands and skills the Mac's `/v1/options` names, the user's own included.
 enum CommandSuggestions {
     typealias Option = AgentOptions.Option
 
-    /// Rows matched at most, as on the Mac.
     static let limit = 8
-    /// How many rows show before the list scrolls.
     static let visibleRows = 5
 
-    /// The word the caret (a UTF-16 offset) is in or just after, when it starts with "/" or, for Codex, "$".
     static func word(in text: String, caret: Int, agent: AgentProvider) -> (range: NSRange, word: String)? {
         CaretWord.command(in: text, caret: caret, codex: agent == .codex)
     }
 
-    /// Options starting with the word first, then those containing it, in the Mac's own order.
     static func matches(_ word: String, in options: [Option]) -> [Option] { CaretWord.matches(word, in: options, limit: limit) }
 
-    /// The text with the word replaced by the chosen command and a space after it, and the caret after that space.
     static func apply(_ option: Option, to text: String, at range: NSRange) -> (text: String, caret: Int) {
         CaretWord.replace(range, in: text, with: option.id)
     }
 }
 
-/// The list over the field: each command with its description on one muted line; the highlighted row is the one
-/// Return or Tab takes from a hardware keyboard. From L8's draft.
 struct CommandSuggestionList: View {
     let options: [AgentOptions.Option]
     let highlighted: Int
-    /// The options are paths: each shows its file's name over its folder.
     var files = false
     let onPick: (AgentOptions.Option) -> Void
 

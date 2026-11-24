@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 
 /// A feature one side offers. The phone shows a feature only when the Mac's `Hello` lists it.

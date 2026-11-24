@@ -3,7 +3,6 @@ import Photos
 import SwiftUI
 import UIKit
 
-/// The + held: the newest photos above the field, slid along by the finger that held the + and attached on release.
 @MainActor @Observable
 final class RecentStrip {
     nonisolated deinit {}
@@ -20,7 +19,6 @@ final class RecentStrip {
     private(set) var hovered: Int?
     private(set) var tracking = false
     private(set) var offset: CGFloat = 0
-    /// A finger is on the +, set by it.
     var pressing = false
     var access: PhotoAccess { photos.access }
 
@@ -34,27 +32,21 @@ final class RecentStrip {
     @ObservationIgnored private var entered = false
     @ObservationIgnored private var fingerDown = false
     @ObservationIgnored private var outside: OutsideTap?
-    /// When it last went away, so the tap that closed it doesn't also count as a tap on the +.
     @ObservationIgnored private var closedAt = Date.distantPast
 
     var closedJustNow: Bool { Date().timeIntervalSince(closedAt) < 0.4 }
 
-    /// The finger touched the +: with access already given, the list is read now so the strip has it by the time the
-    /// press counts as a hold. Nothing is asked here.
     func prepare() {
         guard PhotoAccess(PHPhotoLibrary.authorizationStatus(for: .readWrite)).canListRecents, !isShown else { return }
         Task { await photos.open() }
     }
 
-    /// Shows the strip, asking for the library first if nobody has. False when there is nothing to show (refused, or a
-    /// library with no photos): the caller opens the menu instead, so a hold never ends nowhere.
     func show(held: Bool, window: UIWindow?) async -> Bool {
         fingerDown = held
         let asked = PhotoAccess(PHPhotoLibrary.authorizationStatus(for: .readWrite)).asksOnOpen
         await photos.open()
         guard photos.access.canListRecents else { return false }
         assets = Array(photos.assets.prefix(Self.count))
-        // A limited library with nothing shared still shows, with the way to share some.
         guard !assets.isEmpty || photos.access.canWiden else {
             photos.close()
             return false
@@ -86,8 +78,6 @@ final class RecentStrip {
         hovered = min(max(index, 0), assets.count - 1)
     }
 
-    /// The finger lifted: on a photo it attaches; off the strip after being on it, the strip goes; never having reached
-    /// it, the strip stays for a tap.
     func release(at point: CGPoint) {
         fingerDown = false
         guard isShown, tracking else { return }
@@ -98,7 +88,6 @@ final class RecentStrip {
         hovered = nil
     }
 
-    /// The system took the touch (an alert, a call): the strip stays, for taps.
     func cancelTracking() {
         fingerDown = false
         tracking = false
@@ -143,7 +132,6 @@ final class RecentStrip {
         }
     }
 
-    /// The strip's height and a margin a thumb covering a photo still counts in: more above, where the thumb's tip is.
     private func inBand(_ point: CGPoint) -> Bool {
         point.y >= frame.minY - 36 && point.y <= frame.maxY + 14 && point.x >= frame.minX - 24 && point.x <= frame.maxX + 24
     }
@@ -206,10 +194,8 @@ struct RecentStripView: View {
         }
         .scrollPosition($position)
         .scrollIndicators(.hidden)
-        // While the finger slides, it moves the strip, not a scroll of its own.
         .scrollDisabled(strip.tracking)
         .frame(height: RecentStrip.cell + RecentStrip.inset * 2)
-        // Photos soften into the glass at both ends rather than being cut off by it.
         .mask {
             HStack(spacing: 0) {
                 LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: RecentStrip.fade)
@@ -256,8 +242,6 @@ private struct StripCell: View {
                 .contentShape(.rect(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
-        // Lifted from its bottom edge, up out of the row toward the finger; the rest step aside by as much as it grew,
-        // by transform, so nothing re-lays out while the finger slides.
         .scaleEffect(hovered && !reduceMotion ? RecentStrip.lift : 1, anchor: .bottom)
         .offset(x: reduceMotion ? 0 : aside)
         .zIndex(hovered ? 1 : 0)

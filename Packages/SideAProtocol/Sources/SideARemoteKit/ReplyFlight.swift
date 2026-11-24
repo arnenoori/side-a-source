@@ -109,16 +109,13 @@ extension ReplyFlight.Phase {
         case (_, .unsent(let reason)): .unsent(reason: reason)
         case (.signing, .signed): .queued(resigned: false)
         case (.resigning, .signed): .queued(resigned: true)
-        // From `waiting` only: Face ID declined, or not asked, while the app is in the background.
         case (.signing, .deferred): .waiting
-        // A refusal that asks for Face ID while away: held unsigned (as a new item) until the app is in front.
         case (.queued(resigned: false), .deferred): .waiting
         case (.queued(resigned: false), .resign): .resigning
         // A second refusal stands: `ReplyFlight.next(after:)` reads it as unsent, never as `resign`.
         case (.queued(resigned: true), .resign), (.queued(resigned: true), .deferred): nil
         case (.queued, .unanswered): .waiting
         case (.unsent, .send), (.waiting, .send): .signing
-        // Retry goes by the Mac's outcome, not the phase, and a queued reply's bubble offers none; kept as the code allows it.
         case (.queued, .send): .signing
         case (.unsent, .restored), (.waiting, .restored): self
         case (.queued, .restored(inQueue: true)): self

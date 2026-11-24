@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 @testable import SideAProtocol
 import SideAProtocolFixtures
@@ -14,7 +18,6 @@ private func object(_ value: some Encodable) throws -> [String: Any] {
     try #require(try JSONSerialization.jsonObject(with: encoder.encode(value)) as? [String: Any])
 }
 
-/// What an older Mac sends a newer phone: none of the new fields, and every old one still reads.
 @Test func aNewPhoneReadsAnOlderMac() throws {
     let account = try JSONDecoder().decode(RemoteAccount.self, from: Fixtures.data("RemoteAccount.claude"))
     #expect(account.priority == nil && account.allowAuto == nil && account.limited == nil && account.fableOut == nil && account.issue == nil && account.backAt == nil)
@@ -28,8 +31,6 @@ private func object(_ value: some Encodable) throws -> [String: Any] {
     #expect(session.limit == nil)
 }
 
-/// What a new Mac sends an older phone. The old shapes are spelled out here: a phone keeps reading what it knew, and
-/// takes an event it doesn't know for `.unknown`.
 @Test func anOldPhoneReadsANewMac() throws {
     struct OldAccount: Decodable { let id, name, email: String; let provider: AgentProvider; let ready, active: Bool; let sessions: Int }
     struct OldDecision: Decodable { let id: String; let at: Double; let kind, title, reason: String; let sessions: [AutopilotDecision.Moved] }
@@ -47,18 +48,14 @@ private func object(_ value: some Encodable) throws -> [String: Any] {
     let old = try JSONDecoder().decode(OldState.self, from: encoder.encode(state))
     #expect(old.enabled && old.decisions.first?.kind == "priorityWait" && old.pending?.id == "h")
 
-    // A kind the phone has no case for still decodes.
     #expect(try JSONDecoder().decode(AutopilotDecision.self, from: encoder.encode(hold)).kind.rawValue == "priorityWait")
 
-    // The event's envelope, as a build without the case sees it.
     let frame = try encoder.encode(EventEnvelope(seq: 7, at: 1, event: .autopilotUpdate(state)))
     let text = String(decoding: frame, as: UTF8.self).replacingOccurrences(of: "autopilot.update", with: "autopilot.tomorrow")
     let future = try JSONDecoder().decode(EventEnvelope.self, from: Data(text.utf8))
     #expect(future.seq == 7 && future.event == .unknown(type: "autopilot.tomorrow") && !future.event.isState)
 
-    // A phone without the toggle sends no `rotation`: it wants none.
     #expect(try JSONDecoder().decode(NotificationPrefs.self, from: Fixtures.data("future/NotificationPrefs.before-health")).rotation == nil)
-    // And no `macQuiet`: the relay says nothing to it about its Mac going quiet.
     #expect(try JSONDecoder().decode(NotificationPrefs.self, from: Fixtures.data("future/NotificationPrefs.before-health")).macQuiet == nil)
     let quiet = NotificationPrefs(macQuiet: true, rotation: false)
     #expect(try JSONDecoder().decode(NotificationPrefs.self, from: JSONEncoder().encode(quiet)).macQuiet == true)
@@ -86,7 +83,6 @@ private func object(_ value: some Encodable) throws -> [String: Any] {
     #expect(try JSONDecoder().decode(UsageOutlook.self, from: encoder.encode(outlook)) == outlook)
 }
 
-/// Each subject binds the exact change, so a signature for one never does another.
 @Test func rotationSubjectsBindTheChange() throws {
     #expect(try ConfirmMessage.subject(account: "a1", priority: .last) == "a1:priority:last")
     #expect(try ConfirmMessage.subject(account: "a1", auto: false) == "a1:auto:false")

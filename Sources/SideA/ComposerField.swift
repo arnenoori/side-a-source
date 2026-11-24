@@ -13,7 +13,6 @@ struct ComposerField: NSViewRepresentable {
     var onKey: (Key) -> Bool
     /// Images pasted or dropped onto the text; true when they were taken.
     var onImages: ([Data]) -> Bool = { _ in false }
-    /// Where the caret is, for a suggestion list that reads the word under it.
     var onCaret: (Int) -> Void = { _ in }
 
     static let font = NSFont.systemFont(ofSize: 13)
@@ -110,7 +109,6 @@ struct ComposerField: NSViewRepresentable {
         }
     }
 
-    /// Draws the placeholder, and hands pasted or dropped images to the composer rather than the text.
     final class TextView: NSTextView {
         var placeholder = ""
         weak var coordinator: Coordinator?
@@ -138,7 +136,6 @@ struct ComposerField: NSViewRepresentable {
         }
     }
 
-    /// Image files, or image data, on a pasteboard; text and other files are left to the text view.
     static func images(on board: NSPasteboard) -> [Data] {
         let urls = (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         let files = urls.filter { url in

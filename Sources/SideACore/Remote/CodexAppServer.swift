@@ -9,7 +9,6 @@ public enum CodexAppServer {
         URL(fileURLWithPath: home).appendingPathComponent("app-server-control/app-server-control.sock").path
     }
 
-    /// A JSON value that crosses actors.
     public indirect enum JSON: Sendable, Equatable, Codable {
         case null, bool(Bool), number(Double), string(String), array([JSON]), object([String: JSON])
 
@@ -173,7 +172,6 @@ public enum CodexAppServer {
             reason = params["reason"]?.string
         }
 
-        /// What the island shows. File changes name their files when the item that proposed them was seen.
         public func request(files: [String], diff: String) -> IslandRequest {
             let action: IslandAction = switch kind {
             case .command: .command(command ?? "")
@@ -259,7 +257,6 @@ public enum CodexAppServer {
                     length = Int(view[2]) << 8 | Int(view[3]); offset = 4
                 } else if length == 127 {
                     guard view.count >= 10 else { return nil }
-                    // Unsigned until checked: a top bit set would make a negative Int that passes the limit.
                     let wide = view[2..<10].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
                     guard wide <= UInt64(maxMessage) else { throw AppServerClient.Failure.refused }
                     length = Int(wide); offset = 10
@@ -298,7 +295,6 @@ public enum CodexAppServer {
     public struct Settings: Sendable, Equatable {
         public var model: String
         public var effort: String?
-        /// The collaboration mode, "default" or "plan".
         public var mode: String
         /// `approvalPolicy` and `sandboxPolicy` as the daemon gave them.
         public var approval: JSON?
@@ -321,16 +317,13 @@ public enum CodexAppServer {
                       approval: json["approvalPolicy"], sandbox: json["sandboxPolicy"])
         }
 
-        /// Full access (no sandbox) or no approvals: a raise from the phone, which needs Face ID.
         public var fullAccess: Bool { sandbox?["type"]?.string == "dangerFullAccess" }
         public var neverAsks: Bool { approval?.string == "never" }
         public var raised: Bool { fullAccess || neverAsks }
 
-        /// One mode for the row: plan, then the raises, then default.
         public var shown: String { mode == "plan" ? "plan" : fullAccess ? Self.fullAccessMode : neverAsks ? Self.neverMode : mode }
         public static let neverMode = "never", fullAccessMode = "dangerFullAccess"
 
-        /// `thread/settings/update` for a raise, or for lowering one back to `base`, what the session ran with before.
         public func raise(thread: String, to mode: String) -> JSON {
             var params: [String: JSON] = ["threadId": .string(thread)]
             if mode == Self.neverMode { params["approvalPolicy"] = .string("never") }
@@ -457,7 +450,6 @@ public enum CodexAppServer {
         }
         close()
         return files.map { file in
-            // Hunks past the cap are left out whole.
             FileDiff(path: file.path, oldPath: file.oldPath, change: file.change, additions: file.added, deletions: file.removed,
                      hunks: file.hunks.filter { !$0.lines.isEmpty || $0.oldCount + $0.newCount == 0 }, truncated: file.truncated)
         }

@@ -16,8 +16,6 @@ final class RecoveryTests: XCTestCase {
 
     private func stale() -> MacConnection { MacConnection(name: "Studio", state: .connecting, lastSeen: .now) }
 
-    // MARK: What the offline screen says
-
     func testTailscaleOffOnlyWithNoRelayToReachTheMacAnyway() {
         let mac = stale()
         mac.vpnUp = false
@@ -74,8 +72,6 @@ final class RecoveryTests: XCTestCase {
         XCTAssertFalse(message.contains("0.6"))
     }
 
-    // MARK: Reply retry
-
     private final class Silent: Transport, @unchecked Sendable {
         func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) { throw URLError(.notConnectedToInternet) }
         func socket(_ request: URLRequest) -> any SocketConnection { fatalError("no socket") }
@@ -99,7 +95,6 @@ final class RecoveryTests: XCTestCase {
         XCTFail("the outbox never had \(count)")
     }
 
-    /// An item the engine no longer holds goes fresh, which used to send plain text as `auto`.
     func testARetrySentFreshKeepsWhatTheReplyCarried() async throws {
         let outbox = try outbox()
         let link = LiveLink(mac: PairedMac(endpoint: endpoint, deviceID: "d", deviceName: "iPhone"), outbox: outbox, transport: Silent())
@@ -127,8 +122,6 @@ final class RecoveryTests: XCTestCase {
         XCTAssertEqual(sent.first?.mode, .auto)
         XCTAssertEqual(sent.first?.attachments, [])
     }
-
-    // MARK: Push
 
     private final class Requests: @unchecked Sendable {
         private let lock = NSLock()

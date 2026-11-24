@@ -157,7 +157,6 @@ class WorktreeTests(unittest.TestCase):
         git(self.repo, "worktree", "add", "-b", "messy", str(self.dirty))
         (self.dirty / "scratch.txt").write_text("untracked")
         git(self.repo, "worktree", "add", "-b", "new", str(self.fresh))
-        # Repositories are found through the folders indexed sessions ran in.
         self.root = self.base / "SideA"
         project = self.base / "home/.claude/projects/-repo"
         project.mkdir(parents=True)
@@ -177,11 +176,9 @@ class WorktreeTests(unittest.TestCase):
         self.assertTrue(found["dirty"]["dirty"])
         self.assertLess(found["merged"]["age"], 600)
         self.assertEqual((found["merged"]["inUse"], found["merged"]["refused"]), (False, None))
-        # A brand new worktree isn't merged until it has sat untouched for a week.
         self.assertFalse(found["fresh"]["merged"])
         with patch.object(cleanup.time, "time", return_value=time.time() + 8 * 86400):
             self.assertTrue(self.listing()["fresh"]["merged"])
-        # Claude Code's registry counts as in use beside lsof; a failed check refuses.
         registry = Path.home() / ".claude/sessions"
         registry.mkdir(parents=True)
         (registry / "a.json").write_text(json.dumps({"pid": os.getpid(), "cwd": str(self.ahead / "sub")}))
@@ -195,17 +192,14 @@ class WorktreeTests(unittest.TestCase):
         self.assertIn("Could not check", cleanup.refusal(str(self.merged), None))
 
     def test_removal_refuses_whatever_would_lose_work_and_removes_a_clean_merged_worktree(self):
-        # Uncommitted files and the main checkout stay.
         self.assertFalse(cleanup.remove_worktree(str(self.dirty))["removed"])
         self.assertTrue((self.dirty / "scratch.txt").exists())
         self.assertFalse(cleanup.remove_worktree(str(self.repo))["removed"])
-        # A commit on no branch exists only there.
         lone = self.base / "lone"
         git(self.repo, "worktree", "add", "--detach", str(lone))
         (lone / "d.txt").write_text("d")
         git(lone, "add", ".")
         git(lone, "commit", "-m", "only here")
-        # Ignored files a build brings back don't block; a secret does.
         (self.merged / "node_modules/pkg").mkdir(parents=True)
         (self.merged / "node_modules/pkg/index.js").write_text("x")
         found = self.listing()
@@ -223,7 +217,6 @@ class WorktreeTests(unittest.TestCase):
         self.assertIn(".env", result["error"])
         self.assertTrue((self.merged / ".env").exists())
         (self.merged / ".env").unlink()
-        # A process working there blocks it until it's gone.
         process = subprocess.Popen(["sleep", "30"], cwd=self.merged)
         self.addCleanup(process.wait)
         self.addCleanup(process.kill)

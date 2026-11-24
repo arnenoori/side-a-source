@@ -2,19 +2,13 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// Replies sent into a Claude or Codex session, followed until the agent has read them, so the phone says where each
-/// one is from the agent's own record rather than from seeing its words come back: Claude's transcript, Codex's
-/// rollout, or Codex's app server, which reports by `clientUserMessageId` through `codex(client:_:)`.
 /// A record line is about one message, so it settles one reply, the oldest it fits: two "yes" in one turn are two lines.
 @MainActor final class ReplyReceipts {
     private struct Watch {
-        /// Nil for a hosted pane whose session isn't in the live list yet.
         var pid: Int?
         let hosted: String?
         let agent: AgentProvider
-        /// What the record will show: the reply, or the one prompt it went in with others.
         var text: String
-        /// The reply's own words, as the phone sent them: a retry is answered from this one only if it says the same.
         let asked: String
         var transcript: URL?
         var start: UInt64
@@ -23,11 +17,8 @@ import SideAProtocol
         let delivery: ReplyResult.Delivery
         var client: String?
         var stop = StopState.none
-        /// Typed as one prompt with others: the line that reads one reads them all.
         var batch: String?
-        /// Codex's rollout: a turn ended without it, and none has started since.
         var ended: (at: Double, interrupted: Bool)?
-        /// When it went `expired`.
         var expired: Double?
 
         var state: Following { expired != nil ? .expired(receipt.stage) : Following(receipt.stage) }
@@ -36,13 +27,11 @@ import SideAProtocol
         var letGo: Double? { if case .stopping(let letGo) = stop { letGo } else { nil } }
     }
 
-    /// Where a Stop has a reply: one being taken back isn't carried, and a carried one isn't taken back again.
     enum StopState: Hashable {
         case none
         /// A Stop is taking it back from the prompt, so Claude letting go of it isn't the end: that waits in `letGo` for
         /// the Stop's outcome, and stands if it found nothing.
         case stopping(letGo: Double?)
-        /// Interrupt and Send: off the prompt since then, to go ahead of the message that follows.
         case carried(since: Double)
 
         enum Event: Equatable, CaseIterable {
@@ -65,9 +54,6 @@ import SideAProtocol
         }
     }
 
-    /// A watch's receipt, and with `StopState` all of where a watched reply stands: followed while the agent hasn't read
-    /// it, then kept `kept` for a phone that was away. One with no word for `patience` expires: it is left out of
-    /// `receipts` and no longer looked for.
     enum Following: Hashable {
         case open(ReplyReceipt.Stage)
         case settled(ReplyReceipt.Stage)
@@ -93,28 +79,20 @@ import SideAProtocol
         }
     }
 
-    /// What a Stop found in the prompt after Esc, for the replies it was taking back, oldest first.
     enum TakeBack: Equatable {
-        /// The replies from `from` on were all the prompt held, and it was cleared; earlier ones weren't there.
         case cleared(from: Int)
-        /// Something Side A can't tell for the phone's alone: left as it was.
         case left
-        /// Nothing came back.
         case absent
     }
 
-    /// A settled receipt stays this long, for a phone that was away when it settled.
     static let kept: Double = 300
     /// As on the app server: a Codex turn that ended without the message, with no other starting, won't take it.
     static let unseen: Double = 30
-    /// A transcript that stops saying anything (its format changed, say) isn't read for ever.
     static let patience: Double = 3600
-    /// Interrupt and Send's message comes right after the stop; without it, what the stop took back goes back.
     static let carry: Double = InterruptTiming.carried
 
     private weak var store: AccountStore?
     private var watches: [String: Watch] = [:]
-    /// Each transcript is read once per pass, from where the last pass ended.
     private var cursors: [URL: UInt64] = [:]
     /// Claude's `remove` lines still owed their `queued_command` echo, by transcript.
     private var echoes: [URL: [(text: String, at: Double)]] = [:]
@@ -125,9 +103,6 @@ import SideAProtocol
     init(store: AccountStore?) { self.store = store }
 
     /// Before typing, so that only what the transcript records after it counts. False when there is nothing to follow.
-    /// `asked`: the reply's own words when `text` is the prompt it goes in with others.
-    /// A session just started or continued may have no id or transcript yet: it is followed all the same, for retries and
-    /// for a Stop, and its transcript is read from when it appears.
     @discardableResult func expect(_ key: String?, text: String, asked: String? = nil, live: LiveSession, delivery: ReplyResult.Delivery = .typed) -> Bool {
         guard let key else { return false }
         let transcript = live.sessionID.flatMap { transcript(live, id: $0) }
@@ -138,7 +113,6 @@ import SideAProtocol
         return true
     }
 
-    /// A hosted pane whose session the live list doesn't show yet: followed by the pane's name until it does.
     func expect(_ key: String?, text: String, asked: String? = nil, hosted name: String, agent: AgentProvider, delivery: ReplyResult.Delivery = .typed) {
         guard let key else { return }
         let now = Date().timeIntervalSince1970
@@ -195,13 +169,11 @@ import SideAProtocol
         follow()
     }
 
-    /// An attempt under this key's family went in and is still followed: a retry of it is answered from that attempt.
     func follows(_ key: String?) -> Bool {
         guard let key, let watch = watches[ReplyReceipt.family(key)] else { return false }
         return watch.receipt.stage != .unsent
     }
 
-    /// Typing failed, and the reply's answer says so.
     func forget(_ key: String?) {
         guard let key, watches.removeValue(forKey: ReplyReceipt.family(key)) != nil else { return }
         changed()
@@ -216,7 +188,6 @@ import SideAProtocol
         return watch.delivery
     }
 
-    /// Interrupt and Send types a reply in one prompt with others, so the record shows that prompt, not the reply.
     func typed(_ key: String?) -> String? {
         key.flatMap { watches[ReplyReceipt.family($0)]?.text }
     }
@@ -256,17 +227,14 @@ import SideAProtocol
         return nil
     }
 
-    /// Codex's app server on a message it was sent: `held` in the running turn, `read` as a user item, or dropped.
     func codex(client: String, _ stage: ReplyReceipt.Stage, reason: String? = nil) {
         for (key, watch) in watches where watch.client == client && watch.receipt.stage != .read { settle(key, stage, reason: reason) }
     }
 
-    /// Sent again after an interrupt, under the id of the turn that carries it now.
     func codex(client: String, becomes next: String) {
         for (key, watch) in watches where watch.client == client { watches[key]?.client = next }
     }
 
-    /// The pane's own check found this reply wasn't submitted; the transcript, when it has spoken, knows better.
     func unsent(_ key: String, reason: String) {
         let key = ReplyReceipt.family(key)
         Task {
@@ -277,9 +245,6 @@ import SideAProtocol
         }
     }
 
-    // MARK: Stop
-
-    /// Before an Esc in a hosted pane: the phone's replies the agent hasn't read, oldest first, for the Stop to take back.
     /// One sent to wait for the turn (Codex's Tab) isn't the step's, and stays.
     func stopping(hosted name: String) async -> [(key: String, text: String)] {
         _ = await scan()
@@ -312,13 +277,11 @@ import SideAProtocol
         }
     }
 
-    /// Interrupt and Send's message is typed after what its stop took back, as one prompt: those replies, oldest first.
     func carried(hosted name: String) -> [(key: String, text: String)] {
         watches.filter { $0.value.hosted == name && $0.value.carried != nil && $0.value.open }.sorted { $0.value.since < $1.value.since }
             .map { ($0.key, $0.value.text) }
     }
 
-    /// Before typing `text`, the one prompt `keys` go in with the reply under `key`.
     func join(_ keys: [String], with key: String?, text: String) {
         guard !keys.isEmpty else { return }
         let batch = key.map(ReplyReceipt.family) ?? UUID().uuidString
@@ -331,7 +294,6 @@ import SideAProtocol
         }
     }
 
-    /// The prompt they were to go in wasn't typed: back to the phone, as a plain Stop would have given them.
     func release(_ keys: [String]) {
         for key in keys { if let watch = watches[key], watch.open { settle(key, .unsent, reason: ReplyReceipt.stopped(agent: watch.agent)) } }
     }
@@ -345,7 +307,6 @@ import SideAProtocol
         return rows.isEmpty ? nil : rows
     }
 
-    /// `batch`: every reply typed in the same prompt goes with it.
     private func settle(_ key: String, _ stage: ReplyReceipt.Stage, at: Double = Date().timeIntervalSince1970, reason: String? = nil, batch: Bool = false) {
         let keys = batch ? watches[key]?.batch.map { group in watches.filter { $0.value.batch == group }.map(\.key) } ?? [key] : [key]
         for key in keys {
@@ -368,7 +329,6 @@ import SideAProtocol
         }
     }
 
-    /// One look at every unsettled reply's record; false once nothing is left to follow.
     private func scan() async -> Bool {
         if let scanning { return await scanning.value }
         let pass = Task { await self.pass() }
@@ -423,7 +383,6 @@ import SideAProtocol
         return !watches.isEmpty
     }
 
-    /// The oldest reply in `stages` that this line, at `offset` of `file`, can be about.
     private func owner(of text: String, at offset: UInt64, in file: URL, _ stages: Set<ReplyReceipt.Stage>, letGo: Bool = false,
                        match: (String, String) -> ClaudeQueueEvidence.Match?) -> String? {
         var best: (key: String, since: Double)?
@@ -474,7 +433,6 @@ import SideAProtocol
         }
     }
 
-    /// The whole lines written after `offset`, each with where it starts, and where they end.
     nonisolated private static func lines(_ url: URL, from offset: UInt64) -> ([(UInt64, Substring)], UInt64) {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return ([], offset) }
         defer { try? handle.close() }

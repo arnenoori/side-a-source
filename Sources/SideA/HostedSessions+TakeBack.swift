@@ -1,7 +1,6 @@
 import Foundation
 import SideACore
 
-/// A Stop's take-back of the phone's replies from a hosted pane's prompt.
 extension HostedSessions {
     /// After Esc, Claude Code puts the messages it held unread back into its prompt, where nothing sends them; a Stop
     /// isn't a send, so they come off it. Only when the whole prompt is the phone's replies, the newest of `texts`

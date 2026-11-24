@@ -4,8 +4,6 @@ import SideARemoteShared
 import SwiftUI
 import VisionKit
 
-/// Scan the code on the Mac (setup, "Scan"). A Side A code freezes the frame and the pairing card
-/// rises over it; anything else gets a short capsule and the scanner keeps looking.
 struct ScannerScreen: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
@@ -19,12 +17,9 @@ struct ScannerScreen: View {
     @State private var torch = false
     @State private var scannerFailed = false
     @State private var locked = 0
-    /// A code for a Mac on another tailnet than one already paired, waiting for Pair Anyway.
     @State private var otherTailnet: OtherTailnet?
-    /// A code that may not be from the Mac it names, waiting for Pair Anyway.
     @State private var identity: OtherTailnet?
     @State private var askingDemo = false
-    /// "Pair Again with MacBook Pro" when re-pairing.
     var title: String?
 
     private var supported: Bool { DataScannerViewController.isSupported && !scannerFailed }
@@ -129,7 +124,6 @@ struct ScannerScreen: View {
             root.openDemo()
             dismiss()
         }
-        // Back from Settings with the camera allowed: scan without reopening.
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { access = AVCaptureDevice.authorizationStatus(for: .video) }
         }
@@ -175,7 +169,6 @@ struct ScannerScreen: View {
     }
 }
 
-/// Two Macs on different tailnets, and no relay to reach across them.
 struct OtherTailnet: Identifiable {
     let invitation: PairingClient.Invitation
     let title: String
@@ -183,7 +176,6 @@ struct OtherTailnet: Identifiable {
     static let message = "Your \(ThisDevice.kind) reaches one tailnet at a time, so only one of them will connect."
 }
 
-/// The back camera's light, for a code on a dim screen.
 private enum Torch {
     static var available: Bool { AVCaptureDevice.default(for: .video)?.hasTorch == true }
 
@@ -194,7 +186,6 @@ private enum Torch {
     }
 }
 
-/// The corners of the scanning frame.
 private struct Viewfinder: View {
     var body: some View {
         RoundedRectangle(cornerRadius: 28, style: .continuous)
@@ -204,11 +195,9 @@ private struct Viewfinder: View {
     }
 }
 
-/// VisionKit's scanner, QR codes only.
 private struct QRScanner: UIViewControllerRepresentable {
     let paused: Bool
     let found: (String) -> Void
-    /// The camera wouldn't start (in use elsewhere, or restricted).
     let failed: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(found: found) }
@@ -248,7 +237,6 @@ private struct QRScanner: UIViewControllerRepresentable {
 /// the Mac's key hash: without one the connection can't be pinned, and the 6 digits alone could be ground by a
 /// machine in the middle.
 enum PairingLink {
-    /// One of the two forms, with nothing beside the fragment: no user, port or query.
     static func isForm(_ url: URL) -> Bool {
         let scheme = url.scheme?.lowercased(), host = url.host()?.lowercased()
         let form = (scheme == "sidea-remote" && host == "pair" && ["", "/"].contains(url.path()))

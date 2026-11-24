@@ -2,7 +2,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// The Mac's setup state for the phone's one-time rows, and what its composer can offer per agent.
 extension RemoteRoutes {
     static let setupRoutes: [Route] = [
         Route("GET", "v1/setup", setup),
@@ -32,12 +31,9 @@ extension RemoteRoutes {
     }
 }
 
-/// Side A has no model menu of its own, so the options are what each CLI takes and what this Mac has used: the
-/// aliases, then the models in the usage report or Codex's config, then the user's own commands and skills.
 enum RemoteOptions {
     typealias Option = AgentOptions.Option
 
-    /// What the main actor knows of the Mac before the slower reads start.
     private struct Known: Sendable {
         let claude: Bool
         let codex: String?
@@ -46,12 +42,10 @@ enum RemoteOptions {
         let signedIn: Set<AgentProvider>
     }
 
-    /// Each agent's models, efforts and commands: the phone's options and the Sessions window's New Session.
     static func agents(_ controller: RemoteController) async -> [AgentOptions]? {
         let known = await MainActor.run { () -> Known? in
             guard let store = controller.store else { return nil }
             let used = (store.report?.models ?? []).sorted { $0.total > $1.total }.compactMap(\.model)
-            // A demo never runs the real Codex, and reads only its own folders.
             let codex = store.isInstalled(.codex) && !store.isDemo ? store.dependencies.agent(.codex).path : nil
             return Known(claude: store.isInstalled(.claude), codex: codex, used: used, homes: homes(store),
                          signedIn: Set(AgentProvider.allCases.filter { SessionCommands.signedIn(store, $0) }))
@@ -65,7 +59,6 @@ enum RemoteOptions {
                              signedIn: known.signedIn.contains(.codex))]
     }
 
-    /// Where each agent keeps its commands: the user's home, or a demo's own folder; Codex's CODEX_HOME when set.
     struct Homes: Sendable {
         let home: URL
         let codex: URL
@@ -76,8 +69,6 @@ enum RemoteOptions {
         return Homes(home: home, codex: ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) } ?? home.appendingPathComponent(".codex"))
     }
 
-    /// Each agent's built-ins, commands and skills, for the phone's options and the Sessions window's suggestions.
-    /// Reading every command and skill file is the slow part; a new one shows within half a minute.
     static func commands(_ homes: Homes, cache: RemoteCache) async -> (claude: [Option], codex: [Option]) {
         let commands = try? await cache.value("commands \(homes.home.path) \(homes.codex.path)", ttl: 30) {
             await Task.detached { (claudeCommands(home: homes.home.appendingPathComponent(".claude")), codexCommands(home: homes.codex)) }.value
@@ -105,7 +96,6 @@ enum RemoteOptions {
         }
     }
 
-    /// What `codex debug models` lists, each with the levels it takes; none and minimal are never offered.
     struct CodexCatalog: Decodable {
         struct Model: Decodable {
             struct Level: Decodable { let effort: String }
@@ -134,7 +124,6 @@ enum RemoteOptions {
         var codex: (at: Date, home: URL, models: [ModelOption])?
     }
 
-    /// From Codex itself, kept ten minutes; without it, the model Codex's config names, with no efforts to offer.
     static func codexModels(codex: String?, home: URL) async -> [ModelOption] {
         if let cached = cache.lock.withLock({ cache.codex }), cached.home == home, Date().timeIntervalSince(cached.at) < 600 { return cached.models }
         if let codex {
@@ -157,7 +146,6 @@ enum RemoteOptions {
             }.first
     }
 
-    /// A start's effort, checked against the model it runs; nil when it can be run.
     static func refusal(effort: String?, model: String?, agent: AgentProvider, options: [AgentOptions]) -> String? {
         guard let effort, effort != Effort.auto.rawValue || agent == .claude else { return nil }
         let models = options.first { $0.agent == agent }?.models ?? []
@@ -199,7 +187,6 @@ enum RemoteOptions {
         return unique(codexBuiltIn + prompts + self.skills(in: skills, prefix: "$") + self.skills(in: skills.appendingPathComponent(".system"), prefix: "$"))
     }
 
-    /// Each `<name>/SKILL.md` in a folder, by name; dot folders are left out.
     private static func skills(in folder: URL, prefix: String) -> [Option] {
         ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted().compactMap { name -> Option? in
             let file = folder.appendingPathComponent("\(name)/SKILL.md")
@@ -210,7 +197,6 @@ enum RemoteOptions {
 
     static let maxCommands = 300
 
-    /// Markdown files under a folder and their names relative to it, without `.md`.
     private static func markdown(in folder: URL, recursive: Bool) -> [(URL, String)] {
         let base = folder.resolvingSymlinksInPath().path + "/"
         guard let walker = FileManager.default.enumerator(at: folder.resolvingSymlinksInPath(), includingPropertiesForKeys: nil,
@@ -222,7 +208,6 @@ enum RemoteOptions {
         }.sorted { $0.1 < $1.1 }
     }
 
-    /// The front matter's `description`, else the first line of text, cut to a row.
     static func summary(_ file: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }

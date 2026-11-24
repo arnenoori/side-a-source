@@ -80,7 +80,6 @@ final class HostedSessions {
         var worktree: String?
     }
 
-    /// Something on a session's screen the user should decide about.
     struct Attention: Sendable, Equatable {
         /// "unsent": a reply may not have gone in.
         let kind: String
@@ -100,24 +99,21 @@ final class HostedSessions {
     let root: URL
     /// Overrides for every tmux and launcher run, for tests: SIDE_A_TMUX_SOCKET (a socket path in
     /// place of `-L sidea`) and HOME.
-    private let environment: [String: String]
+    let environment: [String: String]
     private let bridge: @MainActor ([String]) async throws -> Data
     private let changed: @MainActor () async -> Void
     /// A fresh `sessions.py live`: every live process, idle ones included.
     let live: @MainActor () async -> [LiveSession]?
-    /// Raised for the phone (hosted.attention).
     @ObservationIgnored var onAttention: (@MainActor (String, Attention) -> Void)?
-    /// After every reading of the server, for the phone's terminals (window size, copy mode).
     @ObservationIgnored var onRefresh: (@MainActor () -> Void)?
     /// A session's agent exited, before the session goes: its exit status (nil when a signal ended it), and killed
     /// when `end` asked for it.
     @ObservationIgnored var onEnded: (@MainActor (String, Int?, TermExitReason) -> Void)?
-    @ObservationIgnored private var ending: Set<String> = []
+    @ObservationIgnored var ending: Set<String> = []
     private(set) var tmux: String?
     private(set) var sessions: [Session] = []
     /// The Mac tab most recently typed in, per session; phones are left out.
     private(set) var macClients: [String: Client] = [:]
-    /// Phone viewers per session, as the last refresh listed them.
     @ObservationIgnored private(set) var phoneViewers: [String: Int] = [:]
     var available: Bool { tmux != nil }
     @ObservationIgnored private var verifiers: [String: Task<Void, Never>] = [:]
@@ -131,7 +127,7 @@ final class HostedSessions {
     @ObservationIgnored private var conversations: [String: [CheckedContinuation<Void, Never>]] = [:]
     /// Conversations Continue on phone is moving; one at a time each.
     @ObservationIgnored private var continuing: Set<String> = []
-    @ObservationIgnored private let log = Logger(subsystem: "com.arnenoori.sidea", category: "hosted")
+    @ObservationIgnored let log = Logger(subsystem: "com.arnenoori.sidea", category: "hosted")
 
     /// Each `install` and `stop` counts here; an install that wakes to a newer count stands down.
     @ObservationIgnored private var installs = 0
@@ -145,8 +141,6 @@ final class HostedSessions {
         self.changed = changed
     }
 
-    var runtime: URL { root.appendingPathComponent("runtime") }
-    var launcher: URL { runtime.appendingPathComponent("sidea-tmux") }
 
     /// The command a terminal tab runs to join a session; a full path, so it works without the .zshrc line.
     func attachCommand(_ name: String) -> String { "\(Shell.quote(launcher.path)) attach \(name)" }
@@ -163,10 +157,8 @@ final class HostedSessions {
         return (tmux, [tmux] + server + ["-f", conf, "attach-session", "-f", "ignore-size", "-t", "=\(name)"], environment)
     }
 
-    /// Runs one tmux command on Side A's server, for the terminal's window size.
     func command(_ args: [String]) async -> (status: Int32, output: String) { await run(args) }
 
-    /// Writes the config and launcher, finds tmux, reloads a running server and starts watching it.
     func install() async {
         struct Installed: Decodable { let tmux: String? }
         installs += 1
@@ -202,7 +194,6 @@ final class HostedSessions {
         sessions = []
     }
 
-    // MARK: Starting
 
     /// Starts a hosted session and returns its name. A resume of a conversation that already runs
     /// throws `alreadyLive`; the check and the launch happen under one lock per conversation, so a
@@ -236,7 +227,6 @@ final class HostedSessions {
         if let key = request.key { args += ["--key", key] }
         var agentArgs: [String] = []
         if request.agent == .codex, let account = request.codexAccount {
-            // The same home and flags Side A runs that Codex account with everywhere else.
             struct Launch: Decodable { let args: [String]; let env: [String: String] }
             let launch = try JSONDecoder().decode(Launch.self, from: try await bridge(["hosting", "codex-env", account]))
             agentArgs += launch.args
@@ -286,7 +276,6 @@ final class HostedSessions {
         next.resume()
     }
 
-    // MARK: Continue on phone
 
     /// Why a live session can't move into tmux now, or nil when it can (hosting.md, Continue on phone).
     nonisolated static func continueRefusal(_ session: LiveSession) -> String? {
@@ -354,13 +343,11 @@ final class HostedSessions {
         }
     }
 
-    /// Gitignored .env files the launcher copied into a session's worktree, relative to it.
     func copiedFiles(_ name: String) -> [String] {
         ((try? String(contentsOf: runtime.appendingPathComponent("hosted/\(name)/copied.txt"), encoding: .utf8)) ?? "")
             .split(separator: "\n").map(String.init)
     }
 
-    // MARK: Typing
 
     /// Pastes text into the composer and presses Enter, then watches whether Enter was taken.
     /// Refused while a selection is on screen (Enter would pick an option) or while the composer
@@ -451,7 +438,6 @@ final class HostedSessions {
         ["load-buffer", "-b", buffer, "-", ";", "paste-buffer", "-p", "-d", "-b", buffer, "-t", pane]
     }
 
-    /// Allowlisted single keys, one `send-keys` each, for dialogs and mode cycling.
     func keys(_ name: String, _ keys: [String]) async throws {
         guard sessions.contains(where: { $0.name == name && $0.agent != nil }) else { throw HostedError.notHosted }
         let mapped = try keys.map { key in
@@ -478,7 +464,6 @@ final class HostedSessions {
         }
     }
 
-    // MARK: Settings
 
     /// What a hosted Claude runs with after `change`, as its screens confirmed it.
     struct Settings: Sendable, Equatable {
@@ -495,7 +480,8 @@ final class HostedSessions {
         guard agent == .claude else { throw HostedError.refused("Side A types \(command) only into Claude.") }
         await lock(Self.composer(name))
         defer { unlock(Self.composer(name)) }
-        guard Hosting.composer(.claude, screen: try await composerScreen(name)) == .empty else { throw HostedError.composerBusy }
+        guard let target = target(name) else { throw HostedError.unavailable }
+        guard Hosting.composer(.claude, screen: try await composerScreen(target)) == .empty else { throw HostedError.composerBusy }
         cancelVerifier(name)
         let activity = await macActivity(name)
         _ = await run(["send-keys", "-t", pane(name), "-l", command])
@@ -510,7 +496,6 @@ final class HostedSessions {
         arm(name, agent: .claude, expected: command, activity: activity, key: "Enter")
     }
 
-    // MARK: Before the composer
 
     /// While a new session has no composer, a look every second for up to two minutes: a folder-trust question
     /// raises hosted.attention "trust" (the phone's Trust and start), any other screen that sits unchanged for 20 s
@@ -597,241 +582,6 @@ final class HostedSessions {
         }
     }
 
-    /// Changes a hosted Claude's model, effort and mode for this session only. Model and effort go through `/model`'s
-    /// picker and `/effort`'s slider and are applied with `s` ("use this session only"): the typed forms (`/model X`,
-    /// `/effort X`) save the pick as the user's default for every session (Claude Code 2.1.303). The mode is Shift+Tab
-    /// until the footer shows it. Every key follows a reading of the screen and nothing is typed to search; a screen
-    /// Side A doesn't expect is cancelled with Esc and left for the Mac. Idle sessions only, under the composer lock
-    /// replies take, so nothing is typed into it meanwhile.
-    func change(_ name: String, model: String?, effort: String?, mode: String?) async throws -> Settings {
-        guard let agent = sessions.first(where: { $0.name == name })?.agent else { throw HostedError.notHosted }
-        guard agent == .claude else { throw HostedError.refused("Side A changes settings this way only in Claude.") }
-        let match = try model.map { model in
-            guard let match = Hosting.pickerMatch(model) else { throw HostedError.refused("Claude's model list can't pick \(model) for one session.") }
-            return match
-        }
-        if let effort, !Hosting.claudeEfforts.contains(effort) { throw HostedError.refused("Claude has no \(effort) effort.") }
-        await lock(Self.composer(name))
-        defer { unlock(Self.composer(name)) }
-        cancelVerifier(name)
-        var done = Settings()
-        if let match {
-            (done.model, done.effort) = (model, try await pickModel(name, match: match, effort: effort))
-        } else if let effort {
-            done.effort = try await pickEffort(name, effort)
-        }
-        if let mode { done.mode = try await cycleMode(name, to: mode) }
-        return done
-    }
-
-    /// The model, and the effort with it when asked, from `/model`'s list; returns the effort it shows after.
-    private func pickModel(_ name: String, match: (String) -> Bool, effort: String?) async throws -> String? {
-        var shown = try await open(name, "/model") { Hosting.modelPicker(screen: $0) }
-        func down() async throws {
-            let before = shown.row
-            shown = try await step(name, "Down") { Hosting.modelPicker(screen: $0).flatMap { $0.row == before ? nil : $0 } }
-        }
-        // Once round the list, which wraps: an alias stands for its family's first row, the newest.
-        var rows = [shown.row: shown.label]
-        while rows.count < 50 {
-            try await down()
-            guard rows[shown.row] == nil else { break }
-            rows[shown.row] = shown.label
-        }
-        guard let wanted = rows.keys.sorted().first(where: { match(rows[$0]!) }) else {
-            throw await cancel(name, "Claude's model list doesn't have that model.")
-        }
-        while shown.row != wanted { try await down() }
-        if let effort {
-            let target = Hosting.claudeEfforts.firstIndex(of: effort)!
-            var tried: Set<String> = []
-            while shown.effort != effort {
-                guard let now = shown.effort, let at = Hosting.claudeEfforts.firstIndex(of: now) else {
-                    throw await cancel(name, "\(shown.label) takes no effort setting.")
-                }
-                // A model without the level steps over it; back where it was means it can't have it.
-                guard tried.insert(now).inserted else { throw await cancel(name, "\(shown.label) doesn't take \(effort) effort.") }
-                let label = shown.label
-                shown = try await step(name, at < target ? "Right" : "Left", or: "\(shown.label) doesn't take \(effort) effort.") {
-                    Hosting.modelPicker(screen: $0).flatMap { $0.label == label && $0.effort != now ? $0 : nil }
-                }
-            }
-        }
-        try await apply(name, done: "Set model to \(shown.label)", confirming: shown.label)
-        return shown.effort
-    }
-
-    private func pickEffort(_ name: String, _ effort: String) async throws -> String {
-        var now = try await open(name, "/effort") { Hosting.effortSlider(screen: $0) }
-        let target = Hosting.claudeEfforts.firstIndex(of: effort)!
-        var tried: Set<String> = []
-        while now != effort {
-            guard tried.insert(now).inserted, let at = Hosting.claudeEfforts.firstIndex(of: now) else {
-                throw await cancel(name, "This model doesn't take \(effort) effort.")
-            }
-            let from = now
-            now = try await step(name, at < target ? "Right" : "Left", or: "This model doesn't take \(effort) effort.") {
-                Hosting.effortSlider(screen: $0).flatMap { $0 == from ? nil : $0 }
-            }
-        }
-        try await apply(name, done: "Set effort level to \(effort)", confirming: effort)
-        return effort
-    }
-
-    /// Shift+Tab until the footer names the mode. A mode outside the session's cycle (bypass in a session not started
-    /// with it) brings it round to where it was.
-    private func cycleMode(_ name: String, to mode: String) async throws -> String {
-        let screen = try await composerScreen(name)
-        guard var now = Hosting.claudeMode(screen: screen) else { throw HostedError.refused("Side A can't read this session's mode.") }
-        let start = now
-        while now != mode {
-            let from = now
-            _ = await run(["send-keys", "-t", pane(name), "BTab"])
-            let next = await waitFor(name) { screen in
-                Hosting.dialog(.claude, screen: screen) ? "" : Hosting.claudeMode(screen: screen).flatMap { $0 == from ? nil : $0 }
-            }
-            guard let next, !next.isEmpty else {
-                throw await cancel(name, next == nil ? "Shift+Tab didn't change this session's mode." : "Claude asked something on the way to that mode.")
-            }
-            if next == start { throw HostedError.refused("This session's Shift+Tab doesn't reach that mode.") }
-            now = next
-        }
-        return now
-    }
-
-    /// The screen while the session can take a command: no question open, the composer up.
-    private func composerScreen(_ name: String) async throws -> String {
-        let screen = await capture(name)
-        if Hosting.dialog(.claude, screen: screen) { throw HostedError.sessionWaiting }
-        guard Hosting.ready(.claude, screen: screen) else { throw HostedError.refused("That session isn't ready yet.") }
-        return screen
-    }
-
-    /// Types a slash command into the empty composer and presses Enter once the list highlights that very command,
-    /// then waits for the screen it opens.
-    private func open<Shown>(_ name: String, _ command: String, _ read: @escaping (String) -> Shown?) async throws -> Shown {
-        guard Hosting.composer(.claude, screen: try await composerScreen(name)) == .empty else { throw HostedError.composerBusy }
-        _ = await run(["send-keys", "-t", pane(name), "-l", command])
-        let typed = await waitFor(name) { screen in
-            Hosting.composer(.claude, screen: screen) == .text(command) && Hosting.slashSuggestion(screen: screen) == command ? true : nil
-        }
-        guard typed != nil else {
-            _ = await run(["send-keys", "-t", pane(name), "C-u"])
-            throw HostedError.refused("Claude didn't offer \(command) here.")
-        }
-        _ = await run(["send-keys", "-t", pane(name), "Enter"])
-        guard let shown = await waitFor(name, seconds: 5, read) else { throw await cancel(name, "Claude's \(command) didn't open as expected.") }
-        return shown
-    }
-
-    /// One key, then the screen `read` accepts; cancelled with `failure` when it doesn't come.
-    private func step<Shown>(_ name: String, _ key: String, or failure: String = "Claude's screen changed unexpectedly.",
-                             _ read: @escaping (String) -> Shown?) async throws -> Shown {
-        _ = await run(["send-keys", "-t", pane(name), key])
-        guard let shown = await waitFor(name, read) else { throw await cancel(name, failure) }
-        return shown
-    }
-
-    /// `s`, then the warm-cache confirm when it comes for exactly this target, then the composer and Claude's
-    /// "… this session only" line. A hook's confirm, or any other screen, is cancelled.
-    private func apply(_ name: String, done: String, confirming target: String) async throws {
-        // The same words may be in the conversation already: only a new line counts.
-        let before = await said(name, done).count
-        _ = await run(["send-keys", "-t", pane(name), "-l", "s"])
-        enum Next { case confirm(Hosting.SwitchConfirm), back }
-        let next = await waitFor(name) { screen -> Next? in
-            if let confirm = Hosting.switchConfirm(screen: screen) { return .confirm(confirm) }
-            return Hosting.ready(.claude, screen: screen) ? .back : nil
-        }
-        switch next {
-        case .confirm(.yesSelected(let to))? where to.lowercased() == target.lowercased():
-            _ = await run(["send-keys", "-t", pane(name), "Enter"])
-        case .back?: break
-        case .confirm?: throw await cancel(name, "Claude asks to confirm this switch. Confirm it on the Mac.")
-        case nil: throw await cancel(name, "Claude's screen changed unexpectedly.")
-        }
-        var line: String?
-        for _ in 0..<25 where line == nil {
-            let lines = await said(name, done)
-            if lines.count > before { line = lines.last } else { try? await Task.sleep(for: .milliseconds(80)) }
-        }
-        guard let line else { throw HostedError.failed("Side A couldn't tell whether Claude took the change.") }
-        if !line.contains("this session only") {
-            log.error("a session-only pick in \(name, privacy: .public) didn't say so: \(line, privacy: .public)")
-            throw HostedError.failed("Claude didn't confirm the change was for this session only.")
-        }
-        // The confirm can outlast the line by a moment; the next change starts from the composer.
-        _ = await waitFor(name, seconds: 3) { Hosting.ready(.claude, screen: $0) ? true : nil }
-    }
-
-    /// The lines holding `words` in the pane and the 300 lines above it.
-    private func said(_ name: String, _ words: String) async -> [String] {
-        Hosting.plainLines(await run(["capture-pane", "-p", "-J", "-t", pane(name), "-S", "-300"]).output).filter { $0.contains(words) }
-    }
-
-    /// Esc closes a picker, slider or confirm without picking, once per layer ("No, go back" returns to the picker);
-    /// returns the error to throw.
-    private func cancel(_ name: String, _ message: String) async -> HostedError {
-        func open(_ screen: String) -> Bool {
-            Hosting.modelPicker(screen: screen) != nil || Hosting.effortSlider(screen: screen) != nil
-                || Hosting.switchConfirm(screen: screen) != nil || Hosting.dialog(.claude, screen: screen)
-        }
-        for _ in 0..<3 {
-            let screen = await capture(name)
-            guard open(screen) else { break }
-            _ = await run(["send-keys", "-t", pane(name), "Escape"])
-            _ = await waitFor(name, seconds: 1) { $0 != screen ? true : nil }
-        }
-        return .refused(message)
-    }
-
-    /// The first non-nil reading of the screen within `seconds`.
-    func waitFor<Shown>(_ name: String, seconds: Double = 2, _ read: (String) -> Shown?) async -> Shown? {
-        let end = ContinuousClock.now + .seconds(seconds)
-        while true {
-            if let shown = read(await capture(name)) { return shown }
-            if ContinuousClock.now >= end { return nil }
-            try? await Task.sleep(for: .milliseconds(80))
-        }
-    }
-
-    /// The phone's End: the agent gets the hangup a closed terminal sends, and its pane then goes the way of any
-    /// session that ends (last screen kept, Side A's clean worktree removed). Claude and Codex exit on it. The
-    /// pane's shell exits whatever the agent does, so one that outlived it would run on unseen: its process
-    /// group is noted first, then sent SIGTERM after 3 s and SIGKILL after 2 more.
-    func end(_ name: String) async throws {
-        guard sessions.contains(where: { $0.name == name }) else { throw HostedError.notHosted }
-        cancelVerifier(name)
-        let listed = await run(["display-message", "-p", "-t", pane(name), "#{pane_pid}"])
-        guard let pid = listed.output.split(separator: "\n").first.flatMap({ pid_t($0) }), pid > 1 else {
-            throw HostedError.failed("Side A couldn't find that session's process.")
-        }
-        ending.insert(name)
-        let groups = Set(Self.children(of: pid).map { getpgid($0) }).subtracting([-1, 0, 1, getpgrp()])
-        kill(pid, SIGHUP)
-        for (signal, wait) in [(SIGTERM, 3.0), (SIGKILL, 2.0)] {
-            guard await Self.running(groups, within: wait) else { break }
-            for group in groups { killpg(group, signal) }
-        }
-        await refresh()
-    }
-
-    private nonisolated static func children(of pid: pid_t) -> [pid_t] {
-        var pids = [pid_t](repeating: 0, count: 64)
-        let count = proc_listchildpids(pid, &pids, Int32(pids.count * MemoryLayout<pid_t>.size))
-        return Array(pids.prefix(max(0, Int(count))))
-    }
-
-    /// Whether any of these process groups still has a process `seconds` from now; false as soon as none has.
-    private static func running(_ groups: Set<pid_t>, within seconds: Double) async -> Bool {
-        let end = Date().addingTimeInterval(seconds)
-        while true {
-            let left = groups.contains { killpg($0, 0) == 0 }
-            if !left || Date() >= end { return left }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-    }
-
     /// Someone typed into the session another way (the phone's terminal); a pending re-press must not fire.
     func cancelVerifier(_ name: String) {
         verifiers.removeValue(forKey: name)?.cancel()
@@ -867,17 +617,6 @@ final class HostedSessions {
         }
     }
 
-    /// Where typing for a session goes: its agent's pane, never whichever pane is active in it now.
-    func pane(_ name: String) -> String {
-        sessions.first { $0.name == name }.map(\.pane).flatMap { $0.isEmpty ? nil : $0 } ?? "=\(name):"
-    }
-
-    func capture(_ name: String) async -> String {
-        await run(["capture-pane", "-p", "-e", "-J", "-t", pane(name)]).output
-    }
-
-    // MARK: Clients
-
     /// Mac tabs and phone viewers attached to a session, most recently active first.
     func clients(_ name: String) async -> [Client] {
         await allClients(["-t", "=\(name)"]).map(\.1)
@@ -896,7 +635,6 @@ final class HostedSessions {
         await clients(name).filter { !$0.phone }.map(\.activity).max() ?? 0
     }
 
-    // MARK: Watching
 
     private func watch() {
         watcher = Task { [weak self] in
@@ -912,7 +650,6 @@ final class HostedSessions {
         }
     }
 
-    /// Reads every session and handles panes that died: their agent exited.
     func refresh() async {
         guard tmux != nil else { sessions = []; return }
         let format = ["session_name", "pane_dead", "pane_dead_status", "pane_dead_signal", "@sidea_v", "@sidea_agent", "@sidea_cwd",
@@ -1019,7 +756,6 @@ final class HostedSessions {
         return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
-    /// Folders of sessions that ended more than a week ago.
     private func pruneFolders() {
         let folder = runtime.appendingPathComponent("hosted")
         let files = FileManager.default
@@ -1034,10 +770,9 @@ final class HostedSessions {
         }
     }
 
-    // MARK: Running tmux
 
     /// -u: without a UTF-8 locale (an app started by launchd has none) tmux prints tabs in formats as '_'.
-    private var server: [String] { ["-u"] + (environment["SIDE_A_TMUX_SOCKET"].map { ["-S", $0] } ?? ["-L", "sidea"]) }
+    var server: [String] { ["-u"] + (environment["SIDE_A_TMUX_SOCKET"].map { ["-S", $0] } ?? ["-L", "sidea"]) }
 
     func run(_ args: [String], input: Data? = nil) async -> (status: Int32, output: String) {
         guard let tmux else { return (-1, "") }

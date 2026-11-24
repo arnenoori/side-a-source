@@ -63,7 +63,6 @@ class SessionTests(unittest.TestCase):
         self.assertNotIn('handed_from', listed['claude-one'])
         self.assertEqual(sessions.show(self.root, 'codex-two')['session']['handed_from'], 'claude-one')
         self.assertEqual(sessions.search(self.root, 'continues work')['sessions'][0]['handed_from'], 'claude-one')
-        # The view's cache starting over in a new index version keeps the links.
         db = sessions.connect(self.root); db.execute('PRAGMA user_version=2'); db.commit(); db.close()
         self.assertEqual(len(sessions.handoffs(self.root)['handoffs']), 1)
 
@@ -82,7 +81,6 @@ class SessionTests(unittest.TestCase):
                   user('meta', 'Caveat: the messages below were generated', '2026-10-01T10:05:01Z', isMeta=True),
                   user('cmd', '<command-name>/model</command-name><command-args>opus</command-args>', '2026-10-01T10:05:02Z')]
         self.write('parent', parent)
-        # A fork copies the parent's history, each copy keeping its own uuid.
         copies = [{**entry, 'forkedFrom': {'sessionId': 'parent', 'messageUuid': entry['uuid']}} for entry in parent[:2]]
         self.write('child', copies + [user('c1', 'Try a trigram index instead', '2026-10-02T09:00:00Z'),
                                       {'type': 'custom-title', 'customTitle': 'Trigram experiment'},
@@ -151,7 +149,6 @@ class SessionTests(unittest.TestCase):
             sessions.show(self.root, sid)
         db = sqlite3.connect(self.root / 'runtime/sessions.db'); self.addCleanup(db.close)
         cached = lambda table: {row[0] for row in db.execute(f'SELECT DISTINCT session FROM {table}')}
-        # A file that changed is indexed without the upkeep; the pass over everything does it.
         with patch.object(sessions, 'tidy', side_effect=AssertionError('upkeep on a named file')):
             sessions.index(self.root, paths=[str(self.project / 'new.jsonl')])
         for at, sid in enumerate(('old', 'mid', 'new')):
@@ -176,15 +173,14 @@ class SessionTests(unittest.TestCase):
         running = [subprocess.Popen(['sleep', '60']) for _ in range(4)]
         for process in running:
             self.addCleanup(process.wait); self.addCleanup(process.kill)
-        # Waiting, then working, then idle; within each, the newest change first.
         rows = [('idle', 's-idle', 1791560900000), ('busy', 's-busy', 1791560100000),
                 ('waiting', 's-older', 1791560000000), ('waiting', 's-newer', 1791560500000)]
         for process, (status, sid, at) in zip(running, rows):
             (registry / f'{process.pid}.json').write_text(json.dumps({'pid': process.pid, 'sessionId': sid, 'cwd': '/code/app', 'status': status,
                                                                       'waitingFor': 'permission' if status == 'waiting' else None, 'statusUpdatedAt': at}))
-        (registry / '999999.json').write_text(json.dumps({'pid': 999999, 'sessionId': 's2', 'status': 'busy'}))  # exited
+        (registry / '999999.json').write_text(json.dumps({'pid': 999999, 'sessionId': 's2', 'status': 'busy'}))
         (registry / 'broken.json').write_text('{')
-        with patch.object(sessions, 'live_codex', return_value=[]):  # Codex running on this Mac is found by its processes
+        with patch.object(sessions, 'live_codex', return_value=[]):
             live = sessions.live(self.root)['sessions']
         self.assertEqual([(s['id'], s['status'], s['waitingFor']) for s in live],
                          [('s-newer', 'waiting', 'permission'), ('s-older', 'waiting', 'permission'), ('s-busy', 'busy', None), ('s-idle', 'idle', None)])
@@ -196,7 +192,6 @@ class SessionTests(unittest.TestCase):
         self.write('s1', [{'type': 'permission-mode', 'permissionMode': 'default', 'sessionId': 's1'},
                           {'type': 'system', 'subtype': 'compact_boundary', 'uuid': 'c1', 'timestamp': '2026-10-01T09:59:00Z'},
                           user('u1', 'Plan the gauge', '2026-10-01T10:00:00Z', permissionMode='plan'),
-                          # A tool result is no prompt, so the turn stays u1's.
                           user('r1', [{'type': 'tool_result', 'tool_use_id': 't1', 'content': 'ok'}], '2026-10-01T10:00:02Z')])
         line = {'session_id': 's1', 'model': {'id': 'claude-opus-5-5', 'display_name': 'Opus'}, 'effort': {'level': 'high'}, 'fast_mode': False,
                 'context_window': {'used_percentage': 37, 'context_window_size': 1000000}, 'cost': {'total_cost_usd': 1.25}}
@@ -204,9 +199,9 @@ class SessionTests(unittest.TestCase):
         (saved / 's1.json').write_text(json.dumps(line))
         state = self.root / 'runtime/state'; state.mkdir(parents=True)
         (state / 's1.tasks.json').write_text(json.dumps({'tasks': [{'id': 'b1', 'type': 'shell', 'status': 'running', 'description': 'npm run dev'}]}))
-        (saved / '.s1.123').write_text('{')  # a statusline stopped mid-write
+        (saved / '.s1.123').write_text('{')
         (state / 'gone.hook.json').write_text('{}')
-        (state / 'ended.tasks.json').write_text(json.dumps({'tasks': [{'id': 'b9', 'status': 'running'}]}))  # its session quit
+        (state / 'ended.tasks.json').write_text(json.dumps({'tasks': [{'id': 'b9', 'status': 'running'}]}))
         old = time.time() - 8 * 86400
         os.utime(saved / '.s1.123', (old, old)); os.utime(state / 'gone.hook.json', (old, old))
         live = lambda: next(s for s in sessions.live(self.root)['sessions'] if s['id'] == 's1')
@@ -216,12 +211,10 @@ class SessionTests(unittest.TestCase):
                              {'model': 'claude-opus-5-5', 'effort': 'high', 'fast': False, 'mode': 'plan', 'contextPercent': 37, 'cost': 1.25,
                               'backgroundTasks': [{'id': 'b1', 'type': 'shell', 'status': 'running', 'description': 'npm run dev'}]})
             self.assertEqual((row['turnID'], row['compactedAt']), ('u1', sessions.epoch('2026-10-01T09:59:00Z')))
-            # A turn longer than the tail: its prompt is the newest user row the viewer cached.
             sessions.page(self.root, 's1')
             with patch.object(sessions, 'TAIL', 40):
                 self.assertEqual(live()['turnID'], 'u1')
             self.assertEqual(sorted(p.name for p in saved.iterdir()) + sorted(p.name for p in state.iterdir()), ['s1.json', 's1.tasks.json'])
-            # A hook or a model switch newer than the statusline and the transcript wins; an older one doesn't.
             later = time.time() + 5
             (state / 's1.hook.json').write_text(json.dumps({'mode': 'acceptEdits', 'effort': 'max'}))
             (state / 's1.model.json').write_text(json.dumps({'model': 'claude-sonnet-5-5'}))
@@ -240,7 +233,6 @@ class SessionTests(unittest.TestCase):
         with patch.object(sessions, 'process_tree', return_value=tree), patch.object(sessions, 'listening', return_value={}):
             with patch.object(hosting, 'panes', return_value={500: 'sa-app-1a2b'}):
                 self.assertEqual(sessions.live(self.root)['sessions'][0]['hosted'], 'sa-app-1a2b')
-            # No tmux server, or no tmux at all: nothing is hosted.
             with patch.object(hosting, 'panes', return_value={}):
                 self.assertIsNone(sessions.live(self.root)['sessions'][0]['hosted'])
 
@@ -295,25 +287,20 @@ class SessionTests(unittest.TestCase):
             return [(step['text'], step['status'], step['activeForm']) for step in shown['steps']] if shown else None
         def pairs(shown):
             return [step[:2] for step in steps(shown)]
-        # Ids come back in the result, plain text or structured, and the list keeps its creation order.
         lines = create(1, 'Read', structured=False) + create(2, 'Fix') + create(3, 'Ship') + update(1, status='completed') + update(2, status='in_progress')
         shown, board = plan(lines)
         self.assertEqual(steps(shown), [('Read', 'completed', 'Doing Read'), ('Fix', 'inProgress', 'Doing Fix'), ('Ship', 'pending', 'Doing Ship')])
-        # A delete drops the task; an update of one it never saw, a failed one and a failed create change nothing.
         more = update(3, status='deleted') + update(9, status='completed') + [
             call('x', 'tx', 'TaskUpdate', {'taskId': '2', 'status': 'completed'}),
             done('xr', 'tx', 'Task #2 not found', {'success': False, 'taskId': '2', 'updatedFields': []}),
             call('y', 'ty', 'TaskCreate', {'subject': 'Nope'}), done('yr', 'ty', 'Error', error=True)]
         shown, board = plan(more, plan=shown, board=board)
         self.assertEqual(pairs(shown), [('Read', 'completed'), ('Fix', 'inProgress')])
-        # A later tail finds the list in the carried board, past a compaction that took the creates out of it.
         boundary = {'type': 'system', 'subtype': 'compact_boundary', 'timestamp': '2026-10-01T10:00:00Z'}
         shown, board = plan([boundary] + update(2, status='completed', activeForm='Fixing'), plan=shown, board=board)
         self.assertEqual(pairs(shown), [('Read', 'completed'), ('Fix', 'completed')])
-        # Subagent calls never reach the plan.
         side, _ = plan(create(7, 'Sidequest', side=True), plan=shown, board=board)
         self.assertEqual(pairs(side), [('Read', 'completed'), ('Fix', 'completed')])
-        # TaskList is the whole truth: structured or text, it replaces the list and keeps what it doesn't say.
         listing = [call('l', 'tl', 'TaskList', {}), done('lr', 'tl', '#1 [completed] Read\n#4 [in_progress] Test [blocked by #2]')]
         listed, listed_board = plan(listing, plan=shown, board=board)
         self.assertEqual(steps(listed), [('Read', 'completed', 'Doing Read'), ('Test', 'inProgress', None)])
@@ -323,13 +310,11 @@ class SessionTests(unittest.TestCase):
         get = [call('g', 'tg', 'TaskGet', {'taskId': '4'}),
                done('gr', 'tg', 'Task #4: Test', {'task': {'id': '4', 'subject': 'Test it', 'status': 'completed', 'blocks': [], 'blockedBy': []}})]
         self.assertEqual(steps(plan(get, plan=listed, board=listed_board)[0])[1], ('Test it', 'completed', None))
-        # TodoWrite and the task tools share the card; the one written last shows, and the tasks wait underneath.
         todo = call('w', 'tw', 'TodoWrite', {'todos': [{'content': 'Old way', 'status': 'pending', 'activeForm': 'Old'}]})
         written, board = plan([todo], plan=shown, board=board)
         self.assertEqual(steps(written), [('Old way', 'pending', 'Old')])
         back, board = plan(update(1, status='in_progress'), plan=written, board=board)
         self.assertEqual(pairs(back), [('Read', 'inProgress'), ('Fix', 'completed')])
-        # A finished list goes at the next prompt, and its tasks with it.
         finished, board = plan(update(1, status='completed'), plan=back, board=board)
         gone, board = plan([{'type': 'user', 'uuid': 'p', 'message': {'content': 'Next thing'}}] + create(5, 'Fresh'), plan=finished, board=board)
         self.assertEqual(steps(gone), [('Fresh', 'pending', 'Doing Fresh')])
@@ -429,7 +414,6 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(len(newest['messages']), 50)
         self.assertGreater(newest['truncated'], 0)
 
-        # Reopening reads the saved messages; the transcript isn't parsed again.
         with patch.object(sessions, 'read_messages', side_effect=AssertionError('re-parsed')):
             self.assertEqual(sessions.show(self.root, 'long', limit=50)['messages'], newest['messages'])
 
@@ -440,7 +424,6 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(uuids.index('hit'), 40)
         self.assertEqual(len(uuids), 50)
         self.assertEqual(around['truncated'] + len(uuids) + around['later'], newest['truncated'] + len(newest['messages']))
-        # A hit in a tool call merged into the line before it lands on that line.
         merged = sessions.show(self.root, 'long', limit=50, around='merged')
         self.assertEqual(merged['focus'], 'hit')
         self.assertIn('Grep', ' '.join(t for m in merged['messages'] if m['uuid'] == merged['focus'] for t in m['tools']))
@@ -468,7 +451,6 @@ class SessionTests(unittest.TestCase):
             self.assertEqual(sessions.index(self.root)['indexed'], 0)
         self.write('odd', [user('o3', 'A later line', '2026-10-02T10:02:00Z')], 'a')
         self.assertEqual(sessions.index(self.root)['indexed'], 1)
-        # The viewer's warm-up over the newest conversations steps past one it can't read, too.
         self.write('older', [{'type': 'assistant', 'uuid': 'o4', 'timestamp': '2026-10-01T10:01:00Z', 'message': 'odd'}], 'a')
         self.assertEqual(sessions.index(self.root)['remaining'], 0)
 
@@ -552,7 +534,6 @@ class RenameLiveTests(unittest.TestCase):
         self.assertEqual([line['type'] for line in got], ['control'])
 
     def test_falls_back_when_there_is_no_inbox_to_reach(self):
-        # An older Claude has no socket in its record; Codex and closed sessions have no record at all.
         self.record('old')
         self.assertEqual(sessions.rename_live('old', 'Title'), {'renamed': False, 'reason': 'no-inbox'})
         self.assertEqual(sessions.rename_live('codex-thread', 'Title'), {'renamed': False, 'reason': 'not-running'})

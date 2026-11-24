@@ -2,9 +2,7 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// What a Codex terminal session runs with: the models its daemon offers, and changing model, effort and mode.
 extension CodexTerminals {
-    /// The models the session's daemon offers, read once per connection.
     func models(_ live: LiveSession) async throws(Failure) -> [CodexAppServer.Model] {
         guard let (link, client, _) = link(of: live) else { throw .notAttached }
         if let models = link.models { return models }
@@ -23,8 +21,6 @@ extension CodexTerminals {
         return models
     }
 
-    /// Changes what the session's next turns run with; the TUI's footer follows. A model without the effort the
-    /// session has takes the model's default, as the TUI's own picker does.
     func change(_ live: LiveSession, model: String? = nil, effort: String? = nil, mode: String? = nil) async throws(Failure) {
         guard let (link, client, thread) = link(of: live) else { throw .notAttached }
         guard link.settable else { throw .unsupported }
@@ -43,7 +39,6 @@ extension CodexTerminals {
                 throw .invalid("This Codex account doesn't offer \(name).")
             }
         }
-        // A raise sets the approval or sandbox policy; default lowers one back to what the session ran with before it.
         var updates: [CodexAppServer.JSON] = []
         if let mode, raises.contains(mode) {
             updates.append(current.raise(thread: thread, to: mode))

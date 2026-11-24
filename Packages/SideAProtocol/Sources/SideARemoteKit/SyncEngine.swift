@@ -243,7 +243,6 @@ public actor SyncEngine {
     /// Skips the wait before the next attempt and starts the backoff over: the app came forward or the network changed.
     public func reconnectNow() {
         resetLadder = true
-        // A loop that ended on a terminal state has no wait to skip: only starting it again asks the Mac.
         if run == nil { if started { start() } } else { waiting?.cancel() }
     }
 
@@ -254,8 +253,6 @@ public actor SyncEngine {
         if up { return reconnectNow() }
         if case .offline(let retryAt, let reason, .unknown) = stored.connection { set(.offline(retryAt: retryAt, reason: reason, cause: .noNetwork)) }
     }
-
-    // MARK: Presence
 
     public func setForeground(_ foreground: Bool) async {
         self.foreground = foreground
@@ -296,8 +293,6 @@ public actor SyncEngine {
         if viewing == session, watchers[session] == nil { await setViewing(nil) }
     }
 
-    // MARK: Transcripts
-
     public func transcript(_ session: SessionKey) -> TranscriptFeed {
         if let feed = feeds[session] { return feed }
         let feed = TranscriptFeed(sessionID: session,
@@ -333,8 +328,6 @@ public actor SyncEngine {
         feeds[session] = nil
         if stored.connection.isLive { await send(.unsubscribe(sessions: [session])) }
     }
-
-    // MARK: Mutations
 
     /// `confirm` is the `X-SideA-Confirm` value the app signed for this answer, when the request's gate needs one.
     /// `mode` with `.allow` also switches the session's mode (`AnswerBody.mode`); its confirm signs
@@ -422,8 +415,6 @@ public actor SyncEngine {
         publish()
     }
 
-    // REST slices: each refreshes its part of the state and never moves `seq`.
-
     public func refreshRequests() async throws {
         let asked = stored.epoch
         let list = try await client.requests()
@@ -476,16 +467,12 @@ public actor SyncEngine {
         return item
     }
 
-    // MARK: Connection
-
     enum Next: Equatable { case stop(Connection), now, after(Double, String), backoff(String), nextAddress(String, keyChanged: Bool = false, refused: Bool = false) }
 
     private func loop() async {
         var attempt = 0
-        // Addresses in this round that offered a key other than the pinned one.
         var keyChanged = 0
         var refused = false
-        // Reconnects in a row that asked for no wait, from a connection that didn't last.
         var immediate = 0
         while !Task.isCancelled {
             await reloadPending()
@@ -507,7 +494,6 @@ public actor SyncEngine {
                 attempt = 0
                 immediate = 0
             }
-            // It still counts toward the backoff, so a Mac that keeps dropping backs off. A goodbye says why it went.
             let dropped = welcomed && attempt == 0 && bye == nil && cause == .unknown
             welcomed = false
             let delay: Double
@@ -521,14 +507,12 @@ public actor SyncEngine {
                 if connection == .idle, cause != .unknown { return set(.offline(retryAt: now(), reason: "Side A on the Mac closed", cause: cause)) }
                 return set(connection)
             case .now:
-                // A Mac that replays what drops the socket again would otherwise be called back without end.
                 immediate += 1
                 if immediate <= Self.immediateReconnects { continue }
                 delay = timing.backoff(attempt)
                 attempt += 1
                 offline(retryAt: now() + delay, reason: "Connection kept dropping")
             case .nextAddress(let reason, let changed, let turnedAway):
-                // Try the Mac's other addresses before waiting; wait once all of them have failed.
                 if changed { keyChanged += 1 }
                 if turnedAway { refused = true }
                 addressIndex += 1
@@ -549,7 +533,6 @@ public actor SyncEngine {
                 attempt += 1
                 offline(retryAt: now() + delay, reason: reason)
             }
-            // With no network the path monitor's next change ends the wait, not the backoff.
             let seconds = networkUp ? delay : max(delay, timing.noNetworkRecheck)
             resetLadder = false
             let wait = Task { _ = try? await Task.sleep(for: .seconds(seconds)) }
@@ -562,13 +545,11 @@ public actor SyncEngine {
         }
     }
 
-    /// Rounds of the Mac's addresses before a relay's refusal is worth offering Pair Again for: a relay that lost its
-    /// device list says the same until the Mac reconnects to it.
+    /// Rounds of the Mac's addresses before a relay's refusal is worth offering Pair Again for.
     static let refusalsToOfferPairing = 3
 
     static let immediateReconnects = 3
 
-    /// The Mac answered: whatever was said about why it couldn't be reached no longer holds.
     private func answered() {
         cause = .unknown
         if case .offline(let retryAt, let reason, _) = stored.connection { set(.offline(retryAt: retryAt, reason: reason)) }
@@ -578,7 +559,6 @@ public actor SyncEngine {
         if !stored.connection.isTerminal { set(.offline(retryAt: retryAt, reason: reason, cause: cause == .unknown && !networkUp ? .noNetwork : cause)) }
     }
 
-    /// `GET /v1/hello` first: is the Mac there, can we talk, are we still paired.
     private func greet() async -> Next? {
         let hello: Hello
         do { hello = try await client.hello() } catch let failure as RemoteFailure {
@@ -724,7 +704,6 @@ public actor SyncEngine {
         }
     }
 
-    /// What `Reconciler` asked of the engine after an event.
     private func settle(_ effects: [Reconciler.Effect]) {
         for effect in effects {
             switch effect {
@@ -735,8 +714,6 @@ public actor SyncEngine {
             }
         }
     }
-
-    // MARK: Outbox
 
     func drain() async {
         guard stored.connection.isLive else { return }
@@ -750,7 +727,6 @@ public actor SyncEngine {
         // Targets whose oldest item is waiting to be retried: only their later items wait with it.
         var held: Set<String> = []
         var retryIn: Double?
-        // The last claim found nothing and the queue was read again, with nothing asking for another drain since.
         var emptied = false
         defer {
             if let retryIn {
@@ -887,8 +863,6 @@ public actor SyncEngine {
         await syncPending()
         watchExpiry()
     }
-
-    // MARK: Plumbing
 
     func sendPresence() async {
         guard stored.connection.isLive else { return }

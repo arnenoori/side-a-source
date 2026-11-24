@@ -2,8 +2,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// Sessions Side A hosts in tmux, and the folders a phone may start one in: the projects of the last two months'
-/// sessions, never a path the phone made up.
 extension RemoteRoutes {
     static let hostedRoutes: [Route] = [
         Route("GET", "v1/projects", projects),
@@ -17,13 +15,9 @@ extension RemoteRoutes {
 
     static let tmuxMissing = RemoteServer.error(503, .tmuxMissing, "Hosted sessions need tmux, which comes with Side A. Reinstall Side A on the Mac.", retryAfter: 60)
 
-    // MARK: Projects
-
     @Sendable static func projects(_ context: Context) async -> HTTPResponse {
         json(200, ProjectList(projects: await RemoteProjects.list(context.controller)))
     }
-
-    // MARK: Hosted
 
     @Sendable static func hostedList(_ context: Context) async -> HTTPResponse {
         guard await MainActor.run(body: { context.controller.store?.hosted.available }) == true else { return tmuxMissing }
@@ -49,7 +43,6 @@ extension RemoteRoutes {
                 return RemoteServer.error(422, .invalidOption, "\(body.agent.title) can't start in that mode.")
             }
         }
-        // Signed over the whole start: an unlocked phone, or Face ID for a permissive mode or a shell prompt.
         guard let subject = try? ConfirmMessage.subject(start: body) else { return badJSON }
         if let refused = await refusal(context, .settings, subject: subject, needs: ConfirmProof(ConfirmPolicy.start(body))) { return refused }
         guard let root = await MainActor.run(body: { context.controller.store?.root }),
@@ -89,7 +82,6 @@ extension RemoteRoutes {
         }?.value ?? notReady
     }
 
-    /// A session just started (201) or answered (200), as the phone gets it.
     @MainActor static func hosted(_ name: String, store: AccountStore, status: Int = 201, handoff: HandoffLink? = nil) -> HTTPResponse {
         guard let session = store.hosted.sessions.first(where: { $0.name == name }),
               var wire = WireBuilders.hosted(session, hosted: store.hosted, store: store, viewers: 0) else {
@@ -116,8 +108,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// Trust and start: the hosted session's folder-trust question answered Yes. Signed by the confirm key after Face
-    /// ID over the name and the folder the phone showed; 409 when no trust question for that folder is on screen.
     @Sendable static func trustHosted(_ context: Context) async -> HTTPResponse {
         let name = context.params["name"] ?? ""
         let cwd = await MainActor.run { context.controller.store?.hosted.sessions.first(where: { $0.name == name && $0.agent != nil })?.cwd }
@@ -140,7 +130,6 @@ extension RemoteRoutes {
         }
     }
 
-    /// Continue on phone: ends the Mac process and resumes the conversation in tmux (hosting.md).
     @Sendable static func continueOnPhone(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         let needs: ConfirmProof
@@ -185,8 +174,6 @@ extension RemoteRoutes {
 }
 
 enum RemoteProjects {
-    /// The folders of the last two months' sessions, newest first, with their git branches: the phone's New Session
-    /// list and the Sessions window's.
     static func list(_ controller: RemoteController) async -> [RemoteProject] {
         struct Recent: Decodable { let sessions: [SessionInfo] }
         guard let store = await MainActor.run(body: { controller.store }) else { return [] }
@@ -217,7 +204,6 @@ enum RemoteProjects {
 
     typealias Git = (root: String?, branch: String?, branches: [String])
 
-    /// Each folder's `git`, eight at a time, each kept half a minute: three git runs a folder add up over fifty folders.
     static func gits(_ paths: [String], cache: RemoteCache) async -> [Git] {
         await withTaskGroup(of: (Int, Git).self) { group in
             var out = [Git](repeating: (nil, nil, []), count: paths.count)
@@ -235,7 +221,6 @@ enum RemoteProjects {
         }
     }
 
-    /// The repository a folder is in, its branch, and its 20 most recently committed branches.
     static func git(_ path: String) -> Git {
         guard var root = run(["-C", path, "rev-parse", "--show-toplevel"]) else { return (nil, nil, []) }
         // Git answers with symlinks resolved; the root keeps the folder's own spelling, as the phone was given it.

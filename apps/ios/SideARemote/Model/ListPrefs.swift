@@ -1,8 +1,6 @@
 import Foundation
 import SideAProtocol
 
-/// New Session's choices at the last Start on one Mac, to open with next time. Each is checked against what the Mac
-/// offers then; one it no longer has falls back to the sheet's default.
 struct NewSessionPrefs: Codable, Equatable {
     var agent: AgentProvider?
     var modelID: String?
@@ -31,7 +29,6 @@ struct ListPrefs: Codable, Equatable {
 
     init() {}
 
-    // A field added later decodes as its default rather than losing the rest.
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         groupBy = (try? values.decode(GroupBy.self, forKey: .groupBy)) ?? .project
@@ -54,7 +51,6 @@ enum SortBy: String, CaseIterable, Identifiable, Codable {
 
 enum ListPrefsStore {
     static let shownKey = "sessions.shownMac"
-    /// Read until a Mac has its own: from when one Group By and one idle fold served every Mac.
     static let legacyGroupBy = "sessions.groupBy", legacyIdle = "sessions.showIdle"
 
     static func key(mac: String) -> String { "sessions.list.\(mac)" }
@@ -78,7 +74,6 @@ enum ListPrefsStore {
 
     static let openKey = "sessions.splitOpen"
 
-    /// The session open beside the iPad's list, as Mac id and session id.
     static func open(in defaults: UserDefaults = .standard) -> (mac: String, session: String)? {
         guard let pair = defaults.stringArray(forKey: openKey), pair.count == 2 else { return nil }
         return (pair[0], pair[1])

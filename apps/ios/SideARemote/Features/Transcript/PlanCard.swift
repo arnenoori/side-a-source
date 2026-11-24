@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The turn's live plan (Codex `turn/plan/updated`) above the field: folded to the step in progress and how far along
-/// it is, open to every step.
 struct PlanCard: View {
     let plan: TurnPlan
     @State private var open = false

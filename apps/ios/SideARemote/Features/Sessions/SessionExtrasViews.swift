@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-// MARK: Pull request
-
 extension PullRequest {
     var summary: String {
         let name = number.map { "#\($0)" } ?? "Pull request"
@@ -17,7 +15,6 @@ extension PullRequest {
         }
     }
 
-    /// StatusGlyph's colours: amber where it needs the person, done green, secondary while running, tertiary when over.
     var tint: Color {
         switch (state, checks) {
         case (.merged?, _): .done
@@ -82,10 +79,8 @@ struct PullRequestMenu: View {
     }
 }
 
-/// On a row's second line: the glyph and the short summary, quiet, for a row the whole of which opens the session.
 struct PullRequestBadge: View {
     let pull: PullRequest
-    /// The number alone, its colour and glyph carrying the checks, for a row too narrow for the words.
     var compact = false
 
     var body: some View {
@@ -98,8 +93,6 @@ struct PullRequestBadge: View {
         .fixedSize()
     }
 }
-
-// MARK: Failure
 
 extension SessionFailure {
     var symbol: String {
@@ -152,8 +145,6 @@ struct FailureSection: View {
     }
 }
 
-// MARK: Snooze
-
 extension SessionSnooze.Choice {
     static let offered: [Self] = [.hour, .threeHours, .morning, .needsMe]
 
@@ -167,7 +158,6 @@ extension SessionSnooze.Choice {
         }
     }
 
-    /// Nil for `needsMe`. Tomorrow morning is 9:00 here, wherever the Mac is.
     func until(from now: Date = .now, calendar: Calendar = .current) -> Date? {
         switch self {
         case .hour: now.addingTimeInterval(3600)
@@ -187,7 +177,6 @@ extension SessionSnooze {
 }
 
 extension RemoteSession {
-    /// What the Mac wakes at once, so a snooze could only flash by: a request, a failure, a failing or stuck flag.
     var snoozable: Bool {
         openRequests.isEmpty && status != .waiting && failure == nil && ![.failing, .stuck].contains(flag?.kind)
     }

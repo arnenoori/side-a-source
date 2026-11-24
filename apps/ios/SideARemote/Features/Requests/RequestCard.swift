@@ -2,154 +2,21 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// An open request as the transcript's last item: an amber-tinted card with the headline, the
-/// command, and Allow / Deny inline. Tapping elsewhere on it opens the approval sheet.
-struct RequestCard: View {
-    @Environment(AppModel.self) private var model
-    @Environment(ApprovalPresenter.self) private var approvals
-    let request: RemoteRequest
-    /// All of what Allow approves fits on the card; past `limit` it's cut, and Allow waits for the sheet.
-    @State private var whole = true
-    @ScaledMetric(relativeTo: .callout) private var limit: CGFloat = 200
-    @State private var failures = 0
-    @State private var asking = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Space.s) {
-                Button {
-                    approvals.request = request
-                } label: {
-                    VStack(alignment: .leading, spacing: Space.xs) {
-                        Text(RequestText.visible(request.cardHeadline)).font(.headline)
-                        if request.risk == .destructive { RiskLabel(reason: request.riskReason) }
-                        if let plan = request.plan {
-                            // The plan's opening, faded out; the sheet has the rest.
-                            MarkdownView(RequestText.visible(plan), sourceID: "card-\(request.id)")
-                                .frame(maxHeight: 140, alignment: .top)
-                                .clipped()
-                                .mask(LinearGradient(stops: [.init(color: .black, location: 0.6), .init(color: .clear, location: 1)],
-                                                     startPoint: .top, endPoint: .bottom))
-                                .allowsHitTesting(false)
-                        } else {
-                            RequestPayload(request: request)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .onGeometryChange(for: Bool.self) { $0.size.height <= limit } action: { whole = $0 }
-                                .frame(maxHeight: whole ? nil : limit, alignment: .top)
-                                .clipped()
-                                .mask(LinearGradient(stops: [.init(color: .black, location: whole ? 1 : 0.7), .init(color: whole ? .black : .clear, location: 1)],
-                                                     startPoint: .top, endPoint: .bottom))
-                        }
-                    }
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("Opens the request")
-
-                GlassEffectContainer(spacing: Space.xs) {
-                    HStack(spacing: Space.xs) {
-                        Spacer()
-                        if request.plan != nil {
-                            Button {
-                                approvals.request = request
-                            } label: {
-                                Text("Review Plan").fontWeight(.semibold).frame(minWidth: 72)
-                            }
-                            .buttonStyle(.glassProminent)
-                            .tint(.amber)
-                        } else {
-                            Button {
-                                model.requests.answer(request.id, .deny(message: nil))
-                            } label: {
-                                Text("Deny").frame(minWidth: 72)
-                            }
-                            .buttonStyle(.glass)
-                            // Cut here or by the Mac: Allow waits for the sheet, which shows all of it.
-                            if !request.allowsOnCard(whole: whole) {
-                                Button {
-                                    approvals.request = request
-                                } label: {
-                                    Text("Review").fontWeight(.semibold).frame(minWidth: 72)
-                                }
-                                .buttonStyle(.glassProminent)
-                                .tint(.amber)
-                                .accessibilityHint("Shows all of it, with Allow")
-                            } else if request.allowGate == .biometric {
-                                // All of it shows, so Face ID is the confirmation.
-                                Button {
-                                    allowWithFaceID()
-                                } label: {
-                                    Text("Allow…").foregroundStyle(Color.destructive).frame(minWidth: 72)
-                                }
-                                .buttonStyle(.glass)
-                                .disabled(asking)
-                            } else if let mode = request.switchMode {
-                                // Hold for Allow + Accept Edits, as the Mac's card offers it beside Allow.
-                                Menu {
-                                    Button(request.switchTitle, systemImage: "checkmark.circle") {
-                                        model.requests.answer(request.id, .allow(confirmDestructive: false), mode: mode)
-                                    }
-                                } label: {
-                                    Text("Allow").fontWeight(.semibold).frame(minWidth: 72)
-                                } primaryAction: {
-                                    model.requests.answer(request.id, .allow(confirmDestructive: false))
-                                }
-                                .buttonStyle(.glassProminent)
-                                .tint(.amber)
-                                .accessibilityHint("Touch and hold for \(request.switchTitle)")
-                            } else {
-                                Button {
-                                    model.requests.answer(request.id, .allow(confirmDestructive: false))
-                                } label: {
-                                    Text("Allow").fontWeight(.semibold).frame(minWidth: 72)
-                                }
-                                .buttonStyle(.glassProminent)
-                                .tint(.amber)
-                            }
-                        }
-                    }
-                    .controlSize(.large)
-                    .needsMac()
-                }
-        }
-        .padding(Space.m)
-        .background(Color.amber.opacity(0.09), in: .rect(cornerRadius: Radius.inlineCard, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: Radius.inlineCard, style: .continuous)
-                .strokeBorder(Color.amber.opacity(0.35), lineWidth: 0.5)
-        }
-        .zoomSource("request-\(request.id)")
-        .accessibilityElement(children: .contain)
-        .sensoryFeedback(.error, trigger: failures)
-    }
-
-    private func allowWithFaceID() {
-        asking = true
-        Task {
-            defer { asking = false }
-            switch await FaceIDAllow.ask(for: request, on: model) {
-            case .granted(let confirm): model.requests.answer(request.id, .allow(confirmDestructive: true), confirm: confirm)
-            case .cancelled: break
-            case .failed: failures += 1
-            }
-        }
-    }
-}
-
 extension RemoteRequest {
-    /// Allow and switch mode, as the Mac offers it: the request's best mode, when Allow itself needs no Face ID and
-    /// the mode doesn't raise.
+    /// The rule that lasts only until the session ends, when the host offers one and Allow needs no Face ID.
+    var sessionRule: RemoteSuggestion? {
+        allowGate != .biometric && answers.contains(.always) ? suggestions.first { $0.scope == .session } : nil
+    }
+
     var switchMode: PermissionMode? {
         guard answers.contains(.allowMode), allowGate != .biometric, let mode = modes?.first, !mode.raises else { return nil }
         return mode
     }
 
-    /// "Allow + Accept Edits", the Mac's words.
     var switchTitle: String { switchMode.map { $0 == .acceptEdits ? "Allow + Accept Edits" : "Allow + \($0.title)" } ?? "Allow" }
 
-    /// The plan's Markdown, for ExitPlanMode.
     var plan: String? { if case .plan(let markdown) = action { markdown } else { nil } }
 
-    /// "Allow Bash?", "Allow edit to Island.swift?".
     var cardHeadline: String {
         switch action {
         case .command: "Allow \(tool)?"
@@ -174,7 +41,6 @@ struct RiskLabel: View {
     }
 }
 
-/// An answered request or question folded to one line; tap unfolds it read-only.
 struct AnsweredLine: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let answered: TranscriptStore.AnsweredRequest
@@ -195,7 +61,6 @@ struct AnsweredLine: View {
                     .font(.subheadline)
                     .foregroundStyle(iconStyle)
                     .contentTransition(.symbolEffect(.replace))
-                    // Once, when the Mac has it.
                     .symbolEffect(.bounce, value: answered.delivery == .delivered)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 1) {
@@ -222,7 +87,6 @@ struct AnsweredLine: View {
         .disclosureGroupStyle(QuietDisclosureStyle())
     }
 
-    /// The second line while the answer isn't settled.
     private var status: String? {
         switch answered.delivery {
         case .sending: "Sending…"
@@ -244,7 +108,6 @@ struct AnsweredLine: View {
 
     private var line: String {
         switch answered.outcome {
-        // Keep Planning sends the feedback as a deny.
         case .denied where answered.request.plan != nil: return "Kept planning"
         case .allowed, .denied, .elsewhere:
             if case .command(let command) = answered.request.action { return "\(answered.outcome.line) · \(answered.request.tool) \(command)" }

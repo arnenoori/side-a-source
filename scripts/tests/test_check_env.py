@@ -63,7 +63,7 @@ class CheckRoutingTests(unittest.TestCase):
         self.tools.mkdir()
         self.log.touch()
         (self.repo / "scripts").mkdir(parents=True)
-        for script in ("check.sh", "lint-python.sh", "lint-swift.sh", "sync-bridge.sh", "scan-public-source.py"):
+        for script in ("check.sh", "lint-python.sh", "lint-swift.sh", "sync-bridge.sh", "test-bridge.sh", "lint-scripts.sh", "scan-public-source.py"):
             (self.repo / "scripts" / script).write_text((ROOT / "scripts" / script).read_text())
             (self.repo / "scripts" / script).chmod(0o755)
         (self.repo / "bridge/tests").mkdir(parents=True)

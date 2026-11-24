@@ -3,16 +3,16 @@ import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
-/// The Settings tab. Toggles are green so amber keeps
-/// meaning "needs you".
 struct SettingsView: View {
     @Environment(AppRoot.self) private var root
+    @Environment(\.dismiss) private var dismiss
     @State private var pairing = false
-    @AppStorage("terminal.fontSize") private var fontSize = 13
+    @AppStorage(PrefKey.terminalFontSize) private var fontSize = 13
     @AppStorage(AppLock.key) private var requireFaceID = true
+    @AppStorage(Theme.key, store: SharedStorage.defaults) private var theme = Theme.system
+    @AppStorage(DictationPrefs.key, store: SharedStorage.defaults) private var dictatesOnPhone = false
 
     var body: some View {
-        // Switches are green as in Settings, so only their sections take the tint.
         Form {
             Section {
                 ForEach(root.macs, id: \.macID) { mac in
@@ -25,12 +25,39 @@ struct SettingsView: View {
             } header: {
                 Text(root.macs.map(\.mac.kind).shared.titlePlural)
             }
-            Section("Appearance") {
-                VStack(alignment: .leading, spacing: Space.xxs) {
-                    Text("Accent")
-                    AccentPicker()
+            if root.macs.count == 1, let mac = root.macs.first {
+                Section("Notifications") {
+                    PrefToggle("Requests", .requests, mac: mac.macID) { mac.link?.reportPush() }
+                    PrefToggle("Questions", .questions, mac: mac.macID) { mac.link?.reportPush() }
+                    PrefToggle("Finished", .finished, mac: mac.macID) { mac.link?.reportPush() }
+                    PrefToggle("Limit warnings", .limits, mac: mac.macID) { mac.link?.reportPush() }
+                    NavigationLink("More", value: SettingsPage.mac(mac.macID))
                 }
-                NavigationLink("App Icon") { AppIconPickerView() }
+                .tint(.green)
+            }
+            Section("Appearance") {
+                Picker("Theme", selection: $theme) {
+                    ForEach(Theme.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                LabeledContent("Accent") { AccentPicker().frame(maxWidth: 260) }
+                AppIconStrip()
+            }
+            Section("Sessions") {
+                Picker("Group By", selection: choice(\.groupBy)) {
+                    ForEach(GroupBy.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Sort By", selection: choice(\.sortBy)) {
+                    ForEach(SortBy.allCases) { Text($0.title).tag($0) }
+                }
+            }
+            if root.macs.contains(where: { $0.tools.can(.transcribe) }) {
+                Section("Dictation") {
+                    Picker("Transcribe On", selection: $dictatesOnPhone) {
+                        Text(root.current.mac.name).tag(false)
+                        Text("This \(ThisDevice.kind)").tag(true)
+                    }
+                }
             }
             Section("Security") {
                 Toggle("Require \(Biometry.current.name)", isOn: $requireFaceID)
@@ -40,6 +67,11 @@ struct SettingsView: View {
                 Stepper(value: $fontSize, in: 10...18) {
                     LabeledContent("Font size") { Text("\(fontSize) pt").monospacedDigit() }
                 }
+                Text(verbatim: "$ swift test --filter SendKey \u{2713}")
+                    .font(.system(size: CGFloat(fontSize), design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityHidden(true)
             }
             Section {
                 NavigationLink("Privacy", value: SettingsPage.privacy)
@@ -55,6 +87,12 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done", systemImage: "checkmark") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
         .navigationDestination(for: SettingsPage.self) { page in
             switch page {
             case .privacy: PrivacyView()
@@ -69,12 +107,13 @@ struct SettingsView: View {
                 }
             }
         }
-        // Straight to the scanner, no welcome or Tailscale step.
         .fullScreenCover(isPresented: $pairing) { ScannerScreen(title: "Pair Another \(root.macs.map(\.mac.kind).shared.titleNoun)") }
     }
 
-    /// "1.0 (11) · Mac 1.0 (12) · protocol 1": this app, then each paired Mac its hello has described, by name when
-    /// there are several.
+    private func choice<Value>(_ key: ReferenceWritableKeyPath<SessionsStore, Value>) -> Binding<Value> {
+        Binding { root.current.sessions[keyPath: key] } set: { value in for mac in root.macs { mac.sessions[keyPath: key] = value } }
+    }
+
     private var versionLine: String {
         let macs = root.macs.compactMap { mac in mac.link?.state.hello.map { (name: mac.mac.name, hello: $0) } }
         let lines = macs.map { "\(macs.count == 1 ? $0.hello.mac.kind.titleNoun : $0.name) \($0.hello.versionLine)" }
@@ -88,7 +127,6 @@ enum SettingsPage: Hashable {
     case mac(String), name(String), test(String), privacy, acknowledgements
 }
 
-/// Support and privacy questions both go here; the App Store listing gives the same address.
 enum Support {
     static let address = "support@getsidea.com"
     static let mail = URL(string: "mailto:\(address)")!
@@ -126,7 +164,10 @@ private struct MacRow: View {
 
     var body: some View {
         HStack(spacing: Space.s) {
-            Circle().fill(mac.state == .live ? Color.green : Color.secondary.opacity(0.5)).frame(width: 8, height: 8)
+            Image(systemName: mac.symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+                .overlay(alignment: .bottomTrailing) { ConnectionDot(state: mac.shown).offset(x: 2, y: 2) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(mac.name)
                 Text([version.map { "Side A \($0)" }, mac.state == .live ? mac.status : Formatting.age(of: mac.lastSeen)]
@@ -138,8 +179,6 @@ private struct MacRow: View {
     }
 }
 
-/// One paired Mac: where it is, what it may notify about, Test Connection, and Forget. The demo's Macs have no link,
-/// and still show how they're reached and what each may notify about.
 struct MacDetailView: View {
     let model: AppModel
     @Environment(AppRoot.self) private var root
@@ -178,13 +217,10 @@ struct MacDetailView: View {
         }
         .navigationTitle(model.mac.name)
         .navigationBarTitleDisplayMode(.inline)
-        // The Mac sends only what's on here, so it hears the switches once the user is done with them: on leaving the page,
-        // or the app, since Settings is a tab that can stay open.
         .onDisappear { link?.reportPush() }
         .onChange(of: scenePhase) { if $1 != .active { link?.reportPush() } }
         .confirmationDialog("Forget \(model.mac.name)?", isPresented: $confirmsForget, titleVisibility: .visible) {
             Button("Forget This \(model.mac.kind.titleNoun)", role: .destructive) {
-                // Back to the list first, so the row is seen leaving. No haptic: the dialog was the confirmation.
                 let macID = model.macID, animation = Motion.smooth(reduceMotion)
                 dismiss()
                 Task { [root] in
@@ -198,7 +234,6 @@ struct MacDetailView: View {
     }
 }
 
-/// The Mac's name on this iPhone, as Settings › General › About › Name edits a device's. Cleared, it's the Mac's own again.
 private struct MacNameView: View {
     let mac: MacConnection
     let macID: String
@@ -227,7 +262,6 @@ private struct MacNameView: View {
             text = mac.name
             focused = true
         }
-        // The Mac's own name typed back follows the Mac again if it's renamed there.
         .onDisappear {
             let before = mac.name
             mac.rename(text == mac.reportedName ? nil : text, macID: macID)
@@ -236,15 +270,23 @@ private struct MacNameView: View {
     }
 }
 
-/// A Mac's Notifications and Live Activity switches.
 private struct MacNotificationSections: View {
     let macID: String
     @Environment(\.scenePhase) private var scenePhase
     @State private var notificationsDenied = false
+    @State private var notificationsUndetermined = false
 
     var body: some View {
         Section {
             if notificationsDenied { OpenNotificationSettings() }
+            if notificationsUndetermined {
+                Button("Turn On Notifications", systemImage: "bell.badge") {
+                    Task {
+                        await NotificationsCard.requestAccess()
+                        notificationsUndetermined = await NotificationsCard.undetermined()
+                    }
+                }
+            }
             PrefToggle("Requests", .requests, mac: macID)
             PrefToggle("Questions", .questions, mac: macID)
             PrefToggle("Plans", .plans, mac: macID)
@@ -258,7 +300,10 @@ private struct MacNotificationSections: View {
             Text("Notifications")
         }
         .tint(.green)
-        .task(id: scenePhase) { notificationsDenied = await NotificationsCard.denied() }
+        .task(id: scenePhase) {
+            notificationsDenied = await NotificationsCard.denied()
+            notificationsUndetermined = await NotificationsCard.undetermined()
+        }
         Section("Live Activity") {
             PrefToggle("On the Lock Screen", .liveActivity, mac: macID) { PushRegistrar.shared.endActivitiesIfOff() }
         }
@@ -266,7 +311,6 @@ private struct MacNotificationSections: View {
     }
 }
 
-/// One of a Mac's notification switches, stored under its own key.
 private struct PrefToggle: View {
     let title: String
     let changed: (() -> Void)?

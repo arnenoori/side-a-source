@@ -3,9 +3,7 @@ import SideAProtocol
 import SideARemoteKit
 import SideARemoteShared
 
-/// Replies typed while the Mac was out of reach: kept here unsigned, and signed and queued only once it's back.
 extension ReplyFlights {
-    /// A pairing that ended or a Mac to update won't come back by waiting: what's sent then queues as before.
     static func holds(_ connection: Connection) -> Bool {
         switch connection {
         case .connecting, .offline: true
@@ -16,7 +14,6 @@ extension ReplyFlights {
     static let catchUpLimit: Double = 20
     var catchingUpNotice: String { "Not sent yet: Side A Remote is still catching up with \(mac.endpoint.kind.the(mac.endpoint.name)). It sends once it has." }
 
-    /// `since` in place of where the session stands now: a reply held again keeps the moment it was sent.
     func hold(_ body: RemoteReply, turn: String, session: SessionKey, needs: ConfirmLevel?, key: String? = nil, wire: String? = nil,
                       since: String?? = nil) {
         let flight = ReplyFlight(session: session, turn: turn, body: body, at: Date.now.timeIntervalSince1970, phase: .waiting, needs: needs,
@@ -24,8 +21,6 @@ extension ReplyFlights {
         setFlight(flight, item: key ?? UUID().uuidString.lowercased())
     }
 
-    /// Before the first snapshot the engine knows no session, and where one stands is what the screen showed: the row
-    /// drawn from the cache, and the finished turn saved with it.
     func mark(_ session: SessionKey) -> String? {
         if state.epoch != nil { return ReplyMark.marks(state.sessions[session], state.finished[session]).first }
         if cachedFinished == nil { cachedFinished = StateCache.load(mac.endpoint.macID)?.finished ?? [:] }
@@ -115,8 +110,6 @@ extension ReplyFlights {
         }
     }
 
-    /// A held reply that was posted once and that the Mac's receipts already name went in: the receipt, applied before
-    /// this, moves its bubble, and nothing goes again.
     private func received(_ flight: ReplyFlight) -> Bool {
         guard let key = flight.key, let receipts = state.sessions[flight.session]?.receipts else { return false }
         return receipts.contains { $0.answers(key) }
@@ -134,7 +127,6 @@ extension ReplyFlights {
             // Posted once, perhaps typed, perhaps the very thing that moved the session on: under its first key the Mac
             // replays that attempt if it landed, and otherwise refuses it by its `seen` as this would.
             if flight.key != nil, flight.body.seen != nil, state.macCan(.repliesSeen) { return nil }
-            // Retry sends it under its first key, which the Mac answers from the first attempt if that one landed.
             if flight.key != nil {
                 return "The session moved on while this waited, and \(mac.endpoint.kind.the(mac.endpoint.name)) may already have it. Read what it did before you retry."
             }
@@ -143,8 +135,6 @@ extension ReplyFlights {
         return nil
     }
 
-    /// `auto` is decided afresh, as for Retry: a request may be waiting on the session now. The turn it follows up stays,
-    /// so the Mac refuses it if that turn has moved on.
     private func refreshed(_ flight: ReplyFlight) -> RemoteReply {
         let old = flight.body
         let mode = old.mode == .auto ? model?.replyMode(flight.session) ?? .auto : old.mode

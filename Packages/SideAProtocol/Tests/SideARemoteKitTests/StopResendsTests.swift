@@ -4,7 +4,6 @@ import Testing
 
 private enum Event: CaseIterable { case press, cancel, answered, answeredForAnEarlierPress, gaveBack, gaveBackLate }
 
-// Each state (idle, pressed) × each event: the state after it, and whether replies go again.
 @Test func everyEventFromEveryStateOfAResendAfterAStop() {
     let pressedAt = Date(timeIntervalSince1970: 1_000)
     let table: [(pressed: Bool, Event, after: Bool, resends: Bool)] = [

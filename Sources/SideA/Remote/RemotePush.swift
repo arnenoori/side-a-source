@@ -4,28 +4,48 @@ import os
 import SideACore
 import SideAProtocol
 
-/// Notifications to paired phones through the relay: each phone's tokens registered with it, each push sealed per
-/// device under its own key, nothing sent to a phone that turned that kind off or has the app open. `PushScheduler` says when.
 @MainActor
 final class RemotePush {
-    /// ok, unreachable or unregistered, for setup.
     private(set) var relayState = "unregistered"
-    private weak var controller: RemoteController?
+    weak var controller: RemoteController?
     private var client: RelayClient?
     private let log = Logger(subsystem: "com.arnenoori.sidea", category: "push")
-    /// Diagnostic pushes waiting for the phone's receipt, by id.
     private(set) var diagnostics: [String: (device: String, sent: Date, received: Date?)] = [:]
 
-    init(controller: RemoteController) { self.controller = controller }
+    let delivery = PushDelivery()
+    /// Requests whose answer is still wanted: an alert for one stops retrying, and is held back or sent late, only while it is.
+    var open: Set<String> = []
+    var watched: [String: Watched] = [:]
+    var watchTimer: Task<Void, Never>?
+    /// Alerts to a request, question or plan that a relaunch would leave on a phone with nothing behind them.
+    var outstanding = PushDismissals()
+    var outstandingURL: URL?
+    var swept = false
+    var presenceOf: (String) -> EventHub.Presence? = { _ in nil }
 
-    private var relay: RelayClient? {
+    #if DEBUG
+    var sealing: ((PushPayload, PushCategory, String, [String]) -> Void)?
+    #endif
+
+    init(controller: RemoteController) {
+        self.controller = controller
+        outstandingURL = controller.store?.root.appendingPathComponent("remote/pending-pushes.json")
+        presenceOf = { [weak controller] device in controller?.hub?.presence(device) }
+        delivery.noted = { [weak self] device, result in
+            self?.relayState = "ok"
+            self?.note(device, result)
+        }
+        delivery.failed = { [weak self] error in self?.failed(error, device: nil, doing: "send a notification") }
+        delivery.relay = { [weak self] in self?.relay }
+    }
+
+    var relay: RelayClient? {
         if let client { return client }
         guard let controller, let base = controller.relayURL, let key = controller.installKey else { return nil }
         client = RelayClient(base: base, key: key)
         return client
     }
 
-    /// Setup's relay row: whether the relay still knows this install, asked at most once a minute.
     func checkRelay() async -> String {
         guard let relay else { return relayState }
         if let checked, Date().timeIntervalSince(checked) < 60 { return relayState }
@@ -40,20 +60,13 @@ final class RemotePush {
 
     private var checked: Date?
     private(set) var tokenWarned: [String: Date] = [:]
-    /// Two phones reporting in turn flip the token at each launch; once an hour says all there is to say.
     static let tokenWarnEvery: TimeInterval = 3_600
 
-    /// This route takes the token alone, so a phone can report from the background. A stolen token could send pushes
-    /// elsewhere with it; an address that really moves is rare (a restore, a reinstall), so moving is worth saying, and a
-    /// first report isn't.
     static func warns(from previous: String?, to next: String, warned: Date?, now: Date) -> Bool {
         guard let previous, previous != next else { return false }
         return warned.map { now.timeIntervalSince($0) >= tokenWarnEvery } ?? true
     }
 
-    // MARK: Devices
-
-    /// `POST /v1/devices/push`: keep what the phone reported and register it with the relay.
     func register(_ device: String, _ registration: PushRegistration) async -> Bool {
         guard let controller, let record = controller.devices.devices.first(where: { $0.id == device }) else { return false }
         do { try controller.devices.update(device) { $0.push = registration } } catch {
@@ -66,22 +79,16 @@ final class RemotePush {
             NotificationRouter.deviceMoved(device, name: record.name)
         }
         perform(activities.reported(device, activities: Array(registration.activityTokens.keys), now: Date().timeIntervalSince1970), state: activities.state)
-        // The phone's Live Activity switch comes with this report, and a card it turned off ends now.
         defer { activity(activities.state) }
         return await put(device, registration, secretHash: record.secretHash, app: record.app)
     }
 
-    /// Phones whose stored registration the relay hasn't acknowledged. The phone reports once per connection, so
-    /// without a retry here a relay that was down at that moment would leave it without notifications.
     private(set) var unacknowledged: Set<String> = [] {
-        // Everything registered: the next failure, whenever it comes, starts the backoff over.
         didSet { if unacknowledged.isEmpty { attempts = 0 } }
     }
     @ObservationIgnored private var retrying: Task<Void, Never>?
     private(set) var attempts = 0
-    /// The first wait before a retry; it doubles to ten times as long. Tests shorten it.
     var retryAfter: Duration = .seconds(15)
-    /// Tests stand in for the relay's `PUT /v1/devices/{id}`.
     var putDevice: ((String, RelayClient.Device) async throws -> Bool)?
 
     private func put(_ device: String, _ registration: PushRegistration, secretHash: String, app: String) async -> Bool {
@@ -130,7 +137,6 @@ final class RemotePush {
         }
     }
 
-    /// The tunnel connected or the network changed: the relay may be reachable now, so waiting registrations go at once.
     func relayMayBeBack() {
         guard !unacknowledged.isEmpty else { return }
         retrying?.cancel()
@@ -147,7 +153,6 @@ final class RemotePush {
         Task { try? await relay.delete(device) }
     }
 
-    /// Remote's uninstall: the install and all its devices go.
     func deleteInstall() async {
         do { try await relay?.deleteInstall() } catch {
             RemoteLog.shared("the relay didn't delete this install: \(error.localizedDescription)")
@@ -156,19 +161,15 @@ final class RemotePush {
         relayState = "unregistered"
     }
 
-    // MARK: Sending
-
-    /// The Mac's presence and the time, for when pushes go; tests supply their own.
     var presence: () -> UserPresence = UserPresence.now
     var clock: () -> Date = Date.init
     private(set) var scheduler = PushScheduler()
-    /// The sends the scheduler holds, by its ids.
-    private var held: [String: () -> Void] = [:]
+    var held: [String: () -> Void] = [:]
     private var wake: Task<Void, Never>?
 
-    /// A request, question or plan that just arrived. Time sensitive: something is waiting on it.
     func request(_ request: RemoteRequest) {
-        let category = RemotePushPayload.request(request, mac: RemoteController.macID, now: 0).category
+        let (category, first) = RemotePushPayload.request(request, mac: RemoteController.macID, now: 0)
+        open.insert(request.id)
         held[request.id] = { [weak self] in
             guard let self else { return }
             let (category, payload) = RemotePushPayload.request(request, mac: RemoteController.macID, now: clock().timeIntervalSince1970)
@@ -177,50 +178,52 @@ final class RemotePush {
             case .plan: \.plans
             default: \.requests
             }
-            let level = category == .request || category == .requestDestructive ? "time-sensitive" : "active"
-            let collapse = Self.collapse(request.id)
-            dismissals.sent(collapse, to: send(payload, category: category, collapse: collapse, wanted: wanted,
-                                               level: level, timeSensitive: true, expiresIn: 3600))
+            var spec = PushSpec(payload: payload, category: category, collapse: Self.collapse(request.id), wanted: wanted,
+                                level: category == .request || category == .requestDestructive ? "time-sensitive" : "active", timeSensitive: true)
+            spec.alive = { [weak self] in self?.open.contains(request.id) == true }
+            sendRequest(spec, id: request.id)
         }
         run(scheduler.add(request.id, .ask(destructive: category == .requestDestructive), now: clock(), presence: presence()))
+        logHeld(request.id, kind: first.t)
     }
 
-    /// A turn that finished, and how long it ran when known: into the Mac's one Ready notification.
     func finished(_ finished: FinishedSession, ran: TimeInterval?) {
+        if (ran ?? .infinity) < PushScheduler.shortTurn { skipped("finished", finished.turnID, "short-turn") }
         run(scheduler.finished(finished, ran: ran, now: clock(), presence: presence()))
     }
 
     /// The relay's only removal is its "Answered" push, so Ready shrinks in place while turns are left.
-    func finishedResolved(_ turnID: String) {
+    func finishedResolved(_ turnID: String, reason: Island.ReadyReason = .replied) {
         let shown = scheduler.ready.contains { $0.turnID == turnID }
+        let silently = reason == .expired || reason == .released
         resolve(turnID)
-        clear(Self.collapse(turnID))
+        clear(Self.collapse(turnID), silently: silently)
         guard shown else { return }
         let left = scheduler.ready
-        guard !left.isEmpty else { return clear(Self.readyCollapse) }
+        guard !left.isEmpty else { return clear(Self.readyCollapse, silently: silently) }
         let showing = Set(dismissals.showing(Self.readyCollapse))
         guard !showing.isEmpty else { return }
-        send(RemotePushPayload.ready(left, mac: RemoteController.macID, now: clock().timeIntervalSince1970, quiet: true, faceID: needsFaceID),
-             category: .finished, collapse: Self.readyCollapse, wanted: \.finished, level: "passive", timeSensitive: false, expiresIn: 3600,
-             sound: false, only: { showing.contains($0.id) })
+        var spec = PushSpec(payload: RemotePushPayload.ready(left, mac: RemoteController.macID, now: clock().timeIntervalSince1970, quiet: true, faceID: needsFaceID),
+                            category: .finished, collapse: Self.readyCollapse, wanted: \.finished, level: "passive", sound: false)
+        spec.only = { showing.contains($0.id) }
+        spec.reason = "ready-shrank"
+        send(spec)
     }
 
-    /// Ready's one notification per Mac, updated in place. Active; without a sound soon after one that had it. A phone
-    /// that can't show a grouped Ready gets each turn as its own FINISHED push instead, once.
     private func ready(_ turns: [FinishedSession], quiet: Bool) {
         guard !turns.isEmpty else { return }
         let now = clock().timeIntervalSince1970
-        let payload = RemotePushPayload.ready(turns, mac: RemoteController.macID, now: now, quiet: quiet, faceID: needsFaceID)
-        dismissals.sent(Self.readyCollapse, to: send(payload, category: .finished, collapse: Self.readyCollapse, wanted: \.finished,
-                                                     level: "active", timeSensitive: false, expiresIn: 3600, sound: !quiet, only: Self.groupsReady))
+        var group = PushSpec(payload: RemotePushPayload.ready(turns, mac: RemoteController.macID, now: now, quiet: quiet, faceID: needsFaceID),
+                             category: .finished, collapse: Self.readyCollapse, wanted: \.finished, level: "active", sound: !quiet)
+        group.only = Self.groupsReady
+        dismissals.sent(Self.readyCollapse, to: send(group).sent)
         var sounded = quiet
         for turn in turns.reversed() where !perTurnSent.contains(turn.turnID) {
             perTurnSent.insert(turn.turnID)
-            let collapse = Self.collapse(turn.turnID)
-            dismissals.sent(collapse, to: send(RemotePushPayload.finished(turn, mac: RemoteController.macID, now: now, quiet: sounded,
-                                                                          faceID: needsFaceID(turn.sessionID)),
-                                               category: .finished, collapse: collapse, wanted: \.finished, level: "active", timeSensitive: false,
-                                               expiresIn: 3600, sound: !sounded, only: { !Self.groupsReady($0) }))
+            let payload = RemotePushPayload.finished(turn, mac: RemoteController.macID, now: now, quiet: sounded, faceID: needsFaceID(turn.sessionID))
+            var each = PushSpec(payload: payload, category: .finished, collapse: Self.collapse(turn.turnID), wanted: \.finished, level: "active", sound: !sounded)
+            each.only = { !Self.groupsReady($0) }
+            dismissals.sent(each.collapse, to: send(each).sent)
             sounded = true
         }
         perTurnSent.formIntersection(turns.map(\.turnID))
@@ -231,40 +234,40 @@ final class RemotePush {
         return ConfirmPolicy.session(mode: mode) == .biometric
     }
 
-    /// The turns already pushed one by one to phones without grouped Ready.
     private var perTurnSent: Set<String> = []
 
     /// Per Mac, so two Macs' Ready notifications on one phone don't replace each other.
     static var readyCollapse: String { opaque("ready-" + RemoteController.macID) }
 
-    /// Whether a paired phone said it shows a grouped Ready.
     nonisolated static func groupsReady(_ device: RemoteDevice) -> Bool { device.readyGroups == true }
 
-    /// Passive, once per session an hour, to phones that keep health notifications on.
-    /// A new flag replaces one still held; one that doesn't notify ends it.
     func health(_ session: RemoteSession, _ flag: SessionFlag) {
         guard Self.notifies(flag) else { return healthEnded(session.id) }
-        if let last = healthSent[session.id], clock().timeIntervalSince(last) < 3600 { return }
+        if let last = healthSent[session.id], clock().timeIntervalSince(last) < 3600 {
+            return skipped("health", Self.opaque("health-" + session.id), "already-warned-within-an-hour")
+        }
         let id = Self.healthID(session.id)
         held[id] = { [weak self] in
             guard let self else { return }
             let now = clock()
             healthSent[session.id] = now
             let payload = RemotePushPayload.health(session, flag: flag, mac: RemoteController.macID, now: now.timeIntervalSince1970)
-            send(payload, category: .health, collapse: Self.opaque("health-" + session.id), wanted: \.health,
-                 level: "passive", timeSensitive: false, expiresIn: 3600)
+            send(PushSpec(payload: payload, category: .health, collapse: Self.opaque("health-" + session.id), wanted: \.health, level: "passive"))
         }
         run(scheduler.add(id, .health, now: clock(), presence: presence()))
+        logHeld(id, kind: "health", collapse: Self.opaque("health-" + session.id))
     }
 
-    /// The flag cleared or the session went: a health push still held doesn't go.
     func healthEnded(_ session: SessionKey) { resolve(Self.healthID(session)) }
 
     private static func healthID(_ session: SessionKey) -> String { "health:" + session }
 
-    private func resolve(_ id: String) {
+    func resolve(_ id: String) {
+        if held[id] != nil { skipped("held", Self.collapse(id), "settled-before-sent") }
         scheduler.resolve(id)
         held[id] = nil
+        open.remove(id)
+        watched[id] = nil
         schedule()
     }
 
@@ -278,7 +281,6 @@ final class RemotePush {
         schedule()
     }
 
-    /// One wake, for the soonest thing the scheduler waits on.
     private func schedule() {
         wake?.cancel()
         wake = nil
@@ -293,8 +295,6 @@ final class RemotePush {
 
     func tick() { run(scheduler.tick(now: clock(), presence: presence())) }
 
-    /// Remote off: nothing held goes, and nothing waits to. Turned on again, it starts empty, as the events do: what was
-    /// already open then isn't pushed. Live Activities end, since nothing would update them.
     func stopScheduling() {
         retrying?.cancel()
         retrying = nil
@@ -306,29 +306,29 @@ final class RemotePush {
         scheduler = PushScheduler()
         perTurnSent = []
         endActivities()
+        open = []
+        watched = [:]
+        watchTimer?.cancel()
+        watchTimer = nil
     }
 
-    /// A full context isn't worth a notification: the flag stays on the session's row, and Restart Fresh is there.
     nonisolated static func notifies(_ flag: SessionFlag) -> Bool { flag.kind != .bloated }
 
-    /// A reply the phone was told is Queued that can't go now. The session may be gone, so this is the only word of it.
-    /// Never held: it answers something the phone sent, and whoever sent it may not be at the Mac.
     func queuedDropped(session: SessionKey, title: String?, text: String) {
         let payload = RemotePushPayload.queuedDropped(session: session, title: title, text: text, mac: RemoteController.macID, now: Date().timeIntervalSince1970)
-        send(payload, category: .health, collapse: Self.opaque("dropped-" + session), wanted: \.health,
-             level: "active", timeSensitive: false, expiresIn: 3600)
+        send(PushSpec(payload: payload, category: .health, collapse: Self.opaque("dropped-" + session), wanted: \.health, level: "active"))
     }
 
-    /// An account in use passed 90% or reached its limit in a window; once per threshold until the window resets. Held
-    /// while someone is at the Mac, where the menu bar shows it; a later threshold for the window replaces a held one.
     func limit(_ account: RemoteAccount, _ window: UsageWindow, threshold: Int) {
         let key = "\(account.id)|\(window.id)|\(threshold)|\(Int(window.resetsAt ?? 0))"
-        guard limitSent.insert(key).inserted else { return }
+        guard limitSent.insert(key).inserted else {
+            return skipped("limit", Self.opaque("limit-" + account.id + "-" + window.id), "already-sent-for-this-threshold")
+        }
         let collapse = Self.opaque("limit-" + account.id + "-" + window.id)
         notice("limit:" + collapse) { [weak self] in
             guard let self else { return }
             let payload = RemotePushPayload.limit(account, window: window, mac: RemoteController.macID, now: clock().timeIntervalSince1970)
-            send(payload, category: .limit, collapse: collapse, wanted: \.limits, level: "active", timeSensitive: false, expiresIn: 3600)
+            send(PushSpec(payload: payload, category: .limit, collapse: collapse, wanted: \.limits, level: "active"))
         }
     }
 
@@ -340,50 +340,32 @@ final class RemotePush {
             guard let self else { return }
             let payload = RemotePushPayload.rotation(title: title, body: body, account: account, resetsAt: resetsAt, mac: RemoteController.macID,
                                                      now: clock().timeIntervalSince1970)
-            send(payload, category: .rotation, collapse: "rotation", wanted: { $0.rotation == true }, level: Self.rotationLevel(blocks: blocks),
-                 timeSensitive: false, expiresIn: 3600, only: Self.showsRotation)
+            var spec = PushSpec(payload: payload, category: .rotation, collapse: "rotation", wanted: { $0.rotation == true }, level: Self.rotationLevel(blocks: blocks))
+            spec.only = Self.showsRotation
+            send(spec)
         }
     }
 
     private func notice(_ id: String, _ send: @escaping () -> Void) {
         held[id] = send
         run(scheduler.add(id, .notice, now: clock(), presence: presence()))
+        logHeld(id, kind: id.hasPrefix("limit:") ? "limit" : id, collapse: id.hasPrefix("limit:") ? String(id.dropFirst(6)) : id)
     }
 
-    /// A move is passive, since work goes on; no account left is active, since work stops.
     nonisolated static func rotationLevel(blocks: Bool) -> String { blocks ? "active" : "passive" }
 
-    /// Whether a paired phone asked for rotation pushes, in words it can read.
     nonisolated static func showsRotation(_ device: RemoteDevice) -> Bool { device.rotationPushes == true }
 
     private var healthSent: [SessionKey: Date] = [:]
     private var limitSent: Set<String> = []
 
-    /// The phones each request's notification went to, so only they get its "Answered".
-    private var dismissals = PushDismissals()
-
-    /// Answered somewhere else: "Answered" replaces the notification on each phone that showed it, other than
-    /// `answeredBy`, which already took its own away.
-    func dismiss(_ request: RequestID, answeredBy: String? = nil) {
-        resolve(request)
-        clear(Self.collapse(request), answeredBy: answeredBy)
-    }
-
-    private func clear(_ collapse: String, answeredBy: String? = nil) {
-        let devices = dismissals.settled(collapse, answeredBy: answeredBy)
-        guard !devices.isEmpty, let relay else { return }
-        for batch in Self.batches(devices) {
-            let body = RelayClient.Send(devices: batch, kind: "dismiss", collapseId: collapse, priority: 5)
-            Task { await deliver(relay, body, doing: "clear a notification") }
-        }
-    }
+    var dismissals = PushDismissals()
 
     /// One send names at most the relay's limit of devices; more go in further sends rather than fail together.
     nonisolated static func batches(_ devices: [String]) -> [[String]] {
         stride(from: 0, to: devices.count, by: RelayClient.maxDevices).map { Array(devices[$0..<min($0 + RelayClient.maxDevices, devices.count)]) }
     }
 
-    /// Test Connection: one `TEST` push to one phone, with its result, and an id the phone acknowledges.
     func test(_ device: String) async -> DiagnosticPush {
         let id = "diag-" + UUID().uuidString.prefix(8).lowercased()
         guard let relay, let record = controller?.devices.devices.first(where: { $0.id == device }), record.push != nil,
@@ -412,12 +394,9 @@ final class RemotePush {
         return true
     }
 
-    // MARK: Live Activity
-
     private var activities = LiveActivities()
     private var ticker: Task<Void, Never>?
 
-    /// From every change to sessions, requests or usage, and once a minute while an activity is up.
     func activity(_ state: ActivityContentState) {
         let devices = targets { $0.push != nil }.map {
             LiveActivities.Device(id: $0.id, wanted: $0.push?.prefs.liveActivity == true, canStart: $0.push?.pushToStartToken != nil)
@@ -434,7 +413,6 @@ final class RemotePush {
         }
     }
 
-    /// Every card ends as one a phone turned off would, and the minute's ticker stops.
     private func endActivities() {
         ticker?.cancel()
         ticker = nil
@@ -444,8 +422,6 @@ final class RemotePush {
     }
 
     #if DEBUG
-    /// Tests: each Live Activity action, before it's handed to the relay (none in tests), and whether the minute's
-    /// ticker runs.
     var acting: (([LiveActivities.Action]) -> Void)?
     var ticking: Bool { ticker != nil }
     #endif
@@ -471,57 +447,6 @@ final class RemotePush {
         Task { await deliver(relay, body, doing: "\(event) the Live Activity") }
     }
 
-    // MARK: Delivery
-
-    #if DEBUG
-    /// Tests: each push sealed for its devices, before it's handed to the relay (none in tests).
-    var sealing: ((PushPayload, PushCategory, String, [String]) -> Void)?
-    #endif
-
-    /// The devices it went to.
-    @discardableResult
-    private func send(_ payload: PushPayload, category: PushCategory, collapse: String, wanted: (NotificationPrefs) -> Bool,
-                      level: String, timeSensitive: Bool, expiresIn: Int, sound: Bool = true,
-                      only: (RemoteDevice) -> Bool = { _ in true }) -> [String] {
-        let data = RemotePushPayload.encoded(payload)
-        let watching = controller?.hub
-        var sealed: [String: String] = [:]
-        for device in targets({ only($0) && $0.push.map { wanted($0.prefs) } ?? false }) {
-            guard let key = Self.key(device), device.push != nil else { continue }
-            // The app is open on it: the socket already shows everything.
-            if Self.skips(watching?.presence(device.id), now: Date()) { continue }
-            if let envelope = try? PushEnvelope.seal(data, with: key, category: category, collapseID: collapse, deviceID: device.id) {
-                sealed[device.id] = envelope
-            }
-        }
-        #if DEBUG
-        if !sealed.isEmpty { sealing?(payload, category, collapse, sealed.keys.sorted()) }
-        #endif
-        guard !sealed.isEmpty, let relay else { return [] }
-        // Each device's own Time Sensitive switch: the relay takes one level per send, so devices that differ go apart.
-        let groups = Dictionary(grouping: sealed.keys) { id in
-            timeSensitive && controller?.devices.devices.first { $0.id == id }?.push?.prefs.timeSensitiveRequests == false ? "active" : level
-        }
-        for (level, ids) in groups {
-            for batch in Self.batches(ids.sorted()) {
-                let body = RelayClient.Send(devices: batch, kind: "alert", category: category.rawValue, collapseId: collapse, priority: 10,
-                                            expiresIn: expiresIn, sound: sound, level: level, sealed: sealed.filter { batch.contains($0.key) })
-                Task { await deliver(relay, body, doing: "send a notification") }
-            }
-        }
-        return Array(sealed.keys)
-    }
-
-    /// A phone in front refreshes its presence every 30 s while its socket is up, and says at once when it leaves the
-    /// front; this allows one refresh and some slack. Older than that, the phone may have been suspended without a word.
-    nonisolated static let openFresh: TimeInterval = 40
-
-    /// In front and fresh: the app shows it, so no push.
-    nonisolated static func skips(_ presence: EventHub.Presence?, now: Date) -> Bool {
-        guard let presence, presence.foreground else { return false }
-        return now.timeIntervalSince(presence.at) <= openFresh
-    }
-
     private func deliver(_ relay: RelayClient, _ body: some Encodable & Sendable, doing: String) async {
         do {
             for result in try await relay.send(body) { note(result.device, result.result) }
@@ -531,20 +456,19 @@ final class RemotePush {
         }
     }
 
-    private func targets(_ include: (RemoteDevice) -> Bool) -> [RemoteDevice] {
+    func targets(_ include: (RemoteDevice) -> Bool) -> [RemoteDevice] {
         (controller?.devices.devices ?? []).filter { $0.pushKey != nil && include($0) }
     }
 
-    private func note(_ device: String, _ result: String) {
+    func note(_ device: String, _ result: String) {
         guard let controller, controller.devices.devices.first(where: { $0.id == device })?.pushResult != result else { return }
         do { try controller.devices.update(device) { $0.pushResult = result } } catch {
             RemoteLog.shared("couldn't save device \(device.prefix(6))'s push result: \(error.localizedDescription)")
         }
     }
 
-    /// Whether the failure is the relay being out of reach, which a later try can mend.
     @discardableResult
-    private func failed(_ error: Error, device: String?, doing: String) -> Bool {
+    func failed(_ error: Error, device: String?, doing: String) -> Bool {
         let failure = error as? RelayClient.Failure
         let transient = failure == nil || failure == .unreachable || (failure?.status ?? 0) >= 500
         if transient { relayState = "unreachable" }

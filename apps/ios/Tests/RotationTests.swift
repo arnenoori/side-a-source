@@ -49,7 +49,6 @@ final class RotationTests: XCTestCase {
         XCTAssertNil(RotationText.plan(account([], capacity: 5, provider: .codex)))
     }
 
-    /// With a Mac that serves `limited`, a Fable cap alone isn't "Limited", and neither is a 98% window Autopilot still uses.
     func testLimitedFollowsTheMacsPlanner() {
         let capped = account([window("five_hour", 10), window("model:fable", 100)], limited: false, fableOut: true, backAt: t + 3600)
         XCTAssertFalse(capped.limited(at: now))
@@ -60,12 +59,10 @@ final class RotationTests: XCTestCase {
 
         XCTAssertFalse(account([window("five_hour", 98)], limited: false).limited(at: now))
         XCTAssertTrue(account([window("five_hour", 100)], limited: true, backAt: t + 60).limited(at: now))
-        // Past the moment the Mac said it ends, the phone stops saying so, connected or not.
         XCTAssertFalse(account([window("five_hour", 100)], limited: true, backAt: t - 60).limited(at: now))
         XCTAssertFalse(account([window("model:fable", 100)], limited: false, fableOut: true, backAt: t - 60).fableOut(at: now))
     }
 
-    /// An older Mac serves no verdict, so the phone reads the percentages as it always did.
     func testAnOlderMacKeepsTheOldReading() {
         let old = account([window("five_hour", 10), window("model:fable", 100)])
         XCTAssertTrue(old.limited(at: now))

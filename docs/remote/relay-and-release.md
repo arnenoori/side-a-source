@@ -163,7 +163,7 @@ with headers `apns-push-type: alert`, `apns-topic: <registration bundleID>` (`co
 `apns-priority`, `apns-expiration`, `apns-collapse-id`, and `e` set to that device's envelope.
 `loc-key` strings (`PUSH_REQUEST_FALLBACK`, `PUSH_QUESTION_FALLBACK`, `PUSH_PLAN_FALLBACK`,
 `PUSH_FINISHED_FALLBACK`, `PUSH_LIMIT_FALLBACK`, `PUSH_HEALTH_FALLBACK`, `PUSH_ROTATION_FALLBACK`, `PUSH_TEST_FALLBACK`,
-`PUSH_ANSWERED`, and the relay's own `PUSH_MAC_QUIET`, `PUSH_MAC_ASLEEP`, `PUSH_MAC_BACK`) live in the
+`PUSH_ANSWERED`, and the relay's own `PUSH_MAC_QUIET`, `PUSH_MAC_ASLEEP`) live in the
 app's `Localizable.strings` ("Side A needs you", "A session finished"), so even the fallback text
 is the app's, and a stolen install key can make a phone show only those fixed strings.
 
@@ -218,10 +218,12 @@ Who is told: only devices the Mac registered with `notifyQuiet: true` (`PUT /v1/
 or never named is not told; an older Mac that doesn't send the field changes nothing.
 
 The words are the relay's, as for every push: `aps.alert` is a `loc-key` (`PUSH_MAC_QUIET`,
-`PUSH_MAC_ASLEEP`, `PUSH_MAC_BACK`), category `MAC_QUIET`, `thread-id` and `apns-collapse-id` `mac-quiet`,
+`PUSH_MAC_ASLEEP`), category `MAC_QUIET`, `thread-id` and `apns-collapse-id` `mac-quiet-<macID>` (one per Mac),
 `"q": "<macID>"` for the tap, no `e` and no `mutable-content`. The alert is priority 10, sound, active, and
-expires after 6 hours; the all-clear is priority 5, passive, no sound, expires after 1 hour, and replaces
-the alert in Notification Center. The all-clear is sent only if the alert was.
+expires after 6 hours; the all-clear is a background push (`content-available`, priority 5, no alert, no collapse id,
+expires after 1 hour) with `"back": "<macID>"`; the app removes that Mac's delivered alert and shows
+nothing. The all-clear is sent only if the alert was. The relay knows no name for the Mac, so the alert can't
+name it.
 
 Storage, in tables made when first needed: `tunnel_mac(id, up, since, watch, goodbye, goodbye_at, alerted)`
 (one row from the Mac's first connect) and `quiet_devices(id)`. Nothing the Mac wrote is stored but the

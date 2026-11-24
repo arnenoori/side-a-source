@@ -1,12 +1,9 @@
 import SideARemoteShared
 import SwiftUI
 
-/// Assistant prose: full width, no container (v0). Settled blocks take a native partial selection
-/// (`SelectableText`); only the block still fading in while a reply streams is plain `Text`.
 struct MarkdownView: View {
     let markdown: String
     var sourceID: String = "md"
-    /// While a reply streams: the newest words of the last block, still fading in.
     var fading: [FadingWords] = []
     @Environment(\.openFile) private var openFile
 
@@ -29,12 +26,10 @@ struct MarkdownView: View {
         .privacySensitive()
     }
 
-    /// The block's text, with its fading tail marked for `FadingWordsRenderer` when it's the last block.
     private func text(_ block: MarkdownBlock) -> Text {
         guard !fading.isEmpty, block.id == blocks.last?.id else { return Text(block.text) }
         var rest = block.text
         var spans: [(AttributedString, Double)] = []
-        // Newest first, each span cut off the end of what's left.
         for span in fading.reversed() where span.count > 0 {
             let count = rest.characters.count
             let cut = rest.characters.index(rest.startIndex, offsetBy: max(0, count - span.count))
@@ -48,7 +43,6 @@ struct MarkdownView: View {
 
     private func fades(_ block: MarkdownBlock) -> Bool { !fading.isEmpty && block.id == blocks.last?.id }
 
-    /// Selectable once settled; the fading block draws through `FadingWordsRenderer` until it's done.
     @ViewBuilder private func prose(_ block: MarkdownBlock, _ style: SelectableText.Style = .init()) -> some View {
         if fades(block) {
             text(block).font(.body).lineSpacing(3).foregroundStyle(style.secondary ? .secondary : .primary)
@@ -88,7 +82,6 @@ struct MarkdownView: View {
     }
 }
 
-/// A horizontally scrolling grid with a hairline under the header.
 struct MarkdownTable: View {
     let header: [AttributedString]
     let rows: [[AttributedString]]
@@ -109,7 +102,6 @@ struct MarkdownTable: View {
             }
             .padding(.vertical, Space.xxs)
         }
-        // Text opens links through openURL; a file's stops here, as SelectableText's does.
         .environment(\.openURL, OpenURLAction { url in
             guard let path = FileLink.path(url) else { return .systemAction }
             openFile?.open(path)
@@ -118,8 +110,6 @@ struct MarkdownTable: View {
     }
 }
 
-/// Streamed words still fading in: `count` characters revealed together, at `opacity`.
-/// A list of them runs oldest to newest and ends at the end of the text.
 struct FadingWords: Equatable {
     var count: Int
     var opacity: Double
@@ -127,7 +117,6 @@ struct FadingWords: Equatable {
     struct Opacity: TextAttribute { var value: Double }
 }
 
-/// Draws runs marked `FadingWords.Opacity` at that opacity; everything else as usual.
 struct FadingWordsRenderer: TextRenderer {
     func draw(layout: Text.Layout, in context: inout GraphicsContext) {
         for line in layout {

@@ -10,7 +10,7 @@ public struct Endpoint: Sendable, Hashable, Codable {
     /// The pinned SPKI SHA-256, base64url; every connection checks it.
     public let serverKeyHash: String
     public let name: String
-    /// The Mac's relay tunnel, the path when no address answers (docs/remote/tunnel.md).
+    /// The Mac's relay tunnel, the path when no address answers.
     public let relay: RelayRoute?
     /// What kind of computer this is, from its hello; nil for a pairing saved before hosts said, which is a Mac (`kind`).
     public let os: HostOS?
@@ -196,7 +196,6 @@ public struct RemoteClient: Sendable {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    /// A body-less mutation that answers nothing the caller keeps.
     func signedSend(_ method: String, _ path: String, confirm: String?) async throws {
         var request = try await request(method, path, idempotencyKey: UUID().uuidString.lowercased())
         if let confirm { request.setValue(confirm, forHTTPHeaderField: ConfirmSignature.header) }
@@ -228,8 +227,6 @@ public struct RemoteClient: Sendable {
             }
         }
     }
-
-    // Reads the phone makes outside the sync engine.
 
     public func hello() async throws -> Hello { try await get("/v1/hello") }
     public func options() async throws -> OptionsList { try await get("/v1/options") }
@@ -285,8 +282,6 @@ public struct RemoteClient: Sendable {
         try await get("/v1/sessions/\(session)/messages/\(seq)", query: [URLQueryItem(name: "generation", value: generation)]
                       + (agent.map { [URLQueryItem(name: "agent", value: $0)] } ?? []))
     }
-
-    // Only in Side A. Each needs its capability in `Hello`.
 
     /// Takes a reply out of the session's queue. 409 `queue_changed` when it has gone or changed.
     public func removeQueued(_ session: SessionKey, _ reply: String) async throws {

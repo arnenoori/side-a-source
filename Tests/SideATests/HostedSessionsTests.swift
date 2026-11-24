@@ -167,7 +167,6 @@ struct HostedFixture {
         let fake = bin.appendingPathComponent("claude")
         try fakeClaude.replacingOccurrences(of: "sys.argv[1]", with: "'\(submitted.path)'").write(to: fake, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
-        // The pane's login shell reads this, never the real ~/.zshrc.
         try "export PATH=\(bin.path):$PATH\n".write(to: home.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
         tmux = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].first { FileManager.default.isExecutableFile(atPath: $0) } ?? ""
     }
@@ -217,11 +216,9 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     #expect(name.hasPrefix("sa-app-"))
     #expect(hosted.sessions.map(\.name) == [name] && hosted.sessions.first?.agent == .claude)
     #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
-    // The mouse scrolls and selects, but no right-click menu can kill or swap a pane.
     let root = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "list-keys", "-T", "root"], timeout: 5).output
     #expect(root.contains("WheelUpPane") && !root.contains("MouseDown3"))
 
-    // The first Enter is ignored; the verifier sees the reply still there, photo paths and all, and presses again at 2 s.
     let photos = ["/tmp/Side A/uploads/one.jpg", "/tmp/Side A/uploads/two.jpg"]
     try await hosted.reply(name, text: "What's in these photos?", images: photos)
     #expect(await eventually(5) { fixture.lines() == ["\"'\(photos[0])' '\(photos[1])' What's in these photos?\""] }, "\(fixture.lines())")
@@ -229,20 +226,17 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     try await hosted.reply(name, text: "Fix the build; then run the tests again")
     #expect(await eventually(5) { fixture.lines().last == "'Fix the build; then run the tests again'" })
 
-    // Long text shows as a placeholder and still arrives whole, trailing ';' and all.
     let long = (1...12).map { "line \($0) of the plan;" }.joined(separator: "\n")
     try await hosted.reply(name, text: long)
     #expect(await eventually(5) { fixture.lines().count == 3 })
     #expect(fixture.lines().last == String(reflecting: long).replacingOccurrences(of: "\"", with: "'"))
 
-    // Two phones at once: each message goes in whole, one after the other, though the fake ignores each first Enter.
     async let first: Void = hosted.reply(name, text: "first from one phone")
     async let second: Void = hosted.reply(name, text: "second from another")
     _ = try await (first, second)
     #expect(await eventually(10) { fixture.lines().count == 5 })
     #expect(Set(fixture.lines().suffix(2)) == ["'first from one phone'", "'second from another'"])
 
-    // Someone splits the window and the new pane is the active one: the reply still goes to the agent's pane.
     let stray = fixture.root.appendingPathComponent("stray.txt")
     let split = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "split-window", "-P", "-F", "#{pane_id}", "-t", "=\(name):",
                                                             "cat > " + Shell.quote(stray.path)], timeout: 5)
@@ -255,21 +249,17 @@ private func exercise(_ hosted: HostedSessions, _ fixture: HostedFixture) async 
     #expect(((try? String(contentsOf: stray, encoding: .utf8)) ?? "").isEmpty)
     _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "kill-pane", "-t", strayPane], timeout: 5)
 
-    // A draft typed at the Mac is never sent by Side A.
     _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", hosted.sessions[0].pane, "-l", "my draft"], timeout: 5)
     #expect(await eventually { Hosting.composer(.claude, screen: await hosted.capture(name)) == .text("my draft") })
     await #expect(throws: HostedError.self) { try await hosted.reply(name, text: "from the phone") }
     _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", "=\(name):", "C-u"], timeout: 5)
 
-    // Keys are allowlisted; Esc interrupts only while working.
     await #expect(throws: HostedError.self) { try await hosted.keys(name, ["C-d"]) }
     await #expect(throws: HostedError.self) { try await hosted.interrupt(name, working: false) }
     try await hosted.interrupt(name, working: true)
     #expect(await eventually { fixture.lines().last == "ESC" })
 
-    // The agent exits: its last screen is kept and the session goes.
     try await hosted.reply(name, text: "/exit")
-    // The list empties as soon as the pane is dead; the last screen is written just after.
     let saved = fixture.root.appendingPathComponent("runtime/hosted/\(name)/last.txt")
     #expect(await eventually(8) { await hosted.refresh(); return hosted.sessions.isEmpty && FileManager.default.fileExists(atPath: saved.path) })
     let last = try String(contentsOf: saved, encoding: .utf8)
@@ -287,7 +277,6 @@ func worktreeSessionsCleanUpAfterThemselvesAndAmbiguityIsRaisedNotPressed() asyn
     await hosted.install()
     do {
         try #require(hosted.available)
-        // A resume of a conversation that runs, idle or not, is never started twice.
         await #expect(throws: HostedError.self) { try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .resume("S-live"))) }
         // Nor is a Codex fork of it, until `codex fork` is known to leave the parent's rollout alone.
         await #expect(throws: HostedError.self) { try await hosted.start(.init(agent: .codex, cwd: fixture.project.path, mode: .fork("S-live"))) }
@@ -307,14 +296,12 @@ func worktreeSessionsCleanUpAfterThemselvesAndAmbiguityIsRaisedNotPressed() asyn
         #expect(hosted.copiedFiles(name) == [".env"])
         #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
 
-        // The fake never takes this one; someone then types after it, so whose text it is is unclear.
         try await hosted.reply(name, text: "STICKY: hold on to this message for a while")
         _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", "=\(name):", "-l", " and more"], timeout: 5)
         #expect(await eventually(5) { attention.contains { $0.0 == name && $0.1.kind == "unsent" } })
         #expect(fixture.lines().isEmpty)
         _ = await HostedSessions.process(fixture.tmux, ["-S", fixture.socket, "send-keys", "-t", "=\(name):", "C-u"], timeout: 5)
 
-        // The session ends: the unchanged .env copy goes, so the clean worktree and its branch go too.
         _ = try? await hosted.reply(name, text: "/exit")
         #expect(await eventually(8) { await hosted.refresh(); return hosted.sessions.isEmpty && !FileManager.default.fileExists(atPath: tree) })
         let branches = await HostedSessions.process("/usr/bin/git", ["-C", fixture.project.path, "branch", "--list", "sidea/*"], timeout: 10)
@@ -336,7 +323,6 @@ func tmuxIsWatchedAgainAfterAnInstallThatFailed() async throws {
     failing = true
     await hosted.install()
     #expect(!hosted.available)
-    // The failed install drops the watcher at once; the next install starts a new one.
     failing = false
     await hosted.install()
     #expect(hosted.available)
@@ -361,7 +347,6 @@ func endStopsAnAgentThatOutlivesTheHangup() async throws {
         let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: "stubborn")))
         #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
         let agent = try #require(pid_t(String(contentsOf: fixture.submitted.appendingPathExtension("pid"), encoding: .utf8)))
-        // The hangup ends the pane's shell but not this agent; SIGTERM is ignored too, so it takes SIGKILL.
         let started = Date()
         try await hosted.end(name)
         #expect(Date().timeIntervalSince(started) > 3)
@@ -373,8 +358,6 @@ func endStopsAnAgentThatOutlivesTheHangup() async throws {
     await fixture.cleanUp()
 }
 
-/// Continue on phone is offered only for an idle or waiting terminal session; never busy, a background shell,
-/// unknown, headless, hosted, or a Codex turn that hasn't finished.
 @Test func continueOnPhoneIsOfferedOnlyWhenEndingItLosesNothing() {
     func session(_ status: String, agent: String = "claude", kind: String? = "interactive", hosted: String? = nil, id: String? = "S1") -> LiveSession {
         var live = LiveSession(pid: 10, sessionID: id, name: nil, title: nil, cost: nil, cwd: "/tmp", status: status, waitingFor: nil, since: nil)
@@ -421,7 +404,6 @@ private final class ContinueScene {
         hosted = HostedSessions(root: fixture.root, environment: fixture.environment, bridge: fixture.bridge, live: { [unowned self] in self.live() })
     }
 
-    /// The Mac process while it runs, then the hosted agent once it's up under its pane with the conversation.
     func live() -> [LiveSession] {
         var rows: [LiveSession] = []
         if let mac, ProcessCheck.alive(mac.pid) { rows.append(mac) }
@@ -454,8 +436,6 @@ private final class ContinueScene {
     }
 }
 
-/// The Mac process gets SIGTERM, its last transcript line lands, and the same conversation comes back up in tmux
-/// on the same pinned account; Continue then answers with the hosted session's name.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func continueOnPhoneEndsTheMacProcessAndResumesItInTmux() async throws {
@@ -474,13 +454,11 @@ func continueOnPhoneEndsTheMacProcessAndResumesItInTmux() async throws {
         let origin = await HostedSessions.process(scene.fixture.tmux, ["-S", scene.fixture.socket, "show-options", "-v", "-t", "=\(name):", "@sidea_origin"], timeout: 5)
         #expect(origin.output.trimmingCharacters(in: .newlines) == "continue")
 
-        // Now hosted, it can't be moved again; the route answers that case with the session itself.
         await #expect(throws: HostedError.self) { try await scene.hosted.continueHere(scene.live().last!, transcript: nil, registry: scene.registry) }
     } catch { Issue.record(error) }
     await scene.cleanUp()
 }
 
-/// A process that ignores SIGTERM keeps running on the Mac, and nothing starts in tmux.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func continueOnPhoneLeavesASessionThatDidntQuit() async throws {
@@ -544,18 +522,14 @@ func settingsGoThroughClaudesPickersForThisSessionOnly() async throws {
         footer = await hosted.capture(name)
         #expect(Hosting.claudeMode(screen: footer) == "plan")
 
-        // What the list can't pick is refused before any key.
         let count = fixture.lines().count
         await #expect(throws: HostedError.self) { try await hosted.change(name, model: "opus[1m]", effort: nil, mode: nil) }
         #expect(fixture.lines().count == count && !fixture.lines().contains("DEFAULT"))
 
-        // /compact goes in once the list offers it, and the verifier presses again past the Enter the fake ignores;
-        // nothing off the allowlist is typed.
         try await hosted.command(name, "/compact")
         #expect(await eventually(5) { fixture.lines().last == "'/compact'" }, "\(fixture.lines())")
         await #expect(throws: HostedError.self) { try await hosted.command(name, "/clear") }
 
-        // A compaction that never shows raises attention; one that does, nothing.
         var raised: [String] = []
         hosted.onAttention = { _, attention in raised.append(attention.kind) }
         hosted.expectCompaction(name, within: 0.3, every: .milliseconds(50)) { true }
@@ -586,7 +560,6 @@ func aHooksConfirmIsLeftForTheMac() async throws {
         } catch HostedError.refused(let message) {
             #expect(message.contains("Confirm it on the Mac"))
         }
-        // Esc twice: the confirm, then the picker it went back to.
         #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
         #expect(fixture.lines() == ["'hello'"])
     } catch { Issue.record(error) }
@@ -604,13 +577,11 @@ func trustAnswersOnlyThisFoldersQuestion() async throws {
     do {
         try #require(hosted.available)
         let name = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: "untrusted")))
-        // The question raises attention for the phone's Trust and start.
         #expect(await eventually(5) { raised.first?.0 == "trust" })
         #expect(raised.first?.1 == "Quick safety check: Is this a project you created or one you trust?")
         try await hosted.trust(name)
         #expect(fixture.lines() == ["TRUSTED"])
         #expect(await eventually { Hosting.ready(.claude, screen: await hosted.capture(name)) })
-        // Nothing to answer now: refused, nothing pressed.
         await #expect(throws: HostedError.self) { try await hosted.trust(name) }
 
         // A question for another folder gets no key at all: Esc or Enter there would end the session.

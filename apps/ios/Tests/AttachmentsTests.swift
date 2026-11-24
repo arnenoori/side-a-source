@@ -32,7 +32,6 @@ final class AttachmentsTests: XCTestCase {
     func testTheDemoKeepsPhotosUntilTheReplyTakesThem() async throws {
         let attachments = ComposerAttachments()
         attachments.add(png(width: 40, height: 30), to: "s1")
-        // Prepared off the main actor, then kept as ready: the demo has no Mac to upload to.
         for _ in 0..<50 {
             if case .ready = attachments.items("s1").first?.state { break }
             try await Task.sleep(for: .milliseconds(20))

@@ -3,7 +3,6 @@ import Foundation
 import SideACore
 import Testing
 
-/// The bridge's real answers, from a made-up transcript in a temporary home, through the wire mapping.
 private final class Bridge {
     let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sidea-transcript-\(UUID().uuidString)")
     var home: URL { folder.appendingPathComponent("home") }
@@ -54,14 +53,12 @@ private final class Bridge {
     #expect(edit.action == .edit(path: "/code/app/a.js", removed: "x = 1", added: "x = 2"))
     #expect(edit.diffs.first?.hunks.first?.oldStart == 1 && edit.diffs.first?.hunks.first?.lines == ["-x = 1", "+x = 2"] && edit.status == .ok)
 
-    // The uncut row, and a stale generation, which the phone takes as a cue to page again.
     let row = try #require(page.messages.last)
     let whole = try RemoteTranscript.message(try bridge.reply(["message", session, "--seq", String(row.seq), "--generation", page.generation]))
     #expect(whole?.seq == row.seq && whole?.tools.map(\.id) == row.tools.map(\.id))
     #expect(try RemoteTranscript.message(try bridge.reply(["message", session, "--seq", "0", "--generation", "nope"])) == nil)
     #expect(throws: RemoteTranscript.Failure.self) { try RemoteTranscript.page(try bridge.reply(["show", "00000000-0000-0000-0000-000000000000", "--format", "remote"])) }
 
-    // The image's bytes come from the transcript itself, checked against the id.
     let located = try SessionBridge.decode(try bridge.reply(["image", ref.id]), as: RemoteImages.Location.self)
     #expect(RemoteImages.read(located, id: ref.id) == image)
     #expect(RemoteImages.read(located, id: String(repeating: "0", count: 40)) == nil)

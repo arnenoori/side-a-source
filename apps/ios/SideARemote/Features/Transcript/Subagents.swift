@@ -2,7 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// Opens the step page until the Mac knows the subagent's id.
 struct SubagentCard: View {
     let sessionID: SessionKey
     let tool: TranscriptTool
@@ -11,7 +10,6 @@ struct SubagentCard: View {
     private var running: Bool { tool.status == .running }
     private var title: String { tool.subagent?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Subagent" }
 
-    /// A nested subagent's transcript is paged through the top-level session.
     private var parent: SessionKey { SubagentRef(key: sessionID)?.parent ?? sessionID }
 
     private var route: Route {

@@ -58,7 +58,6 @@ struct SessionViewer: View {
         // Resuming a session that is still running would put two agents on one conversation.
         let live = model.liveByID[session.id] ?? model.live.first { $0.sessionID == session.id }
         let running = live != nil
-        // Running somewhere Side A can't bring forward (tmux, a closed window, a background job).
         let host = live.flatMap(model.hostName)
         let stale = session.id != model.selectedID
         return VStack(alignment: .leading, spacing: 8) {
@@ -82,7 +81,6 @@ struct SessionViewer: View {
                 .modifier(HoverPlate())
                 .help(model.isPinned(session.id) ? "Unpin" : "Pin to the top of the list")
                 Menu {
-                    // What the phone's menu offers after its settings: each only where the session takes it.
                     if let live {
                         let abilities = WireBuilders.session(live, store: model.store, finished: []).abilities
                         if abilities.contains(.review) {
@@ -144,7 +142,6 @@ struct SessionViewer: View {
     private func meta(_ session: SessionInfo) -> String {
         var parts: [String?] = [session.project.isEmpty ? nil : session.project]
         if let branch = session.branch, !["HEAD", "main", "master"].contains(branch) { parts.append(branch) }
-        // The account a running session uses, as the phone shows it.
         if let live = model.liveByID[session.id], let id = model.accountID(of: live, agent: live.provider) {
             parts.append(model.store.config.accounts.first { $0.id == id }?.name)
         }
@@ -153,7 +150,6 @@ struct SessionViewer: View {
         return parts.compactMap { $0 }.joined(separator: "  ·  ")
     }
 
-    /// Only while the composer is there to take the words.
     private var resend: ((String) -> Void)? {
         guard let id = model.detail?.session.id, ComposerTarget(id, store: model.store).canReply else { return nil }
         return { text in
@@ -518,7 +514,6 @@ struct MessageView: View {
 
     private var long: Bool { message.text.count > 900 }
 
-    /// Floats on its own surface over the message's corner, so it never lands on the text around it.
     private var toolbar: some View {
         HStack(spacing: 0) {
             if let ts = message.ts {

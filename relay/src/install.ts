@@ -38,13 +38,12 @@ export interface Reply {
 }
 
 export interface Signed {
-  message: Uint8Array;   // the signed string
+  message: Uint8Array;
   sig: Uint8Array;
   nonce: string;
   ts: number;
 }
 
-// Which app a token belongs to, and which APNs host knows it.
 export interface ApnsRoute {
   bundle: string;
   environment: Environment;
@@ -94,13 +93,11 @@ export type DeviceResult =
   | { device: string; result: 'retry'; after: number }
   | { device: string; result: 'rejected'; reason: string };
 
-// A send: what to push, and the devices decided without asking APNs.
 export interface Plan {
   targets: Target[];
   results: DeviceResult[];
 }
 
-// Anything else: the reply, and a verification push to make when a device brought a new token.
 export interface Answer {
   reply: Reply;
   challenge?: Target;
@@ -164,7 +161,6 @@ export class Install extends DurableObject<Env> {
     super(ctx, env);
     this.tunnel = new Tunnel(ctx, () => this.exists() ? new Uint8Array(this.install().public_key) : null,
       (alerted, now) => { if (alerted) ctx.waitUntil(this.tell('back', now).catch(() => null)); });
-    // Keepalives are answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
@@ -172,7 +168,6 @@ export class Install extends DurableObject<Env> {
     return this.ctx.storage.sql;
   }
 
-  // The tunnel's WebSocket upgrades, routed by the Worker. Only a registered install tunnels.
   override async fetch(request: Request): Promise<Response> {
     const role = new URL(request.url).pathname === '/v1/tunnel/mac' ? 'mac' : 'phone';
     const result: Response | Refusal = this.exists() ? await this.tunnel.accept(request, role)
@@ -214,7 +209,6 @@ export class Install extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS state(id INTEGER PRIMARY KEY, data TEXT);`);
   }
 
-  // The devices that asked to hear when the Mac goes quiet. Its own table, so an install from before it needs no migration.
   private quietDevices(): string[] {
     this.sql.exec('CREATE TABLE IF NOT EXISTS quiet_devices(id TEXT PRIMARY KEY)');
     return this.sql.exec<{ id: string }>('SELECT id FROM quiet_devices').toArray().map(row => row.id);
@@ -299,7 +293,6 @@ export class Install extends DurableObject<Env> {
         this.tunnel.dropMac();
         return answer({ status: 200, body: { installId } });
       case 'self': {
-        // A gone device stays listed until the Mac removes it, but can't be verified.
         const { devices, verified } = this.sql.exec<{ devices: number; verified: number }>(
           'SELECT COUNT(*) AS devices, COUNT(CASE WHEN verified = 1 AND apns_token IS NOT NULL THEN 1 END) AS verified FROM devices').one();
         const activities = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM activities').one().n;
@@ -330,7 +323,6 @@ export class Install extends DurableObject<Env> {
     if (!existing && this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM devices').one().n >= MAX_DEVICES) {
       return answer(error(409, 'too_many_devices', `An install has at most ${MAX_DEVICES} devices`));
     }
-    // The proof was for one token at one app and host; moving any of them needs a new one.
     const sameToken = existing?.apns_token === input.apnsToken && existing.bundle === input.bundle && existing.environment === input.environment;
     if (input.quiet !== undefined) {
       this.quietDevices();
@@ -344,7 +336,6 @@ export class Install extends DurableObject<Env> {
       id, input.apnsToken, input.bundle, input.environment, buffer(input.secretHash), input.pushToStartToken ?? null, input.appVersion,
       sameToken ? existing.token_updated : now, sameToken ? existing.verified : 0,
       sameToken ? existing.challenge_hash : null, sameToken ? existing.challenge_sent : null, sameToken ? existing.challenge_route : null);
-    // Activity tokens were reported under the old proof or the old pairing.
     const samePairing = existing !== undefined && equalBytes(new Uint8Array(existing.secret_hash), input.secretHash);
     if (!sameToken || !samePairing) this.sql.exec('DELETE FROM activities WHERE device_id = ?', id);
     const verified = sameToken && existing.verified === 1;
@@ -434,11 +425,9 @@ export class Install extends DurableObject<Env> {
     return plan;
   }
 
-  // What APNs said: successes (for the 90-day cleanup), gone tokens and environment flips.
   async settle(reports: Report[], now = Date.now()) {
     if (!this.exists()) return;
     const { last_send: lastSend } = this.install();
-    // A day's precision is all the cleanup needs; don't write a row per push for it.
     if (reports.some(({ target, outcome }) => outcome.result === 'ok' && target.kind !== 'challenge') && now - (lastSend ?? 0) > DAY) {
       this.sql.exec('UPDATE install SET last_send = ?', now);
     }
@@ -497,9 +486,7 @@ export class Install extends DurableObject<Env> {
                               challenge_route = CASE WHEN ?6 THEN NULL ELSE challenge_route END
            WHERE id = ?7`,
           op.apnsToken ?? null, op.pushToStartToken ?? null, bundle, environment, now, newToken ? 1 : 0, deviceId);
-        // Live Activity tokens hang off the proof, so they go with it; the Mac's next registration brings push-to-start back.
         if (newToken) this.sql.exec('DELETE FROM activities WHERE device_id = ?', deviceId);
-        // The old token's challenge dies with it, so the next one goes out at once.
         // oxlint-disable-next-line typescript/no-non-null-assertion -- `fresh` is made for every tokens op.
         const challenge = newToken ? this.challenge(state, this.install().install_id, deviceId, now, fresh!) : undefined;
         return answer({ status: 200, body: { verified: !newToken && device.verified === 1 } }, challenge);
@@ -519,7 +506,6 @@ export class Install extends DurableObject<Env> {
         const owner = this.sql.exec<{ device_id: string }>('SELECT device_id FROM activities WHERE id = ?', op.activityId).toArray()[0];
         if (owner && owner.device_id !== deviceId) return answer(error(409, 'conflict', 'Activity belongs to another device'));
         if (!device.verified || !device.apns_token) return answer(error(403, 'unverified', 'Prove the device\'s push token first'));
-        // Started by the same app as the device's own token, unless the phone says otherwise.
         this.sql.exec('INSERT OR REPLACE INTO activities(id, device_id, update_token, bundle, environment, created) VALUES (?, ?, ?, ?, ?, ?)',
           op.activityId, deviceId, op.updateToken, op.route.bundle ?? device.bundle, op.route.environment ?? device.environment, now);
         this.sql.exec(
@@ -548,7 +534,6 @@ export class Install extends DurableObject<Env> {
     if (!quiet.alert) return quiet.next;
     const done = await this.tell(quiet.alert, now);
     if (done) return this.tunnel.quiet(now).next;
-    // Paused, unconfigured, limited or unreachable: the outage is still untold, and tried again shortly.
     this.tunnel.unalert();
     return now + (done === null ? 5 * MINUTE : MINUTE);
   }
@@ -586,7 +571,6 @@ export class Install extends DurableObject<Env> {
     this.sql.exec('DELETE FROM activities WHERE created < ?', now - LIMITS.activityLifetime);
     const { created, last_send: lastSend, empty_since: emptySince } = this.sql.exec<{ created: number; last_send: number | null; empty_since: number | null }>(
       'SELECT created, last_send, empty_since FROM install').one();
-    // A Mac that only tunnels is as alive as one that sends.
     const lastUsed = Math.max(lastSend ?? created, this.tunnel.lastUsed() ?? 0);
     const live = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM devices WHERE apns_token IS NOT NULL').one().n + this.tunnel.devices();
     if (now - lastUsed > LIMITS.silentInstall || (!live && emptySince !== null && now - emptySince > LIMITS.emptyInstall)) {

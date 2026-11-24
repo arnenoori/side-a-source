@@ -7,7 +7,6 @@ public enum ThisDevice {
     public static let kind = ProcessInfo.processInfo.isiOSAppOnMac
         ? "Mac" : kind(model: ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? machine)
 
-    /// The SF Symbol for it.
     public static var symbol: String {
         switch kind {
         case "iPad": "ipad"
@@ -16,7 +15,6 @@ public enum ThisDevice {
         }
     }
 
-    /// "iPad16,3" is an iPad; everything else, phones included, says iPhone.
     public static func kind(model: String) -> String { model.hasPrefix("iPad") ? "iPad" : "iPhone" }
 
     private static var machine: String {

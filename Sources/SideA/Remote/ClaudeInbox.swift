@@ -14,7 +14,6 @@ final class ClaudeInbox {
 
     private(set) var installed = false
     @ObservationIgnored private weak var store: AccountStore?
-    /// A message no hook took within `pickup`, by session pid, for the session's flag until one goes through.
     @ObservationIgnored private var unsent: [Int: String] = [:]
 
 
@@ -37,11 +36,9 @@ final class ClaudeInbox {
     }
 
     #if DEBUG
-    /// The harness's inbox rows: these pids count as watched, and a message left for one is taken at once.
     var staged: Set<Int>? { didSet { if staged != nil { installed = true } } }
     #endif
 
-    /// A hook of this session is waiting for a message now.
     func watching(_ live: LiveSession) -> Bool {
         #if DEBUG
         if let staged { return live.provider == .claude && live.hosted == nil && staged.contains(live.pid) }
@@ -90,7 +87,6 @@ final class ClaudeInbox {
 
     func unsent(_ live: LiveSession) -> String? { unsent[live.pid] }
 
-    /// Drops what's kept for sessions that ended.
     func prune(_ live: [LiveSession]) {
         let pids = Set(live.map(\.pid))
         unsent = unsent.filter { pids.contains($0.key) }

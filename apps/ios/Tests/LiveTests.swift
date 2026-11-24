@@ -14,7 +14,6 @@ final class LiveTests: XCTestCase {
         let store = SessionsStore([])
         store.replace([session("a", at: 100), session("b", at: 200)], finished: [:], now: Date(timeIntervalSince1970: 300))
         XCTAssertEqual(store.rows(.working).map(\.id), ["b", "a"])
-        // A later status change doesn't move a row within its phase.
         store.replace([session("a", at: 900), session("b", at: 200)], finished: [:])
         XCTAssertEqual(store.rows(.working).map(\.id), ["b", "a"])
     }
@@ -127,7 +126,6 @@ final class LiveTests: XCTestCase {
         XCTAssertNotNil(PairingLink.invitation(URL(string: "https://getsidea.com/pair" + fragment)!))
         XCTAssertNotNil(PairingLink.invitation(URL(string: "https://getsidea.com/pair/" + fragment)!))
         XCTAssertNil(PairingLink.invitation(URL(string: "https://getsidea.com/pair/x" + fragment)!))
-        // Another host or path carrying the same fragment.
         XCTAssertNil(PairingLink.invitation(URL(string: "https://evil.example/pair" + fragment)!))
         XCTAssertNil(PairingLink.invitation(URL(string: "sidea-remote://session/pair" + fragment)!))
         XCTAssertNil(PairingLink.invitation(URL(string: "http://getsidea.com/pair" + fragment)!))
@@ -145,7 +143,6 @@ final class LiveTests: XCTestCase {
         XCTAssertFalse(ReviewDemo.matches(URL(string: "https://getsidea.com:8443/pair#review=GVCDWQ37LE")!))
         XCTAssertFalse(ReviewDemo.matches(URL(string: "https://user@getsidea.com/pair#review=GVCDWQ37LE")!))
         XCTAssertFalse(ReviewDemo.matches(URL(string: "https://getsidea.com/pair?x=1#review=GVCDWQ37LE")!))
-        // A review link is never an invitation.
         XCTAssertNil(PairingLink.invitation(URL(string: "https://getsidea.com/pair#review=WRONG12345")!))
     }
 
@@ -257,7 +254,6 @@ final class LiveTests: XCTestCase {
         XCTAssertNil(LockWindow.shared.window)
     }
 
-    /// A row's swipe allows only what its two lines show whole; an edit's change is never on the row.
     func testRowAllowsOnlyWhatItShows() {
         func request(_ action: IslandAction) -> RemoteRequest {
             RemoteRequest(id: "r", sessionID: "s", agent: .claude, tool: "Bash", action: action, headline: "Allow Bash", risk: .normal,
@@ -284,7 +280,6 @@ final class LiveTests: XCTestCase {
     func testModesFollowTheMacsChip() {
         XCTAssertEqual(PermissionMode.offered(.claude, current: .acceptEdits), [.default, .acceptEdits, .plan, .auto, .bypassPermissions])
         XCTAssertEqual(PermissionMode.offered(.codex, current: nil), [.default, .plan])
-        // A mode the Mac's list doesn't offer still shows, checked, at the end.
         XCTAssertEqual(PermissionMode.offered(.claude, current: .dontAsk).last, .dontAsk)
         XCTAssertEqual(PermissionMode.acceptEdits.title, "Accept edits")
         XCTAssertEqual(PermissionMode(rawValue: "yolo").title, "yolo")
@@ -295,7 +290,6 @@ final class LiveTests: XCTestCase {
         let row = HostedSession(name: "sa-app-1", agent: .claude, cwd: "/p", project: "p", createdAt: 1)
         var state = RemoteState()
         tools.apply(state)
-        // Added by this phone as Start returned, before the Mac's list had it.
         state.hosted["sa-app-1"] = row
         tools.apply(state)
         XCTAssertTrue(tools.dropped.isEmpty)
@@ -329,13 +323,11 @@ final class LiveTests: XCTestCase {
         _ = try await tools.change(row, SettingsChange(model: "claude-sonnet-5-5"), title: "Sonnet 5.5")
         _ = try await tools.change(row, SettingsChange(effort: .low), title: "Low effort")
         XCTAssertEqual(tools.settings(of: row), SessionSettings(model: "claude-sonnet-5-5", effort: .low, mode: .default))
-        // The row says the model first; the effort waits on.
         var state = RemoteState()
         state.sessions["s"] = RemoteSession(id: "s", agent: .claude, title: "s", project: "p", status: .idle,
                                             settings: SessionSettings(model: "claude-sonnet-5-5", effort: .high, mode: .default))
         tools.apply(state)
         XCTAssertEqual(tools.changed["s"], SessionSettings(effort: .low))
-        // A model the list doesn't have still shows, first, by its short name.
         XCTAssertEqual(tools.models(for: state.sessions["s"]!).first?.title, "Sonnet 5.5")
         XCTAssertEqual(ModelName.short("claude-opus-5-5-20260101"), "Opus 5.5")
         XCTAssertEqual(ModelName.short("gpt-6.1-sol"), "GPT-6.1 Sol")
@@ -350,7 +342,6 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(request(modes: [.acceptEdits]).switchTitle, "Allow + Accept Edits")
         XCTAssertNil(request(modes: nil).switchMode)
         XCTAssertNil(request(modes: [.acceptEdits], answers: [.allow, .deny]).switchMode)
-        // Face ID's Allow and a mode that raises stay off the card.
         XCTAssertNil(request(modes: [.acceptEdits], gate: .biometric).switchMode)
         XCTAssertNil(request(modes: [.bypassPermissions]).switchMode)
 
@@ -382,7 +373,6 @@ final class LiveTests: XCTestCase {
         for _ in 0..<50 where store.wholeLoad(cut, in: "s") == .loading { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(calls, 1)
         XCTAssertEqual(store.wholeLoad(cut, in: "s"), .failed)
-        // A failure waits for Try Again.
         store.loadWhole(cut, in: "s")
         XCTAssertEqual(calls, 1)
         fails = false
@@ -391,12 +381,10 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(store.text(cut, in: "s"), "First part and the rest")
         XCTAssertFalse(store.isCut(cut, in: "s"))
         XCTAssertEqual(store.wholeMessages("s").first?.text, "First part and the rest")
-        // Another entry at that seq doesn't take it.
         let other = TranscriptMessage(seq: 3, uuid: "b", role: .assistant, text: "Else", textTruncated: true)
         XCTAssertEqual(store.text(other, in: "s"), "Else")
     }
 
-    /// The turn-end row's Copy and Share take a cut reply whole once Show All has fetched it, not the Mac's cut.
     func testATurnEndCopiesTheWholeReplyOnceFetched() async throws {
         let cut = TranscriptMessage(seq: 3, uuid: "a", role: .assistant, text: "First part", textTruncated: true)
         let full = TranscriptMessage(seq: 3, uuid: "a", role: .assistant, text: "First part and the rest")
@@ -410,7 +398,6 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(store.text(end, in: "s"), "First part and the rest")
     }
 
-    /// A paired Mac whose outbox couldn't open has no engine: nothing it's asked to change may report that it did.
     func testWithoutAWayToTheMacNothingPretendsToChange() async throws {
         let tools = MacTools()
         let row = RemoteSession(id: "s", agent: .codex, title: "s", project: "p", status: .idle, settings: SessionSettings(mode: .default))
@@ -439,7 +426,6 @@ final class LiveTests: XCTestCase {
         let live = MacTools()
         XCTAssertFalse(live.can(.accountsUse))
         XCTAssertFalse(live.can(.autopilotToggle))
-        // No Mac to sign for: Use This Account says so rather than switching.
         let work = RemoteAccount(id: "w", name: "Work", provider: .claude, ready: true)
         do { try await live.useAccount(work); XCTFail() } catch ToolError.unavailable {}
 
@@ -455,7 +441,6 @@ final class LiveTests: XCTestCase {
         XCTAssertTrue(demo.can(.autopilotContinues))
         try await demo.setContinuesStopped(false)
         XCTAssertEqual(demo.autopilot?.continuesStopped, false)
-        // Another change keeps it.
         try await demo.setAnswersRecommended(false)
         XCTAssertEqual(demo.autopilot?.continuesStopped, false)
         XCTAssertEqual(demo.autopilot?.enabled, false)
@@ -500,12 +485,10 @@ final class LiveTests: XCTestCase {
         let wrongKey = await PairingFailure(URLError(.cancelled), macName: "MacBook Pro")
         XCTAssertEqual(wrongKey.primary, .scanAgain)
 
-        // TLS failing is not a different Mac: the code goes behind Details, never in the title.
         let tls = await PairingFailure(URLError(.secureConnectionFailed, userInfo: ["_kCFStreamErrorCodeKey": -9802]), macName: "MacBook Pro")
         XCTAssertEqual(tls.title, "Couldn't connect securely to MacBook Pro.")
         XCTAssertEqual(tls.detail, "TLS error -1200 (-9802)")
 
-        // The Mac voids a code whose comparison ran out, so retrying it can't work.
         let spent = await PairingFailure(URLError(.timedOut), macName: "MacBook Pro", codeSpent: true)
         XCTAssertEqual(spent.primary, .scanNewCode)
 
@@ -518,7 +501,6 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(run.macName, "100.101.12.4")
     }
 
-    /// Real suggestions are a whole sentence; only the rule is code.
     func testAlwaysLineMonosOnlyTheRule() {
         let text = ApprovalSheet.ruleInMono("Always allow Bash(npm test:*) in this project")
         let mono = text.runs.filter { $0.font != nil }.map { String(text[$0.range].characters) }
@@ -536,7 +518,6 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(outcome, .approvedPlan(acceptEdits: true))
     }
 
-    /// A request that leaves the Mac's list without an answer from here folds as "Answered on Mac".
     func testRequestGoneFromTheMacFoldsAsAnsweredOnMac() {
         let requests = DemoData(now: .now).requests
         let store = RequestsStore([])
@@ -548,7 +529,6 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(outcomes, [requests[0].id: .denied, requests[1].id: .elsewhere("Denied on Mac")])
     }
 
-    /// A Mac that restarts drops its open requests without settling them: they just go.
     func testRequestGoneWithoutAReasonLeavesNoLine() {
         let request = DemoData(now: .now).requests[0]
         let store = RequestsStore([request])

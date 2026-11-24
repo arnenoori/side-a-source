@@ -5,14 +5,12 @@ import SideACore
 /// a pid it could act on, or a raw permission rule.
 @MainActor
 enum WireBuilders {
-    /// Claude's status page only: Side A doesn't watch OpenAI's.
     @MainActor static func incidents(_ store: AccountStore) -> [Incident] {
         guard let outage = store.outage else { return [] }
         return [Incident(id: outage.id, provider: .claude, title: outage.name, status: .init(rawValue: outage.status ?? "investigating"),
                          url: outage.url ?? "https://status.claude.com", startedAt: outage.startedAt)]
     }
 
-    /// A conversation from the index, with Side A's own pin, title and archive. Search's highlight marks are dropped.
     @MainActor static func past(_ info: SessionInfo, sessions: SessionStore) -> PastSession {
         let custom = sessions.names[info.id]
         let snippet = info.snippets?.first
@@ -25,7 +23,6 @@ enum WireBuilders {
 
     static let maxString = RemoteTranscript.maxString
 
-    /// What was asked, kept with its answer in the approvals log.
     static func summary(_ item: Island.Pending) -> RequestSummary {
         RequestSummary(tool: item.request.tool, headline: item.request.headline, sessionTitle: item.title, agent: item.request.agent.provider)
     }
@@ -35,19 +32,17 @@ enum WireBuilders {
         let (action, truncated) = cut(request.action.escaped)
         let gate = AllowGate.of(request, projects: Island.projects(request.cwd))
         ShownGates.shared[item.id] = gate
-        // Always is never offered where it would skip Face ID.
         let noAlways = !request.offersAlways || gate == .biometric
         return RemoteRequest(id: item.id.uuidString.lowercased(), sessionID: request.sessionID, agent: request.agent.provider, tool: DisplayText.escaped(request.tool),
                              action: action, headline: request.headline, detail: request.detail, reason: request.reason.map(DisplayText.escaped), risk: request.risk,
                              riskReason: request.riskReason,
-                             suggestions: noAlways ? [] : request.suggestions.map { RemoteSuggestion(id: RemoteAnswers.suggestionID($0), title: $0.title) },
+                             suggestions: noAlways ? [] : request.remoteSuggestions.map(RemoteSuggestion.init),
                              answers: RemoteAnswers.accepted(request), title: item.title, project: request.project, accountName: item.account,
                              headless: request.headless, arrivedAt: item.arrived.timeIntervalSince1970,
                              handBackAt: item.handBackAt?.timeIntervalSince1970, truncated: truncated,
                              gate: gate, modes: RemoteAnswers.modes(request).isEmpty ? nil : RemoteAnswers.modes(request))
     }
 
-    /// Uncut, for `GET /v1/requests/{rid}`.
     static func fullRequest(_ item: Island.Pending) -> RemoteRequest {
         let short = request(item)
         return RemoteRequest(id: short.id, sessionID: short.sessionID, agent: short.agent, tool: short.tool, action: item.request.action.escaped,
@@ -65,7 +60,6 @@ enum WireBuilders {
                                at: row.at.timeIntervalSince1970, canFollowUp: island.canReply(row))
     }
 
-    /// The key a phone uses for a live session: its conversation id when known, else its process and start time.
     static func key(_ session: LiveSession) -> SessionKey {
         session.sessionID ?? "pid-\(session.pid)-\(Int(session.started ?? 0))"
     }
@@ -79,8 +73,6 @@ enum WireBuilders {
         }
     }
 
-    /// What every row of one listing shares, read once for all of them: the open requests by session and by process,
-    /// and each conversation's limit.
     struct Rows {
         let finished: Set<String>
         let limits: [String: SessionLimit]
@@ -120,7 +112,6 @@ enum WireBuilders {
         let status = commands.status(live, finished: finished)
         let accountID = sessions.accountID(of: live)
         let agent = live.provider
-        // Codex's app server: settings for the next turns, context and cost.
         let daemon = store.remote.codex.row(live)
         var row = RemoteSession(id: key, conversationID: live.sessionID, agent: agent,
                              title: live.sessionID.flatMap { sessions.names[$0] } ?? live.title ?? live.name ?? sessions.project(of: live.cwd), cwd: live.cwd, project: sessions.project(of: live.cwd),
@@ -161,14 +152,13 @@ enum WireBuilders {
         return failure
     }
 
-    /// What the session runs with, as the bridge read it; nil when it read nothing.
     static func settings(_ live: LiveSession) -> SessionSettings? {
         guard live.model != nil || live.effort != nil || live.mode != nil || live.fast != nil else { return nil }
         return SessionSettings(model: live.model, effort: live.effort.map(Effort.init(rawValue:)),
                                mode: live.mode.map(PermissionMode.init(rawValue:)), fast: live.fast)
     }
 
-    /// A worktree's `.git` is a file. Asked for every session on every change, so each folder's answer is kept a little.
+    /// A worktree's `.git` is a file.
     static func worktree(_ cwd: String, now: Date = Date()) -> Bool {
         if let known = worktrees[cwd], now.timeIntervalSince(known.at) < worktreeTTL { return known.is }
         if worktrees.count > 512 { worktrees = [:] }
@@ -185,7 +175,6 @@ enum WireBuilders {
         guard let agent = session.agent else { return nil }
         let live = store.sessions.live.first { $0.hosted == session.name }
         return HostedSession(name: session.name, agent: agent == .codex ? .codex : .claude, cwd: session.cwd,
-                             // A worktree's project is the repo it came from.
                              project: URL(fileURLWithPath: HostedSessions.repository(of: session.cwd) ?? session.cwd).lastPathComponent,
                              worktree: session.worktree.isEmpty ? nil : SideAProtocol.Worktree(path: session.worktree, branch: "sidea/\(session.name)"),
                              sessionID: live.map(key) ?? (session.sessionID.isEmpty ? nil : session.sessionID),
@@ -193,7 +182,6 @@ enum WireBuilders {
                              exitStatus: nil, handoffFrom: HandoffLinks.of(store).link(conversation: live?.sessionID, hosted: session.name))
     }
 
-    /// Phone viewers as the last tmux refresh counted them, which `HostedSessions.watch` keeps within seconds.
     static func hostedSessions(_ store: AccountStore) -> [HostedSession] {
         let hosted = store.hosted
         return hosted.sessions.compactMap { Self.hosted($0, hosted: hosted, store: store, viewers: hosted.phoneViewers[$0.name] ?? 0) }
@@ -213,10 +201,20 @@ enum WireBuilders {
         }
     }
 
-    /// Settings' "Worth at API prices": the last 7 and 30 days of this Mac's Claude Code tokens, all accounts together.
     static func worth(_ rows: [TokenRow]) -> Worth? {
         guard !rows.isEmpty else { return nil }
         let week = rows.filter { ($0.date ?? "") >= MenuPlayer.day(-6) }
         return Worth(days7: APIPrice.dollars(week), days30: APIPrice.dollars(rows))
+    }
+}
+
+private extension RemoteSuggestion {
+    init(_ suggestion: IslandSuggestion) {
+        let scope: SuggestionScope? = switch suggestion.destination {
+        case "session": .session
+        case .some: .saved
+        case nil: nil
+        }
+        self.init(id: RemoteAnswers.suggestionID(suggestion), title: suggestion.title, scope: scope)
     }
 }

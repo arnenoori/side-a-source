@@ -1,7 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// "Changes" in the session header, where the phone's row offers a turn diff.
 struct ChangesChip: View {
     let model: SessionStore
     let live: LiveSession
@@ -18,8 +17,6 @@ struct ChangesChip: View {
     }
 }
 
-/// Everything a turn changed, by the same command as the phone's Changes page: the Mac's note on what it leaves out,
-/// then each file's hunks. A running turn reloads as the session moves.
 struct TurnDiffSheet: View {
     let model: SessionStore
     let live: LiveSession
@@ -99,7 +96,6 @@ struct TurnDiffSheet: View {
     }
 }
 
-/// One file: its path and counts, then each hunk's lines, tinted by sign.
 struct FileDiffCard: View {
     let file: FileDiff
 

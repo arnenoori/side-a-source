@@ -21,7 +21,6 @@ struct UpdateFailure: Equatable {
 /// doesn't count time asleep, so a release could go unseen for longer than a day.
 enum UpdateSchedule {
     static let interval: TimeInterval = 3600
-    /// After a check that couldn't reach the feed.
     static let retry: TimeInterval = 10 * 60
     /// How often Side A looks at the clock; also on wake.
     static let tick: TimeInterval = 5 * 60
@@ -65,14 +64,10 @@ enum StagedUpdate {
 enum QuietInstall {
     /// No keyboard or pointer input for this long, unless the screen is locked.
     static let away: TimeInterval = 10 * 60
-    /// How often a waiting update looks again.
     static let interval: TimeInterval = 60
 
-    /// What Side A is in the middle of.
     struct Activity: Equatable, Sendable {
-        /// Requests, questions and plans waiting in the island.
         var pending = 0
-        /// Pool requests being answered.
         var poolInFlight = 0
         /// Anything else a relaunch would break, by name: a sign-in, a login renewal, an unsent reply.
         var busy: [String] = []
@@ -93,7 +88,7 @@ enum QuietInstall {
         return nil
     }
 
-    /// Whether Side A keeps Sparkle's install-now block for a download. Off, or critical: Sparkle's own way, as before.
+    /// Whether Side A keeps Sparkle's install-now block for a download. Off, or critical: Sparkle's own way.
     static func takesOver(automatic: Bool, critical: Bool) -> Bool { automatic && !critical }
 }
 
@@ -124,7 +119,6 @@ struct UpdateHistory {
         return age >= 0 && age < Self.shown ? version : nil
     }
 
-    /// The release on GitHub, made from releases/vX.Y.Z.md.
     static func notes(_ version: String) -> URL {
         URL(string: "https://github.com/arnenoori/side-a-releases/releases/tag/v\(version)")!
     }
@@ -184,9 +178,7 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
             if staged != nil { watchStaged() }
         }
     }
-    /// Who is at the Mac; tests put their own in.
     var presence: () -> UserPresence = { UserPresence.now() }
-    /// What Side A is in the middle of; the app connects its store.
     var activity: () -> QuietInstall.Activity = { QuietInstall.Activity() }
     /// A packaged app with a feed; `swift run`, tests and the demo leave Sparkle and its settings alone.
     private var enabled = false
@@ -227,7 +219,6 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
                 }
             }
     }
-    /// The version Side A updated to in the last day, for the menu.
     func updated(now: Date = Date()) -> String? { version.flatMap { history.recent($0, now: now) } }
     /// Sparkle's window, or, while Side A holds a downloaded update (and Sparkle can't check), an offer to install it.
     func check() {
@@ -240,9 +231,7 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         NSApp.activate(ignoringOtherApps: true)
         updater.checkForUpdates()
     }
-    /// Check for Updates… or Update to X can do something: Sparkle is free, or an update is waiting.
     var canUpdate: Bool { canCheck || staged != nil }
-    /// Asks whether to restart into `version` now; tests answer for the user.
     var confirmInstall: (String) -> Bool = { version in
         let alert = NSAlert()
         alert.messageText = "Side A \(version) Is Ready"
@@ -281,10 +270,8 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         guard UpdateSchedule.due(lastCheck: last, offline: lastFailure.offline, now: now) else { return }
         _ = checkQuietly()
     }
-    /// The newer version Sparkle found; shown in the menu so a silent update is never invisible.
     @Published private(set) var available: String?
     private var installRequested = false
-    /// The waiting build dropped this cycle because the feed has a newer one.
     private var dropped: String?
     private var drops = 0
     /// Restarts into a downloaded update once the feed confirms it is the newest, or shows Sparkle's dialog.
@@ -318,7 +305,6 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         let version = item.displayVersionString
         MainActor.assumeIsolated { available = version; lastFailure.checked() }
     }
-    /// For the menu's fallback and diagnostics.
     var failure: Int? { lastFailure.code }
     @Published private var lastFailure = UpdateFailure()
     nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
@@ -354,7 +340,6 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         MainActor.assumeIsolated { willRelaunch?() }
     }
 
-    // MARK: Quiet install
 
     /// A download Sparkle handed over: `install` relaunches into it without any window.
     struct Staged {
@@ -373,7 +358,7 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     /// Update Automatically on: Side A keeps the install-now block and uses it at a quiet moment; Sparkle's later cycles
     /// wait until then. Off, or a critical update: not handled here, so Sparkle ends the session, later checks can
-    /// still reach the feed, and the update installs on quit or from the menu as before.
+    /// still reach the feed, and the update installs on quit or from the menu.
     /// Turned off after Side A took a block: Sparkle can't take it back, so it stays held. It installs when asked
     /// (Update to X, Check for Updates…) or, as Sparkle does for any download it has prepared, when Side A quits.
     nonisolated func updater(_ updater: SPUUpdater, willInstallUpdateOnQuit item: SUAppcastItem, immediateInstallationBlock: @escaping () -> Void) -> Bool {
@@ -389,7 +374,6 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         }
     }
 
-    /// Looks each minute while the switch is on and the block unused; stops otherwise.
     private func watchStaged() {
         watch?.invalidate()
         watch = nil
@@ -402,12 +386,10 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
         watch = timer
     }
 
-    /// Why a waiting update isn't installing right now, or nil when it may.
     var hold: QuietInstall.Hold? {
         QuietInstall.hold(automatic: automaticallyUpdates, staged: staged != nil, presence: presence(), activity: activity())
     }
 
-    /// Each minute while an update waits.
     func installIfQuiet() {
         guard hold == nil else { return }
         installStaged(asked: false)
@@ -466,7 +448,6 @@ final class Updates: NSObject, ObservableObject, SPUUpdaterDelegate {
 }
 
 extension AccountStore {
-    /// What an automatic update waits for before relaunching Side A.
     var relaunchActivity: QuietInstall.Activity {
         var busy: [String] = []
         if !signingIn.isEmpty || !adopting.isEmpty { busy.append("a sign-in") }

@@ -36,18 +36,14 @@ final class AccountStore {
     var error: String?
     /// Accounts that own the Mac-wide Claude and Codex logins, when they are in the library.
     var activeIDs: [AgentProvider: String] = [:] { didSet { remoteUsageChanged() } }
-    /// Mac-wide login emails that are not in the library yet.
     var unknownLogins: [AgentProvider: String] = [:]
-    /// Mac logins being added to the library, by provider.
     private(set) var adopting: Set<AgentProvider> = []
     /// When adding a Mac login on its own last failed, by "provider:email"; it waits ten minutes to try again.
     @ObservationIgnored private var adoptFailedAt: [String: Date] = [:]
     /// What Side A keeps about each account while it runs, apart from what views show. One entry per account, so
     /// forgetting an account is dropping its entry.
     struct PerAccount {
-        /// When it was last read, and when it may be read again after a failure.
         var usageAt: Date?, backoffUntil: Date?
-        /// When its 5-hour window was last started, and when its login was last renewed.
         var primedAt: Date?, renewedAt: Date?
         /// When an unready account holding the Mac's login was last checked, so it's checked at most every ten minutes.
         var recheckedAt: Date?
@@ -56,18 +52,14 @@ final class AccountStore {
         var failing = false
         /// The newest login stamp seen, the sign-in end already warned about, and the paid-usage window reset already warned about.
         var loginStamp: Double?, endWarned: Double?, paidWarned: Double?
-        /// When a Claude Code session last reported its limits.
         var liveAt: Double?
-        /// Recent (time, 5-hour percent) samples for the burn-rate forecast.
         var samples: [(Double, Double)] = []
         /// The name it was added with when it had none, which takes its email's once sign-in confirms it.
         var unnamed: String?
     }
     @ObservationIgnored private(set) var perAccount: [String: PerAccount] = [:]
     private var failingIDs: Set<String> { Set(perAccount.filter(\.value.failing).keys) }
-    /// One saved field of every account that has it, for the usage cache.
     private func saved<T>(_ field: KeyPath<PerAccount, T?>) -> [String: T] { perAccount.compactMapValues { $0[keyPath: field] } }
-    /// Tests answer bridge calls here instead of running Python.
     @ObservationIgnored var testBridge: (@MainActor ([String]) async throws -> Data)?
     var report: UsageReport?
     /// An incident on status.claude.com reaching Claude Code or the API, while it lasts.
@@ -80,29 +72,23 @@ final class AccountStore {
         let slot: String, from: String, to: String, share: Bool, reason: String, since: Date
     }
     @ObservationIgnored var telemetry = TelemetryChecks()
-    /// Shown in the menu while sessions hold a lot of memory and macOS reports memory pressure.
     var memoryWarning: String?
     /// When the API price list was last fetched, for the Usage footer; nil while Side A's own table is used.
     var pricesUpdated: Date?
-    /// Model of the newest Claude Code response in the last half hour.
     private(set) var claudeModel: String?
     var limitHook = false
-    /// The `claude` shell function that makes new commands use the chosen account.
     var shellSwitching = false
-    /// The ~/.zshrc wrappers that start interactive claude and codex in Side A's tmux server.
     var hostTerminal = false
     var liveLimits = false
     private var liveSeen = Date.distantPast
     /// Keychain slots running claude processes read, with the account whose login is in each;
     /// nil when processes can't be listed.
     var busyLogins: [String: String]?
-    /// Per running slot, the model each of its sessions last answered with.
     @ObservationIgnored private(set) var slotModels: [String: [String?]] = [:]
     /// Per running slot, seconds since its sessions last wrote, so trades it can wait on land in a pause.
     @ObservationIgnored private var slotQuiet: [String: Double] = [:]
     /// Per account, the newest limit a running session reported hitting, when, and every session whose last reply says so.
     @ObservationIgnored var limitHits: [String: (limit: String, at: Double, sessions: [String])] = [:]
-    /// `runtime/stopped.json`, so a relaunch still knows which sessions to ask.
     /// Running sessions whose last reply is an error another try could get past, as the bridge last read them.
     @ObservationIgnored var stalls: [String: (error: String, at: Double)] = [:]
     @ObservationIgnored lazy var stoppedSessions = (try? PrivateFile.read(StoppedSessions.self, from: stoppedURL)) ?? StoppedSessions()
@@ -121,7 +107,6 @@ final class AccountStore {
     /// Failed moves already notified, by slot and target, so a retry every tick doesn't notify again.
     @ObservationIgnored private var swapFailures: Set<String> = []
     @ObservationIgnored private var reading: Set<String> = []
-    /// Where the running autopilot step is, and whether the loop should start its next one now.
     @ObservationIgnored private var stepAt = ""
     @ObservationIgnored private var kicked = false
     /// Bumped by every switch, so an "active" answer that started earlier cannot overwrite it.
@@ -129,18 +114,15 @@ final class AccountStore {
     @ObservationIgnored private var exhaustedNotified = false
     /// When each Claude sign-in stops renewing; about a month after signing in.
     var loginEnds: [String: Double] = [:]
-    /// When each account was last read successfully, for marking old readings.
     var readAt: [String: Date] = [:] { didSet { remoteUsageChanged() } }
     private(set) var lidOpen = false
     /// The player only stays open when asked for; macOS would otherwise restore it at launch.
     var playerRequested = false
-    /// Settings reopens on the tab last used.
     var settingsTab: SettingsTab = SettingsTab(rawValue: UserDefaults.standard.string(forKey: "settingsTab") ?? "") ?? .accounts {
         didSet { UserDefaults.standard.set(settingsTab.rawValue, forKey: "settingsTab") }
     }
     var addingAccount = false
     var held = false
-    /// Each account's login check under way.
     @ObservationIgnored private var verifying: [String: Task<Result<Bool, Error>, Never>] = [:]
     /// Tests: a demo store's sign-in, login checks and pool take the real paths, on its temporary root.
     @ObservationIgnored var checksLogins = false
@@ -152,10 +134,8 @@ final class AccountStore {
     @ObservationIgnored private(set) lazy var sessions = SessionStore(store: self)
     @ObservationIgnored private(set) lazy var waitingNotifier = WaitingNotifier(store: self)
     @ObservationIgnored private(set) lazy var island = Island(store: self)
-    /// The harness puts its own in place, so the store's changes reach the controller it serves.
     @ObservationIgnored lazy var remote = RemoteController(store: self, keychain: isDemo ? .inMemory() : .forApp())
     // swiftlint:disable unowned_variable_capture -- the store owns HostedSessions and outlives it.
-    /// Tests put one on a private tmux socket in its place.
     @ObservationIgnored lazy var hosted = HostedSessions(root: root, bridge: { [unowned self] in try await self.bridgeOutput($0) },
                                                                       live: { [unowned self] in await self.sessions.freshLive() },
                                                                       changed: { [unowned self] in await self.sessions.refreshLive() })
@@ -177,20 +157,16 @@ final class AccountStore {
     /// Counts what the share setting was last asked to do; work begun under an older count stands down.
     @ObservationIgnored var poolShareGeneration = 0
     @ObservationIgnored var poolShareRunning = false
-    /// Tests take any free port, whatever else on this Mac holds the real one.
     @ObservationIgnored var poolPreferredPort = PoolProxy.preferredPort
     @ObservationIgnored var poolFailures = 0
     @ObservationIgnored var poolRetryAt: Date?
-    /// Tests stand in for tailscaled.
     @ObservationIgnored var tailscaleStatus: @Sendable () async -> TailscaleStatus = { await TailscaleCLI.shared.status() }
     @ObservationIgnored var poolQuitObserver: (any NSObjectProtocol)?
     @ObservationIgnored var lastPoolPlan: PoolPlan?
-    /// What the pool last did for each service, for Settings and a joined Mac's health check.
     var poolHealth: [AgentProvider: PoolActivity] = [:]
     /// Results of Test Pool: each member's login, checked without spending quota.
     var poolTest: [String: String]?
     var poolTesting = false
-    /// Another Mac's pool this one joined with `sidea pool join`, and whether it answered last time.
     var remotePool: (url: String, answered: Bool?, codexAccounts: Int, detail: String)?
     @ObservationIgnored var stuckNotified: Set<String> = []
     @ObservationIgnored var slotMovedAt: [String: Double] = [:]
@@ -201,7 +177,6 @@ final class AccountStore {
     @ObservationIgnored var signInAsked: Set<String> = []
     /// Why the last read of the logins in use failed; nil when it worked or was only overtaken by a new selection.
     @ObservationIgnored var activeProblem: String?
-    /// Why running sessions couldn't be listed, from the bridge.
     @ObservationIgnored var busyProblem: String?
     @ObservationIgnored private(set) lazy var keepAwake = KeepAwakeController(system: isDemo ? nil : MacSleepSystem(root: root.path))
     @ObservationIgnored private(set) var preferences: PreferencesMirror?
@@ -215,7 +190,6 @@ final class AccountStore {
     }
 
     /// Tests pass `demo: true`: a demo store reads and writes only its temp folder.
-    /// `root`: tests give a demo store a folder of its own.
     init(demo: Bool = ProcessInfo.processInfo.arguments.contains("--demo"), root folder: URL? = nil) {
         isDemo = demo
         analytics = AppAnalytics(allowed: !isDemo)
@@ -271,7 +245,6 @@ final class AccountStore {
         } else if FileManager.default.fileExists(atPath: configURL.path) {
             readConfig()
         } else if Bundle.main.bundleURL.pathExtension == "app" {
-            // First launch: Autopilot only helps while running, so start with the Mac.
             do { try SMAppService.mainApp.register() } catch {
                 integrationLog.error("couldn't add Side A to the login items: \(error.localizedDescription, privacy: .public)")
             }
@@ -286,14 +259,12 @@ final class AccountStore {
         if !isDemo { loadUsageCache() }
         if !isDemo {
             report = try? PrivateFile.read(UsageReport.self, from: reportURL)
-            // Files from the 0.4 session runner; nothing reads them any more.
             let runtime = root.appendingPathComponent("runtime")
             for name in (try? FileManager.default.contentsOfDirectory(atPath: runtime.path)) ?? []
             where ["active.json", "session.lock", "keychain.lock", "claude-account"].contains(name) || name.hasSuffix(".hooks.json") {
                 try? FileManager.default.removeItem(at: runtime.appendingPathComponent(name))
             }
         }
-        // The lid stays open while Settings is on screen, as the old account panel did.
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
             nonisolated(unsafe) let window = note.object as? NSWindow
             MainActor.assumeIsolated {
@@ -340,7 +311,6 @@ final class AccountStore {
     /// The last readings, shown at once; what belongs to accounts the library doesn't have is left out.
     private func loadUsageCache() {
         guard let cache = try? PrivateFile.read(UsageCache.self, from: usageCacheURL) else { return }
-        // Show the last numbers at once and keep each account on its normal polling schedule.
         usage = cache.usage
         for (id, at) in cache.at { perAccount[id, default: PerAccount()].usageAt = at }
         for (id, until) in cache.backoff ?? [:] { perAccount[id, default: PerAccount()].backoffUntil = until }
@@ -426,7 +396,6 @@ final class AccountStore {
             return nil
         }
     }
-    /// Only Remote's recorder listens; without a paired phone this costs a static check.
     private func remoteUsageChanged() { remote.events?.usageChanged() }
     /// Codex logins are never traded, so a profile's home is its account; its own home is the Mac's.
     func accountID(codexHome home: ProcessEnvironment.CodexHome) -> String? {
@@ -493,7 +462,6 @@ final class AccountStore {
     }
     var configURL: URL { root.appendingPathComponent("config.json") }
     var selected: Account? { config.selected }
-    /// The Mac-wide Claude account (shown in the menu bar title).
     var active: Account? { config.accounts.first { $0.id == activeIDs[.claude] } }
     var schedule: WorkSchedule? { report.flatMap { WorkSchedule($0.activity) } }
     var trackNumber: Int { (config.accounts.firstIndex { $0.id == config.selectedID } ?? 0) + 1 }
@@ -523,14 +491,12 @@ final class AccountStore {
         config.step(offset); persist()
         Sounds.play(.tick)
     }
-    /// Autopilot on or off, from the Mac's toggles or the phone.
     func setAutopilot(_ enabled: Bool) {
         guard config.smartMode != enabled else { return }
         config.smartMode = enabled; persist()
         // Autopilot moves Terminal's account, which needs the shell line; turning it on is the consent.
         if config.smartMode && !shellSwitching && !isDemo { Task { await setShellSwitching(true) } }
     }
-    /// Answering with the recommended choice on or off, from Settings or the phone.
     func setAnswerRecommended(_ enabled: Bool) {
         guard (config.answerRecommended == true) != enabled else { return }
         config.answerRecommended = enabled ? true : nil; persist()
@@ -546,7 +512,6 @@ final class AccountStore {
         let title = item.title.replacingOccurrences(of: ": ", with: " - ")
         autopilotLog.write(Autopilot.answeredPrefix + "\(title): \(reason)".replacingOccurrences(of: "\n", with: " "))
     }
-    /// Opens a Terminal window that stays on this account, whatever Autopilot does elsewhere.
     func openTerminal(_ id: String) async {
         guard let account = config.accounts.first(where: { $0.id == id }), !isDemo else { return }
         if !shellSwitching { await setShellSwitching(true) }
@@ -572,7 +537,6 @@ final class AccountStore {
         config.accounts[index].allowAuto = allowed; persist()
         remote.events?.autopilotChanged()
     }
-    /// Opens Settings on the Accounts tab; the player's lid opens while it is shown.
     func openLibrary() {
         settingsTab = .accounts
         addingAccount = true
@@ -586,12 +550,10 @@ final class AccountStore {
         NSApp.activate(ignoringOtherApps: true)
         showSettings?()
     }
-    /// SwiftUI's openWindow for the Sessions window, registered the same way as showSettings.
     @ObservationIgnored var showSessions: (() -> Void)?
     /// Set before the Sessions window opens, so one macOS restores at launch closes again, as the player does.
     @ObservationIgnored var sessionsRequested = false
     @ObservationIgnored var sessionsOpen = false
-    /// Opens the Sessions window, on one conversation when given.
     func openSessions(_ id: String? = nil) {
         sessionsRequested = true
         sessions.warm()
@@ -630,11 +592,9 @@ final class AccountStore {
         guard let given, account.name == given, let name = Self.name(from: account.email) else { return }
         config.accounts[index].name = name
     }
-    /// An email's local part, as an account's name.
     static func name(from email: String) -> String? {
         email.split(separator: "@").first.map(String.init).flatMap { $0.isEmpty ? nil : $0 }
     }
-    /// Runs the CLI's own browser sign-in in the background and verifies when it returns.
     @discardableResult func signIn(_ id: String) async -> Bool {
         guard !isDemo || checksLogins else { return await verify(id) }
         guard let account = config.accounts.first(where: { $0.id == id }), !isActive(account) else {
@@ -677,7 +637,6 @@ final class AccountStore {
         persist()
         forgetState(id)
     }
-    /// What Side A kept about a removed account, so none of it lingers in the menu, the pool or the usage cache.
     private func forgetState(_ id: String) {
         perAccount[id] = nil
         usage[id] = nil; health[id] = nil; readAt[id] = nil; loginEnds[id] = nil; limitHits[id] = nil
@@ -756,7 +715,6 @@ final class AccountStore {
         do { try PrivateFile.write(summary, to: url) }
         catch { self.error = "The diagnostic summary could not be saved. Choose another location." }
     }
-    /// Makes the selected account the Mac-wide login (PLAY on the player).
     func play() {
         guard !held, let account = selected else { return }
         guard account.ready else { openLibrary(); return }
@@ -812,7 +770,6 @@ final class AccountStore {
         let account = Account(name: Self.name(from: email) ?? "This Mac", email: email, allowAuto: true, provider: provider)
         config.accounts.append(account)
         guard persist() else { config.accounts.removeAll { $0.id == account.id }; return false }
-        // Its row shows progress, not a Sign in button, while it's checked.
         signingIn.insert(account.id); defer { signingIn.remove(account.id) }
         let key = Self.loginKey(provider, email)
         do {
@@ -975,7 +932,6 @@ final class AccountStore {
         }
     }
     enum RowAction: Equatable { case busy, signIn, renew, use, inUse, none }
-    /// The one button an account's row offers, in the menu and in Settings.
     func rowAction(for account: Account) -> RowAction {
         let isActive = isActive(account)
         if signingIn.contains(account.id) { return .busy }
@@ -1025,15 +981,12 @@ final class AccountStore {
         await renew(id)
         if health[id] == .idle { self.error = "\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be renewed. Sign in to it again." }
     }
-    /// What Autopilot may act on: accounts with a trustworthy latest reading.
     var plannable: [String: AccountUsage] { usage.filter { perAccount[$0.key]?.failing != true } }
     /// Read in the last hour and not failing: a pace worked out from anything older would be a guess.
     func isFresh(_ id: String, now: Double) -> Bool {
         perAccount[id]?.failing != true && now - (readAt[id]?.timeIntervalSince1970 ?? 0) < 3600
     }
-    /// True while Claude Code is running Fable and Autopilot follows it.
     var fableMode: Bool { config.followFable != false && claudeModel?.localizedCaseInsensitiveContains("fable") == true }
-    /// Usage as Autopilot ranks Claude accounts: through the Fable cap while Fable is in use.
     func planning(_ values: [String: AccountUsage]) -> [String: AccountUsage] { fableMode ? values.compactMapValues(\.forFable) : values }
     func setPriority(_ id: String, _ priority: AccountPriority) {
         guard let index = config.accounts.firstIndex(where: { $0.id == id }) else { return }
@@ -1046,7 +999,6 @@ final class AccountStore {
         preferences?.syncChanged()
         Task { await refreshReport() }
     }
-    /// iCloud Drive's Side A folder, when iCloud Drive is on.
     var syncFolder: URL? {
         let drive = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs")
         return FileManager.default.fileExists(atPath: drive.path) ? drive.appendingPathComponent("Side A") : nil
@@ -1084,16 +1036,13 @@ final class AccountStore {
         let interval: TimeInterval = live ? 900 : used ? (nearLimit(account.id) ? 90 : 180) : 600
         return Date().timeIntervalSince(perAccount[account.id]?.usageAt ?? .distantPast) >= interval - 1
     }
-    /// Minutes until the account's 5-hour limit at its recent pace.
     func minutesToLimit(_ id: String) -> Double? { Planner.minutesToLimit(perAccount[id]?.samples ?? [], full: config.moveAt, now: Date().timeIntervalSince1970) }
     private func nearLimit(_ id: String) -> Bool {
         (usage[id]?.fiveHour?.percent ?? 0) >= 85 || (minutesToLimit(id) ?? .infinity) < 15
     }
 
-    /// How long before a sign-in ends the menu, the notification and Autopilot start saying so.
     static let signInWarning: TimeInterval = 3 * 86_400
 
-    /// `signIn`: the account the notification's Sign In button signs in to.
     func notify(_ title: String, _ body: String, signIn: String? = nil) {
         guard Bundle.main.bundleURL.pathExtension == "app" else { return }
         Self.post(title, body, signIn: signIn)
@@ -1209,12 +1158,10 @@ final class AccountStore {
         guard let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date else { return false }
         defer { limitMarkerDate = date }
         guard let seen = limitMarkerDate, date > seen else { return false }
-        // Re-read the active account now instead of waiting for its next poll.
         // Throttled so many sessions hitting a limit cannot hammer the usage endpoint.
         if let id = activeIDs[.claude], Date().timeIntervalSince(perAccount[id]?.usageAt ?? .distantPast) > 30 { perAccount[id]?.usageAt = nil }
         return true
     }
-    /// One autopilot step: refresh usage, move each provider's Mac-wide login, start idle windows.
     private func tick() async {
         guard !isDemo else { return }
         if startupError { readConfig() }
@@ -1229,7 +1176,6 @@ final class AccountStore {
             telemetry.memoryAt = Date()
             Task { await checkMemory() }
             Task { await syncCodexPoolHomes() }
-            // "Turn on Tailscale" clears by itself once it's on.
             if poolShareProblem != nil { Task { await syncPoolShare() } }
         }
         // Without knowing who is active, a "switch" could only re-pick the current account.
@@ -1244,7 +1190,6 @@ final class AccountStore {
         await continueStopped(now: Date().timeIntervalSince1970)
         Task { await refreshReport(maxAge: 3600) }
         checkTelemetry()
-        // Keeps session search close to current, so opening Sessions shows results at once.
         if Date().timeIntervalSince(sessionsIndexedAt) > 1800 {
             sessionsIndexedAt = Date()
             Task { _ = try? await bridgeOutput(["sessions", "index", "--seconds", "20"], priority: .background) }
@@ -1284,7 +1229,6 @@ final class AccountStore {
         let current = activeIDs[provider]
         let plannable = planning(self.plannable)
         let fable = self.plannable.compactMapValues(\.forFable)
-        // Each running login is planned by what its own sessions use; unknown models follow the newest session.
         let planned = { (slot: String) in
             switch Planner.needsFable(self.slotModels[slot]) { case true?: fable; case false?: self.plannable; case nil: plannable }
         }
@@ -1305,7 +1249,6 @@ final class AccountStore {
                 autopilotLog.note(key, "\(account.name): its last usage read failed (\(health[id]?.saved ?? "unknown")), so it isn't moved on that reading.")
                 continue
             }
-            // An account with Autopilot off, or mid sign-in, is never moved automatically.
             if !account.allowAuto || signingIn.contains(id) {
                 autopilotLog.note(key, "\(account.name): \(account.allowAuto ? "signing in" : "Autopilot is off for this account"); not moved.")
                 continue
@@ -1379,7 +1322,6 @@ final class AccountStore {
                 island.show(.track, "Now playing: \(name(best))", "\(name(id)) is near its limit; its sessions continue as \(name(best)).")
             }
         }
-        // New commands: if the account they use is still full (no trade, or no sessions on it), point them elsewhere.
         if config.smartMode, shellSwitching, let current = activeIDs[provider], !signingIn.contains(current),
            config.accounts.first(where: { $0.id == current })?.allowAuto != false,
            !(perAccount[current]?.failing == true && usage[current]?.stale != true),
@@ -1418,7 +1360,6 @@ final class AccountStore {
             }
         } else { exhaustedNotified = false }
     }
-    /// Sessions at a limit with nowhere to go are otherwise silent: says once what would free them.
     private func noteStuck(_ account: Account, slot: String, others: [Account], now: Double) {
         guard stuckNotified.insert(slot).inserted else { return }
         let signedOut = Planner.signedOut(others, except: account.id, health: health)

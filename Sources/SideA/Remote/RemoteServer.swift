@@ -6,13 +6,10 @@ import SideACore
 /// Side A's own TLS listener for Remote: one port for REST and both WebSockets, on the tailnet address (and the LAN
 /// with Wi-Fi pairing). Like `IslandServer`, everything here runs on one serial queue.
 final class RemoteServer: @unchecked Sendable {
-    /// Who sent a request. `device` is nil before auth and on the routes that don't need it.
     struct Caller: Sendable {
         let device: String?
         let connection: UInt64
-        /// The address it came from (the phone's, not loopback's, for a spliced connection), for per-address limits.
         var source: String = ""
-        /// It presented a token the Mac's device list doesn't have.
         var rejected = false
     }
 
@@ -24,17 +21,13 @@ final class RemoteServer: @unchecked Sendable {
     static let requestsPerConnection = 1_000
     static let socketsPerDevice = 4
 
-    /// A request's head has `head` seconds from its first byte; its body may go `body` seconds without a byte, so a
-    /// large upload over a slow link takes as long as it keeps coming; a connection with nothing to do goes after `idle`.
     struct Timeouts: Sendable {
         var head: TimeInterval = 10
         var body: TimeInterval = 30
-        /// A whole upload, however steadily it arrives.
         var upload: TimeInterval = 600
         var idle: TimeInterval = 30
     }
 
-    /// Tests shorten these.
     var timeouts = Timeouts()
 
     let queue = DispatchQueue(label: "com.arnenoori.sidea.remote")
@@ -44,21 +37,15 @@ final class RemoteServer: @unchecked Sendable {
     /// Called on the queue with each new WebSocket after its 101.
     var opened: (@Sendable (WebSocketPeer) -> Void)?
     var stateChanged: (@Sendable ([String: ListenerState]) -> Void)?
-    /// A connection closed, with any request on it still running: a pairing wait whose phone went away.
     var connectionClosed: (@Sendable (UInt64) -> Void)?
-    /// A device's first authenticated request since this server started: proof the phone holds its token.
     var authenticated: (@Sendable (String) -> Void)?
     private var vouched: Set<String> = []
-    /// Any authenticated request, at most once a minute: the phone is in use.
     var active: (@Sendable () -> Void)?
     private var lastActive = 0.0
 
-    /// One per address the phone can reach, each relaying to `inner`; see SocketFront for why it isn't an NWListener.
     private var listeners: [String: SocketFront] = [:]
-    /// TLS terminates here, on a loopback port of its own choosing.
     private var inner: NWListener?
     private var innerPort: UInt16?
-    /// The relay tunnel splices its streams into `inner` too, so it stays up while the tunnel runs, addresses or not.
     private var tunnel = false
     private var portWaiters: [@Sendable (UInt16?) -> Void] = []
     private var states: [String: ListenerState] = [:]
@@ -69,16 +56,11 @@ final class RemoteServer: @unchecked Sendable {
     private var nextID: UInt64 = 0
     /// nil: the paired devices couldn't be read, so no token is accepted.
     private var devices: [(id: String, hash: Data)]? = []
-    /// For the confirm signatures (ConfirmSignature): this Mac's id and each device's public keys.
     var macID = ""
     private var confirmKeys: [String: ConfirmGate.Keys] = [:]
     let replay = ConfirmGate.ReplayCache()
-    /// Callers without a token: each address its own small budget with a lockout, and all of them together a larger
-    /// one, so one address (or one local process on loopback) can't use up what a phone pairing needs.
     private var strangers: [String: RemotePolicy.TokenBucket] = [:]
     private var unauthenticated = RemotePolicy.TokenBucket(rate: 1, burst: 40, now: 0)
-    /// Waits on, and cancels of, an attempt the phone already has: a re-poll after a dropped connection mustn't spend
-    /// the budget a new pairing needs.
     private var attempts = RemotePolicy.TokenBucket(rate: 1, burst: 10, now: 0)
     private var perDevice: [String: RemotePolicy.TokenBucket] = [:]
     private var answers: [String: RemotePolicy.TokenBucket] = [:]
@@ -95,10 +77,6 @@ final class RemoteServer: @unchecked Sendable {
         attempts = RemotePolicy.TokenBucket(rate: 1, burst: 10, now: Date().timeIntervalSince1970)
     }
 
-    // MARK: Listeners
-
-    /// Listens on exactly these addresses, starting and stopping listeners to match. `names` are the other names the
-    /// Mac answers to in `Host` (its MagicDNS and `.local` names).
     func serve(addresses: [String], port: UInt16, names: Set<String> = []) {
         queue.async { [self] in
             if port != self.port {
@@ -125,8 +103,6 @@ final class RemoteServer: @unchecked Sendable {
         }
     }
 
-    /// While on, the loopback TLS listener stays up for the relay tunnel even with no address to serve; off, it goes
-    /// with the last address.
     func setTunnel(_ on: Bool) {
         queue.async { [self] in
             tunnel = on
@@ -242,8 +218,6 @@ final class RemoteServer: @unchecked Sendable {
         return error.localizedDescription
     }
 
-    // MARK: Devices
-
     func setDevices(_ devices: [(id: String, hash: Data)]?, keys: [String: ConfirmGate.Keys] = [:]) {
         queue.async { [self] in
             // Unreadable isn't removed: a list that can't be read says nothing about who is on it.
@@ -251,13 +225,11 @@ final class RemoteServer: @unchecked Sendable {
                 self.devices = nil
                 return
             }
-            // A device paired again under the same id has a new token: whatever the old one opened goes too.
             let old = Dictionary((self.devices ?? []).map { ($0.id, $0.hash) }, uniquingKeysWith: { a, _ in a })
             let replaced = Set(devices.filter { device in old[device.id].map { $0 != device.hash } ?? false }.map(\.id))
             self.devices = devices
             confirmKeys = keys
             let ids = Set(devices.map(\.id))
-            // A device paired again, or paired anew after a revoke, proves its new token afresh.
             vouched = vouched.filter { ids.contains($0) && !replaced.contains($0) }
             for socket in sockets.values where !ids.contains(socket.device) || replaced.contains(socket.device) {
                 socket.close(4401, replaced.contains(socket.device) ? "replaced" : "revoked")
@@ -267,7 +239,6 @@ final class RemoteServer: @unchecked Sendable {
         }
     }
 
-    /// Revoking: the device's sockets close with 4401 and its idempotency records go.
     func revoke(_ device: String) {
         queue.async { [self] in
             devices?.removeAll { $0.id == device }
@@ -280,12 +251,9 @@ final class RemoteServer: @unchecked Sendable {
 
     /// Before a relaunch: whoever owns each socket says goodbye first (`bye`), then 1001 so the phone reconnects quietly.
     var farewell: (@Sendable (WebSocketPeer, String) -> Void)?
-    // MARK: Previews
 
-    /// A dev server a phone is previewing, by its credential.
     struct Preview: Sendable, Equatable {
         let port: UInt16
-        /// The dev server's process; nil only in tests that serve a port nobody owns.
         var pid: Int32? = nil
         let device: String
         let expires: Date
@@ -293,8 +261,6 @@ final class RemoteServer: @unchecked Sendable {
 
     static let previewCookie = "sidea_preview"
     private var previews: [String: Preview] = [:]
-    /// Forwards one request to `127.0.0.1:port` as `target`; `cookie` is set on the reply when the request came by the
-    /// credential's own path.
     var proxy: (@Sendable (_ request: HTTPRequest, _ port: UInt16, _ target: String, _ cookie: String?) async -> HTTPResponse)?
 
     /// Credentials whose link was opened once already: after that only their cookie opens them, so a shared or
@@ -314,7 +280,6 @@ final class RemoteServer: @unchecked Sendable {
 
     /// `/v1/preview/<credential>/…`, or any path outside `/v1` that carries a live credential's cookie: a page's
     /// absolute links (`/assets/app.js`) land at the root.
-    /// Only a device paired now: a credential outlives nothing its device lost.
     private func preview(_ request: HTTPRequest) -> (token: String, preview: Preview, target: String, byPath: Bool)? {
         guard let match = previewMatch(request), devices?.contains(where: { $0.id == match.preview.device }) == true else { return nil }
         return match
@@ -369,7 +334,6 @@ final class RemoteServer: @unchecked Sendable {
         }
     }
 
-    /// The harness's crash switch: runs after a keyed request's handler and before its result is recorded.
     var beforeRecording: (@Sendable (HTTPRequest) -> Void)?
 
     func goodbye(_ reason: String) {
@@ -389,11 +353,8 @@ final class RemoteServer: @unchecked Sendable {
         if errors.count > 20 { errors.removeFirst(errors.count - 20) }
     }
 
-    // MARK: Connections
-
     private func accept(_ nw: NWConnection) {
         if connections.count >= Self.maxConnections {
-            // The oldest idle one makes room; with none idle, this one is refused.
             if let idle = connections.values.filter({ $0.idle }).min(by: { $0.lastActive < $1.lastActive }) {
                 idle.cancel(); connections[idle.id] = nil
             } else {
@@ -422,14 +383,10 @@ final class RemoteServer: @unchecked Sendable {
     /// A token arrived while the device list can't be read. It gets 503, so the phone keeps its pairing and asks again.
     var devicesUnavailable: (@Sendable () -> Void)?
 
-    /// Bearer tokens. With the device list unreadable, nothing matches.
-    /// What a caller who isn't signed in may send: a pairing request is a few hundred bytes. 64 connections of it
-    /// come to 4 MiB, not the 1.25 GiB of uploads they could hold before.
     static let unauthenticatedBody = 64 << 10
     static let uploadBody = 20 << 20
     static let recordingBody = TranscribeRoute.largest
 
-    /// Asked by the parser once a request's head is in, on the queue: a body is only kept for someone who may send it.
     func bodyLimit(_ head: HTTPRequest) -> Int? {
         if device(head) != nil {
             if Self.unrecorded(head) { return Self.recordingBody }
@@ -463,7 +420,6 @@ final class RemoteServer: @unchecked Sendable {
     /// records otherwise.
     static func unrecorded(_ request: HTTPRequest) -> Bool { request.method == "POST" && request.path == ["v1", "transcribe"] }
 
-    /// `POST /v1/pair/{attempt}/wait` and `DELETE /v1/pair/{attempt}`.
     private static func attempt(_ request: HTTPRequest) -> Bool {
         let path = request.path
         guard path.count >= 3, path[0] == "v1", path[1] == "pair" else { return false }
@@ -476,7 +432,6 @@ final class RemoteServer: @unchecked Sendable {
 
     /// Every request, in order: a preview's own path, then Host and Origin, rate limit, auth, idempotency, the route.
     func handle(_ request: HTTPRequest, on connection: HTTPConnection, reply: @escaping @Sendable (HTTPResponse) -> Void) {
-        // A preview's credential stands in for the device's token, for that one port and only until it expires.
         if let match = preview(request) { return servePreview(request, match, reply: reply) }
         let now = Date().timeIntervalSince1970
         switch RemotePolicy.check(request.headers, hosts: hosts, port: port) {
@@ -508,21 +463,18 @@ final class RemoteServer: @unchecked Sendable {
                 return reply(Self.limited(wait))
             }
         }
-        // A phone too old to sign hears why, in the state it already has for this, rather than a refusal per call.
         if device != nil, !open, let build = RemotePolicy.clientBuild(request.headers["X-SideA-Client"]), build < RemotePolicy.minClientBuild {
             return reply(Self.error(426, .upgradeClient, "Update Side A Remote to use it with this Mac."))
         }
         let caller = Caller(device: device, connection: connection.id, source: connection.source, rejected: device == nil && presented)
         if request.path.count >= 2, request.path[0] == "v1", request.path[1] == "ws" {
             guard let device else { return reply(Self.error(401, .unauthorized, "This device isn't paired with Side A. Pair it again.")) }
-            // A terminal is a shell: opening one takes Face ID on the phone, proven by its Secure Enclave key.
             if request.path.count == 4, request.path[2] == "term",
                let refusal = Self.confirm(request.headers[ConfirmSignature.header], macID: macID, device: device, purpose: .terminal,
                                           subject: ConfirmMessage.subject(terminal: request.path[3]), needs: .biometric,
                                           keys: confirmKeys[device] ?? ConfirmGate.Keys(confirm: nil, unlock: nil), replay: replay) {
                 return reply(refusal)
             }
-            // The screen shows everything the terminal does and more: Face ID too, its mode bound into the signature.
             if request.path.count >= 3, request.path[2] == "screen",
                let refusal = Self.confirm(request.headers[ConfirmSignature.header], macID: macID, device: device, purpose: .screen,
                                           subject: request.path.count == 4 ? ConfirmMessage.subject(screen: ScreenMode(rawValue: request.path[3])) : "",
@@ -613,14 +565,14 @@ final class RemoteServer: @unchecked Sendable {
             peer.source = connection.source
             sockets[connection.id] = peer
             RemoteLog.shared("#\(connection.id) WebSocket open \(RemoteLog.path(request)) device \(device.prefix(6))")
-            // Its owner attaches first: frames may have come in the same packet as the upgrade.
-            opened?(peer)
-            peer.startKeepalive(on: queue)
-            connection.upgrade(response, to: peer)
+            // The 101 goes out before the owner attaches, which may refuse at once (a close frame), and the owner is attached
+            // before any frame that came in the same packet as the upgrade is handed over.
+            connection.upgrade(response, to: peer) { [weak self] in
+                self?.opened?(peer)
+                peer.startKeepalive(on: self?.queue ?? .main)
+            }
         }
     }
-
-    // MARK: Responses
 
     func stamp(_ response: inout HTTPResponse) {
         response.headers.add("X-SideA-Protocol", "1")
@@ -628,7 +580,6 @@ final class RemoteServer: @unchecked Sendable {
         response.headers.add("Cache-Control", response.headers["Cache-Control"] ?? "no-store")
     }
 
-    /// `{"error": {"code", "message", "retryable"}}`, as protocol's APIError.
     static func error(_ status: Int, _ code: ErrorCode, _ message: String, details: [String: String]? = nil, retryAfter: Int? = nil) -> HTTPResponse {
         var error: [String: Any] = ["code": code.rawValue, "message": message, "retryable": status == 429 || status == 503 || code == .inProgress]
         if let details { error["details"] = details }
@@ -653,10 +604,8 @@ final class HTTPConnection: @unchecked Sendable {
         guard let self else { return RemoteServer.unauthenticatedBody }
         return headIn(head)
     }
-    /// Heads parsed whose body hasn't all arrived.
     private var unfinished = 0
     private var queued: [HTTPRequest] = []
-    /// Reading stops while this many requests, or bytes of them, wait behind a slow one, and goes on as they drain.
     static let maxQueued = 4
     static let maxQueuedBytes = 2 << 20
     private var queuedBytes = 0
@@ -670,7 +619,6 @@ final class HTTPConnection: @unchecked Sendable {
     private(set) var lastActive = Date()
     private var peer: WebSocketPeer?
     private var ended = false
-    /// Who it is, for the log: the outside peer SocketFront spliced in.
     private let from: String
     /// The bare address behind it, for per-address limits. A tunnel stream's slot may be recorded only once its side
     /// is ready, after the accept, so a loopback peer is looked up again on first use.
@@ -766,7 +714,6 @@ final class HTTPConnection: @unchecked Sendable {
                 return
             }
         }
-        // Each byte of a body puts its clock back: only a body that stops arriving ends the connection.
         bodyTimer?.cancel()
         bodyTimer = unfinished > 0 ? cancel(after: timeouts.body) : nil
         next()
@@ -837,11 +784,12 @@ final class HTTPConnection: @unchecked Sendable {
     }
 
     /// Writes the 101, then hands every later byte, including any already read, to the socket.
-    func upgrade(_ response: HTTPResponse, to peer: WebSocketPeer) {
+    func upgrade(_ response: HTTPResponse, to peer: WebSocketPeer, attach: () -> Void) {
         self.peer = peer
         busy = false
         idleTimer?.cancel(); headTimer?.cancel(); bodyTimer?.cancel()
         connection.send(content: response.encoded(close: false), completion: .contentProcessed { _ in })
+        attach()
         let rest = parser.takeRemainder()
         if !rest.isEmpty { peer.received(rest) }
         resume()
@@ -856,7 +804,6 @@ final class HTTPConnection: @unchecked Sendable {
     }
 }
 
-/// A WebSocket after its upgrade. What it carries is up to whoever `RemoteServer.opened` hands it to.
 final class WebSocketPeer: @unchecked Sendable {
     static let maxQueued = 1 << 20
     static let pingEvery: TimeInterval = 15
@@ -865,7 +812,6 @@ final class WebSocketPeer: @unchecked Sendable {
     let id: UInt64
     let device: String
     let path: [String]
-    /// The address it came from; `tunnel:<slot>` through the relay.
     var source = ""
     private weak var connection: HTTPConnection?
     private var parser = WebSocketCodec.Parser()
@@ -876,10 +822,8 @@ final class WebSocketPeer: @unchecked Sendable {
     /// Set by the owner on the server's queue.
     var message: ((WebSocketCodec.Message) -> Void)?
     var ending: (() -> Void)?
-    /// After each frame has gone out, so a producer that paused for `queued` can carry on.
     var sent: (() -> Void)?
 
-    /// Bytes waiting to go out.
     var queued: Int { queuedBytes }
 
     init(id: UInt64, device: String, path: [String], connection: HTTPConnection) {

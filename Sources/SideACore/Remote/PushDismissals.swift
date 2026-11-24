@@ -10,6 +10,9 @@ public struct PushDismissals: Sendable {
 
     public init() {}
 
+    /// Every collapse id and the devices it was sent to, oldest first.
+    public var all: [(collapse: String, devices: [String])] { order.compactMap { id in alerted[id].map { (id, $0.sorted()) } } }
+
     /// A request's notification went to these devices, under this collapse id.
     public mutating func sent(_ collapse: String, to devices: [String]) {
         guard !devices.isEmpty else { return }

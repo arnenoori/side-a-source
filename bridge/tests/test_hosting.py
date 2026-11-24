@@ -30,13 +30,11 @@ class HostingTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_sessions_under_a_pane_are_hosted_and_the_closest_keeps_it(self):
-        # pane zsh 100 -> claude 200 -> claude -p 300; 400 runs in some other terminal.
         parents = {200: 100, 300: 200, 100: 1, 400: 50, 50: 1}
         rows = [{'pid': 300}, {'pid': 200}, {'pid': 400}]
         hosting.match(rows, parents, {100: 'sa-app-1a2b'})
         self.assertEqual([r['hosted'] for r in rows], [None, 'sa-app-1a2b', None])
         self.assertEqual(hosting.match([{'pid': 200}], parents, {})[0]['hosted'], None)
-        # A loop in the parent table (pid reuse while walking) stops after 32 steps.
         self.assertIsNone(hosting.hosted_by(7, {7: 8, 8: 7}, {100: 'x'}))
 
     def test_no_tmux_means_nothing_is_hosted_and_hosting_stays_off(self):
@@ -74,7 +72,6 @@ class HostingTests(unittest.TestCase):
         self.assertIn('default-terminal "tmux-256color"', written)
         self.assertTrue(written.endswith(f"set-environment -g TERMINFO_DIRS '{contents}/Resources/terminfo:'\n"))
         self.assertEqual((self.root / 'runtime/tmux-path').read_text(), f'{bundled}\n')
-        # A development build on a Mac whose system lacks the entry falls back to screen-256color.
         with patch.object(hosting, 'SYSTEM_TERMINFO', [self.temp.name]):
             lacking = hosting.config(None)
         self.assertIn('default-terminal "screen-256color"', lacking)
@@ -107,7 +104,6 @@ class LauncherTests(unittest.TestCase):
                             '[[ ${1:-} == --exit ]] && exit 3\nsleep 30\n' % self.out)
             fake.chmod(0o755)
         self.out.mkdir()
-        # The pane's login shell reads this .zshrc, as it would the user's.
         (self.home / '.zshrc').write_text(f'export PATH={self.bin}:$PATH\n')
         self.assertEqual(hosting.install(self.root)['tmux'], TMUX)
 
@@ -149,9 +145,7 @@ class LauncherTests(unittest.TestCase):
         self.assertFalse((self.root / f'runtime/hosted/{name}/prompt.txt').exists())
         meta = self.tmux('list-sessions', '-F', '#{@sidea_v}|#{@sidea_agent}|#{@sidea_cwd}|#{@sidea_origin}|#{@sidea_session}|#{@sidea_account}').strip()
         self.assertEqual(meta, f'1|claude|{self.project}|mac|S1|long-jobs')
-        # The tab's variables never reach the server or the pane.
         self.assertNotIn('WARP_FOCUS_URL', self.tmux('show-environment', '-g'))
-        # A second resume of the same conversation finds the first instead of opening it twice.
         again = self.run_launcher('host', 'claude', '--detach', '--session', 'S1', '--', '--resume', 'S1')
         self.assertEqual(again.stdout.strip(), name, self.tmux('list-panes', '-a', '-F', '#{pane_dead} #{pane_dead_status} #{@sidea_session} #{session_name}') + again.stderr)
         self.assertEqual(len(self.tmux('list-sessions', '-F', '#{session_name}').split()), 1)
@@ -202,7 +196,6 @@ class LauncherTests(unittest.TestCase):
         self.assertNotEqual(subprocess.run(['git', '-C', str(repo), 'config', '--get', f'branch.sidea/{name}.remote'], check=False).returncode, 0)
         meta = self.tmux('list-sessions', '-F', '#{@sidea_repo}|#{@sidea_worktree}|#{@sidea_branch}|#{@sidea_cwd}').strip()
         self.assertEqual(meta, f'{repo.resolve()}|{tree}|sidea/{name}|{tree}/apps/web')
-        # Outside a repository there is nothing to branch from; nothing is started.
         failed = self.run_launcher('host', 'claude', '--detach', '--cwd', str(self.home), '--worktree', 'HEAD', '--')
         self.assertEqual(failed.returncode, 65)
         self.assertIn('Not in a git repository', failed.stderr)
@@ -223,7 +216,6 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(list(found.values()), [name])
         agent = int(subprocess.run(['pgrep', '-P', str(next(iter(found)))], capture_output=True, text=True, check=False).stdout.split()[0])
         self.assertEqual(hosting.match([{'pid': agent}], {agent: next(iter(found))}, found)[0]['hosted'], name)
-        # Every launch reloads the config into the running server; a second load replaces instead of piling up.
         settings = lambda: (self.tmux('show', '-s', 'terminal-features'), self.tmux('show-hooks', '-g', 'pane-died'))
         self.assertTrue(hosting.install(self.root)['running'])
         once = settings()
@@ -237,7 +229,6 @@ class LauncherTests(unittest.TestCase):
         name = self.run_launcher('host', 'claude', '--detach').stdout.strip()
         elsewhere = self.run_launcher('attach', cwd=self.home)
         self.assertEqual((elsewhere.returncode, elsewhere.stdout.split()[0]), (0, name))
-        # In the session's folder, with a terminal, attach becomes a tmux client of that session.
         pid, fd = pty.fork()
         if pid == 0:
             os.chdir(self.project)
@@ -307,18 +298,15 @@ class HostTerminalTests(unittest.TestCase):
         self.assertTrue((self.root / 'runtime/host-terminal').exists())
         self.assertIn('real claude --dangerously-skip-permissions -p x', self.shell('claude -p x'))
         out = self.shell(f'cd {self.home}; claude --resume abc; codex resume 1; codex exec hi; claude mcp list; claude --version')
-        # The alias's own flags are added in the pane, where the wrapper runs the real CLI.
         self.assertIn(f'hosted host claude --cwd {self.home} --origin terminal -- --resume abc\n', out)
         self.assertIn(f'hosted host codex --cwd {self.home} --origin terminal -- resume 1', out)
         self.assertIn('real codex exec hi', out)
         self.assertIn('real claude --dangerously-skip-permissions mcp list', out)
         self.assertIn('real claude --dangerously-skip-permissions --version', out)
-        # A sidea use pin carries over; inside a pane, inside tmux, or with the escape hatch the CLI runs as is.
         self.assertIn('--origin terminal --pin studio --', self.shell('SIDE_A_PIN=studio claude'))
         for prefix in ('SIDE_A_HOSTED=sa-x-1 ', 'TMUX=/t,1,0 ', 'SIDE_A_NO_HOST=1 '):
             self.assertIn('real claude --dangerously-skip-permissions', self.shell(prefix + 'claude'))
         self.assertIn('real claude', self.shell('claude', terminal=False))
-        # Off: the flag goes first, so a shell already open stops hosting at its next command.
         self.assertIn('real claude', self.shell(f"rm '{self.root}/runtime/host-terminal'; claude"))
         bridge.set_host_terminal(self.root, False)
         self.assertNotIn(bridge.HOST_MARK, rc.read_text())

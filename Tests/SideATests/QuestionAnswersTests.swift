@@ -9,8 +9,6 @@ private let size = IslandQuestion(question: "Which size?", header: nil, options:
     .init(label: "Small", description: nil), .init(label: "Large (Recommended)", description: "The usual"),
 ], multiSelect: false)
 
-/// The island and the Sessions window send the same words: picks in the question's order whatever order they were
-/// clicked in, then anything typed.
 @Test func answersFollowTheQuestionsOrderThenWhatWasTyped() {
     var answers = QuestionAnswers()
     answers.pick("Blue (Recommended)", in: colours)
@@ -25,8 +23,6 @@ private let size = IslandQuestion(question: "Which size?", header: nil, options:
     #expect(answers.answers([colours, size]) == [colours.question: "Red (Recommended), Blue (Recommended), teal", size.question: "Large (Recommended)"])
 }
 
-/// A single choice starts on Claude's recommendation; a multiple choice starts empty, so the form isn't complete
-/// until it's answered, and "Send Recommended" holds only while every answer is exactly what Claude recommended.
 @Test func recommendedAnswersArePreselectedAndRecognised() {
     var answers = QuestionAnswers()
     answers.preselect([colours, size])
@@ -38,14 +34,12 @@ private let size = IslandQuestion(question: "Which size?", header: nil, options:
     #expect(answers.complete([colours, size]) && answers.recommendedOnly([colours, size]))
     answers.other[size.question] = "Medium"
     #expect(!answers.recommendedOnly([colours, size]))
-    // A pick made before the form appeared stays.
     var kept = QuestionAnswers()
     kept.pick("Small", in: size)
     kept.preselect([size])
     #expect(kept.answer(size) == "Small")
 }
 
-/// A description that only repeats its label, in any case, isn't shown twice.
 @Test func aDescriptionThatRepeatsItsLabelIsLeftOut() {
     #expect(QuestionAnswers.description(of: colours.options[0]) == "Warm")
     #expect(QuestionAnswers.description(of: colours.options[1]) == nil)

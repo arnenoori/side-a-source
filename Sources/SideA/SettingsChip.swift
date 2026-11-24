@@ -2,8 +2,6 @@ import SideACore
 import SideAProtocol
 import SwiftUI
 
-/// A running session's model · effort · mode · context, read from the same row the phone gets; a click opens what
-/// can be changed, by the same command and abilities as the phone's sheet. What can't change says why.
 struct SettingsChip: View {
     let model: SessionStore
     let live: LiveSession
@@ -41,7 +39,6 @@ struct SettingsChip: View {
     }
 }
 
-/// The capsule the session header's chips share.
 struct ChipLabel: View {
     let symbol: String
     let text: String
@@ -59,7 +56,6 @@ struct ChipLabel: View {
     }
 }
 
-/// The popover: each setting a picker when the session takes changes to it, else its value and the reason.
 struct SettingsPanel: View {
     let model: SessionStore
     let live: LiveSession
@@ -153,7 +149,6 @@ struct SettingsPanel: View {
         effort = settings?.effort?.rawValue ?? row.effort ?? ""
         mode = settings?.mode?.rawValue ?? ""
         guard row.abilities.contains(.settingsModel) || row.abilities.contains(.settingsEffort) else { return }
-        // The daemon's own list for Codex; the phone's options for the rest.
         let commands = SessionCommands(store: model.store)
         if let list = try? await commands.models(live.provider, session: WireBuilders.key(live)) {
             models = list.models

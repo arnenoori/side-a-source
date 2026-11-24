@@ -2,8 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// Accounts: what's left on each account. Accounts at 90% or limited come first, soonest
-/// reset on top; then each provider, most left first. The clock moves once a minute, never in seconds.
 struct AccountsView: View {
     @Environment(AppRoot.self) private var root
 
@@ -29,6 +27,7 @@ struct AccountsView: View {
             if root.macs.count > 1 {
                 ToolbarItem(placement: .topBarLeading) { MacsMenu() }
             }
+            ToolbarItem(placement: .topBarTrailing) { SheetButton(sheet: .settings) }
         }
         .refreshable {
             let failed = await withTaskGroup(of: Bool.self) { group in
@@ -55,7 +54,6 @@ struct AccountsView: View {
                 case .pairAgain(let reason):
                     PairAgainView(reason: reason, mac: root.current.mac.name).background(Color(.systemGroupedBackground))
                 case .waiting: ProgressView()
-                // Offline: the list's banner says why and what to do.
                 case .banner: EmptyView()
                 }
             }
@@ -67,7 +65,6 @@ struct AccountsView: View {
         case pairAgain(MacConnection.Offline)
     }
 
-    /// What an empty Accounts says, by the shown Macs' states: "No Accounts" only once every Mac has said so.
     static func emptyState(_ states: [MacConnection.State]) -> Empty {
         if states.allSatisfy({ $0 == .live }) { return .noAccounts }
         if states.count == 1, case .offline(let reason) = states[0], reason.needsPairing { return .pairAgain(reason) }
@@ -76,7 +73,6 @@ struct AccountsView: View {
     }
 }
 
-/// One Mac's accounts. With several Macs, each Mac's are under its name, since each signs in on its own.
 private struct MacAccounts: View {
     let now: Date
     let header: Bool
@@ -85,11 +81,9 @@ private struct MacAccounts: View {
     var body: some View {
         let accounts = model.accounts.accounts
         let fableMode = model.tools.autopilot?.fableMode == true
-        let attention = accounts.filter { $0.needsAttention(at: now, fableMode: fableMode) }
-            .sorted { ($0.binding(at: now)?.resetsAt ?? .infinity) < ($1.binding(at: now)?.resetsAt ?? .infinity) }
+        let attention = accounts.filter { $0.issue != nil && $0.issue?.kind != .offline }
         let providers = AgentProvider.allCases.map { provider in
-            (provider, accounts.filter { $0.provider == provider && !$0.needsAttention(at: now, fableMode: fableMode) }
-                .sorted { $0.left(at: now) > $1.left(at: now) })
+            (provider, accounts.filter { $0.provider == provider && !attention.contains($0) })
         }.filter { !$0.1.isEmpty }
         if header {
             Section {} header: {
@@ -108,8 +102,20 @@ private struct MacAccounts: View {
             Section("Needs Attention") { rows(attention) }
         }
         ForEach(providers, id: \.0) { provider, accounts in
+            let limited = accounts.filter { !$0.active && ($0.limited(at: now) || (fableMode && $0.fableOut(at: now))) }
+            let rest = accounts.filter { !$0.active && !limited.contains($0) }.sorted { $0.used(at: now) < $1.used(at: now) }
             Section {
-                rows(accounts)
+                if let active = accounts.first(where: \.active) {
+                    link(active) { ActiveAccountCard(account: active, now: now, fableMode: fableMode) }
+                }
+                rows(rest)
+                if !limited.isEmpty {
+                    DisclosureGroup {
+                        rows(limited)
+                    } label: {
+                        Text(Self.limitedLine(limited, now: now)).foregroundStyle(.secondary)
+                    }
+                }
             } header: {
                 Text(provider.title)
             } footer: {
@@ -123,16 +129,41 @@ private struct MacAccounts: View {
 
     private func rows(_ accounts: [RemoteAccount]) -> some View {
         ForEach(accounts) { account in
-            NavigationLink(value: Route.account(account.id, mac: model.macID)) {
-                AccountRow(account: account, now: now, fableMode: model.tools.autopilot?.fableMode == true)
-            }
-            .zoomSource("account-\(model.macID)-\(account.id)")
+            link(account) { AccountRow(account: account, now: now, fableMode: model.tools.autopilot?.fableMode == true) }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) { if usable(account) { useButton(account).tint(.accentColor) } }
+                .contextMenu { if usable(account) { useButton(account) } }
         }
+    }
+
+    private func usable(_ account: RemoteAccount) -> Bool { model.tools.can(.accountsUse) && !account.active && account.ready }
+
+    private func useButton(_ account: RemoteAccount) -> some View {
+        Button("Use", systemImage: "arrow.left.arrow.right") { use(account) }.needsMac()
+    }
+
+    private func use(_ account: RemoteAccount) {
+        let model = model
+        Task {
+            do {
+                try await model.use(account)
+            } catch ToolError.cancelled {} catch {
+                Pill.show(MacTools.message(error))
+            }
+        }
+    }
+
+    private func link(_ account: RemoteAccount, @ViewBuilder label: () -> some View) -> some View {
+        NavigationLink(value: Route.account(account.id, mac: model.macID), label: label)
+            .zoomSource("account-\(model.macID)-\(account.id)")
+    }
+
+    static func limitedLine(_ limited: [RemoteAccount], now: Date) -> String {
+        let back = limited.compactMap { $0.backAt ?? $0.binding(at: now)?.resetsAt }.filter { $0 > now.timeIntervalSince1970 }.min()
+        return "\(limited.count) limited" + (back.map { " · next back \(Formatting.at(Date(timeIntervalSince1970: $0), now: now))" } ?? "")
     }
 }
 
 extension UsageWindow {
-    /// "5h", "wk", or the model's name for a model cap.
     var shortLabel: String {
         switch id {
         case "five_hour": "5h"
@@ -141,12 +172,8 @@ extension UsageWindow {
         }
     }
 
-    /// Fraction left, 0...1, counting a window that has reset as full.
-    func left(at now: Date) -> Double { 1 - used(at: now.timeIntervalSince1970) / 100 }
-
     var resetDate: Date? { resetsAt.map(Date.init(timeIntervalSince1970:)) }
 
-    /// Green while there's room, orange from 75% used, red from 90%. Words always say the same.
     static func tint(used: Double) -> Color {
         switch used {
         case 90...: .red
@@ -157,19 +184,14 @@ extension UsageWindow {
 }
 
 extension RemoteAccount {
-    /// Side A calls an account limited from 97%.
     static let limitedAt = 97.0
 
-    /// The window closest to its limit. A Mac that serves `limited` has judged the account's own limits itself, so a cap
-    /// on one model alone doesn't stand for the account here.
     func binding(at now: Date) -> UsageWindow? {
         let windows = limited == nil ? usage?.windows : usage?.windows.filter { !$0.id.hasPrefix("model:") }
         return windows?.max { $0.used(at: now.timeIntervalSince1970) < $1.used(at: now.timeIntervalSince1970) }
     }
 
     func used(at now: Date) -> Double { binding(at: now)?.used(at: now.timeIntervalSince1970) ?? 0 }
-    func left(at now: Date) -> Double { 1 - used(at: now) / 100 }
-    /// The Mac's word when it gave one, until the moment it said that ends.
     func limited(at now: Date) -> Bool {
         guard let limited else { return used(at: now) >= Self.limitedAt }
         return limited && (backAt ?? .infinity) > now.timeIntervalSince1970
@@ -181,7 +203,6 @@ extension RemoteAccount {
         used(at: now) >= 90 || limited(at: now) || (fableMode && fableOut(at: now)) || (issue != nil && issue?.kind != .offline)
     }
 
-    /// A reading older than 15 minutes says how old it is.
     func staleSince(now: Date = .now) -> Date? {
         guard let readAt else { return nil }
         let date = Date(timeIntervalSince1970: readAt)
@@ -190,7 +211,6 @@ extension RemoteAccount {
 }
 
 extension Formatting {
-    /// "in 1h 12m" under a day, "Tue 9:00 AM" beyond.
     static func until(_ date: Date, now: Date) -> String {
         let seconds = date.timeIntervalSince(now)
         guard seconds < 86_400 else { return date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
@@ -198,19 +218,16 @@ extension Formatting {
         return minutes < 60 ? "in \(minutes)m" : "in \(minutes / 60)h \(minutes % 60)m"
     }
 
-    /// "3:40 PM" today, "Tue 9:00 AM" beyond.
     static func at(_ date: Date, now: Date) -> String {
         Calendar.current.isDate(date, inSameDayAs: now) ? date.formatted(date: .omitted, time: .shortened)
             : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
     }
 
-    /// "just now", "2 min ago", "1 hr ago".
     static func ago(_ date: Date, now: Date) -> String {
         now.timeIntervalSince(date) < 60 ? "just now" : date.formatted(.relative(presentation: .numeric, unitsStyle: .wide))
     }
 }
 
-/// Monogram, name, one line about the tightest limit, and two small gauges of what's left.
 struct AccountRow: View {
     let account: RemoteAccount
     let now: Date
@@ -236,19 +253,23 @@ struct AccountRow: View {
             }
             .layoutPriority(1)
             Spacer(minLength: Space.xs)
-            HStack(spacing: Space.xs) {
-                ForEach([account.usage?.fiveHour, account.usage?.weekly].compactMap { $0 }, id: \.id) { window in
-                    LeftGauge(window: window, now: now)
-                }
+            if let window = account.headline(at: now) {
+                let used = window.used(at: now.timeIntervalSince1970)
+                UsageBar(used: used).frame(width: 64)
+                Text(Formatting.percent(used))
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 40, alignment: .trailing)
+                    .contentTransition(.numericText(value: used))
             }
-            .opacity(account.staleSince(now: now) == nil ? 1 : 0.5)
         }
+        .opacity(account.staleSince(now: now) == nil ? 1 : 0.6)
         .padding(.vertical, 2)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
     }
 
-    private var subtitle: (text: String, alarm: Bool)? {
+    var subtitle: (text: String, alarm: Bool)? {
         if let issue = account.issue.flatMap({ RotationText.issue($0, now: now) }) { return issue }
         if account.limited(at: now) {
             let back = account.backAt.map(Date.init(timeIntervalSince1970:)) ?? account.binding(at: now)?.resetDate
@@ -257,9 +278,7 @@ struct AccountRow: View {
         if account.fableOut(at: now) {
             return ("Fable out" + (account.backAt.map { " · back \(Formatting.at(Date(timeIntervalSince1970: $0), now: now))" } ?? ""), fableMode)
         }
-        if let window = account.binding(at: now), window.used(at: now.timeIntervalSince1970) >= 50, let reset = window.resetDate {
-            return ("Resets \(Formatting.until(reset, now: now))", false)
-        }
+        if let reset = account.headline(at: now)?.resetDate, reset > now { return ("Resets \(Formatting.until(reset, now: now))", false) }
         if let stale = account.staleSince(now: now) { return ("As of \(Formatting.at(stale, now: now))", false) }
         if account.active { return ("In use", false) }
         return nil
@@ -270,14 +289,13 @@ struct AccountRow: View {
         if let plan = RotationText.plan(account) { parts.append("\(plan) plan") }
         if let subtitle { parts.append(subtitle.text) }
         if account.active, subtitle?.text != "In use" { parts.append("In use") }
-        for window in [account.usage?.fiveHour, account.usage?.weekly].compactMap({ $0 }) {
-            parts.append("\(window.id == "five_hour" ? "5-hour" : "Weekly") \(Int((window.left(at: now) * 100).rounded())) percent left")
+        if let window = account.headline(at: now) {
+            parts.append("\(Int(window.used(at: now.timeIntervalSince1970).rounded())) percent of \(window.id == "seven_day" ? "the week" : window.label) used")
         }
         return parts.joined(separator: ", ")
     }
 }
 
-/// A 28 pt circle with the account's initial, its colour fixed by its id.
 private struct Monogram: View {
     let name: String
     let seed: String
@@ -295,28 +313,6 @@ private struct Monogram: View {
     }
 }
 
-/// What's left of one window, as a small capacity ring with "5h" or "wk" inside.
-private struct LeftGauge: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let window: UsageWindow
-    let now: Date
-
-    var body: some View {
-        Gauge(value: window.left(at: now)) {
-            Text(window.shortLabel)
-        } currentValueLabel: {
-            Text(window.shortLabel)
-        }
-        .gaugeStyle(.accessoryCircularCapacity)
-        .tint(UsageWindow.tint(used: window.used(at: now.timeIntervalSince1970)))
-        .scaleEffect(0.6)
-        .frame(width: 34, height: 34)
-        .animation(Motion.smooth(reduceMotion), value: window.percent)
-    }
-}
-
-/// Autopilot's recent moves, read-only on the phone.
-/// One account: a block per window with what's left and when it resets, then its sessions.
 struct AccountDetailView: View {
     @Environment(AppModel.self) private var model
     let accountID: String
@@ -374,7 +370,6 @@ struct AccountDetailView: View {
             .refreshable {
                 do { try await model.link?.engine.refreshAccounts() } catch { Pill.show("Couldn't refresh accounts") }
             }
-            // Its session rows' swipes and menus.
             .sessionActions()
             .zoomDestination("account-\(model.macID)-\(account.id)")
         }
@@ -382,7 +377,6 @@ struct AccountDetailView: View {
 }
 
 extension AccountDetailView {
-    /// Use This Account, where the Mac takes it: the account becomes its provider's login on the Mac, after Face ID.
     @ViewBuilder private func useSection(_ account: RemoteAccount) -> some View {
         if model.tools.can(.accountsUse) {
             Section {
@@ -417,17 +411,21 @@ extension AccountDetailView {
         Task {
             defer { switching = false }
             do {
-                if model.isDemo {
-                    model.accounts.replace(model.accounts.accounts.map { $0.provider == account.provider ? $0.with(active: $0.id == account.id) : $0 })
-                } else {
-                    try await model.tools.useAccount(account)
-                }
+                try await model.use(account)
                 switched += 1
             } catch ToolError.cancelled {
             } catch {
                 failure = MacTools.message(error)
             }
         }
+    }
+}
+
+extension AppModel {
+    /// Asks for Face ID; the demo has no host to ask and switches its sample accounts itself.
+    func use(_ account: RemoteAccount) async throws {
+        guard isDemo else { return try await tools.useAccount(account) }
+        accounts.replace(accounts.accounts.map { $0.provider == account.provider ? $0.with(active: $0.id == account.id) : $0 })
     }
 }
 
@@ -443,12 +441,10 @@ extension RemoteAccount {
     }
 }
 
-/// "5-hour window", a bar of what's left, then "62% left" and "Resets 3:40 PM".
 private struct WindowBlock: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let window: UsageWindow
     let now: Date
-    /// A window at 97% says Limited only if the Mac agrees the account is; a cap on one model is its own limit.
     var accountLimited = true
 
     var body: some View {
@@ -456,10 +452,9 @@ private struct WindowBlock: View {
         let limited = used >= RemoteAccount.limitedAt && (accountLimited || window.id.hasPrefix("model:"))
         VStack(alignment: .leading, spacing: Space.xs) {
             Text(title).font(.headline)
-            ProgressView(value: window.left(at: now))
-                .tint(UsageWindow.tint(used: used))
+            UsageBar(used: used)
             HStack {
-                Text(limited ? "Limited" : "\(Int((window.left(at: now) * 100).rounded()))% left")
+                Text(limited ? "Limited" : "\(Formatting.percent(used)) used")
                     .foregroundStyle(limited ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                     .contentTransition(.numericText())
                 Spacer()

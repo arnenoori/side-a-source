@@ -18,7 +18,6 @@ import Testing
     (try? String(contentsOf: store.autopilotLog.url, encoding: .utf8)) ?? ""
 }
 
-/// A session stopped on a limit when its login was traded is sent "Please continue" once, through its inbox.
 @MainActor @Test func aStoppedSessionIsAskedToContinueOnce() async throws {
     let store = try store(status: "idle")
     let now = Date().timeIntervalSince1970
@@ -32,7 +31,6 @@ import Testing
     #expect(log(store).components(separatedBy: "Continued app").count == 2)
 }
 
-/// A recorded trade notes which of the account's sessions sat on a limit; the others were never stopped.
 @MainActor @Test func aTradeNotesOnlyTheSessionsALimitStopped() async throws {
     let store = try store(status: "idle")
     let key = WireBuilders.key(try #require(store.sessions.live.first))
@@ -62,7 +60,6 @@ import Testing
     #expect(!log(busy).contains("Continued") && busy.stoppedSessions.isEmpty)
 }
 
-/// With no hook waiting, the message is typed into the session's own terminal tab; a reply from the phone goes the same way.
 @MainActor @Test func aSessionWithNoHookIsTypedIntoInItsTerminal() async throws {
     let store = try store(status: "idle")
     store.remote.inbox.staged = []
@@ -78,12 +75,10 @@ import Testing
     store.stopped { $0.refuse("s-stopped", .codex, at: now) }
     await store.continueStopped(now: now)
     #expect(store.remote.typer.typed.map(\.text) == ["hello", StoppedSessions.prompt] && store.stoppedSessions.isEmpty)
-    // The inbox, when a hook waits, comes first: it is the proven way in.
     store.remote.inbox.staged = [931]
     #expect(commands.abilities(live, status: .idle).contains(.replyInbox) && !commands.abilities(live, status: .idle).contains(.replyTyped))
 }
 
-/// A response cut off by sleep is tried again a minute on; a 429 that names no limit waits for the pool.
 @MainActor @Test func aStalledSessionIsAskedOnceAnotherTryCouldWork() async throws {
     let store = try store(status: "idle")
     let now = Date().timeIntervalSince1970
@@ -95,14 +90,12 @@ import Testing
     #expect(store.liftedSessions(now: now) == ["s-stopped": now])
     await store.continueStopped(now: now)
     #expect(log(store).contains("Continued app"))
-    // What the phone's Autopilot list makes of the two lines.
     #expect(Autopilot.decision("Continued app", at: 1)?.kind == .continued && Autopilot.decision("Continued app", at: 1)?.title == "Continued app")
     let failed = try #require(Autopilot.decision("Couldn't continue app: Side A can't type into this session's terminal.", at: 1))
     #expect(failed.kind == .failed && failed.title == "Couldn't continue app" && failed.reason.hasPrefix("Side A can't type"))
     #expect(TerminalTyping.atLeast("1.4.0", [1, 4]) && TerminalTyping.atLeast("2.0", [1, 4]) && !TerminalTyping.atLeast("1.3.9", [1, 4]) && !TerminalTyping.atLeast("tip", [1, 4]))
 }
 
-/// What the helper refused while Side A was closed, and what Side A knew before it quit, are still asked.
 @MainActor @Test func stopsOutliveARelaunchAndTheHelpersAreTaken() async throws {
     let first = try store(status: "idle")
     let now = Date().timeIntervalSince1970
@@ -120,7 +113,6 @@ import Testing
     #expect(!fresh.stoppedSessions.isEmpty && helper.read().isEmpty && !FileManager.default.fileExists(atPath: helper.url.path))
 }
 
-/// However many models a month used, the chart draws five and folds the rest into one series.
 @Test func theChartKeepsItsMostUsedModelsAndFoldsTheRest() {
     let ids = ["claude-opus-5-5", "gpt-6-astra", "claude-fable-5-2", "claude-haiku-5-5", "gpt-6.1-sol", "claude-sonnet-5-5", "gpt-6-luna", "claude-opus-4-8"]
     let rows = ids.enumerated().flatMap { index, id in
@@ -131,10 +123,8 @@ import Testing
     #expect(series.rows.count == 12 && series.rows.map(\.total).reduce(0, +) == rows.map(\.total).reduce(0, +))
     #expect(series.rows.first { $0.date == "2026-11-02" && $0.model == "Other" }?.total == 600)
 
-    // Six models fit as they are: "Other" never stands for one model.
     let six = TokenSeries(Array(rows.filter { ids.prefix(6).contains($0.model ?? "") }))
     #expect(six.names.count == 6 && !six.names.contains("Other"))
     #expect(TokenSeries([TokenRow(date: "2026-11-01", input: 5, output: 0, cacheWrite: 0, cacheRead: 0)]).names == ["Other"])
-    // A bar sits on its own local day.
     #expect(Calendar.current.dateComponents([.month, .day, .hour], from: UsageSettings.day("2026-11-01")) == DateComponents(month: 11, day: 1, hour: 0))
 }

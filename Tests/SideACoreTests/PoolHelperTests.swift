@@ -1,3 +1,4 @@
+#if canImport(Network)
 import Foundation
 import Network
 @testable import SideACore
@@ -106,7 +107,6 @@ struct PoolHelperTests {
     @Test func theHelperServesWhileTheAppIsGoneAndHandsBackWhenItReturns() async throws {
         let folder = try Folder()
         try folder.write(plan([member("a")]))
-        // A pid nothing runs as: the app quit.
         try Data("99999999\n".utf8).write(to: folder.files.app)
         let port = Self.freePort()
         let helper = PoolHelper(root: folder.root, version: "1.0", installed: { "1.0" }, logs: folder.root, port: port)
@@ -117,7 +117,6 @@ struct PoolHelperTests {
         #expect(try FileManager.default.attributesOfItem(atPath: folder.files.pool.path)[.posixPermissions] as? Int == 0o600)
         #expect(await Self.answers(port))
 
-        // The app is back: this test's own process stands in for it.
         try Data(PoolFiles.claim().utf8).write(to: folder.files.app)
         #expect(await helper.tick() == nil)
         #expect(!helper.serving)
@@ -148,7 +147,6 @@ struct PoolHelperTests {
         disk.version = "1.1"
         #expect(await helper.tick() == nil)
         #expect(helper.serving)
-        // Handed back: replies still streaming get the drain before the restart.
         try Data(PoolFiles.claim().utf8).write(to: folder.files.app)
         #expect(await helper.tick() == nil)
         #expect(!helper.serving)
@@ -165,3 +163,4 @@ struct PoolHelperTests {
         #expect(!folder.files.appRunning)
     }
 }
+#endif

@@ -5,7 +5,7 @@ import UserNotifications
 
 /// Opens the sealed payload (relay-and-release, "Notification Service Extension"): words, thread and
 /// relevance from the Mac, and `REQUEST` loosened to `REQUEST_SAFE` only when the authenticated payload
-/// says the Lock Screen may allow it. No networking: everything shown is in the payload.
+/// says the Lock Screen may allow it. Everything shown is in the payload; the only request is a test push's receipt.
 final class NotificationService: UNNotificationServiceExtension {
     nonisolated deinit {}
 
@@ -43,6 +43,16 @@ final class NotificationService: UNNotificationServiceExtension {
         case .opened(let payload, let data):
             RemoteLog.log(.push, "opened \(content.categoryIdentifier) \(request.identifier)")
             PushOpener.fill(content, with: payload, data: data, category: category, identifier: request.identifier)
+            if payload.kind == .test, payload.mac != PushOpener.demoMac {
+                nonisolated(unsafe) let handler = contentHandler
+                nonisolated(unsafe) let shown = content
+                let (id, mac) = (request.identifier, payload.mac)
+                Task {
+                    await Self.acknowledge(id, mac: mac)
+                    handler(shown)
+                }
+                return
+            }
         case .noKey:
             RemoteLog.error(.push, "no push key for \(content.categoryIdentifier) \(request.identifier)")
             PushOpener.generic(content, body: "Open Side A Remote to reconnect.")

@@ -4,8 +4,6 @@ import SideARemoteShared
 import XCTest
 @testable import SideARemote
 
-/// Several paired Macs: the keychain list and its migration, Forget for one Mac, the tailnet warning,
-/// and the widgets across Macs.
 @MainActor
 final class MultiMacTests: XCTestCase {
     private let keychain = SharedKeychain.shared
@@ -99,7 +97,6 @@ final class MultiMacTests: XCTestCase {
         let mini = try? XCTUnwrap(snapshot.sessions.first { $0.id == "mini-backup" })
         XCTAssertEqual(mini?.mac, "demo-2")
         XCTAssertEqual(snapshot.sessionURL("mini-backup"), URL(string: "sidea-remote://session/demo-2/mini-backup"))
-        // Work is signed in on both Macs and shows once.
         XCTAssertEqual(snapshot.accounts.filter { $0.id == "work" }.count, 1)
     }
 

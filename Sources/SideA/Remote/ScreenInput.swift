@@ -7,10 +7,11 @@ import SideAProtocol
 /// Clicks, scrolls and keys from the phone as CGEvents. macOS drops posted events unless Side A is allowed in
 /// Accessibility, which only the person at the Mac can grant.
 enum ScreenInput {
-    static var trusted: Bool { AXIsProcessTrusted() }
+    static var trusted: Bool { ScreenStandIn.current?.accessibility ?? AXIsProcessTrusted() }
 
     static var locked: Bool {
-        (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+        if let stand = ScreenStandIn.current { return stand.locked }
+        return (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
     }
 
     private static var source: CGEventSource? { CGEventSource(stateID: .hidSystemState) }
@@ -18,12 +19,12 @@ enum ScreenInput {
     static func bounds(display: CGDirectDisplayID) -> CGRect { CGDisplayBounds(display) }
 
     static func bounds(window: CGWindowID) -> CGRect? {
+        if let stand = ScreenStandIn.current { return stand.bounds(window: window) }
         guard let info = (CGWindowListCopyWindowInfo([.optionIncludingWindow], window) as? [[String: Any]])?.first,
               let dictionary = info[kCGWindowBounds as String] as? NSDictionary else { return nil }
         return CGRect(dictionaryRepresentation: dictionary as CFDictionary)
     }
 
-    /// The frontmost ordinary window of `pid`, which after Show on Mac is the session's.
     static func frontWindow(of pid: pid_t) -> CGWindowID? {
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return windows.first { ($0[kCGWindowOwnerPID as String] as? pid_t) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
@@ -35,6 +36,7 @@ enum ScreenInput {
     }
 
     static func focused(_ window: CGWindowID) -> Bool {
+        if ScreenStandIn.current != nil { return true }
         guard let pid = owner(of: window) else { return false }
         return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid && frontWindow(of: pid) == window
     }
@@ -42,6 +44,7 @@ enum ScreenInput {
     /// Accessibility has no window numbers, so the window is found by its frame. Activation can be refused, which is why
     /// whoever asked checks `focused` afterwards.
     static func focus(_ window: CGWindowID) {
+        guard ScreenStandIn.current == nil else { return }
         guard let pid = owner(of: window), let frame = bounds(window: window) else { return }
         let app = AXUIElementCreateApplication(pid)
         var list: AnyObject?
@@ -72,6 +75,7 @@ enum ScreenInput {
     }
 
     static func click(_ point: CGPoint, kind: ScreenPointer.Kind) {
+        if let stand = ScreenStandIn.current { return stand.post("\(kind.rawValue) \(Int(point.x)),\(Int(point.y))") }
         let right = kind == .rightClick
         let button: CGMouseButton = right ? .right : .left
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
@@ -86,18 +90,19 @@ enum ScreenInput {
 
     /// The pointer moves there first: a scroll goes to whatever is under it.
     static func scroll(at point: CGPoint, dx: Double, dy: Double) {
+        if let stand = ScreenStandIn.current { return stand.post("scroll \(Int(point.x)),\(Int(point.y)) by \(wheel(dx)),\(wheel(dy))") }
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
         CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: 2, wheel1: wheel(dy),
                 wheel2: wheel(dx), wheel3: 0)?.post(tap: .cghidEventTap)
     }
 
-    /// A number from the phone: anything not finite is no scroll, and the rest is clamped before it becomes an integer.
     static func wheel(_ amount: Double) -> Int32 {
         amount.isFinite ? Int32(min(max(amount, -10_000), 10_000).rounded()) : 0
     }
 
     static func press(_ press: ScreenKeyPress) {
         guard let code = keyCode(press.key) else { return }
+        if let stand = ScreenStandIn.current { return stand.post("key \(press.modifiers.map(\.rawValue).joined(separator: "+"))\(press.modifiers.isEmpty ? "" : "+")\(press.key.rawValue) code \(code)") }
         var flags = CGEventFlags()
         for modifier in press.modifiers {
             switch modifier {
@@ -117,6 +122,7 @@ enum ScreenInput {
 
     /// Typed as Unicode rather than key codes, so it comes out the same whatever the Mac's keyboard layout.
     static func type(_ text: String) {
+        if let stand = ScreenStandIn.current { return stand.post("text \(text.debugDescription)") }
         for line in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
             if line.offset > 0 { press(ScreenKeyPress(key: .return)) }
             var units = Array(String(line.element).utf16)[...]

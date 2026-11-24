@@ -3,8 +3,6 @@ import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
-/// A turn this phone sent that the Mac's transcript doesn't show yet, with where it is under it (`DeliveryStatus`). A tap
-/// on a waiting message offers Edit (back into the field, to send again), Copy and Delete; a long-press selects part of it.
 struct OutgoingBubble: View {
     let sessionID: SessionKey
     let turn: TranscriptStore.Outgoing
@@ -57,7 +55,6 @@ struct OutgoingBubble: View {
     }
 }
 
-/// A failure isn't said here: the text is back in the field, with the reason in red under it.
 private struct DeliveryStatus: View {
     let sessionID: SessionKey
     let turn: TranscriptStore.Outgoing
@@ -65,7 +62,6 @@ private struct DeliveryStatus: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        // The line keeps its height while it has nothing to say, so a stage that clears it doesn't move the list.
         ZStack(alignment: .trailing) {
             Text(verbatim: " ").hidden()
             TimelineView(.periodic(from: .now, by: 5)) { context in line(at: context.date) }
@@ -79,7 +75,6 @@ private struct DeliveryStatus: View {
         let since = turn.since ?? turn.at
         let unchecked = turn.unchecked
         let late = !unchecked && (ReplyProgress.patience(turn.state).map { now.timeIntervalSince(since) > $0 } ?? false)
-        // The Mac follows it in the agent's own record, so what a Stop takes back of it comes back to go again.
         let followed = session?.receipts?.contains { $0.answers(turn.item) } == true
         let frees = late && working && followed && session.map(model.stopGivesBack) == true && !model.mac.shown.isOffline
             && ReplyProgress(turn.state, overdue: true).actions(interrupts: true).contains(.interruptAndSend)
@@ -122,26 +117,23 @@ private struct DeliveryStatus: View {
         let waited = late && elapsed != "now" ? " · \(elapsed)" : ""
         let step = session?.step.map { "\u{201C}\($0)\u{201D}" } ?? "this step"
         if turn.state == .sending, model.mac.isAway { return (SendsWhenConnected.line, SendsWhenConnected.symbol) }
-        // Out of reach, nothing here is known to have gone or still to be waiting.
         if case .offline(let reason) = model.mac.shown, ![.sent, .held, .read].contains(turn.state) {
             return ("Can't check until connected", reason.symbol)
         }
         switch turn.state {
         case .sending: return (late ? "Waiting for \(model.mac.name)…" : "Sending…", "arrow.up")
-        case .sent where followed: return (late ? "\(agent) hasn't taken it\(waited)" : "Sent to \(agent)", "paperplane")
-        case .sent: return working ? ("\(agent) reads it after this step", "clock") : nil
+        case .sent where followed: return (late ? "\(agent) hasn't taken it\(waited)" : "Sent", "paperplane")
+        case .sent: return working ? ("\(agent) reads it after this step", "clock") : ("Sent", "paperplane")
         case .held: return (working ? "\(agent) reads it after \(step)\(waited)" : "\(agent) reads it next", late ? "hourglass" : "clock")
         case .note: return ("\(agent) reads it after this step\(waited)", late ? "hourglass" : "clock")
         case .queued: return ("\(agent) reads it after this turn", "text.append")
-        case .read: return ("\(agent) read it", "checkmark")
+        case .read: return ("Read by \(agent)", "checkmark")
         case .takingBack: return ("Taking back…", "arrow.uturn.backward")
         case .unsent, .withdrawn: return nil
         }
     }
 }
 
-/// A message waiting for the next step that this phone didn't send (or a stop): a quiet line; a tap or long-press
-/// offers to withdraw it.
 struct MailLine: View {
     let sessionID: SessionKey
     let mail: MailState
@@ -169,7 +161,6 @@ struct MailLine: View {
             }
             .accessibilityElement(children: .combine)
             .accessibilityAction(named: withdraw) { takeBack() }
-            // A refused withdraw says so under the field; the line can be tried again.
             .onChange(of: model.transcripts.notices[sessionID]) { _, notice in if notice != nil { taking = false } }
     }
 

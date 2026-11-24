@@ -153,7 +153,6 @@ extension SessionCommands {
                 links.remove(record.id)
                 throw error
             }
-            // An expired login, a model it doesn't know: the old session stays until the new agent has outlived its start.
             guard await store.hosted.survivedStartup(started) else {
                 links.remove(record.id)
                 let said = await store.hosted.lastWords(started).map { " It said: \($0)" } ?? ""

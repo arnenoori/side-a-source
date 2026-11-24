@@ -284,7 +284,6 @@ class SaveTests(Base):
                 self.renew()
         self.assertEqual(self.token(bridge.backup_service(self.alpha)), 'fresh-rt')
         self.assertIn('save-failed', self.log())
-        # The next renewal spends the rescued token, not the one already rotated away.
         self.answers = [{**GRANTED, 'refresh_token': 'fresher-rt'}]
         self.renew()
         self.assertEqual(self.posts, ['alpha-rt3', 'fresh-rt'])
@@ -479,7 +478,6 @@ class ListingTests(unittest.TestCase):
                     break
         self.assertIsNone(bridge.process_environment(pid))
         self.assertEqual(bridge.environment_failures[pid], 'Invalid argument')
-        # Signal 0 still succeeds on a zombie, which is how one used to read as a running process.
         os.kill(pid, 0)
         self.assertTrue(bridge.finished(bridge.process_state(pid)))
 

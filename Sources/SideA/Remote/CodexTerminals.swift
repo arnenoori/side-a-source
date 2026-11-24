@@ -10,33 +10,24 @@ import SideAProtocol
 @MainActor
 final class CodexTerminals {
     enum Reach: Equatable {
-        /// Its thread is subscribed on a live connection.
         case attached
-        /// The daemon for its home is up and doesn't have its thread, or there is no daemon: the TUI runs embedded.
         case own
     }
 
     enum Failure: Error, Equatable {
         case notAttached, rpc(String), closed
-        /// The daemon has no `thread/settings/update` (older, or the experimental API off).
         case unsupported
-        /// A model or effort the daemon's own list doesn't offer, in words for the phone.
         case invalid(String)
-        /// Only while it's idle.
         case busy
     }
 
     struct Interrupt: Equatable {
-        /// Waiting in `sent` when it was asked for.
         let ids: Set<String>
         var follows: Follows
 
         enum Follows: Equatable {
-            /// A plain Stop, or Interrupt and Send whose reply came first and went alone.
             case nothing
-            /// Interrupt and Send: what it drops waits for the reply.
             case reply
-            /// Interrupt and Resend: no reply follows, and what it drops goes again by itself once the turn has ended.
             case resend
 
             init(send: Bool, resend: Bool) { self = !send ? .nothing : resend ? .resend : .reply }
@@ -48,64 +39,42 @@ final class CodexTerminals {
     struct Thread {
         var status: CodexAppServer.Thread.Status
         var turn: String?
-        /// Messages sent with turn/start that Codex hasn't shown as the user's yet, by clientUserMessageId.
         var sent: [String: (text: String, at: Date)] = [:]
-        /// In Codex's queue (`thread/queue/add`); one that leaves it joins `sent`.
         var queued: [String: (text: String, at: Date)] = [:]
-        /// Side A's own interrupt, until the turn it stops ends.
         var interrupting: Interrupt?
-        /// What that interrupt dropped, kept for the reply that follows: the two go as one turn.
         var carry: (entries: [(id: String, text: String)], at: Date)?
-        /// Gives `carry` back if no reply comes for it.
         var carryTimer: Task<Void, Never>?
         /// One it dropped: a steer still waiting when the turn was interrupted never reaches the model or the TUI.
         var unsent: (text: String, at: Date)?
-        /// Model, effort and mode for its next turns, kept in step with the TUI's own changes.
         var settings: CodexAppServer.Settings? { didSet { if let settings, !settings.raised { base = settings } } }
-        /// The last settings seen without a raise: what lowering back to default restores.
         var base: CodexAppServer.Settings?
-        /// How full the context window is, as the TUI's footer shows it, from the last request.
         var contextPercent: Int?
-        /// Estimated US dollars so far, read after each turn when the account's billing route has it.
         var cost: Double?
-        /// The newest turn seen, running or not, and the diffs of the last few turns by id.
         var lastTurn: String?
         var diffs: [(turn: String, diff: String)] = []
-        /// The newest turn's plan.
         var plan: TurnPlan?
     }
 
-    /// One daemon, by `CODEX_HOME`.
     @MainActor final class Link {
         let home: String
         var client: AppServerClient?
         var connecting = false
         var failures = 0
         var retry: Task<Void, Never>?
-        /// Threads the daemon has loaded, as of the last look; one Side A wants and doesn't find there is `.own`.
         var loaded: Set<String>?
         var threads: [String: Thread] = [:]
         var attaching: Set<String> = []
-        /// False once the daemon said it doesn't know `thread/queue/add` (older, or experimental API off).
         var queues = true
-        /// False once it said it doesn't know `thread/settings/update`.
         var settable = true
-        /// False once it said it doesn't know `turn/steer`; turn/start steers too, without the check.
         var steers = true
-        /// False once `account/usage/read` failed (no sign-in, or none for this account).
         var costs = true
-        /// The daemon's models for its account, read once per connection.
         var models: [CodexAppServer.Model]?
-        /// The island's request for each of the daemon's approval requests, by the request's JSON id.
         var approvals: [String: (id: Island.Pending.ID, thread: String)] = [:]
-        /// Files and diff of each file change item seen, so its approval can show them.
         var changes: [String: (files: [String], diff: String)] = [:]
         init(home: String) { self.home = home }
     }
 
     static let enabledKey = "remoteCodexAppServer"
-    /// Off until turned on (`defaults write … remoteCodexAppServer -bool true`), while it waits for its first check
-    /// against a real daemon. `SIDEA_CODEX_HOMES` (colon separated) limits the homes it may reach.
     static var enabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? false }
     static let allowedHomes: Set<String>? = ProcessInfo.processInfo.environment["SIDEA_CODEX_HOMES"]
         .map { Set($0.split(separator: ":").map { URL(fileURLWithPath: String($0)).standardizedFileURL.path }) }
@@ -116,10 +85,8 @@ final class CodexTerminals {
     private var recheck: Task<Void, Never>?
 
     #if DEBUG
-    /// The harness's two-way rows, by session id: answered here as an app server would, with no daemon behind them.
     struct Staged { var reach: Reach; var status: SessionStatus; var unsent: String? = nil }
     var staged: [String: Staged]?
-    /// Hello's reply.terminal, on for staged rows whatever the setting.
     var offered: Bool { Self.enabled || staged != nil }
     #else
     var offered: Bool { Self.enabled }
@@ -159,9 +126,6 @@ final class CodexTerminals {
         links = [:]
     }
 
-    // MARK: Which sessions
-
-    /// The sessions this can reach, by home: Codex, not hosted (a hosted pane is typed into), with a thread id.
     private func wanted() -> [String: Set<String>] {
         guard let store else { return [:] }
         var out: [String: Set<String>] = [:]
@@ -184,8 +148,6 @@ final class CodexTerminals {
         return path.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
     }
 
-    /// Called when the live list changes: connects to homes that gained a session, attaches new threads, and lets go
-    /// of threads and homes with none left.
     func sync() {
         guard running else { return }
         let wanted = wanted()
@@ -216,13 +178,11 @@ final class CodexTerminals {
         guard running, live.provider == .codex, live.hosted == nil, let thread = live.sessionID, let home = home(of: live),
               let link = links[home] else { return nil }
         if link.threads[thread] != nil, link.client != nil { return .attached }
-        // Known not to be there: the daemon answered without it, or there is none to ask.
         if let loaded = link.loaded, !loaded.contains(thread), !link.attaching.contains(thread) { return .own }
         if link.client == nil, !link.connecting, link.failures > 0 { return .own }
         return nil
     }
 
-    /// The daemon's own word on an attached session, which beats a rollout tail's guess.
     func status(_ live: LiveSession) -> SessionStatus? {
         #if DEBUG
         if let staged { return live.sessionID.flatMap { staged[$0] }.flatMap { $0.reach == .attached ? $0.status : nil } }
@@ -242,10 +202,6 @@ final class CodexTerminals {
         return (link, client, thread)
     }
 
-    // MARK: Talking
-
-    /// Sends a message to the session's thread. Mid-turn, `queue` waits for the turn to end (`thread/queue/add`);
-    /// otherwise it steers. Idle, either one starts a turn. Both show in the TUI as the user's message.
     func send(_ live: LiveSession, text typed: String, queue: Bool, key: String? = nil) async throws(Failure) -> ReplyResult.Delivery {
         #if DEBUG
         if staged != nil {
@@ -289,7 +245,6 @@ final class CodexTerminals {
                 if link.threads[thread]?.queued[id] != nil || link.threads[thread]?.sent[id] != nil { receipts?.codex(client: id, .held) }
                 return .queued
             } catch AppServerClient.Failure.rpc(let error) where error.unknownMethod {
-                // An older daemon: steer instead, which the TUI shows the same way.
                 link.threads[thread]?.queued[id] = nil
                 link.queues = false
                 RemoteLog.shared("codex app server at \(link.home): no thread/queue/add, steering instead")
@@ -304,7 +259,6 @@ final class CodexTerminals {
         do {
             link.threads[thread]?.sent[id] = (text, Date())
             if !queue, working, link.steers, let turn = link.threads[thread]?.turn {
-                // Steer only the turn that's running: one that ended meanwhile gets a turn of its own instead.
                 do {
                     _ = try await client.call("turn/steer", .object(fields.merging(["expectedTurnId": .string(turn)]) { $1 }))
                     // Its answer means the running turn holds it, to read once the current step ends; unless its user
@@ -328,7 +282,6 @@ final class CodexTerminals {
         }
     }
 
-    /// One went through: the flag of an earlier one that didn't goes.
     private func sent(_ thread: String, _ link: Link) -> ReplyResult.Delivery {
         if link.threads[thread]?.unsent != nil {
             link.threads[thread]?.unsent = nil
@@ -337,7 +290,6 @@ final class CodexTerminals {
         return .typed
     }
 
-    /// A message Codex dropped, for the session's flag until the next one goes through.
     func unsent(_ live: LiveSession) -> String? {
         #if DEBUG
         if let staged { return live.sessionID.flatMap { staged[$0]?.unsent } }
@@ -346,8 +298,6 @@ final class CodexTerminals {
         return unsent.text
     }
 
-    /// Sends Codex never showed: dropped by an interrupt at once, otherwise once the thread has been idle a while.
-    /// `stopped`: the interrupt was Side A's own Stop.
     private func lost(_ thread: String, _ link: Link, interrupted: Bool, stopped: Bool = false) {
         guard var state = link.threads[thread], !state.sent.isEmpty else { return }
         let idle = state.status == .idle
@@ -390,7 +340,6 @@ final class CodexTerminals {
         }
     }
 
-    /// What an attached session's row adds: its settings and what can change them, context and cost.
     struct Row {
         var settings: SessionSettings?
         var abilities: Set<SessionAbility> = []
@@ -419,7 +368,6 @@ final class CodexTerminals {
         return row
     }
 
-    /// What a turn changed, as its diff last stood, and whether it's still running.
     func diff(_ live: LiveSession, turn: String) -> (files: [FileDiff], running: Bool)? {
         guard let (link, _, thread) = link(of: live), let state = link.threads[thread],
               let diff = state.diffs.last(where: { $0.turn == turn })?.diff else { return nil }
@@ -446,8 +394,6 @@ final class CodexTerminals {
         }
     }
 
-    /// The thread's estimated cost. A daemon signed in to no account, or one whose billing route has none, has none;
-    /// after the first no, the connection stops asking.
     private func readCost(_ thread: String, _ link: Link) {
         guard link.costs, let client = link.client else { return }
         Task { [weak self] in
@@ -468,8 +414,6 @@ final class CodexTerminals {
         default: .closed
         }
     }
-
-    // MARK: Connection
 
     private func connect(_ link: Link) {
         guard !link.connecting, link.retry == nil else { return }
@@ -504,7 +448,6 @@ final class CodexTerminals {
         }
     }
 
-    /// Daemon restarts and a TUI that starts the daemon later: try again, backing off to 30 s.
     private func again(_ link: Link) {
         guard running, links[link.home] === link, link.retry == nil else { return }
         let delay = min(30, Double(1 << min(max(link.failures - 1, 0), 5)))
@@ -522,7 +465,6 @@ final class CodexTerminals {
         reset(link)
     }
 
-    /// What a link knew through its connection goes with it; the approvals it held are withdrawn.
     private func reset(_ link: Link) {
         link.threads = [:]
         link.attaching = []
@@ -533,7 +475,6 @@ final class CodexTerminals {
         link.approvals = [:]
     }
 
-    /// Subscribes to the threads the daemon has loaded; the rest are TUIs that don't run on it.
     private func attach(_ threads: Set<String>, _ link: Link) {
         guard let client = link.client, !threads.isEmpty else { return }
         link.attaching.formUnion(threads)
@@ -625,13 +566,11 @@ final class CodexTerminals {
             link.threads[thread]?.contextPercent = percent
             store?.remote.events?.liveChanged()
         case "account/rateLimits/updated":
-            // The account the daemon runs on: any of its sessions says which.
             guard let store, let windows = params["rateLimits"].map(CodexAppServer.windows), !windows.isEmpty,
                   let account = store.sessions.live.first(where: { $0.sessionID.map { link.threads[$0] != nil } == true })
                     .flatMap({ store.sessions.accountID(of: $0, agent: .codex) }) else { return }
             store.takeLive(windows, for: account, at: Date().timeIntervalSince1970)
         case "thread/started":
-            // A TUI that started after the last look: attach if Side A already lists it.
             guard let started = params["thread"]?["id"]?.string, wanted()[link.home]?.contains(started) == true,
                   link.threads[started] == nil, !link.attaching.contains(started) else { return }
             link.loaded?.insert(started)
@@ -654,13 +593,11 @@ final class CodexTerminals {
             guard let thread, link.threads[thread]?.queued.isEmpty == false else { return }
             dequeued(thread, link)
         case "thread/settings/updated":
-            // Changed from here, from the TUI, or by another client: the next turns run with these.
             guard let thread, link.threads[thread] != nil, let settings = params["threadSettings"].flatMap(CodexAppServer.Settings.init(updated:)),
                   link.threads[thread]?.settings != settings else { return }
             link.threads[thread]?.settings = settings
             store?.remote.events?.liveChanged()
         case "serverRequest/resolved":
-            // Answered in the terminal (or by another client): the island lets it go.
             guard let id = params["requestId"], let approval = link.approvals.removeValue(forKey: Self.key(id)) else { return }
             store?.island.withdraw(approval.id, by: .terminal)
         default: break

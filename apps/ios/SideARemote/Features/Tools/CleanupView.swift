@@ -1,9 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The Mac's Clean Up, pushed inside the Mac sheet: what conversations take on disk,
-/// Archive Older Than, Restore Archived, and the worktrees no session uses. Removal never forces; a
-/// worktree the Mac keeps says why instead of offering Remove.
 struct CleanupView: View {
     @Environment(AppModel.self) private var model
     @State private var report: CleanupReport?
@@ -32,7 +29,6 @@ struct CleanupView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sensoryFeedback(.success, trigger: successes)
         .sensoryFeedback(.error, trigger: failures)
-        // The Mac's fresh report after a change: its counts roll and the footer crossfades.
         .animation(Motion.smooth(reduceMotion), value: report)
         .animation(Motion.smooth(reduceMotion), value: done)
         .task { await load() }
@@ -141,7 +137,6 @@ struct CleanupView: View {
         }
     }
 
-    /// One change, then the Mac's fresh report.
     private func run(_ work: @escaping () async throws -> String) {
         busy = true
         Task {

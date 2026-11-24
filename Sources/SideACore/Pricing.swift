@@ -98,7 +98,6 @@ public struct Outage: Equatable, Sendable {
         struct Incident: Decodable {
             let id: String; let name: String; let status: String; let impact: String?; let components: [Component]?; let incident_updates: [Update]?
             let created_at: String?; let shortlink: String?
-            /// The incident's components and those its updates name.
             var affected: [Component] { (components ?? []) + (incident_updates ?? []).flatMap { $0.affected_components ?? [] } }
         }
         struct Summary: Decodable { let components: [Component]?; let incidents: [Incident]? }

@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// What the hardware keyboard and the iPad's menu bar can do, from the window's tabs.
 struct RemoteCommandActions {
     var canStart: () -> Bool
     var newSession: () -> Void
     var show: (AppTab) -> Void
+    var sheet: (AppSheet) -> Void
     var previousSession: () -> Void
     var nextSession: () -> Void
 }
@@ -17,10 +17,8 @@ final class KeyRequests {
     nonisolated deinit {}
 
     var newSession = 0
-    /// Set while the paired app's tabs are up; nil before pairing and after the last Mac is forgotten.
     var actions: RemoteCommandActions?
 
-    /// A full-screen cover is up (pairing, the scanner, the camera, the terminal): the tabs are behind it.
     static var coverIsUp: Bool {
         let window = UIApplication.shared.connectedScenes.lazy.compactMap { ($0 as? UIWindowScene)?.windows.first { !$0.isHidden && $0.windowLevel == .normal } }.first
         var presented = window?.rootViewController?.presentedViewController
@@ -36,7 +34,6 @@ struct RemoteCommands: Commands {
     let keys: KeyRequests
     let lock: AppLock
 
-    /// Off under the lock and before pairing.
     private var off: Bool { lock.covered || keys.actions == nil }
 
     var body: some Commands {
@@ -46,7 +43,7 @@ struct RemoteCommands: Commands {
                 .disabled(off || keys.actions?.canStart() != true)
         }
         CommandGroup(replacing: .appSettings) {
-            Button("Settings") { run { $0.show(.settings) } }
+            Button("Settings") { run { $0.sheet(.settings) } }
                 .keyboardShortcut(",")
                 .disabled(off)
         }
@@ -54,7 +51,7 @@ struct RemoteCommands: Commands {
             Group {
                 Button("Sessions") { run { $0.show(.sessions) } }.keyboardShortcut("1")
                 Button("Accounts") { run { $0.show(.accounts) } }.keyboardShortcut("2")
-                Button("Search") { run { $0.show(.search) } }.keyboardShortcut("f")
+                Button("Search") { run { $0.sheet(.search) } }.keyboardShortcut("f")
                 Divider()
                 Button("Previous Session") { run { $0.previousSession() } }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option])
@@ -65,7 +62,6 @@ struct RemoteCommands: Commands {
         }
     }
 
-    /// Checked again on the key press: a cover isn't something the menu hears about.
     private func run(_ action: (RemoteCommandActions) -> Void) {
         guard !lock.covered, !KeyRequests.coverIsUp, let actions = keys.actions else { return }
         action(actions)
@@ -73,7 +69,6 @@ struct RemoteCommands: Commands {
 }
 
 extension View {
-    /// Escape on a hardware keyboard closes a sheet that has no Cancel or Done button of its own, as a swipe down does.
     func closesOnEscape() -> some View { modifier(CloseOnEscape()) }
 }
 
@@ -92,7 +87,6 @@ private struct CloseOnEscape: ViewModifier {
 }
 
 #if DEBUG
-/// `--open <url>` opens a link at launch, as a tap on it would; `--new-session` opens New Session. For screenshots.
 enum LaunchLinks {
     static var url: URL? {
         let arguments = ProcessInfo.processInfo.arguments

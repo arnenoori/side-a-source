@@ -22,7 +22,6 @@ actor TailscaleCLI {
         return status
     }
 
-    /// The Tailscale login of the device at `address`, from tailscaled's own record of the peer.
     func whois(_ address: String) async -> String? {
         guard let path = await find(), let output = await Self.run(path, ["whois", "--json", address]), output.status == 0 else { return nil }
         return Pool.whoisLogin(output.stdout)

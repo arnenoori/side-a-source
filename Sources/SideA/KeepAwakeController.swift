@@ -58,7 +58,6 @@ final class KeepAwakeController {
     @ObservationIgnored private var observer: NSObjectProtocol?
     @ObservationIgnored private var asked = false
     @ObservationIgnored private var handingOff = false
-    /// Whether a paired phone holds a connection now; Remote sets it. An open app that asks nothing is still in use.
     @ObservationIgnored var phoneConnected: (() -> Bool)?
 
     init(system: SleepSystem?, defaults: UserDefaults = .standard) {
@@ -124,7 +123,6 @@ final class KeepAwakeController {
         }
     }
 
-    /// A paired phone made a request. The Mac stays up for it from now, not from the next look.
     func phoneSeen(now: Double = Date().timeIntervalSince1970) {
         state.phone(now: now)
         if settings.enabled, !holding { check(now: now) }

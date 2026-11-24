@@ -35,7 +35,6 @@ public final class ImageCache: Sendable {
         try? data.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    /// Drops the least recently used files until the folder fits `limit`.
     public func trim() {
         let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey]
         guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys)) else { return }

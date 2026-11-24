@@ -1,14 +1,17 @@
 import Foundation
 import Observation
+import UIKit
 import SideAProtocol
 import SideARemoteKit
 import SideARemoteShared
 
-/// One look at the Mac's screen: the socket through `ScreenSession`, reconnects with a fresh Face ID signature each, the
-/// once-a-second feedback the Mac adapts to, and the clicks and keys while controlling.
 @Observable
 final class ScreenModel: Identifiable {
-    nonisolated deinit {}
+    /// The session's event stream ends with its last model, or its reader would wait on it for good.
+    nonisolated deinit {
+        let session = session
+        Task { await session?.finish() }
+    }
 
     enum Phase: Equatable {
         case connecting, live, reconnecting
@@ -27,7 +30,6 @@ final class ScreenModel: Identifiable {
     }
 
     let hosted: String?
-    /// What kind of computer is shared, for the words that name it.
     let kind: HostOS
     private(set) var phase: Phase = .connecting
     private(set) var mode: ScreenMode = .view
@@ -37,7 +39,6 @@ final class ScreenModel: Identifiable {
     private(set) var control = ScreenControlState(allowed: false, reason: .view)
     private(set) var fps = 0.0
     private(set) var rtt: Double?
-    /// Three opens in a row failed: still trying, but the Mac is likely asleep or offline.
     private(set) var unreachable = false
 
     @ObservationIgnored var frames: ((ScreenFrame) -> Void)?
@@ -46,6 +47,8 @@ final class ScreenModel: Identifiable {
     @ObservationIgnored private var opening: Task<Void, Never>?
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var attempt = 0
+    /// The goodbye to the Mac that the last stop sent, which an open that follows waits for so it can't end the new socket.
+    @ObservationIgnored private var leaving: Task<Void, Never>?
     @ObservationIgnored private var shown = 0
     @ObservationIgnored private var dropped = 0
     @ObservationIgnored private var target: ScreenTarget?
@@ -55,7 +58,6 @@ final class ScreenModel: Identifiable {
 
     static let hello = ScreenHello(maxWidth: 2560, maxHeight: 2560)
 
-    /// `screenOn` false: the Mac said its switch is off, so no Face ID is asked for until the person tries anyway.
     init(session: ScreenSession?, hosted: String?, screenOn: Bool, needsKeys: Bool, kind: HostOS = .macos) {
         self.session = session; self.hosted = hosted; self.needsKeys = needsKeys; self.kind = kind
         if session == nil { phase = .stopped(.failed("Connect to \(kind.your()) to see its screen.")) }
@@ -64,7 +66,6 @@ final class ScreenModel: Identifiable {
 
     static let offMessage = ScreenRefusal.off.message
 
-    /// The refusal's words when only its close code arrived. The package's are about a Mac; a host that isn't one sends its own.
     static func words(_ reason: ScreenRefusal, _ kind: HostOS) -> String {
         guard !kind.isMac else { return reason.message }
         switch reason {
@@ -78,15 +79,22 @@ final class ScreenModel: Identifiable {
 
     var controlling: Bool { mode == .control && control.allowed && phase == .live }
 
+    /// The Mac captures for a phone that is looking: nothing opens while the app is in the background, whatever asks.
+    private var foreground: Bool { UIApplication.shared.applicationState != .background }
+
     func start() {
-        guard let session, closed else { return }
+        guard let session, closed, foreground else { return }
         if case .stopped = phase { return }
         if phase == .live { phase = .reconnecting }
         closed = false
-        events = Task { [weak self] in
-            for await event in session.events {
-                guard let self else { return }
-                self.handle(event)
+        // One reader for the model's life: a stream whose reader was cancelled ends for good, so a stop and a start (the app
+        // left the foreground and came back) would otherwise never hear the Mac again.
+        if events == nil {
+            events = Task { [weak self] in
+                for await event in session.events {
+                    guard let self else { return }
+                    self.handle(event)
+                }
             }
         }
         connect()
@@ -107,17 +115,18 @@ final class ScreenModel: Identifiable {
         ticker?.cancel(); ticker = nil
     }
 
-    /// Off screen or in the background: the Mac stops capturing now, not when it notices the silence.
     func stop() {
         guard !closed else { return }
         closed = true
         opening?.cancel()
-        events?.cancel(); events = nil
         ticker?.cancel(); ticker = nil
-        Task { [session] in await session?.bye() }
+        let before = leaving
+        leaving = Task { [session] in
+            await before?.value
+            await session?.bye()
+        }
     }
 
-    /// Try again from a stopped state, such as after turning the switch on at the Mac.
     func retry() {
         attempt = 0
         phase = .connecting
@@ -149,11 +158,13 @@ final class ScreenModel: Identifiable {
 
     private func connect() {
         guard let session, !closed else { return }
-        // A stop let the ticker go; Try Again and Control open again on the same socket model.
         if ticker == nil { startTicker() }
         opening?.cancel()
         let mode = mode
+        let leaving = leaving
         opening = Task { [weak self] in
+            await leaving?.value
+            guard self?.foreground == true else { return }
             do {
                 try await session.open(mode, hello: Self.hello)
             } catch is ScreenSession.Unsigned {
@@ -229,9 +240,6 @@ final class ScreenModel: Identifiable {
         }
     }
 
-    // MARK: Feedback and input
-
-    /// At most twice a second: every frame until the keyframe arrives fails the same way.
     func needKeyframe() {
         guard -keyAsked.timeIntervalSinceNow > 0.5 else { return }
         keyAsked = .now

@@ -1,3 +1,4 @@
+#if canImport(Darwin)
 import Darwin
 import Testing
 @testable import SideACore
@@ -14,3 +15,4 @@ import Testing
     #expect(!ProcessCheck.maySignal(pid: me, started: started.map { $0 - 100 }, own: -1))
     #expect(!ProcessCheck.maySignal(pid: me, started: nil, own: -1))
 }
+#endif

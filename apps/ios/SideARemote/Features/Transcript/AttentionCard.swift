@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The Mac's `hosted.attention` for a hosted session: something on its screen needs a person, so the card says what and
-/// opens the terminal. Side A never presses Enter on ambiguity (hosting.md), so the decision is the user's.
 struct AttentionCard: View {
     let attention: HostedAttention
     @Environment(AppModel.self) private var model
@@ -10,7 +8,6 @@ struct AttentionCard: View {
     @State private var trusting = false
     @State private var failure: String?
 
-    /// Only the Mac's trust call starts the agent; it needs Face ID, so never from the Lock Screen.
     private var canTrust: Bool { attention.kind == .trust && model.tools.can(.hostedTrust) && model.tools.hosted[attention.name] != nil }
 
     var body: some View {
@@ -27,7 +24,6 @@ struct AttentionCard: View {
                     .lineLimit(6)
                     .textSelection(.enabled)
             }
-            // Side by side while both fit on one line each; stacked at large text sizes.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: Space.s) { buttons }
                 VStack(alignment: .leading, spacing: Space.xs) { buttons }
@@ -73,13 +69,11 @@ struct AttentionCard: View {
 }
 
 extension HostedAttention {
-    /// The Mac's own sentence ("It may not have been sent."), except for trust, whose text is the dialog's question.
     var title: String {
         if kind == .trust { return "Waiting for you to trust this folder" }
         return lines.first ?? (kind == .unsent ? "It may not have been sent." : "Look at the session.")
     }
 
-    /// The trust dialog's question, or screen lines after the first.
     var detail: String? {
         let rest = kind == .trust ? lines : Array(lines.dropFirst())
         return rest.isEmpty ? nil : rest.joined(separator: "\n")

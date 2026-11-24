@@ -2,7 +2,6 @@ import AVFoundation
 import SideARemoteShared
 import UIKit
 
-/// AAC at 16 kHz mono and about 32 kbit/s: five minutes is near 1.2 MB, well inside what the Mac and the relay take.
 final class DictationRecorder {
     /// Nonisolated for the iOS 26 abort in the README. A Dictation freed mid-recording would otherwise leave the mic on
     /// and other apps' audio ducked.

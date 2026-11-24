@@ -34,7 +34,6 @@ public enum KitLog {
         return "lan"
     }
 
-    /// "GET 100.93.122.83:47900/v1/hello [tailnet]": no headers, and the path as `path(_:)` leaves it.
     static func line(_ request: URLRequest) -> String {
         let url = request.url
         return "\(request.httpMethod ?? "GET") \(url?.host() ?? "?")\(url?.port.map { ":\($0)" } ?? "")\(path(url)) [\(route(url?.host()))]"
@@ -53,7 +52,6 @@ public enum KitLog {
         return parts.joined(separator: "/")
     }
 
-    /// Milliseconds since `start`.
     static func ms(since start: ContinuousClock.Instant) -> Int {
         let elapsed = ContinuousClock.now - start
         return Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)

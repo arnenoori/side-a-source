@@ -3,14 +3,10 @@ import Foundation
 import os
 import SideARemoteShared
 
-/// Launch milestones, timed from process start: a signpost each for Instruments' Points of Interest, and a log line
-/// each, so Share Logs says how long a launch took to draw, to show sessions and to go live. Each milestone counts
-/// once per process.
 enum Launch {
     static let signposter = OSSignposter(subsystem: RemoteLog.subsystem, category: .pointsOfInterest)
     private static let marked = OSAllocatedUnfairLock(initialState: Set<String>())
 
-    /// When the kernel started this process, so the time before `main` counts too.
     static let started: Date = {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
@@ -29,8 +25,6 @@ enum Launch {
 
     private static var deferred: [() -> Void]? = []
 
-    /// Work the first frames don't need (push registration, widgets, revocations) waits until they're drawn, or 2 s
-    /// for a launch in the background that draws nothing; after that it runs at once.
     static func afterFirstFrame(_ work: @escaping () -> Void) {
         guard deferred != nil else { return work() }
         if deferred!.isEmpty { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { runDeferred() } }
@@ -50,7 +44,6 @@ enum Launch {
         work.forEach { $0() }
     }
 
-    /// "first frame", "sessions from cache", "live"…; `detail` goes on the log line only.
     static func mark(_ milestone: StaticString, _ detail: String = "") {
         let name = "\(milestone)"
         guard marked.withLock({ $0.insert(name).inserted }) else { return }

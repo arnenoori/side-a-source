@@ -2,9 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// The approval sheet: context, headline, risk, payload, then Allow / Deny right under it, the sheet
-/// as tall as that and no taller. Pages between requests when several wait. A plan gets its own review
-/// instead: the Markdown, then Keep Planning and Approve.
 struct ApprovalSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -16,16 +13,12 @@ struct ApprovalSheet: View {
     @State private var denies = 0
     @State private var failures = 0
     @State private var settled = 0
-    /// Which way the last page turned, for the way the next one slides in.
     @State private var forward = true
-    /// Answers this sheet already gave a haptic for, so the transcript behind it doesn't give a second.
     static var felt: Set<RequestID> = []
     @State private var feedback: String?
     @FocusState private var feedbackFocused: Bool
-    /// The request's own height, for a sheet that fits it; 0 until measured.
     @State private var fitted: CGFloat = 0
     @State private var detent: PresentationDetent = .medium
-    /// Requests the Mac cut to fit the stream (`truncated`), fetched whole; Allow waits for them.
     @State private var whole: [RequestID: RemoteRequest] = [:]
     @State private var unreadable: Set<RequestID> = []
 
@@ -36,19 +29,16 @@ struct ApprovalSheet: View {
     /// way at once to the next, so a thumb already on Allow never lands on a request it didn't read.
     static func shown(_ id: RequestID, in open: [RemoteRequest]) -> RemoteRequest? { open.first { $0.id == id } }
 
-    /// Where the sheet goes after answering `id` here: the request after it, else the one before.
     static func next(after id: RequestID, in open: [RemoteRequest]) -> RequestID? {
         guard let position = open.firstIndex(where: { $0.id == id }) else { return open.first?.id }
         return open.indices.contains(position + 1) ? open[position + 1].id : position > 0 ? open[position - 1].id : nil
     }
 
-    /// The request `offset` places from `id`, when there is one: paging stops at either end.
     static func neighbor(of id: RequestID, by offset: Int, in open: [RemoteRequest]) -> RequestID? {
         guard let position = open.firstIndex(where: { $0.id == id }), open.indices.contains(position + offset) else { return nil }
         return open[position + offset].id
     }
 
-    /// A drag that is mostly sideways and long enough turns the page: left for the next request, right for the one before.
     static func pageOffset(for translation: CGSize) -> Int? {
         guard abs(translation.width) > 60, abs(translation.width) > abs(translation.height) * 2 else { return nil }
         return translation.width < 0 ? 1 : -1
@@ -75,9 +65,7 @@ struct ApprovalSheet: View {
                 answeredElsewhere
             }
         }
-        // Swiping sideways pages between requests, as the chevrons do.
         .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { swipe($0) })
-        // As tall as the request, so Allow sits right under the command; large for a plan, or when it doesn't fit.
         .presentationDetents(detents, selection: $detent)
         .onChange(of: detents) { _, detents in if !detents.contains(detent), let first = detents.first { detent = first } }
         .presentationDragIndicator(.visible)
@@ -131,7 +119,6 @@ struct ApprovalSheet: View {
         .padding(.horizontal, Space.l)
         .padding(.top, Space.xl)
         .padding(.bottom, Space.s)
-        // Its own height whatever the detent, so the sheet can fit it; a plan scrolls in the large detent instead.
         .fixedSize(horizontal: false, vertical: request.plan == nil)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
             guard request.plan == nil, abs(height - fitted) > 1 else { return }
@@ -143,20 +130,16 @@ struct ApprovalSheet: View {
         .zoomDestination("request-\(request.id)")
     }
 
-    /// The command or change at its own height, scrolling past a third of the screen (nearly half for a change, which
-    /// needs the room), so Allow and Deny never leave it.
     private func payload(_ request: RemoteRequest) -> some View {
         ViewThatFits(in: .vertical) {
             payloadText(request)
             ScrollView { payloadText(request) }
                 .scrollBounceBehavior(.basedOnSize)
-                // There's more below: the indicator says so as the sheet opens.
                 .scrollIndicatorsFlash(onAppear: true)
         }
         .frame(maxHeight: Self.payloadLimit(request, window: windowSize.height))
     }
 
-    /// Of the window's height, not the screen's: on iPad the window can be a fraction of it.
     static func payloadLimit(_ request: RemoteRequest, window: CGFloat) -> CGFloat {
         let change = switch request.action { case .edit, .write, .patch: true; default: false }
         return (window * (change ? 0.45 : 1.0 / 3)).rounded()
@@ -225,24 +208,24 @@ struct ApprovalSheet: View {
                 }
             }
         }
-        if request.allowGate != .biometric, !cut(request), let suggestion = request.suggestions.first, request.answers.contains(.always) {
-            Button {
-                answer(request, .always(suggestionID: suggestion.id))
-            } label: {
-                Text(Self.ruleInMono(RequestText.visible(suggestion.title)))
-                    .font(.footnote)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity)
+        if request.allowGate != .biometric, !cut(request), request.answers.contains(.always) {
+            ForEach(request.suggestions) { suggestion in
+                Button {
+                    answer(request, .always(suggestionID: suggestion.id))
+                } label: {
+                    Text(Self.ruleInMono(RequestText.visible(suggestion.title)))
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .frame(minHeight: 32)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .frame(minHeight: 32)
         }
     }
 
-    /// Keep Planning opens a field whose text goes back as the deny reason; Approve has a menu for
-    /// approving with edits accepted.
     @ViewBuilder private func planButtons(_ request: RemoteRequest) -> some View {
         if let text = feedback {
             HStack(spacing: Space.xs) {
@@ -298,7 +281,6 @@ struct ApprovalSheet: View {
         }
     }
 
-    /// The Mac's sentence ("Always allow Bash(npm test:*) in this project") with only the rule in mono.
     static func ruleInMono(_ title: String) -> AttributedString {
         var text = AttributedString(title)
         if let match = title.firstMatch(of: /\S+\([^)]*\)/),
@@ -321,7 +303,6 @@ struct ApprovalSheet: View {
         }
     }
 
-    /// How long "Answered" shows when the request on screen was settled elsewhere, before the next one takes its place.
     static let settleHold = Duration.milliseconds(250)
 
     private var answeredElsewhere: some View {
@@ -340,7 +321,6 @@ struct ApprovalSheet: View {
 
     private func deny(_ request: RemoteRequest) { answer(request, .deny(message: nil)) }
 
-    /// Felt here, so the transcript doesn't buzz again; on to the next request, or closed after the last.
     private func answer(_ request: RemoteRequest, _ answer: RemoteAnswer, mode: PermissionMode? = nil, confirm: String? = nil) {
         if case .deny = answer { denies += 1 } else { allows += 1 }
         Self.felt.insert(request.id)
@@ -349,7 +329,6 @@ struct ApprovalSheet: View {
         if open.isEmpty { dismiss() }
     }
 
-    /// Destructive Allow needs the device owner: Face ID is the confirmation, then the answer goes.
     private func allowDestructive(_ request: RemoteRequest) async {
         switch await FaceIDAllow.ask(for: request, on: model) {
         case .granted(let confirm): answer(request, .allow(confirmDestructive: true), confirm: confirm)

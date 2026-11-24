@@ -6,7 +6,6 @@ import Testing
 
 private func temporaryRoot() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent("sa-\(UUID().uuidString.prefix(8))") }
 
-/// Holds a call until the test lets it go.
 private actor Gate {
     private var waiters: [CheckedContinuation<Void, Never>] = []
     private var open = false
@@ -33,8 +32,6 @@ private func tailnet(login: String? = "me@example.com") -> TailscaleStatus {
     status.login = login
     return status
 }
-
-// MARK: Sign-in
 
 @MainActor @Test func aSignInFinishingDuringAnotherAccountsCheckStillVerifies() async throws {
     let store = AccountStore(demo: true, root: temporaryRoot())
@@ -76,7 +73,7 @@ private func tailnet(login: String? = "me@example.com") -> TailscaleStatus {
     let quiet = Task { await store.verify(id, reportError: false) }
     try await until(await slow.waiting == 1)
     let asked = Task { await store.verify(id) }
-    for _ in 0..<20 { await Task.yield() }  // lets `asked` start and join the check that is waiting
+    for _ in 0..<20 { await Task.yield() }
     await slow.release()
     #expect(await quiet.value == false)
     #expect(await asked.value == false)
@@ -85,13 +82,10 @@ private func tailnet(login: String? = "me@example.com") -> TailscaleStatus {
     #expect(calls == 2)
 }
 
-// MARK: Login health
-
 private func room(at now: Double) -> [UsageWindow] {
     [UsageWindow(id: "five_hour", label: "5-hour", percent: 10, resetsAt: now + 3600), UsageWindow(id: "seven_day", label: "Weekly", percent: 10, resetsAt: now + 86_400)]
 }
 
-/// A session's reading clears `stale` and `failing`, so the source can still move; it must not make the login a target.
 @MainActor @Test func aSessionsReadingDoesntMakeASignedOutLoginATarget() throws {
     let store = AccountStore(demo: true, root: temporaryRoot())
     let now = Date().timeIntervalSince1970
@@ -128,7 +122,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     try #require(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("runtime/usage-cache.json"))) as? [String: Any])
 }
 
-/// What a failed read, a session's reading and the endpoint answering again each leave behind, in the order they come.
 @MainActor @Test func anEndpointFailureASessionsReadingAndTheEndpointComingBackEachClearWhatTheyDisprove() async throws {
     let root = temporaryRoot()
     let store = AccountStore(demo: true, root: root)
@@ -151,7 +144,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
         }
     }
 
-    // The endpoint fails: the account is failing and backed off, so Autopilot leaves it and nothing reads it again.
     await store.refreshUsage(id)
     #expect(reads == 1 && store.health[id] == .offline && store.plannable[id] == nil)
     var cache = try usageCache(root)
@@ -159,13 +151,11 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     await store.refreshUsage(id)
     #expect(reads == 1)
 
-    // A session's own reading disproves failing and offline, but not the back-off.
     #expect(store.takeLive(room(at: now), for: id, at: now + 1))
     #expect(store.health[id] == nil && store.plannable[id] != nil && store.minutesToLimit(id) == nil)
     await store.refreshUsage(id)
     #expect(reads == 1)
 
-    // Signing in again drops the back-off, and the endpoint answers: nothing left of the failure.
     up = true
     #expect(await store.signIn(id))
     #expect(reads == 2 && store.health[id] == nil && store.plannable[id] != nil)
@@ -184,8 +174,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect([LoginHealth.idle, .verify, .offline].allSatisfy(\.takesWork) && !LoginHealth.signIn(replacedBy: "x").takesWork)
 }
 
-// MARK: Pool sharing
-
 @MainActor private func sharing() -> (AccountStore, PoolProxy) {
     let store = AccountStore(demo: true, root: temporaryRoot())
     let pool = PoolProxy(key: String(repeating: "a", count: 64), decisions: store)
@@ -195,7 +183,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     return (store, pool)
 }
 
-/// Security: the Mac must not listen on Tailscale with the setting off.
 @MainActor @Test func turningShareOffWhileTailscaleIsAskedLeavesNothingListening() async throws {
     let (store, pool) = sharing()
     defer { pool.stop() }
@@ -214,7 +201,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
 
 
 @MainActor struct PoolShareListening {
-    /// On, off and on again during one question: the last word is on, and one listener answers it.
     @Test func theLastShareSettingWins() async throws {
         let (store, pool) = sharing()
         defer { pool.stop() }
@@ -248,7 +234,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     }
 }
 
-/// The pool went away during the question: its proxy doesn't start sharing.
 @MainActor @Test func aPoolStoppedWhileTailscaleIsAskedDoesntShare() async throws {
     let (store, pool) = sharing()
     defer { pool.stop() }
@@ -262,7 +247,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(!pool.isShared)
 }
 
-/// A pool with no file serves nobody and used to block every later try.
 @MainActor @Test func aPoolFileThatCantBeWrittenLeavesNoPoolAndCanBeRetried() async throws {
     let root = temporaryRoot()
     let runtime = root.appendingPathComponent("runtime")
@@ -288,8 +272,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(store.pool == nil)
 }
 
-// MARK: Hosting
-
 @MainActor @Test func stoppingHostingDuringInstallKeepsItStopped() async throws {
     let root = temporaryRoot()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -306,8 +288,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(!hosted.available)
 }
 
-// MARK: Updates
-
 @Test func anUpdateFailureClearsWhenACheckGoesRight() {
     var failure = UpdateFailure()
     failure.aborted(domain: SUSparkleErrorDomain, code: 2001)
@@ -323,7 +303,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(failure.code == nil)
 }
 
-/// A feed the Mac couldn't reach isn't a failed update: no Download line, and the schedule retries sooner.
 @Test func anUnreachableFeedIsOfflineNotAFailedUpdate() {
     var failure = UpdateFailure()
     failure.aborted(domain: SUSparkleErrorDomain, code: 1002)
@@ -338,8 +317,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(failure == UpdateFailure())
 }
 
-/// The day Side A sat on 0.5.50: the last check at launch, two releases that evening, a night asleep and offline.
-/// Sparkle's daily schedule wasn't due again until the next morning at 11:22; this one is due an hour after any check.
 @Test func updateChecksAreDueByTheClockWhateverHappenedSince() {
     let launch = Date(timeIntervalSince1970: 1_794_000_000)
     func due(_ after: TimeInterval, offline: Bool = false) -> Bool {
@@ -349,14 +326,10 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(!due(0))
     #expect(!due(59 * 60))
     #expect(due(3600))
-    // Waking after a night asleep: due at once, not a day of awake time later.
     #expect(due(14 * 3600))
-    // A check that couldn't reach the feed is retried in minutes.
     #expect(!due(9 * 60, offline: true))
     #expect(due(10 * 60, offline: true))
-    // A clock set back doesn't hold checks off.
     #expect(due(-60))
-    // Checked every tick: the longest an awake, online Mac goes between checks.
     #expect(UpdateSchedule.interval + UpdateSchedule.tick <= 2 * 3600)
 }
 
@@ -391,7 +364,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(!installed)
 }
 
-/// Update Automatically on: the block is kept and used once nobody is at the Mac and nothing is under way.
 @MainActor @Test func aDownloadInstallsByItselfOnceTheMacIsQuiet() async throws {
     let updates = Updates()
     updates.automaticallyUpdates = true
@@ -435,7 +407,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(onMain)
 }
 
-/// Turned off after the block was taken: nothing installs by itself, but asking still works, and so does checking.
 @MainActor @Test func turningUpdatesOffWhileOneWaitsKeepsItInstallableByHand() async throws {
     let updates = Updates()
     updates.automaticallyUpdates = true
@@ -461,7 +432,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(asked.count == 2)
 }
 
-/// The quiet install, Update to X and Check for Updates… all at once: Sparkle's block runs once.
 @MainActor @Test func aHeldUpdateIsInstalledOnlyOnce() async throws {
     let updates = Updates()
     updates.automaticallyUpdates = true
@@ -495,7 +465,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(hold(activity: QuietInstall.Activity(poolInFlight: 1)) == .pool(1))
     #expect(hold(activity: QuietInstall.Activity(busy: ["a sign-in", "pairing a phone"])) == .busy("a sign-in"))
     #expect(hold(staged: false) == .nothingStaged)
-    // Off: nothing installs on its own, whatever else is true.
     #expect(hold(automatic: false) == .off)
     #expect(hold(automatic: false, presence: UserPresence(idle: 0, locked: true)) == .off)
 }
@@ -518,10 +487,8 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(history.recent("0.5.48", now: updated.addingTimeInterval(UpdateHistory.shown - 1)) == "0.5.48")
     #expect(history.recent("0.5.48", now: updated.addingTimeInterval(UpdateHistory.shown)) == nil)
     #expect(history.recent("0.5.48", now: updated.addingTimeInterval(-60)) == nil)
-    // A relaunch of the same version doesn't restart the day.
     history.launched("0.5.48", now: updated.addingTimeInterval(7200))
     #expect(history.recent("0.5.48", now: updated.addingTimeInterval(UpdateHistory.shown + 60)) == nil)
-    // An older copy opened afterwards isn't an update.
     history.launched("0.5.10", now: updated)
     #expect(history.recent("0.5.10", now: updated) == nil)
     #expect(UpdateHistory.notes("0.5.48").absoluteString == "https://github.com/arnenoori/side-a-releases/releases/tag/v0.5.48")
@@ -551,8 +518,6 @@ private func usageCache(_ root: URL) throws -> [String: Any] {
     #expect(!AccountStore.changes(["usage", "a"]) && !AccountStore.changes(["cleanup", "disk"]) && AccountStore.changes(["cleanup", "archive"]))
 }
 
-// MARK: Key check
-
 private final class Signatures: @unchecked Sendable {
     private let lock = NSLock()
     private var gates: [DispatchSemaphore] = []
@@ -566,7 +531,6 @@ private final class Signatures: @unchecked Sendable {
     func finish(_ n: Int) { lock.withLock { gates[n] }.signal() }
 }
 
-/// The old key's check answering after Make New Key must not vouch for the new one.
 @MainActor @Test func aKeyCheckFromBeforeMakeNewKeyVouchesForNothing() async throws {
     let keychain = try TestKeychain()
     let store = AccountStore(demo: true, root: temporaryRoot())
@@ -588,7 +552,6 @@ private final class Signatures: @unchecked Sendable {
     try await until(remote.server != nil)
 }
 
-/// A refused key can be asked again without making a new one, so a mistaken Deny doesn't unpair every iPhone.
 @MainActor @Test func aRefusedKeyCanBeTriedAgainWithoutLosingDevices() async throws {
     let keychain = try TestKeychain()
     let store = AccountStore(demo: true, root: temporaryRoot())
@@ -615,7 +578,6 @@ private final class Answers: @unchecked Sendable {
     func next() -> Bool { lock.withLock { left.isEmpty ? true : left.removeFirst() } }
 }
 
-/// The block was called but Side A is still running: the update is let go so checking works again.
 @MainActor @Test func anInstallThatNeverRelaunchesDoesNotStallUpdatesForTheRestOfTheLaunch() async throws {
     let updates = Updates()
     updates.automaticallyUpdates = true
@@ -628,15 +590,11 @@ private final class Answers: @unchecked Sendable {
     try await until(installs == 1)
     #expect(updates.staged != nil)
     try await until(updates.staged == nil)
-    // A fresh download can be held and installed again.
     #expect(updates.updater(updater, willInstallUpdateOnQuit: .empty(), immediateInstallationBlock: { installs += 1 }))
     updates.installIfQuiet()
     try await until(installs == 2)
 }
 
-// MARK: Library that couldn't be read
-
-/// An unreadable library is read again, never written over meanwhile, and the app carries on once it reads.
 @MainActor @Test func anUnreadableLibraryIsReadAgainAndNeverOverwritten() throws {
     let root = temporaryRoot()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -659,7 +617,6 @@ private final class Answers: @unchecked Sendable {
     #expect(store.config.accounts.map(\.name) == ["Kept"])
 }
 
-/// The file can be gone for a moment while an editor saves it; an empty library written then would replace the fix.
 @MainActor @Test func aLibraryThatIsMissingForAMomentIsNotStartedOver() throws {
     let root = temporaryRoot()
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -674,8 +631,6 @@ private final class Answers: @unchecked Sendable {
     #expect(!store.persist())
     #expect(!FileManager.default.fileExists(atPath: file.path))
 }
-
-// MARK: Pool start retries
 
 @MainActor @Test func aFailedPoolStartIsTriedAgainFromTheTickWithABackOff() async throws {
     let store = AccountStore(demo: true, root: temporaryRoot())

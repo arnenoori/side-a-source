@@ -82,7 +82,6 @@ test('like iOS, the heart rises from behind the bubble: tip hidden at first, res
   assert.equal(at(LET_GO - 0.01).sink, 0);
   const view = { anchorX: 300, anchorY: 700, phone: 400, width: 1280, height: 800 };
   assert.ok(heartTip(at(0.1), MEASURED_FLIGHT, view).y > view.anchorY + 10, 'tip starts below the cut line, hidden behind the bubble');
-  // The visible part is what clears the cut: a sliver of the lobes first, the whole heart by about a second.
   const visible = h => { const l = at(h); return Math.max(0, l.width / 1.13 - l.sink) / (l.width / 1.13); };
   assert.ok(visible(0.1) < 0.7 && visible(0.5) > 0.8 && visible(1) === 1, `${visible(0.1)} ${visible(0.5)}`);
 });
@@ -126,7 +125,6 @@ test('the heart is plump like the iOS Love heart: wide, deep, a shallow cleft an
   assert.ok(width / height >= 1.1 && width / height <= 1.15, `width/height ${(width / height).toFixed(3)}`);
   assert.ok(depth / width >= 0.55 && depth / width <= 0.6, `depth/width ${(depth / width).toFixed(3)}`);
   const pts = outline(1440);
-  // Circle through the tip (center on the axis) fit to the outline's bottom: x² + y² = 2ry.
   let num = 0, den = 0;
   for (const [x, y] of pts) if (y > 1e-4 && y < 0.12) { num += (x * x + y * y) * y; den += 2 * y * y; }
   const tipRadius = num / den;
@@ -155,7 +153,6 @@ test('the heart is one smooth, symmetric, closed shape', () => {
     assert.ok(Math.abs(l - 1) < 1e-5, 'unit normals');
     assert.ok(positions[i] * normals[i] + (positions[i + 1] - cy) * normals[i + 1] + positions[i + 2] * normals[i + 2] > 0, 'normals face out');
   }
-  // Mirror symmetry: the field is even in x, so the mesh's right half mirrors its left.
   const key = (x, y, z) => `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
   const set = new Set();
   for (let i = 0; i < positions.length; i += 3) set.add(key(positions[i], positions[i + 1], positions[i + 2]));
@@ -191,7 +188,6 @@ test('the one page carries one love egg, in its footer', () => {
 });
 
 test('the heart is sized from the bubble, as on iOS, and held to a corner of a large window', () => {
-  // Fully inflated, the iOS heart is about 1.2 phone widths, 13 bubble heights.
   assert.equal(heartUnit(28, 5000, 5000), PHONE_PER_BUBBLE * 28, 'a roomy window keeps the measured ratio');
   for (const [w, h] of [[1280, 800], [1920, 1080], [2560, 1440], [390, 844], [375, 667], [430, 932]]) {
     const peak = heartUnit(28, w, h) * PEAK_WIDTH;

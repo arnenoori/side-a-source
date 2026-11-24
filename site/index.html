@@ -56,7 +56,6 @@
       <div class="how" id="how">
         <section class="hero">
           <h2 class="lead">Never waste a limit you paid for</h2>
-          <!-- The app, rebuilt in HTML and CSS from the SwiftUI views (MenuPlayer, SettingsView, SessionsView). Every control works; the data is a demo. -->
           <svg class="sprite" aria-hidden="true" focusable="false">
             <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4.6h-4.6" /></symbol>
             <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6" /></symbol>
@@ -88,7 +87,6 @@
           <div class="desk" role="group" aria-label="Side A, rebuilt in the browser. Try the menu and the Settings window.">
             <div class="desk-bar"><span class="desk-apple" aria-hidden="true"></span><span class="desk-menus" aria-hidden="true"><b>Terminal</b><span>Shell</span><span>Edit</span><span>View</span></span><span class="desk-right"><button type="button" class="desk-status" aria-label="Side A" aria-expanded="true" aria-controls="mm"><span class="mini-disc"></span></button><span aria-hidden="true">Mon 3:41 PM</span></span></div>
 
-            <!-- Settings window -->
             <div class="mw glass" data-mock="settings" data-mode="sessions" role="region" aria-label="Side A Sessions and Settings">
               <div class="mw-toolbar">
                 <span class="lights"><button type="button" data-light="close" aria-label="Close Settings"></button><button type="button" data-light="minimize" aria-label="Minimize Settings"></button><i aria-hidden="true"></i></span>
@@ -101,7 +99,6 @@
                 </div>
               </div>
 
-              <!-- Accounts -->
               <div class="mw-pane form" role="tabpanel" id="mp-accounts" aria-labelledby="mt-accounts" tabindex="0" hidden>
                 <p class="f-head">Claude</p>
                 <div class="f-section">
@@ -147,7 +144,6 @@
                 </div>
               </div>
 
-              <!-- Usage -->
               <div class="mw-pane form" role="tabpanel" id="mp-usage" aria-labelledby="mt-usage" tabindex="0" hidden>
                 <div class="f-section tiles">
                   <div class="tile"><small>Today</small><b>1.7B</b><small>+12% vs usual by 3 PM</small></div>
@@ -179,7 +175,6 @@
                 </div>
               </div>
 
-              <!-- Sessions -->
               <div class="mw-pane s-pane" role="region" id="mp-sessions" aria-label="Sessions">
                 <div class="s-side">
                   <label class="s-search"><svg aria-hidden="true"><use href="#i-search" /></svg><input type="search" placeholder="Search 1,284 conversations" aria-label="Search conversations" autocomplete="off" /><svg aria-hidden="true" class="s-filter"><use href="#i-filter" /></svg></label>
@@ -242,7 +237,6 @@
                 </div>
               </div>
 
-              <!-- Autopilot -->
               <div class="mw-pane form" role="tabpanel" id="mp-autopilot" aria-labelledby="mt-autopilot" tabindex="0" hidden>
                 <div class="f-section">
                   <div class="f-row"><span class="f-label"><b class="big">Autopilot</b><small data-autopilot-status>On. Using Personal. Warms up idle windows from 8:30.</small></span><button type="button" class="switch" role="switch" aria-checked="true" aria-label="Autopilot" data-autopilot><span></span></button></div>
@@ -261,7 +255,6 @@
                 <p class="f-foot hand">weekly % left ÷ hours until it resets × plan size</p>
               </div>
 
-              <!-- General -->
               <div class="mw-pane form" role="tabpanel" id="mp-general" aria-labelledby="mt-general" tabindex="0" hidden>
                 <div class="f-section">
                   <div class="f-row"><span class="f-label">Open at login</span><button type="button" class="switch" role="switch" aria-checked="true" aria-label="Open at login"><span></span></button></div>
@@ -279,7 +272,6 @@
               </div>
             </div>
 
-            <!-- Menu bar popover -->
             <div class="mm glass" id="mm" data-mock="menu" role="region" aria-label="Side A menu">
               <div class="mm-head"><p class="mm-title">Side A</p><button type="button" class="mm-icon" data-refresh aria-label="Refresh usage"><svg aria-hidden="true"><use href="#i-refresh" /></svg></button></div>
               <div class="mm-group">
@@ -380,7 +372,6 @@
             <h2>Answer from anywhere</h2>
           </div>
           <div class="pillar-demo">
-            <!-- The Dynamic Island, rebuilt from IslandView.swift: the notch grows into the card; the buttons and the ⌃⌥ shortcuts work. -->
             <div class="island-demo" data-state="rest">
               <div class="mac">
                 <div class="screen">
@@ -441,7 +432,6 @@
             <h2>Keep your Mac fast</h2>
           </div>
           <div class="pillar-demo">
-            <!-- Sessions (LiveSummary, RunningRow), CleanupView and SetupView, with their demo data. -->
             <div class="desk solo" data-live-mock role="group" aria-label="Side A's Sessions, Clean Up and Setup, rebuilt in the browser. The buttons work; the data is a demo.">
               <div class="mw glass">
                 <div class="mw-toolbar">
@@ -543,7 +533,6 @@
             <h2>Run agents overnight</h2>
           </div>
           <div class="pillar-demo">
-            <!-- Keep awake (General settings), rebuilt: close the lid and the agents keep going; the Mac sleeps after the last one. Time runs fast; the data is a demo. -->
             <div class="desk solo ka" data-keep-awake role="group" aria-label="Keep awake, rebuilt in the browser. Close the lid and watch the agents finish. The data is a demo.">
               <div class="ka-sky" aria-hidden="true"><svg class="ka-moon"><use href="#i-moon" /></svg></div>
               <div class="ka-stage">
@@ -588,7 +577,6 @@
             <h2 id="remote-title">Every session, on your iPhone</h2>
             <!-- remote-availability -->
           </div>
-          <!-- The Mac runs the session in tmux; the phone shows real Side A Remote screens from the simulator. -->
           <div class="remote-demo" data-remote>
             <div class="mac remote-mac" aria-hidden="true">
               <div class="screen">

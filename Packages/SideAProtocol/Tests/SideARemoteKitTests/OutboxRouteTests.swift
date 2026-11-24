@@ -35,7 +35,6 @@ private func shape(_ item: Outbox.Item) -> Shape {
     #expect(shape(interrupt) == Shape(method: "POST", path: "/v1/sessions/\(sid)/interrupt", target: "session:\(sid)", answering: nil, answer: 0))
     #expect(shape(takeBack) == Shape(method: "DELETE", path: "/v1/sessions/\(sid)/mail", target: "session:\(sid)", answering: nil, answer: 0))
 
-    // What a notification action makes is the same item.
     let fromAction = Outbox.Item.answer(rid, .deny(message: nil), macID: "mac1", now: 1)
     #expect(shape(fromAction) == Shape(method: "POST", path: "/v1/requests/\(rid)/answer", target: "request:\(rid)", answering: rid, answer: 1))
     let replyFromAction = Outbox.Item.reply(sid, RemoteReply(text: "x"), macID: "mac1", now: 1)
@@ -51,12 +50,10 @@ private func shape(_ item: Outbox.Item) -> Shape {
     #expect(item("/v1/sessions/s1").target == "session:s1")
     #expect(item("/v1/sessions").target == "/v1/sessions" && item("/v1/state").target == "/v1/state" && item("").target == "")
     #expect(item("/x/requests/r2/answer").target == "request:r2" && item("/x/requests/r2/answer").answering == "r2")
-    // The id is read as written for the target, and decoded for the request it answers.
     #expect(item("/v1/requests/a%2Fb/answer").target == "request:a%2Fb" && item("/v1/requests/a%2Fb/answer").answering == "a/b")
     #expect(item("//v1//requests//r3//answer//").target == "request:r3" && item("//v1//requests//r3//answer//").answering == "r3")
 }
 
-/// Rows written before descriptors existed: the items as they were stored, and the target column as it was written.
 @Test func rowsWrittenByTheOldCodeAreReadAndClaimedTheSame() async throws {
     let fixtures: [(String, Shape)] = [
         ("kit/OutboxItem.answer", Shape(method: "POST", path: "/v1/requests/\(rid)/answer", target: "request:\(rid)", answering: rid, answer: 1)),
@@ -75,7 +72,6 @@ private func shape(_ item: Outbox.Item) -> Shape {
         let item = try JSONDecoder().decode(Outbox.Item.self, from: data)
         #expect(shape(item) == expected, "\(name)")
         decoded.append(item)
-        // Inserted as the old code did: its own column values, its item as the JSON it encoded.
         var statement: OpaquePointer?
         let sql = "INSERT INTO outbox(id, mac, target, created, answer, item) VALUES(?, ?, ?, ?, ?, ?)"
         #expect(sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK)
@@ -90,16 +86,13 @@ private func shape(_ item: Outbox.Item) -> Shape {
         sqlite3_finalize(statement)
     }
     let mac = decoded[0].macID
-    // The queue reads them back, and a held target skips exactly the rows its old column named.
     #expect(await outbox.items(for: mac).map(\.id).sorted() == decoded.map(\.id).sorted())
     #expect(await outbox.claim(for: mac, by: "o", now: 1_791_560_100, skipping: ["request:\(rid)"])?.id == decoded[2].id)
     #expect(await outbox.claim(for: mac, by: "p", now: 1_791_560_100, skipping: ["request:\(rid)", "session:\(sid)"]) == nil)
-    // Answers go first, then the oldest of a target: the same order a new row gets.
     let first = await outbox.claim(for: mac, by: "q", now: 1_791_560_100)
     #expect(first?.answering == rid)
 }
 
-/// What the engine writes now is what the old code wrote: the same columns for the same item.
 @Test func aNewRowHoldsTheColumnsTheOldCodeWrote() async throws {
     let (outbox, file) = try temporaryOutbox()
     let answer = Outbox.Item.answer(rid, .allow(confirmDestructive: false), macID: "mac1", now: 10)

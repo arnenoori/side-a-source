@@ -1,7 +1,6 @@
 import Foundation
 import SideACore
 
-/// Whether a session just started took, what a session that ended said last, and whether the one it replaces has quit.
 extension HostedSessions {
     /// tmux makes the pane before the CLI checks its resume id, model or login, so a pane alone proves nothing.
     func survivedStartup(_ name: String, resuming: String? = nil, settle: Duration = .seconds(3), within: Duration = .seconds(12)) async -> Bool {
@@ -27,7 +26,6 @@ extension HostedSessions {
         return line.map { String(Redact.secrets($0).prefix(300)) }
     }
 
-    /// Up to 5 s for the process to go, its registry file with it.
     static func exited(_ session: LiveSession, registry: URL) async -> Bool {
         for _ in 0..<100 {
             let gone = !ProcessCheck.maySignal(pid: session.pid, started: session.started)
@@ -36,4 +34,9 @@ extension HostedSessions {
         }
         return false
     }
+}
+
+extension HostedSessions {
+    var runtime: URL { root.appendingPathComponent("runtime") }
+    var launcher: URL { runtime.appendingPathComponent("sidea-tmux") }
 }

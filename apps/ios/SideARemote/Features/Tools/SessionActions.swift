@@ -3,9 +3,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// The session actions that open something or ask first, from a row's swipe or context menu, the
-/// session's toolbar or a card: the terminal and its covers, sheets and confirmations live here once,
-/// so every entry point behaves the same.
 @Observable
 final class SessionActions {
     nonisolated deinit {}
@@ -22,45 +19,28 @@ final class SessionActions {
     }
 
     var terminal: Terminal?
-    /// Restart Fresh's sheet.
     var restarting: RemoteSession?
-    /// Continue on iPhone, waiting for the user's yes.
     var continuing: RemoteSession?
-    /// Quit Session, waiting for the user's yes.
     var quitting: RemoteSession?
-    /// Quit Idle, with how many it would quit.
     var quittingIdle: Int?
-    /// The quick Reply sheet.
     var replying: RemoteSession?
-    /// Rename, with the field's text.
     var renaming: RemoteSession?
     var newTitle = ""
-    /// Stop Server, waiting for the user's yes.
     var stopping: Port?
-    /// A dev server's preview sheet.
     var previewing: Port?
-    /// A hosted session just started here (Restart Fresh, Continue, Resume): pushed until it shows.
     var started: HostedSession?
-    /// Bumped on a success the user should feel.
     private(set) var successes = 0
-    /// What went wrong, in the Mac's words.
     var failure: String? { didSet { if failure != nil { failures += 1 } } }
-    /// The alert's title: the action that failed, when it has a word.
     private(set) var failureTitle = "Couldn't Do That"
-    /// Bumped with each failure, which the user feels as .error before reading the alert.
     private(set) var failures = 0
-    /// Sessions with a call in flight, so their buttons wait.
     private(set) var busy: Set<String> = []
 
-    /// The host's Mac, which acts unless a button names another.
     @ObservationIgnored weak var host: AppModel?
-    /// The Mac of the row or page that asked last: with several Macs, one list holds rows from each.
     @ObservationIgnored private(set) weak var mac: AppModel?
 
     var tools: MacTools? { (mac ?? host)?.tools }
     var model: AppModel? { mac ?? host }
 
-    /// The actions, for a button on `model`'s session.
     func on(_ model: AppModel) -> SessionActions {
         if mac !== model { mac = model }
         return self
@@ -74,8 +54,6 @@ final class SessionActions {
         }
     }
 
-    /// Runs a call for a session, marks it busy meanwhile, and reports a failure. `working` shows a spinner and that
-    /// word in the pill until the call's own result replaces it; `failed` titles the alert a failure raises.
     func run(_ key: String, working: String? = nil, failed: String? = nil, _ work: @escaping (MacTools) async throws -> Void) {
         guard let tools, !busy.contains(key) else { return }
         busy.insert(key)
@@ -94,7 +72,6 @@ final class SessionActions {
 
     func isBusy(_ key: String) -> Bool { busy.contains(key) }
 
-    /// Ends the Mac's process and resumes the conversation in tmux; the session comes back hosted.
     func continueOnPhone(_ session: RemoteSession) {
         run(session.id) { tools in
             let hosted = try await tools.continueOnPhone(session.id)
@@ -103,7 +80,6 @@ final class SessionActions {
         }
     }
 
-    /// Its tab on the Mac, brought forward or opened.
     func showOnMac(_ name: String) {
         run("show-\(name)") { tools in
             try await tools.showOnMac(name)
@@ -113,7 +89,6 @@ final class SessionActions {
     }
 
     static let quitIdleKey = "quit-idle"
-    /// Quit Idle's rule: idle for 30 minutes or more.
     static let idleMinutes = 30
 
     static func idleCount(_ sessions: [RemoteSession], now: Date = .now) -> Int {
@@ -123,30 +98,40 @@ final class SessionActions {
         }.count
     }
 
-    /// Quitting loses nothing when the session is idle, so it just quits. One that is working, waiting on a request or
-    /// holding background tasks or a server asks once first.
     static func quitAsks(_ session: RemoteSession) -> Bool {
         stopAsks(session) || !(session.ports ?? []).isEmpty
     }
 
-    /// Stopping a server asks only when the session itself is mid-work.
     static func stopAsks(_ session: RemoteSession) -> Bool {
         [.working, .needsYou].contains(SessionPhase(session)) || (session.backgroundTasks ?? 0) > 0
     }
 
-    func requestQuit(_ session: RemoteSession) {
-        if Self.quitAsks(session) { quitting = session } else { quit(session) }
+    func requestQuit(_ session: RemoteSession, undoable: Bool = false) {
+        if Self.quitAsks(session) { quitting = session } else if undoable { quitAfterUndo(session) } else { quit(session) }
+    }
+
+    /// A quit can't be taken back, so the row leaves at once and the session quits only when its Undo runs out.
+    private func quitAfterUndo(_ session: RemoteSession) {
+        guard let model else { return }
+        model.sessions.setLeaving(session.id, true)
+        Pill.undoable("Quit \u{201C}\(model.tools.title(for: session))\u{201D}", expired: { self.on(model).quit(session, quiet: true) }) {
+            model.sessions.setLeaving(session.id, false)
+        }
     }
 
     func requestStop(_ port: Port) {
         if model?.sessions.session(port.session).map(Self.stopAsks) ?? true { stopping = port } else { stopServer(port) }
     }
 
-    func quit(_ session: RemoteSession) {
+    func quit(_ session: RemoteSession, quiet: Bool = false) {
+        let model = model
         run(session.id) { tools in
-            try await tools.quit(session.id)
+            do { try await tools.quit(session.id) } catch {
+                model?.sessions.setLeaving(session.id, false)
+                throw error
+            }
             self.successes += 1
-            Pill.show("Session quit")
+            if !quiet { Pill.show("Session quit") }
         }
     }
 
@@ -168,7 +153,6 @@ final class SessionActions {
         }
     }
 
-    /// Snoozes it, or wakes it with a nil `choice`; Undo puts back the snooze it had, or none.
     func snooze(_ session: RemoteSession, _ choice: SessionSnooze.Choice?, until: Date? = nil, undoable: Bool = true) {
         guard let model, let tools else { return }
         let before = tools.snooze(of: session)
@@ -215,7 +199,6 @@ final class SessionActions {
         }
     }
 
-    /// A Codex session takes it from its next turn, which the composer says.
     func change(_ session: RemoteSession, _ change: SettingsChange, title: String) {
         run("settings-\(session.id)") { tools in
             let result = try await tools.change(session, change, title: title)
@@ -240,7 +223,6 @@ final class SessionActions {
         }
     }
 
-    /// Fork a live session: pushed like any new hosted one, with "Forked from …" under its title.
     func fork(_ session: RemoteSession) {
         run("fork-\(session.id)", working: "Forking", failed: "Couldn't Fork") { tools in
             let hosted = try await tools.fork(session)
@@ -256,7 +238,6 @@ final class SessionActions {
         tools.can(.hosted) && !session.headless && session.conversationID != nil && session.cwd != nil && session.agent == .claude
     }
 
-    /// How a past conversation comes back: the same folder and, unless chosen, the account Autopilot picks.
     struct Resume: Hashable {
         var fork = false
         var worktree = false
@@ -264,8 +245,6 @@ final class SessionActions {
         var accountID: String?
     }
 
-    /// Resume or Fork a past conversation as a hosted session, then push it, or hand it to `then`
-    /// when the page shows it in place.
     func resume(_ past: PastSession, _ choice: Resume = Resume(), then: ((HostedSession) -> Void)? = nil) {
         guard let cwd = past.cwd else { return }
         let start = StartHosted(cwd: cwd, agent: past.agent, model: choice.model, worktree: choice.worktree,
@@ -279,17 +258,14 @@ final class SessionActions {
 }
 
 extension EnvironmentValues {
-    /// Set by a past session's page: a Resume or Fork from it replaces the page instead of stacking on it.
     @Entry var onResumed: ((HostedSession) -> Void)?
 }
 
-/// True while the optional holds something; false clears it.
 private func present<T>(_ binding: Binding<T?>) -> Binding<Bool> {
     Binding { binding.wrappedValue != nil } set: { if !$0 { binding.wrappedValue = nil } }
 }
 
 extension View {
-    /// Gives the view's subtree the session actions and their presentations. A pushed page gets its own.
     func sessionActions() -> some View { modifier(SessionActionsHost()) }
 }
 
@@ -298,7 +274,6 @@ private struct SessionActionsHost: ViewModifier {
     @State private var actions = SessionActions()
     @Environment(\.sidebarSelection) private var sidebarSelection
 
-    /// The Mac whose button asked.
     private var model: AppModel { actions.model ?? hostModel }
 
     func body(content: Content) -> some View {
@@ -342,7 +317,6 @@ private struct SessionActionsHost: ViewModifier {
                     .environment(model)
             }
             .navigationDestination(item: sidebarSelection == nil ? $actions.started : .constant(nil)) { StartingSessionView(started: $0).environment(model) }
-            // From a row in the iPad's sidebar, it opens beside the list instead.
             .onChange(of: actions.started) { _, started in
                 guard let started, let sidebarSelection else { return }
                 sidebarSelection.wrappedValue = .starting(started.name, mac: model.macID)

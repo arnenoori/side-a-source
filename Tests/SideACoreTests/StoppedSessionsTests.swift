@@ -4,7 +4,6 @@ import Testing
 
 private let now = 1_800_000_000.0
 
-/// The pool refused a conversation with every account out: it's asked once an account has room, and only once.
 @Test func aRefusedSessionIsAskedOnceThePoolHasRoom() {
     var stopped = StoppedSessions()
     stopped.refuse("claude-1", .claude, at: now)
@@ -15,7 +14,6 @@ private let now = 1_800_000_000.0
     #expect(!stopped.isEmpty)
 }
 
-/// A session that found an account by itself, is mid-turn, or is gone gets nothing typed into it.
 @Test func aSessionThatWentOnIsLeftAlone() {
     var stopped = StoppedSessions()
     stopped.refuse("served", .claude, at: now)
@@ -23,11 +21,9 @@ private let now = 1_800_000_000.0
     stopped.refuse("gone", .claude, at: now)
     stopped.served("served")
     #expect(stopped.due(now: now + 60, idle: ["served"], working: ["busy"]) { _ in true }.isEmpty)
-    // Still waiting when its turn ends.
     #expect(stopped.due(now: now + 120, idle: ["served", "busy"]) { _ in true } == ["busy"])
 }
 
-/// A login trade takes a minute to reach running sessions, and one the user sent on meanwhile isn't asked.
 @Test func aMovedSessionWaitsForTheTradeToReachIt() {
     var stopped = StoppedSessions()
     stopped.move(["a", "b"], at: now)
@@ -38,8 +34,6 @@ private let now = 1_800_000_000.0
     #expect(stopped.isEmpty)
 }
 
-/// A session that stops again right away is not asked in a loop, the count starts over after a rest, and a stop
-/// from over a week ago is the user's.
 @Test func asksAreSpacedCappedAndForgotten() {
     var stopped = StoppedSessions()
     let lifted = { (at: Double) in ["s": at] }
@@ -57,7 +51,6 @@ private let now = 1_800_000_000.0
     #expect(old.isEmpty)
 }
 
-/// A message that couldn't be delivered leaves the stop in place for the next try; one that was settles it.
 @Test func aStopStaysUntilItsMessageArrives() {
     var stopped = StoppedSessions()
     stopped.refuse("s", .claude, at: now)
@@ -68,7 +61,6 @@ private let now = 1_800_000_000.0
     #expect(stopped.isEmpty)
 }
 
-/// However many rests pass, a start that fails at once each time isn't asked for again past the ceiling.
 @Test func aSessionThatNeverGetsPastItsStopIsNotAskedForEver() {
     var stopped = StoppedSessions()
     var asks = 0, at = now

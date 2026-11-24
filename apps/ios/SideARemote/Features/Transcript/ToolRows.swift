@@ -2,7 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// A tool step as a sentence: the verb, then the target (mono for paths and commands).
 struct ToolLabel: Hashable {
     let verb: String
     let target: String?
@@ -62,7 +61,6 @@ extension TranscriptTool {
     }
 }
 
-/// v0's quiet one-line step: glyph, sentence, duration, chevron. Taps zoom into the step page.
 struct ToolRow: View {
     let sessionID: SessionKey
     let tool: TranscriptTool
@@ -149,8 +147,6 @@ extension IslandAction {
     }
 }
 
-/// The v0 disclosure look: a quiet row whose chevron turns 90° as it opens; the content sits
-/// indented behind a hairline.
 struct QuietDisclosureStyle: DisclosureGroupStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -185,7 +181,6 @@ struct QuietDisclosureStyle: DisclosureGroupStyle {
     }
 }
 
-/// "Thinking · 4s" live, "Thought for 4s" when done; unfolds in place.
 struct ThinkingRow: View {
     let tool: TranscriptTool
     @State private var expanded = false
@@ -193,7 +188,6 @@ struct ThinkingRow: View {
 
     var body: some View {
         if (tool.output ?? "").isEmpty {
-            // Redacted thinking: the row, with nothing to unfold.
             label.frame(minHeight: 44).frame(maxWidth: .infinity, alignment: .leading)
         } else {
             DisclosureGroup(isExpanded: $expanded) {
@@ -233,7 +227,6 @@ struct ThinkingRow: View {
     }
 }
 
-/// "Worked for 1m 12s · 14 steps": a run of steps folded into one row.
 struct StepGroupRow: View {
     let sessionID: SessionKey
     let group: StepGroup
@@ -275,11 +268,8 @@ struct StepGroupRow: View {
     }
 }
 
-/// Grok's turn end: small icon actions, then the model and duration in tertiary. `more` follows Share: Fork, under
-/// the latest reply.
 struct TurnEndRow<More: View>: View {
     let end: TurnEnd
-    /// The reply's text, whole once fetched.
     let text: String
     @ViewBuilder var more: More
     @State private var copies = 0

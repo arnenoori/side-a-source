@@ -39,13 +39,9 @@ public struct QueuedRoute: Sendable, Equatable {
 }
 
 public enum QueuedRoutes {
-    /// `POST /v1/requests/{rid}/answer`.
     public static let answer = QueuedRoute(method: "POST", subject: .request, action: "answer")
-    /// `POST /v1/sessions/{id}/reply`.
     public static let reply = QueuedRoute(method: "POST", subject: .session, action: "reply")
-    /// `POST /v1/sessions/{id}/interrupt`.
     public static let interrupt = QueuedRoute(method: "POST", subject: .session, action: "interrupt")
-    /// Take Back: `DELETE /v1/sessions/{id}/mail`.
     public static let takeBack = QueuedRoute(method: "DELETE", subject: .session, action: "mail")
 
     /// What a queued item with this path acts on, so items for one session or request go in order and a retrying one holds

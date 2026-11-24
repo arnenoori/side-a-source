@@ -62,7 +62,6 @@ public struct ReplyBubble: Hashable, Sendable {
     public func next(_ event: Event) -> Next? {
         if watch == .shownAway {
             switch event {
-            // A look-alike's user turn settled it; the Mac knows it wasn't read, so its words still come back.
             case .progress(let event): return ReplyProgress(stage).next(event)?.stage == .unsent ? .returns : nil
             case .forgotten: return .leaves
             default: return nil

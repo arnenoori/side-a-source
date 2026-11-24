@@ -84,7 +84,6 @@ final class TranscriptLayoutTests: XCTestCase {
         })
     }
 
-    /// The latest reply's own Copy and Share give way to the turn-end row's, so an ended turn shows one row of them.
     func testAnEndedTurnIsKnownByItsReply() {
         let messages = [
             TranscriptMessage(seq: 0, uuid: "u", role: .user, at: 100, text: "a"),
@@ -119,7 +118,6 @@ final class TranscriptLayoutTests: XCTestCase {
         guard case .question = items.last else { return XCTFail("expected a question card") }
     }
 
-    /// Each lazy row is a message and the steps after it; the earlier-page button keeps a row to itself.
     func testEachMessageCarriesItsStepsInOneLazyRow() {
         let request = RemoteRequest(id: "r", agent: .claude, tool: "Bash", action: .command("swift test"), risk: .normal,
                                     answers: [.allow, .deny], title: "t", arrivedAt: 0)
@@ -135,7 +133,6 @@ final class TranscriptLayoutTests: XCTestCase {
         let rows = TranscriptLayout.rows(items)
         XCTAssertEqual(rows.map { $0.items.map(\.id) }, [["earlier"], ["m-0", "t-a", "t-b"], ["m-2", "end-2"], ["m-3", "t-thinking-4", "t-c", "r-r"]])
         XCTAssertEqual(rows.map(\.id), ["earlier", "m-0", "m-2", "m-3"])
-        // A page that starts partway through a turn: its first steps get a row of their own after the button.
         let midTurn = TranscriptLayout.rows(TranscriptLayout.items(messages: Array(messages.dropFirst()), earlier: 1))
         XCTAssertEqual(midTurn.map { $0.items.map(\.id) }, [["earlier"], ["t-a", "t-b"], ["m-2", "end-2"], ["m-3", "t-thinking-4", "t-c"]])
         XCTAssertEqual(rows.flatMap(\.items), items)
@@ -176,7 +173,6 @@ final class ModelTests: XCTestCase {
 
     func testGroupingKeepsFirstAppearanceOrder() {
         let model = AppModel.demo()
-        // The choice is kept across launches: leave it as found.
         let kept = model.sessions.groupBy
         defer { model.sessions.groupBy = kept }
         model.sessions.groupBy = .project
@@ -295,7 +291,6 @@ final class DeepLinkTests: XCTestCase {
         XCTAssertNil(DeepLink(URL(string: "sidea-remote://mac")!))
     }
 
-    /// Open on a grouped Ready, which names no session, goes to that Mac's sessions; one turn's goes to its session.
     func testOpenOnReadyGoesToTheMacOrTheSession() {
         let grouped = PushPayload(t: PushKind.finished.rawValue, mac: "mac1", sent: 0, title: "3 sessions ready", body: "a, b, c")
         XCTAssertEqual(AppDelegate.link(for: grouped).flatMap(DeepLink.init), .mac("mac1"))

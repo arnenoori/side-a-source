@@ -2,11 +2,8 @@ import Photos
 import SwiftUI
 import UIKit
 
-/// The panel that stands in for the keyboard: a strip of recent photos led by the live camera, and the actions below
-/// it; pulled up, the strip becomes the whole library as a grid.
 struct AttachPanel: View {
     let drawer: AttachDrawer
-    /// A popover is a fixed size and has no keyboard to rise from, so it doesn't pull up or show a grabber.
     var inPopover = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -19,7 +16,6 @@ struct AttachPanel: View {
 
     var body: some View {
         GeometryReader { proxy in
-            // Opened as Photos, the grid is fully there at the keyboard's height.
             let progress = inPopover ? 0 : drawer.showsGrid && drawer.photosOnly ? 1 : drawer.progress
             let shooting = drawer.camera.shooting
             ZStack(alignment: .top) {
@@ -45,8 +41,6 @@ struct AttachPanel: View {
         .onChange(of: typeSize, initial: true) { drawer.dragRegion = typeSize.isAccessibilitySize ? 150 : nil }
     }
 
-    // MARK: Pull handle
-
     private var grabber: some View {
         Capsule()
             .fill(.secondary.opacity(0.5))
@@ -60,12 +54,8 @@ struct AttachPanel: View {
             .accessibilityAdjustableAction { _ in drawer.toggleDetent() }
     }
 
-    // MARK: At the keyboard's height
-
     private var bottomInset: CGFloat { max(drawer.window?.safeAreaInsets.bottom ?? 0, 0) + 8 }
 
-    /// The strip takes whatever height the actions leave, so the panel is full at every keyboard height: a taller strip on
-    /// a Pro Max, a shorter one on an SE, and beside the actions rather than above them when the keyboard is low and wide.
     private func base(in size: CGSize) -> some View {
         let accessible = typeSize.isAccessibilitySize
         let landscape = size.width > size.height * 1.8 && !inPopover
@@ -128,8 +118,6 @@ struct AttachPanel: View {
         .frame(minHeight: 84)
     }
 
-    // MARK: Actions
-
     private struct Item: Identifiable {
         let id: String
         let title: String
@@ -148,7 +136,6 @@ struct AttachPanel: View {
         return items
     }
 
-    /// Two to a row, and an odd one out takes its row whole, so no cell sits alone half-empty.
     private func actionsGrid(accessible: Bool) -> some View {
         let columns = accessible ? 1 : 2
         let all = items
@@ -162,8 +149,6 @@ struct AttachPanel: View {
         }
     }
 
-    /// The actions, or once photos are picked the one capsule that takes them. At the largest text sizes they are taller
-    /// than what the strip leaves, so they scroll, with their indicator showing.
     @ViewBuilder
     private func actionsArea(accessible: Bool, height: CGFloat?) -> some View {
         let content = Group {
@@ -181,7 +166,6 @@ struct AttachPanel: View {
     }
 }
 
-/// An icon well and a title, as the reference's menu rows have them, in a cell that fits two to a row.
 private struct Action: View {
     @ScaledMetric(relativeTo: .body) private var well: CGFloat = 34
     let title: String
@@ -218,7 +202,6 @@ private struct ActionStyle: ButtonStyle {
     }
 }
 
-/// "Add 2 Photos": the pill that takes the picks to the tray.
 struct ConfirmButton: View {
     let drawer: AttachDrawer
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -241,14 +224,8 @@ struct ConfirmButton: View {
     }
 }
 
-// MARK: Camera tile
-
-/// The first tile: what the camera sees, live. Tapping opens the viewfinder in the panel itself. Until the camera has been
-/// allowed it is a glyph that asks; refused, a glyph that opens Settings; with no camera, or with the camera taken away by a
-/// call or another app, a glyph that does nothing.
 private struct CameraTile: View {
     let drawer: AttachDrawer
-    /// Only the strip's tile says where the viewfinder grows from and shrinks back to.
     var reportsFrame = false
 
     var body: some View {
@@ -288,8 +265,6 @@ private struct CameraTile: View {
         .accessibilityHint(camera.access.asksOnTap ? "Asks to use the camera" : camera.access == .denied ? "Opens Settings" : "")
     }
 }
-
-// MARK: Photos
 
 struct PhotoCell: View {
     let asset: PHAsset
@@ -333,7 +308,6 @@ struct PhotoCell: View {
     }
 }
 
-/// The selection mark: a blue disc in a white ring holding the order it was tapped in, popping in on a spring.
 private struct Badge: View {
     let order: Int
 
@@ -351,9 +325,6 @@ private struct Badge: View {
     }
 }
 
-// MARK: Pulled up
-
-/// The whole library as a grid, led by the camera, with the confirm capsule floating at the bottom.
 private struct LibraryGrid: View {
     let drawer: AttachDrawer
     let size: CGSize
@@ -367,7 +338,6 @@ private struct LibraryGrid: View {
         ZStack(alignment: .bottom) {
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(side), spacing: 0), count: columns), spacing: 0) {
-                    // Opened as Photos there is no strip, so this tile is the one the viewfinder grows from.
                     CameraTile(drawer: drawer, reportsFrame: drawer.photosOnly)
                         .padding(.trailing, 1.5)
                         .padding(.bottom, 1.5)
@@ -397,10 +367,8 @@ private struct LibraryGrid: View {
         }
     }
 
-    /// All Photos, or Add N Photos, floating over the grid's bottom edge.
     private var controls: some View {
         HStack(spacing: 10) {
-            // Opened as Photos the grid is all there is, so it has its own way back to the keyboard as well as the +'s ×.
             if drawer.photosOnly {
                 Button { drawer.showKeyboard() } label: {
                     Image(systemName: "xmark")
@@ -447,6 +415,5 @@ private struct LibraryGrid: View {
 }
 
 enum DrawerGrid {
-    /// The columns the grid wants at a width: three on a phone, more in a wide window.
     static func columns(for width: CGFloat) -> Int { max(3, Int(width / 130)) }
 }

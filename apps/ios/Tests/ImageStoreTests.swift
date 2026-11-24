@@ -44,7 +44,6 @@ final class ImageStoreTests: XCTestCase {
         XCTAssertNotNil(cache.data("cc", thumbnail: false))
     }
 
-    /// Fetched once from the Mac however many ask, then served from disk with no fetch at all.
     func testFetchesOnceThenReadsFromDisk() async {
         let calls = Counter()
         let bytes = png()
@@ -62,7 +61,6 @@ final class ImageStoreTests: XCTestCase {
         let thumbs = await calls.thumbs
         XCTAssertEqual(thumbs, 1)
 
-        // A fresh store (a relaunch) finds the file on disk.
         let again = ImageStore(isDemo: false, disk: ImageCache(folder: folder))
         again.fetch = { _, _ in throw URLError(.notConnectedToInternet) }
         let image = await again.image(ref, thumbnail: true)

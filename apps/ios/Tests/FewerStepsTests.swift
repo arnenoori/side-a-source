@@ -3,7 +3,6 @@ import SideARemoteShared
 import XCTest
 @testable import SideARemote
 
-/// The steps taken out of approving, quitting and the list's own settings.
 @MainActor
 final class FewerStepsTests: XCTestCase {
     private func request(_ action: IslandAction = .command("swift test"), id: RequestID = "r", gate: AllowGate? = nil,
@@ -87,7 +86,6 @@ final class FewerStepsTests: XCTestCase {
         XCTAssertEqual(pill.current?.text, "Compacting")
         XCTAssertTrue(pill.current?.working == true)
         pill.show("Compacted")
-        // A newer pill is not the working one's to take down.
         pill.end(id)
         XCTAssertEqual(pill.current?.text, "Compacted")
         let next = pill.working("Forking")

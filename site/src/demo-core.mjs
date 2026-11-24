@@ -20,8 +20,6 @@ export function islandShortcut(state, event) {
   return SHORTCUTS[state]?.[event.code] ?? null;
 }
 
-// Keep awake, as the app decides: a closed lid sleeps unless both options are on; otherwise the Mac
-// is held up while an agent works and let go a grace period after the last one stops.
 export function macSleeps({ keepAwake, lidOption, lidClosed, working, idleMs }, grace) {
   if (lidClosed && !(keepAwake && lidOption)) return true;
   if (!keepAwake) return false;

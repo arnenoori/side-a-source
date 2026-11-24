@@ -3,7 +3,7 @@ import { b64url, fromB64url, hex, sha256, utf8 } from './bytes';
 export const CLOCK_SKEW = 120;
 export const NONCE_WINDOW = 300;
 
-export const ID = /^[A-Za-z0-9_-]{22}$/;   // 16 bytes, base64url
+export const ID = /^[A-Za-z0-9_-]{22}$/;
 
 export interface Signature {
   install: string;

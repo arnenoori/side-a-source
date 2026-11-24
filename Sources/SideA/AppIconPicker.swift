@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Settings' "App Icon" row: every icon, the picked one ringed.
 struct AppIconPicker: View {
     @AppStorage(AppIconChoice.key) private var selected = AppIconChoice.defaultChoice.id
 
@@ -36,7 +35,6 @@ struct AppIconPicker: View {
     }
 }
 
-/// The 3D player toggle, here so Settings' General tab keeps its size.
 struct PlayerToggle: View {
     @AppStorage(MenuPlayer.enabledKey) private var playerEnabled: Bool = PreferencesMirror.fallback(MenuPlayer.enabledKey)
 

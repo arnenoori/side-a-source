@@ -20,7 +20,6 @@ public extension Planner {
         return [live(plain.fiveHour, now), live(plain.weekly, now)].compactMap { $0 }.filter { $0.percent >= max(full, limited) }.compactMap(\.resetsAt).max()
     }
 
-    /// The fuller of an account's running 5-hour and weekly windows.
     static func tightest(_ usage: AccountUsage, now: Double) -> UsageWindow? {
         [live(usage.fiveHour, now), live(usage.weekly, now)].compactMap { $0 }.max { $0.percent < $1.percent }
     }

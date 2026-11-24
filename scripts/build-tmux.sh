@@ -34,7 +34,6 @@ done
 
 rm -rf "$out"
 mkdir -p "$out/licenses"
-# Nothing from Homebrew or the environment may leak into the link.
 unset CPATH LIBRARY_PATH C_INCLUDE_PATH PKG_CONFIG_PATH
 export PKG_CONFIG=/usr/bin/false
 jobs="$(sysctl -n hw.ncpu)"
@@ -70,7 +69,6 @@ for arch in arm64 x86_64; do
      CPPFLAGS="-I$prefix/include" LDFLAGS="-L$prefix/lib" \
      && make -s -j"$jobs" >/dev/null)
   binary="$work/tmux-$TMUX_VERSION/tmux"
-  # Only system libraries may stay dynamic.
   if otool -L "$binary" | tail -n +2 | grep -v -E '^\s+/usr/lib/|^\s+/System/Library/' >&2; then
     echo "tmux links a non-system library ($arch)" >&2; exit 1
   fi

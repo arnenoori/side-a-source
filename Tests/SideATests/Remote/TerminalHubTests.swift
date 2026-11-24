@@ -6,7 +6,6 @@ import SideAProtocol
 import SideARemoteKit
 import Testing
 
-/// What a phone's terminal view saw, read off the socket in the background.
 private actor Screen {
     var output = Data()
     var controls: [TermControl] = []
@@ -44,8 +43,6 @@ private struct Viewer {
     func type(_ seq: UInt32, _ text: String) async throws { try await socket.send(.data(TermFrame.input(seq: seq, bytes: Data(text.utf8)).data)) }
 }
 
-/// The whole terminal path against real tmux: the phone's URLSession, the TLS listener, a tmux client in a PTY, the
-/// fake Claude in the pane.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func aPhoneTerminalTypesOnceSizesTheWindowAndHearsTheEnd() async throws {
@@ -87,7 +84,6 @@ func aPhoneTerminalTypesOnceSizesTheWindowAndHearsTheEnd() async throws {
         }
         for _ in 0..<250 where server.listenerStates.values.first != .ready { try await Task.sleep(for: .milliseconds(20)) }
 
-        // A terminal is a shell: without Face ID's signature the upgrade is refused.
         let unsigned = try open(name, signed: false)
         try? await unsigned.send(.hello(viewer: UUID().uuidString, cols: 60, rows: 20))
         #expect(await eventually { await unsigned.screen.closed != nil })
@@ -102,14 +98,11 @@ func aPhoneTerminalTypesOnceSizesTheWindowAndHearsTheEnd() async throws {
         try await phone.send(.hello(viewer: id, cols: 60, rows: 20))
         #expect(await eventually { await phone.screen.controls.first == .ready(epoch: "e1", applied: nil, cols: 60, rows: 20, owner: "phone") })
         #expect(await eventually { await phone.screen.text.contains("Try \"refactor") })
-        // No Mac tab: the phone's size is the window's.
         #expect(await eventually {
             await hosted.command(["display-message", "-p", "-t", "=\(name):", "#{window_width}x#{window_height}"]).output.hasPrefix("60x20")
         })
-        // tmux's questions to a new client were answered on the Mac and never reached the phone.
         for query in ["\u{1B}[>q", "\u{1B}[c", "\u{1B}[>c", "\u{1B}]10;?"] { #expect(!(await phone.screen.text.contains(query))) }
 
-        // The fake ignores the first Enter after its composer appears.
         try await phone.type(1, "hi")
         try await phone.type(2, "\r")
         try await phone.type(3, "\r")
@@ -119,7 +112,6 @@ func aPhoneTerminalTypesOnceSizesTheWindowAndHearsTheEnd() async throws {
         try await phone.send(.resize(cols: 70, rows: 22))
         #expect(await eventually { await phone.screen.controls.contains(.size(cols: 70, rows: 22, owner: "phone")) })
 
-        // A missing frame closes the socket; the same viewer reconnecting learns what landed.
         try await phone.type(5, "x")
         #expect(await eventually { await phone.screen.closed?.code == 4422 })
         let again = try open(name)
@@ -134,7 +126,6 @@ func aPhoneTerminalTypesOnceSizesTheWindowAndHearsTheEnd() async throws {
         #expect(await eventually(15) { await again.screen.closed?.code == 4410 })
         #expect(await again.screen.controls.contains(.exit(status: 0, reason: .ended)))
 
-        // Ended from the phone's list: the viewer hears it was killed.
         let second = try await hosted.start(.init(agent: .claude, cwd: fixture.project.path, mode: .new(model: nil)))
         let watching = try open(second)
         try await watching.send(.hello(viewer: UUID().uuidString, cols: 60, rows: 20))
@@ -187,7 +178,6 @@ func keysSentBeforeTheTmuxClientIsUpStillReachTheSession() async throws {
         let phone = Viewer(URLSessionTransport(trust: PinnedTrust(.pinned(identity.spkiHash.base64URL))).socket(request))
         try await phone.send(.hello(viewer: UUID().uuidString, cols: 60, rows: 20))
         #expect(await eventually { await phone.screen.controls.first == .ready(epoch: "e1", applied: nil, cols: 60, rows: 20, owner: "phone") })
-        // The fake ignores the first Enter after its composer appears.
         try await phone.type(1, "hi")
         try await phone.type(2, "\r")
         try await phone.type(3, "\r")

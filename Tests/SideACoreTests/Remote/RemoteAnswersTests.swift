@@ -26,7 +26,6 @@ nonisolated(unsafe) private let rule: [String: Any] = ["type": "addRules", "rule
     #expect(throws: RemoteAnswers.Refusal.unknownSuggestion) { try RemoteAnswers.resolve(bash, .always(suggestionID: "0000000000000000"), gate: .unlock, proven: .unlock).get() }
     #expect(try RemoteAnswers.resolve(bash, .allow(confirmDestructive: false), gate: .unlock, proven: .unlock).get() == (.allow, false))
 
-    // A destructive Allow needs the phone's confirmation, which becomes the island's `confirmed`; Always is never one.
     let rm = try request(["tool_name": "Bash", "cwd": "/r/app", "tool_input": ["command": "rm -rf build"], "permission_suggestions": [rule]])
     #expect(throws: RemoteAnswers.Refusal.needsConfirm) { try RemoteAnswers.resolve(rm, .allow(confirmDestructive: false), gate: .biometric, proven: .unlock).get() }
     #expect(try RemoteAnswers.resolve(rm, .allow(confirmDestructive: true), gate: .biometric, proven: .biometric).get() == (.allow, true))
@@ -47,7 +46,6 @@ nonisolated(unsafe) private let rule: [String: Any] = ["type": "addRules", "rule
                                   .init(question: "Which extras?", picked: ["Auth", "Billing"], other: "Search")]
     guard case .answers(let text, let sent) = try RemoteAnswers.resolve(ask, .answers(good), gate: .unlock, proven: .unlock).get().answer else { Issue.record("no answers"); return }
     #expect(text == ["Which database?": "Postgres (Recommended)", "Which extras?": "Auth, Billing, Search"])
-    // The input sent back is the request's, never the phone's.
     #expect(sent == ask.input)
     func refusal(_ answers: [QuestionAnswer]) -> RemoteAnswers.Refusal? {
         if case .failure(let refusal) = RemoteAnswers.resolve(ask, .answers(answers), gate: .unlock, proven: .unlock) { return refusal }
@@ -65,7 +63,6 @@ nonisolated(unsafe) private let rule: [String: Any] = ["type": "addRules", "rule
 private let home = FileManager.default.homeDirectoryForCurrentUser.path
 private let gateRows: [(tool: String, cwd: String, input: [String: String], projects: [String], gate: AllowGate)] = [
     ("Read", "/r/app/src", ["file_path": "/r/app/src/main.swift"], ["/r/app"], .lockScreen),
-    // Secrets and agent settings are destructive by the island's own rules, so they need Face ID.
     ("Read", "/r/app/src", ["file_path": "/r/app/.env.local"], ["/r/app"], .biometric),
     ("Read", "/r/app/src", ["file_path": "/Users/you/.ssh/config"], ["/r/app"], .biometric),
     ("Read", "/r/app/src", ["file_path": "/r/app/certs/server.pem"], ["/r/app"], .unlock),
@@ -113,7 +110,6 @@ func onlyReadsSearchesAndProjectEditsAreAllowedFromALockedPhone(row: (tool: Stri
                      projects: [project.path])
     }
     #expect(try gate("README.md") == .unlock)
-    // Neither target exists yet; each still counts as the file it would write.
     #expect(try gate("notes.md") == .unlock)
     #expect(try gate("vendor/config") == .biometric)
     #expect(try gate("out/new.txt") == .unlock)
@@ -122,14 +118,12 @@ func onlyReadsSearchesAndProjectEditsAreAllowedFromALockedPhone(row: (tool: Stri
 @Test func whatLetsTheAgentGoOnNeedsTheGatesProofAndDenyingNeedsNone() throws {
     let bash = try request(["tool_name": "Bash", "cwd": "/r/app", "tool_input": ["command": "npm test"], "permission_suggestions": [rule]])
     let id = RemoteAnswers.suggestionID(bash.suggestions[0])
-    // The phone's own confirmDestructive is ignored either way.
     #expect(throws: RemoteAnswers.Refusal.needsConfirm) { try RemoteAnswers.resolve(bash, .allow(confirmDestructive: true), gate: .unlock, proven: .none).get() }
     #expect(throws: RemoteAnswers.Refusal.needsConfirm) { try RemoteAnswers.resolve(bash, .always(suggestionID: id), gate: .unlock, proven: .none).get() }
     #expect(try RemoteAnswers.resolve(bash, .allow(confirmDestructive: false), gate: .unlock, proven: .biometric).get() == (.allow, true))
     #expect(try RemoteAnswers.resolve(bash, .allow(confirmDestructive: false), gate: .lockScreen, proven: .none).get() == (.allow, false))
     #expect(try RemoteAnswers.resolve(bash, .deny(message: nil), gate: .biometric, proven: .none).get().answer == .deny(nil))
     #expect(try RemoteAnswers.resolve(bash, .terminal, gate: .biometric, proven: .none).get().answer == .terminal)
-    // Always would skip Face ID next time, so a biometric gate never takes it, signed or not.
     #expect(throws: RemoteAnswers.Refusal.notAllowed) { try RemoteAnswers.resolve(bash, .always(suggestionID: id), gate: .biometric, proven: .biometric).get() }
     let plan = try request(["tool_name": "ExitPlanMode", "tool_input": ["plan": "Do it"]])
     #expect(throws: RemoteAnswers.Refusal.needsConfirm) { try RemoteAnswers.resolve(plan, .approvePlan(acceptEdits: true), gate: .unlock, proven: .none).get() }
@@ -145,8 +139,6 @@ func onlyReadsSearchesAndProjectEditsAreAllowedFromALockedPhone(row: (tool: Stri
     #expect(AllowGate.of(write, projects: [project.path]) == .biometric)
 }
 
-/// Allow and switch mode: only Claude's edits that aren't destructive offer it, only with Allow and a listed mode,
-/// and it goes to the hook as an allow that names the mode.
 @Test func allowAndSwitchModeOnlyWhereTheRequestOffersIt() throws {
     let edit = try request(["tool_name": "Edit", "cwd": "/r/app", "tool_input": ["file_path": "/r/app/README.md", "old_string": "a", "new_string": "b"]])
     #expect(RemoteAnswers.modes(edit) == [.acceptEdits] && RemoteAnswers.accepted(edit).contains(.allowMode))
@@ -163,13 +155,11 @@ func onlyReadsSearchesAndProjectEditsAreAllowedFromALockedPhone(row: (tool: Stri
         try RemoteAnswers.resolve(edit, .allow(confirmDestructive: false), mode: .acceptEdits, gate: .unlock, proven: .none).get()
     }
 
-    // A destructive request offers no mode, and refuses one sent anyway, with or without Face ID.
     let rm = try request(["tool_name": "Bash", "cwd": "/r/app", "tool_input": ["command": "rm -rf build"]])
     #expect(RemoteAnswers.modes(rm).isEmpty && !RemoteAnswers.accepted(rm).contains(.allowMode))
     #expect(throws: RemoteAnswers.Refusal.notAllowed) {
         try RemoteAnswers.resolve(rm, .allow(confirmDestructive: true), mode: .acceptEdits, gate: .biometric, proven: .biometric).get()
     }
-    // Codex, commands, questions and plans offer none.
     let codexEdit = try request(["tool_name": "Edit", "cwd": "/r/app", "tool_input": ["file_path": "/r/app/README.md", "old_string": "a", "new_string": "b"]], agent: "codex")
     let bash = try request(["tool_name": "Bash", "cwd": "/r/app", "tool_input": ["command": "npm test"]])
     let plan = try request(["tool_name": "ExitPlanMode", "tool_input": ["plan": "Do it"]])

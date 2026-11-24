@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 @testable import SideACore
 import SideAProtocol
@@ -25,18 +29,15 @@ private struct Phone {
     #expect(verify(face) == .success(.biometric))
     #expect(verify(face) == .failure(.replayed))
     #expect(verify(try phone.header(.unlock, subject: "r1:allow")) == .success(.unlock))
-    // Another request, another device, another Mac's key, or too old: none of them count.
     #expect(verify(try phone.header(.confirm, subject: "r2:allow")) == .failure(.invalid))
     #expect(verify(try phone.header(.confirm, subject: "r1:allow", device: "d2")) == .failure(.invalid))
     #expect(verify(try phone.header(.confirm, subject: "r1:allow"), keys: Phone().keys) == .failure(.invalid))
     #expect(verify(try phone.header(.confirm, subject: "r1:allow", at: Date().addingTimeInterval(-600))) == .failure(.invalid))
     #expect(verify(nil) == .failure(.missing))
     #expect(verify("v1.nope") == .failure(.malformed))
-    // A keyless pairing proves nothing; a phone without a Face ID key can't claim one.
     #expect(verify(try phone.header(.confirm, subject: "r1:allow"), keys: .init(confirm: nil, unlock: phone.keys.unlock)) == .failure(.missing))
 }
 
-/// Asking twice in one second signs the same message twice. Only a copy of a signature is a replay; the second is fresh.
 @Test func aSecondSignatureInTheSameSecondIsNotAReplay() throws {
     let phone = Phone(), replay = ConfirmGate.ReplayCache(), now = Date()
     func verify(_ header: String) -> Result<ConfirmProof, ConfirmGate.Failure> {

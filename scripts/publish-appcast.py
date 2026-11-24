@@ -95,7 +95,6 @@ def main():
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--state"]:
-        # scripts/ship.sh asks before dispatching, so a rerun picks up after a failed later step.
         metadata = plistlib.loads((ROOT / "scripts/Info.plist").read_bytes())
         print(release_state(metadata["CFBundleShortVersionString"], metadata["CFBundleVersion"]))
     else:

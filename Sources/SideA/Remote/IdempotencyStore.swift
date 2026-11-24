@@ -100,7 +100,6 @@ final class IdempotencyStore {
 
     func forget(device: String) { run("DELETE FROM records WHERE device = ?", [.text(device)]) }
 
-    /// At launch and hourly: 24 hours and 1,000 per device.
     func trim(now: TimeInterval) {
         run("DELETE FROM records WHERE created < ?", [.real(now - Self.maxAge)])
         run("""
@@ -114,8 +113,6 @@ final class IdempotencyStore {
         query("SELECT COUNT(*) FROM records WHERE device = ?", [.text(device)]) { count = Int(sqlite3_column_int64($0, 0)) }
         return count
     }
-
-    // MARK: SQLite
 
     private enum Value { case text(String), blob(Data), int(Int), real(Double), null }
 
@@ -137,7 +134,6 @@ final class IdempotencyStore {
     @discardableResult
     private func run(_ sql: String, _ values: [Value]) -> Bool { query(sql, values) { _ in } }
 
-    /// Whether the statement ran to the end.
     @discardableResult
     private func query(_ sql: String, _ values: [Value], row: (OpaquePointer?) -> Void) -> Bool {
         var statement: OpaquePointer?

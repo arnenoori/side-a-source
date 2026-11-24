@@ -17,7 +17,6 @@ private func message(_ request: [String: Any], agent: String = "claude") throws 
     ])
     #expect(request.action == .command("npm test") && request.reason == "Run the tests" && request.project == "web-app")
     #expect(request.headline == "Run a command" && request.risk == .normal && request.pid == 42)
-    // Bypass mode is never offered from the island.
     #expect(request.suggestions.map(\.title) == ["Always allow Bash(npm test:*) in this project"])
     let line = IslandAnswer.always(request.suggestions[0]).line
     let answer = try #require(try JSONSerialization.jsonObject(with: line) as? [String: Any])
@@ -30,7 +29,6 @@ private func message(_ request: [String: Any], agent: String = "claude") throws 
                              "tool_input": ["command": ["bash", "-lc", "git status"]],
                              "permission_suggestions": [["type": "addRules", "rules": [["toolName": "Bash"]], "behavior": "allow", "destination": "session"]]],
                             agent: "codex")
-    // Claude's rule suggestions never reach Codex, and a command never gets "for this session".
     #expect(shell.agent == .codex && shell.action == .command("git status") && !shell.headless && shell.suggestions.isEmpty)
     let patch = try message(["tool_name": "apply_patch", "tool_input": ["command": "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-x\n+y\n*** Delete File: old.ts\n*** End Patch"]],
                             agent: "codex")
@@ -75,7 +73,6 @@ func commandsThatDeleteOrRunUnseenCodeNeedAClick(command: String, expected: Isla
     try FileManager.default.createDirectory(at: project.appendingPathComponent(".claude"), withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: base) }
     let links = FileManager.default
-    // settings.json doesn't exist yet: the last link dangles.
     try links.createSymbolicLink(atPath: project.appendingPathComponent("notes.txt").path, withDestinationPath: ".claude/settings.json")
     try links.createSymbolicLink(atPath: project.appendingPathComponent("conf").path, withDestinationPath: ".claude")
     try links.createSymbolicLink(atPath: project.appendingPathComponent("keys").path, withDestinationPath: NSHomeDirectory() + "/.ssh")
@@ -98,7 +95,6 @@ func commandsThatDeleteOrRunUnseenCodeNeedAClick(command: String, expected: Isla
     #expect(wipe.accepts(.allow, confirmed: true))
     #expect(!wipe.accepts(.always(rule), confirmed: false) && !wipe.accepts(.always(rule), confirmed: true))
     #expect(wipe.accepts(.deny(nil), confirmed: false) && wipe.accepts(.terminal, confirmed: false))
-    // Allow and switch mode is an Allow: a mode never stands in for the confirmation.
     #expect(!wipe.accepts(.allowMode("acceptEdits"), confirmed: false))
     #expect(wipe.accepts(.allowMode("acceptEdits"), confirmed: true))
     let test = IslandRequest(agent: .claude, cwd: nil, tool: "Bash", action: .command("npm test"))
@@ -181,17 +177,14 @@ func commandsThatDeleteOrRunUnseenCodeNeedAClick(command: String, expected: Isla
     ])
     #expect(marked.recommendedAnswer == .answers(["Which database?": "Postgres (Recommended)" + IslandRequest.autoAnswerNote, "Which checks?": "Lint (Recommended), Unit (Recommended)" + IslandRequest.autoAnswerNote],
                                                  input: marked.input))
-    // The first option is no default: the forms start on the recommended one only.
     let unmarked = try ask([["question": "Which color?", "multiSelect": false, "options": [["label": "Red"], ["label": "Blue"]]]])
     #expect(unmarked.recommendedAnswer == nil)
-    // One question without a recommendation holds back the whole form.
     let partly = try ask([["question": "A?", "options": [["label": "Yes (Recommended)"]]], ["question": "B?", "options": [["label": "No"]]]])
     let empty = try ask([])
     #expect(partly.recommendedAnswer == nil && empty.recommendedAnswer == nil)
 
     let plan = try message(["tool_name": "ExitPlanMode", "tool_input": ["plan": "# Ship it"]])
     #expect(plan.recommendedAnswer == nil)
-    // Permission requests stay with whoever answers them.
     for request in [["tool_name": "Bash", "tool_input": ["command": "ls"]], ["tool_name": "Edit", "tool_input": ["file_path": "/a"]]] {
         let permission = try message(request)
         #expect(permission.recommendedAnswer == nil)
@@ -206,13 +199,11 @@ func commandsThatDeleteOrRunUnseenCodeNeedAClick(command: String, expected: Isla
         IslandSession.verdict(request, arrived: arrived, in: [IslandSession(pid: pid, sessionID: "s1", status: status, since: Date(timeIntervalSince1970: since))],
                               alive: { _ in alive }, now: Date(timeIntervalSince1970: now))
     }
-    // The registry flips to waiting just before the hook connects, and back to busy on the answer.
     #expect(verdict("waiting", at: 999.9) == .open)
     #expect(verdict("busy", at: 999) == .open)
     #expect(verdict("busy", at: 1004) == .answered)
     #expect(verdict("idle", at: 1004) == .answered)
     #expect(verdict("busy", at: 1009.8) == .unsure)
-    // Matched by session when the pid isn't Claude Code's own.
     #expect(verdict("busy", at: 1004, pid: 7) == .answered)
     #expect(verdict("waiting", at: 999, alive: false) == .answered)
     let codex = IslandRequest(agent: .codex, sessionID: "s1", cwd: "/r", tool: "Bash", action: .command("ls"), pid: 42)

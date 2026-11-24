@@ -2,15 +2,10 @@
 # All gates run on this Mac. Intel is cross-compiled; native tests use this host.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-actionlint
-shellcheck scripts/*.sh
+./scripts/lint-scripts.sh
 ./scripts/lint-python.sh
 python3 -m unittest discover -s scripts/tests -v
-python3 -m unittest discover -s bridge/tests -v
-# The app accepts Python 3.9, which is macOS's own /usr/bin/python3.
-if [[ "$(/usr/bin/python3 -c 'import sys; print(sys.version_info[:2] == (3, 9))' 2>/dev/null)" == True ]]; then
-  /usr/bin/python3 -m unittest discover -s bridge/tests -v
-fi
+./scripts/test-bridge.sh -v
 ./scripts/lint-swift.sh
 ./scripts/sync-bridge.sh
 swift test

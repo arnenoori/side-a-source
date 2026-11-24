@@ -1,7 +1,6 @@
 import CryptoKit
 import Foundation
 
-/// Ids that reach the bridge, for the routes and the Mac's own commands alike, and ids made from text.
 enum IDs {
     /// Ids go to the bridge as arguments, so nothing that could read as an option gets through.
     static func safe(_ id: String) -> Bool {

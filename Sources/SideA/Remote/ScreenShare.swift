@@ -39,7 +39,7 @@ final class ScreenShare {
         // swiftlint:disable:next user_defaults_standard -- ScreenShare owns the two screen switches; nothing else reads them
         UserDefaults.standard.set(value, forKey: Self.enabledKey)
         RemoteLog.shared("screen sharing turned \(value ? "on" : "off")")
-        if value, !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
+        if value, ScreenStandIn.current == nil, !CGPreflightScreenCaptureAccess() { CGRequestScreenCaptureAccess() }
         if !value { end(.off) }
         refresh()
     }
@@ -49,7 +49,7 @@ final class ScreenShare {
         // swiftlint:disable:next user_defaults_standard -- ScreenShare owns the two screen switches; nothing else reads them
         UserDefaults.standard.set(value, forKey: Self.controlKey)
         RemoteLog.shared("screen control turned \(value ? "on" : "off")")
-        if value, !AXIsProcessTrusted() { AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary) }
+        if value, ScreenStandIn.current == nil, !AXIsProcessTrusted() { AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary) }
         hub.map { hub in hub.queue.async { hub.controlChanged() } }
         refresh()
     }

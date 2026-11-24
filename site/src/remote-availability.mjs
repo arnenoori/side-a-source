@@ -1,5 +1,3 @@
-// Side A Remote's availability, rendered into each page at build time from remote.json: the App Store badge once
-// appStoreURL is set, else the public TestFlight beta, else "Coming soon to iPhone" with no link.
 export const BADGE = 'remote/app-store-badge.svg';
 const PHONE = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6" /><path d="M10.5 5.2h3" /></svg>';
 

@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// The camera tile grown to fill the panel: the same preview, now with the shutter, the flash, the flip and a close that
-/// shrinks it back into the tile. It is drawn at the tile's rect and animates to the panel's, so the picture is never
-/// restarted or covered; it only grows.
 struct CameraViewfinder: View {
     let drawer: AttachDrawer
     let size: CGSize

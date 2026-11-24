@@ -58,7 +58,6 @@ struct SideAApp: App {
         MenuBarExtra {
             MenuPlayer(store: store, updates: updates)
         } label: {
-            // The menu bar is the main surface: a gauge and the active account's tightest limit.
             if let percent = menuPercent {
                 Label("\(percent)%", systemImage: Self.gauge(percent)).labelStyle(.titleAndIcon)
             } else {
@@ -68,7 +67,6 @@ struct SideAApp: App {
         .menuBarExtraStyle(.window)
         Settings { SettingsView(store: store, updates: updates) }
     }
-    /// The active Claude account's tightest limit: 5-hour or weekly, whichever is closer.
     private var menuPercent: Int? {
         guard let account = store.active, let usage = store.usage[account.id] else { return nil }
         let now = Date().timeIntervalSince1970
@@ -81,7 +79,6 @@ struct SideAApp: App {
 }
 
 extension Scene {
-    /// The player is optional; Side A lives in the menu bar and opens the player on request.
     func hiddenAtLaunch() -> some Scene {
         if #available(macOS 15, *) { return self.defaultLaunchBehavior(.suppressed) }
         return self

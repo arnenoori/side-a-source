@@ -5,7 +5,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension EnvironmentValues {
-    /// Opens a path from agent prose in `FilePage`. Nil where no session is known, and file links stay plain.
     @Entry var openFile: OpenFileAction?
 }
 
@@ -21,7 +20,6 @@ struct OpenFileAction: Equatable {
 }
 
 extension View {
-    /// File links in this view's Markdown open the session's file over it.
     func fileLinks(_ sessionID: SessionKey) -> some View { modifier(FileLinks(sessionID: sessionID)) }
 }
 
@@ -58,7 +56,6 @@ enum FileKind: Equatable {
     case image(ImageRef)
     case quickLook
 
-    /// Types that read as text but look like something else: Quick Look draws them as a page, a table or a document.
     static let previewed: Set<String> = ["html", "htm", "csv", "tsv", "rtf", "svg"]
 
     static func of(_ data: Data, path: String) -> FileKind {
@@ -72,7 +69,6 @@ enum FileKind: Equatable {
     }
 }
 
-/// Quick Look inside the page, for PDFs, web pages, spreadsheets and documents.
 struct QuickLookView: UIViewControllerRepresentable {
     let url: URL
 
@@ -101,7 +97,6 @@ struct QuickLookView: UIViewControllerRepresentable {
     }
 }
 
-/// Share's item from a chip: the file itself, fetched from the Mac when the sheet asks for it.
 struct SharedFile: Transferable {
     let tools: MacTools
     let sessionID: SessionKey

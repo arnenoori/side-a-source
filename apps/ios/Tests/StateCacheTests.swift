@@ -35,7 +35,6 @@ final class StateCacheTests: XCTestCase {
         restored.restore(decoded)
         XCTAssertEqual(restored.sessions.sessions.count, 20)
         XCTAssertEqual(restored.transcripts.messages["s19"]?.first?.seq, 40)
-        // The trimmed part reads as earlier messages, as a page from the Mac would.
         XCTAssertEqual(restored.transcripts.earlier["s19"], 40)
         XCTAssertTrue(restored.requests.open.isEmpty)
     }

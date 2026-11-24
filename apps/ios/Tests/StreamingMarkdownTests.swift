@@ -6,7 +6,6 @@ final class StreamingMarkdownTests: XCTestCase {
         let text = "First paragraph.\n\nSecond one is still"
         XCTAssertEqual(StreamingMarkdown.frozenEnd(of: text), "First paragraph.\n\n".count)
         XCTAssertEqual(StreamingMarkdown.frozenEnd(of: "Only one so far"), 0)
-        // A trailing blank line doesn't freeze anything until the next block starts.
         XCTAssertEqual(StreamingMarkdown.frozenEnd(of: "Done.\n\n"), 0)
     }
 

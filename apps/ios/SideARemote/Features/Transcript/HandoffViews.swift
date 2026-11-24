@@ -110,7 +110,6 @@ struct HandoffHeader: View {
             if loading { ProgressView().frame(maxWidth: .infinity) }
             divider
         }
-        // Again once the Mac is back, for a count that couldn't be read while it was away.
         .task(id: "\(link.conversationID) \(model.tools.isLive)") { await peek() }
         .sheet(item: $prompt) { state in HandoffPromptSheet(title: dividerText, text: state.text, error: state.error) }
     }
@@ -161,7 +160,6 @@ struct HandoffHeader: View {
             before = page.before
             count = page.count
         } catch {
-            // Nothing to show: the button comes back for another try.
             if earlier.isEmpty { withAnimation(Motion.smooth(reduceMotion)) { shown = false } }
         }
     }

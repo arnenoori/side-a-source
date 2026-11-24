@@ -1,7 +1,6 @@
 import Foundation
 import SideAProtocol
 
-/// Whether the Mac is still there: what counts as proof, the ping that asks, and what a socket that fails the check does.
 extension SyncEngine {
     /// A frame that doesn't decode still took its place in the sequence: without its seq the next frame reads as a gap,
     /// and the Mac replays this one again. Its change is lost, so the state is read afresh over REST.
@@ -94,7 +93,6 @@ extension SyncEngine {
     /// No pong: a half-open socket never ends by itself, so it's closed here and the loop connects again.
     func lost(_ socket: any SocketConnection, _ generation: Int) {
         guard generation == socketGeneration else { return }
-        // A goodbye for sleep came before the pong failed: it is still why the Mac can't be reached.
         set(cause == .unknown ? .connecting : .offline(retryAt: now(), reason: "No answer from the Mac", cause: cause))
         socket.close(code: 4008, reason: "no pong")
     }

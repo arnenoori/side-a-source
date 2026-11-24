@@ -738,9 +738,10 @@ becomes that question's "write your own" answer (`answers` with `other`) and pos
   inside the sheet to a checkmark list of the options `GET /v1/options` lists for that agent
   (`AgentOptions.models`, `.efforts`); **Commands ›** (`AgentOptions.commands`, the slash command
   list including custom ones); **Send as** (Note / Send now, for working hosted sessions only).
-- Choosing a model or effort sends the slash command as a `keys`-mode reply for hosted sessions
-  and closes the sheet. For non-hosted sessions Model and Effort show as read-only rows
-  ("Change on your Mac") because the phone can't type into that terminal.
+- Choosing a model or effort goes to `POST /v1/sessions/{id}/settings` for a session whose
+  abilities include `settings.model` / `settings.effort` (a Claude session Side A hosts or one in
+  the user's own tmux, a Codex session on its app server) and closes the sheet. Elsewhere Model and
+  Effort show as read-only rows with the session's `abilityReasons` line.
 
 Images are downscaled to 2048 px long edge, HEIC → JPEG, MIME sniffed (Happy), uploaded via
 `POST /v1/uploads`; the returned `Upload.id` goes into the reply's `attachments` (the Mac turns ids
@@ -1908,9 +1909,9 @@ light and dark, at default and AX3 text sizes, compared against the references, 
 4. ~~Allow from the Lock Screen without unlocking.~~ Settled by `AllowGate`: only the safe
    allowlist (reads, searches, edits inside the project) runs locked; every command, MCP or
    unknown tool and permission-widening answer needs unlock; destructive needs Face ID in the app.
-5. **Model and effort on non-hosted sessions.** The chips need typing into the TUI, so they're
-   hidden for non-hosted sessions. Is that acceptable, or should the Mac relay `/model` through
-   the hook path somehow?
+5. **Model and effort on non-hosted sessions.** The chips need typing into the TUI and reading its
+   screen, so a Claude session outside Side A gets them only in the user's own tmux; a Ghostty tab
+   outside tmux can't. Should the Mac relay `/model` through the hook path somehow?
 6. **App Review.** Reviewers need a Mac with Side A and Tailscale. Options: a demo mode with
    fixture data behind a hidden gesture on the welcome screen, or a reviewer tailnet with a hosted
    Mac. Demo mode also helps screenshots.

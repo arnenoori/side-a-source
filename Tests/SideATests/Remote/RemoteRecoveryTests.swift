@@ -24,8 +24,6 @@ private func hex(_ text: String) -> String { SHA256.hash(data: Data(text.utf8)).
     #expect(RemoteController.macName("Studio", release: false) == "Studio Dev")
 }
 
-// MARK: Hello
-
 @MainActor
 private func helloAnswer(_ caller: RemoteServer.Caller) async throws -> [String: Any] {
     let remote = RemoteController(store: AccountStore(demo: true), keychain: .inMemory(), addresses: ["127.0.0.1"], port: 1_025)
@@ -43,7 +41,6 @@ private func helloAnswer(_ caller: RemoteServer.Caller) async throws -> [String:
     let none = try await helloAnswer(RemoteServer.Caller(device: nil, connection: 1))
     #expect(none["paired"] == nil)
 
-    // A wrong token learns that and no more than a caller with none.
     let wrong = try await helloAnswer(RemoteServer.Caller(device: nil, connection: 1, rejected: true))
     #expect(wrong["paired"] as? Bool == false)
     for key in ["mac", "endpoints", "keyID", "capabilities"] {
@@ -57,7 +54,6 @@ private func helloAnswer(_ caller: RemoteServer.Caller) async throws -> [String:
     #expect(decoded.paired == false)
 }
 
-/// The caller as the server builds it, over real TLS.
 private final class Echo {
     final class Count: @unchecked Sendable {
         private let lock = NSLock()
@@ -110,7 +106,6 @@ private final class Echo {
     #expect(await echo.ask("Authorization: Bearer \(echo.token)", "GET /v1/hello").contains(#""device":"d1","rejected":false"#))
 }
 
-/// An unreadable list is an answer to come back later, never a 401 the phone reads as removed.
 @Test func anUnreadableDeviceListAnswersUnavailable() async throws {
     let echo = try Echo()
     defer { echo.server.stop() }
@@ -133,16 +128,13 @@ private final class Echo {
         #expect(answer.contains(#""code":"not_ready""#) && answer.contains(#""retryable":true"#) && answer.contains("Retry-After: 5"))
     }
     #expect(echo.asked == 3)
-    // Nobody's token is accepted meanwhile, and none is told it's wrong.
     #expect(await echo.ask("Authorization: Bearer sa1_wrong", "GET /v1/sessions").hasPrefix("HTTP/1.1 503"))
-    // Without a token, what a phone does before pairing still works.
     #expect(await echo.ask(nil, "GET /v1/hello").contains("200 OK"))
     #expect(await echo.ask(nil, "GET /v1/sessions").hasPrefix("HTTP/1.1 401"))
 
     let after = await open.wait(0.3) { _ in false }
     #expect(after.count == Data(opened.utf8).count, "a frame arrived: \(Array(after.suffix(20)))")
 
-    // Read again: the same token works, and a wrong one is wrong again.
     echo.server.setDevices([(id: "d1", hash: DeviceToken.hash(echo.token))])
     #expect(await echo.ask(bearer, "GET /v1/sessions").contains(#""device":"d1""#))
     #expect(await echo.ask("Authorization: Bearer sa1_wrong", "GET /v1/sessions").hasPrefix("HTTP/1.1 401"))
@@ -166,7 +158,6 @@ private func device(_ id: String, hash: Data = Data(count: 32)) -> RemoteDevice 
     #expect(remote.devices.unreadable != nil && remote.devices.hashes == nil)
     #expect(try keychain.readDevices() == garbage)
 
-    // Every phone asks, and the keychain is read once every few seconds at most.
     try keychain.writeDevices(try JSONEncoder().encode([device("d1")]))
     let reads = keychain.memoryReads
     remote.reloadDevices(now: start.addingTimeInterval(RemoteController.deviceReloadEvery - 1))
@@ -176,13 +167,10 @@ private func device(_ id: String, hash: Data = Data(count: 32)) -> RemoteDevice 
     #expect(remote.devices.unreadable == nil && remote.error == nil)
     #expect(remote.devices.hashes?.map(\.id) == ["d1"])
 
-    // Readable: nothing to do, and no more reads.
     let settled = keychain.memoryReads
     remote.reloadDevices(now: start.addingTimeInterval(600))
     #expect(keychain.memoryReads == settled)
 }
-
-// MARK: Sleep
 
 @MainActor @Test func theMacSaysGoodbyeBeforeItSleeps() async throws {
     let keychain = try TestKeychain()

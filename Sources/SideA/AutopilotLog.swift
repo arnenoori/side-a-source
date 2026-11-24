@@ -5,7 +5,6 @@ struct AutopilotLog {
     let url: URL
     private var last: [String: String] = [:]
     static let limit = 1_000_000
-    /// Each line's time, in UTC with no zone written.
     static let stamp = Date.ISO8601FormatStyle().year().month().day().time(includingFractionalSeconds: false).timeSeparator(.colon).dateSeparator(.dash)
 
     init(url: URL) { self.url = url }

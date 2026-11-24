@@ -60,17 +60,26 @@ describe('alerts', () => {
     }
   });
 
-  it('keeps session health alerts passive whatever the Mac asks', async () => {
+  it('never makes a session health alert time-sensitive', async () => {
     const apns = new FakeApns();
     const { mac, phone } = await paired(apns);
     const body = alert(phone, { category: 'HEALTH', priority: 5, level: 'time-sensitive', sound: false });
     await send(mac, body);
     const push = apns.last(phone.apnsToken)!;
     expect(push.body).toEqual({
-      aps: { alert: { 'loc-key': 'PUSH_HEALTH_FALLBACK' }, 'mutable-content': 1, category: 'HEALTH', 'interruption-level': 'passive' },
+      aps: { alert: { 'loc-key': 'PUSH_HEALTH_FALLBACK' }, 'mutable-content': 1, category: 'HEALTH', 'interruption-level': 'active' },
       e: body.sealed[phone.deviceId],
     });
     expect(push.headers).toMatchObject({ 'apns-priority': '5', 'apns-collapse-id': body.collapseId });
+  });
+
+  it('sends a health alert at the level the Mac asks, passive or active', async () => {
+    const apns = new FakeApns();
+    const { mac, phone } = await paired(apns);
+    for (const level of ['passive', 'active']) {
+      await send(mac, alert(phone, { category: 'HEALTH', priority: 5, level, sound: false }));
+      expect(apns.last(phone.apnsToken)?.body.aps).toMatchObject({ category: 'HEALTH', 'interruption-level': level });
+    }
   });
 
   it('sends a passive Test Connection push, 5 an hour per install', async () => {

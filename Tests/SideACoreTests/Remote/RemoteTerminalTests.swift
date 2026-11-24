@@ -7,7 +7,6 @@ import Testing
     var input = RemoteTerminal.Input()
     #expect(input.take(seq: 1, bytes: Data("l".utf8)) == .write(Data("l".utf8)))
     #expect(input.take(seq: 2, bytes: Data("s".utf8)) == .write(Data("s".utf8)))
-    // A resent frame after a reconnect is acked again, never typed twice.
     #expect(input.take(seq: 2, bytes: Data("s".utf8)) == .again && input.applied == 2)
     #expect(input.take(seq: 4, bytes: Data("x".utf8)) == .gap && input.applied == 2)
     #expect(input.take(seq: 3, bytes: Data(count: TermFrame.maxInput + 1)) == .tooLarge && input.applied == 3)
@@ -30,12 +29,10 @@ import Testing
     let (forward, replies) = queries.filter(Data("hi\(esc)[c\(esc)[>q\(esc)[1mbold\(esc)]11;?\u{07}".utf8))
     #expect(String(decoding: forward, as: UTF8.self) == "hi\(esc)[1mbold")
     #expect(String(decoding: replies, as: UTF8.self) == "\(esc)[?62;22c\(esc)P>|SideA-Remote 1.0\(esc)\\\(esc)]11;rgb:0000/0000/0000\u{07}")
-    // Cut across two reads: held, then answered.
     let first = queries.filter(Data("ok\(esc)[?99".utf8))
     #expect(String(decoding: first.forward, as: UTF8.self) == "ok" && first.replies.isEmpty)
     let second = queries.filter(Data("6n!".utf8))
     #expect(String(decoding: second.forward, as: UTF8.self) == "!" && String(decoding: second.replies, as: UTF8.self) == "\(esc)[?997;2n")
-    // A lone Esc at the end is held only while it could start a query.
     #expect(queries.filter(Data(esc.utf8)).forward.isEmpty)
     #expect(queries.flush() == Data(esc.utf8))
 }

@@ -25,7 +25,6 @@ private final class FakeAnthropic: @unchecked Sendable {
     private let lock = NSLock()
     private var _seen: [HTTPRequest] = []
     var seen: [HTTPRequest] { lock.withLock { _seen } }
-    /// Holds each connection this long after answering, then closes it unasked, as a server timing out an idle one does.
     private let linger: DispatchTimeInterval
 
     init(linger: DispatchTimeInterval = .seconds(0)) throws {
@@ -141,8 +140,6 @@ private final class FakeAnthropic: @unchecked Sendable {
     #expect((exhausted as? HTTPURLResponse)?.statusCode == 429)
 }
 
-/// Moving on from a full account reuses the connection its 429 came on. A server that has since closed it costs that one
-/// send, which it never read: Claude Code must not hear a 502 for it.
 @MainActor @Test func anUpstreamClosingAKeptConnectionDoesntFailTheRequest() async throws {
     let upstream = try FakeAnthropic(linger: .milliseconds(150))
     let base = try await upstream.start()
@@ -163,7 +160,6 @@ private final class FakeAnthropic: @unchecked Sendable {
     #expect(decisions.answered.map(\.0) == ["full", "ok"])
 }
 
-/// A lost connection may have got there, so only turns, and routes that change nothing, risk a second one.
 @Test func onlyTurnsAreResentOnALostConnection() {
     #expect(PoolProxy.resends("/v1/messages?beta=true") && PoolProxy.resends("/v1/messages") && PoolProxy.resends("/codex/responses"))
     #expect(PoolProxy.resends("/v1/messages/count_tokens") && PoolProxy.resends("/codex/models", method: "GET"))
@@ -201,7 +197,6 @@ private final class FakeAnthropic: @unchecked Sendable {
     await #expect(throws: (any Error).self) { _ = try await ask(String(repeating: "s", count: 64)) }
 }
 
-/// What a bare TCP client hears, sending only `text`, within a few seconds.
 private func rawReply(port: UInt16, sending data: Data) async -> String {
     let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
     let heard = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
@@ -226,14 +221,12 @@ private func rawReply(port: UInt16, sending data: Data) async -> String {
     return (proxy, port, decisions)
 }
 
-/// Finding 9: someone else on the tailnet is turned away before sending anything.
 @MainActor @Test func aPeerWhoIsntAdmittedIsRefusedBeforeSendingAByte() async throws {
     let (proxy, port, decisions) = try await sharedProxy(admit: false)
     defer { withExtendedLifetime(decisions) { proxy.stop() } }
     #expect(await rawReply(port: port, sending: Data()).hasPrefix("HTTP/1.1 403"))
 }
 
-/// Finding 9: only the key buys the 40 MiB.
 @MainActor @Test func aCallerWithoutTheKeyCantAskForALargeBuffer() async throws {
     let (proxy, port, decisions) = try await sharedProxy(admit: true)
     defer { withExtendedLifetime(decisions) { proxy.stop() } }
@@ -244,7 +237,6 @@ private func rawReply(port: UInt16, sending data: Data) async -> String {
     #expect(PoolProxy.strangerBody <= 64 << 10)
 }
 
-/// Finding 9: a client that opens a request and stalls doesn't hold its buffer forever.
 @MainActor @Test func aRequestThatStallsIsDropped() async throws {
     let (proxy, port, decisions) = try await sharedProxy(admit: true, patience: 0.3)
     defer { withExtendedLifetime(decisions) { proxy.stop() } }
@@ -319,7 +311,6 @@ private actor Admitted {
     func poolAnswered(_ account: String, status: Int, headers: HTTPHeaders) {}
 }
 
-/// An automatic update waits while the pool is answering anyone.
 @MainActor @Test func poolCountsTheRequestsItIsAnswering() async throws {
     let upstream = try FakeAnthropic()
     let base = try await upstream.start()

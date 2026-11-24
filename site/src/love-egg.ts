@@ -4,7 +4,6 @@ import { createLinger, createPress } from './linger.mjs';
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 let playing = false;
 
-// three.js and the heart load only when the effect fires, so the page's own script stays small.
 function play(source: HTMLElement) {
   if (playing || reducedMotion.matches || document.hidden) return;
   playing = true;
@@ -24,7 +23,6 @@ export function initLoveEgg(source: HTMLElement) {
   text.append(...source.childNodes);
   bubble.append(text);
   source.append(bubble);
-  // A rest that ends while the last heart is still in the air waits again, so the next play still comes.
   const linger = createLinger({ delay: 2800, onFire: () => {
     if (playing) { linger.leave(); linger.enter(); } else play(source);
   } });
@@ -46,7 +44,6 @@ export function initLoveEgg(source: HTMLElement) {
   });
   source.addEventListener('pointerup', () => press.up());
   source.addEventListener('pointercancel', () => press.up());
-  // The finger that fired the egg lifts on the link; that tap is the egg's, not a visit to the link.
   source.addEventListener('click', e => { if (press.consume()) e.preventDefault(); });
   source.addEventListener('contextmenu', e => { if (touching) e.preventDefault(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { linger.leave(); press.up(); } });

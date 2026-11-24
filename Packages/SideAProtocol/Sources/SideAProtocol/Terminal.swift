@@ -150,7 +150,6 @@ public enum TermFrame: Hashable, Sendable {
         var next = seq
         while start < text.endIndex {
             var end = min(start + maxInput, text.endIndex)
-            // Back up over continuation bytes (10xxxxxx) so the cut falls on a character boundary.
             if end < text.endIndex {
                 while end > start, text[end] & 0xC0 == 0x80 { end -= 1 }
                 if end == start { end = min(start + maxInput, text.endIndex) }

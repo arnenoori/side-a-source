@@ -9,7 +9,6 @@ final class RemoteEvents: Island.Watcher {
     private let hub: EventHub
     private let queue: DispatchQueue
     private var sessions: [SessionKey: RemoteSession] = [:]
-    /// Which key each process was last known by, so a new conversation id is a replacement, not a new session.
     private var keys: [String: SessionKey] = [:]
     private var accounts: [String: RemoteAccount] = [:]
     private var hosted: [String: HostedSession] = [:]
@@ -69,14 +68,12 @@ final class RemoteEvents: Island.Watcher {
         record(.incidentUpdate(WireBuilders.incidents(store)))
     }
 
-    /// Power, battery, memory and keep awake, read every 30 s and after the phone changes a setting.
     func macChanged(_ state: MacState) {
         guard recording, MacStats.changed(mac, state) else { return }
         mac = state
         record(.macUpdate(state))
     }
 
-    /// Autopilot's state after anything that could change it, at most once a second and only when it did.
     func autopilotChanged() {
         guard recording, autopilotTask == nil else { return }
         autopilotTask = Task { [weak self] in
@@ -100,8 +97,6 @@ final class RemoteEvents: Island.Watcher {
         queue.async { hub.record(event, at: at) }
     }
 
-    // MARK: Island
-
     func requestAdded(_ item: Island.Pending) {
         let request = WireBuilders.request(item)
         record(.requestAdd(request))
@@ -113,7 +108,11 @@ final class RemoteEvents: Island.Watcher {
         let resolution = Island.resolution(item.id, by, answer, at: Date())
         record(.requestResolve(resolution))
         store?.remote.approvals.add(.init(resolution: resolution, request: WireBuilders.summary(item)))
-        store?.remote.push.dismiss(item.id.uuidString.lowercased(), answeredBy: resolution.deviceID)
+        if let why = RemotePush.unanswered(by) {
+            store?.remote.push.withdrawn(WireBuilders.fullRequest(item), why: why)
+        } else {
+            store?.remote.push.dismiss(item.id.uuidString.lowercased(), answeredBy: resolution.deviceID)
+        }
         liveChanged()
     }
 
@@ -125,18 +124,19 @@ final class RemoteEvents: Island.Watcher {
             guard let finished = WireBuilders.finished(row, island: island) else { continue }
             record(.finishedAdd(finished))
             let ran = ran(finished.sessionID, at: row.at)
-            // A snooze that finishing doesn't wake keeps the turn's end quiet until it wakes.
-            if store?.remote.snoozes.quiets(finished.sessionID) != true { store?.remote.push.finished(finished, ran: ran) }
+            if store?.remote.snoozes.quiets(finished.sessionID) == true {
+                store?.remote.push.skipped("finished", finished.turnID, "session-snoozed")
+            } else {
+                store?.remote.push.finished(finished, ran: ran)
+            }
         }
         for row in old where !after.contains(row.id) {
             if let session = row.finish.sessionID { record(.finishedResolve(sessionID: session, reason: reason.rawValue)) }
-            store?.remote.push.finishedResolved(row.id.uuidString.lowercased())
+            store?.remote.push.finishedResolved(row.id.uuidString.lowercased(), reason: reason)
         }
         liveChanged()
     }
 
-    /// From when the session was first seen working, else from its last finished turn, which can only make it longer.
-    /// Nil when neither is known.
     private func ran(_ session: SessionKey, at end: Date) -> TimeInterval? {
         let start = working.removeValue(forKey: session) ?? lastFinished[session]
         lastFinished[session] = end
@@ -153,8 +153,6 @@ final class RemoteEvents: Island.Watcher {
         }
     }
 
-    // MARK: Sessions
-
     private static func process(_ session: LiveSession) -> String { "\(session.pid)-\(Int(session.started ?? 0))" }
 
     func current() -> [RemoteSession] {
@@ -164,23 +162,18 @@ final class RemoteEvents: Island.Watcher {
         return store.sessions.live.map { WireBuilders.session($0, store: store, rows: rows) }.filter { seen.insert($0.id).inserted }
     }
 
-    /// The one row a phone asked for, built alone.
     func session(_ id: String) -> RemoteSession? {
         guard let store, let live = store.sessions.live.first(where: { WireBuilders.key($0) == id || $0.sessionID == id }) else { return nil }
         return WireBuilders.session(live, store: store, finished: Set(store.island.ready.compactMap(\.finish.sessionID)))
     }
 
-    /// The window a burst of changes shares: the first goes at once, the rest together when it closes.
     static let liveWindow: Duration = .milliseconds(100)
     private var liveTask: Task<Void, Never>?
     private var liveAgain = false
     #if DEBUG
-    /// Tests: a window is open.
     var holding: Bool { liveTask != nil }
     #endif
 
-    /// Every change to sessions, requests, mail or usage lands here, often many to a moment; at most one pass a window,
-    /// and none waits longer than the window.
     func liveChanged() {
         guard recording else { return }
         guard liveTask == nil else { liveAgain = true; return }
@@ -195,7 +188,6 @@ final class RemoteEvents: Island.Watcher {
         }
     }
 
-    /// Memory and ports are left out of the comparison, so a refresh that only moves them sends nothing.
     private func flushLive() {
         guard recording, let store else { return }
         store.remote.codex.sync()
@@ -207,7 +199,6 @@ final class RemoteEvents: Island.Watcher {
         let ids = Set(next.map(\.id))
         for old in sessions.keys where !ids.contains(old) { record(.sessionRemove(id: old, replacedBy: replaced[old])) }
         for session in next where sessions[session.id].map({ !Self.same($0, session) }) ?? true { record(.sessionUpsert(session)) }
-        // A flag that starts; `start` took in the ones already up.
         for session in next {
             if let flag = session.flag, session.snooze == nil, sessions[session.id].map({ $0.flag?.kind != flag.kind }) ?? true { store.remote.push.health(session, flag) }
             if session.status == .working, working[session.id] == nil {
@@ -228,8 +219,6 @@ final class RemoteEvents: Island.Watcher {
         store.remote.push.activity(Self.activity(next, requests: store.island.pending.map { $0.id.uuidString.lowercased() }, accounts: Array(accounts.values)))
     }
 
-    /// The Live Activity's numbers: counts, the next request's id, and the tightest window of the accounts in use.
-    /// Takes request ids, not wire requests: building one records its gate as shown to a phone.
     static func activity(_ sessions: [RemoteSession], requests: [String], accounts: [RemoteAccount]) -> ActivityContentState {
         let windows = accounts.filter(\.active).flatMap { [$0.usage?.fiveHour, $0.usage?.weekly].compactMap { $0 } }
         let tightest = windows.max { $0.percent < $1.percent }
@@ -245,10 +234,6 @@ final class RemoteEvents: Island.Watcher {
         return a == b
     }
 
-    // MARK: Hosted
-
-    /// After each tmux refresh: an upsert for a pane that's new or changed, a remove for one that's gone. One pass at
-    /// a time; a refresh during one runs another after.
     func hostedChanged() {
         guard recording, let store else { return }
         guard hostedTask == nil else { hostedAgain = true; return }
@@ -267,16 +252,10 @@ final class RemoteEvents: Island.Watcher {
         }
     }
 
-    /// A hosted session needs someone at its screen: a reply that may not have gone in, a compaction that didn't show.
     func hostedAttention(_ name: String, _ attention: HostedSessions.Attention) {
-        // Screen lines can hold a pasted key.
         record(.hostedAttention(HostedAttention(name: name, kind: .init(rawValue: attention.kind), text: Redact.secrets(attention.text))))
     }
 
-    // MARK: Usage
-
-    /// At most one `usage.update` a second, with only the accounts that changed, and an `account.remove` for each
-    /// account gone from the library.
     func usageChanged() {
         guard recording, usageTask == nil else { return }
         usageTask = Task { [weak self] in
@@ -301,9 +280,6 @@ final class RemoteEvents: Island.Watcher {
         }
     }
 
-    // MARK: Snapshot
-
-    /// Everything a phone needs to start over, gathered in one pass on the main actor.
     func snapshot() -> @Sendable (Int, String) -> StateSnapshot {
         guard let store else { return { seq, epoch in StateSnapshot(seq: seq, epoch: epoch) } }
         let island = store.island

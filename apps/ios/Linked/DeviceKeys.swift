@@ -4,7 +4,7 @@ import Security
 import SideAProtocol
 import SideARemoteShared
 
-/// The phone's two Secure Enclave keys for one Mac (H1). The Mac requires a signature from one of them for anything
+/// The phone's two Secure Enclave keys for one Mac. The Mac requires a signature from one of them for anything
 /// past a Lock Screen allow, so a token alone can't approve, open the terminal or type while a request waits.
 /// - `confirm` signs only after Face ID (`.biometryCurrentSet`): biometric requests, the terminal, keys.
 /// - `unlock` signs silently, but only while the phone is unlocked: allows behind an unlock gate.
@@ -29,7 +29,6 @@ nonisolated enum DeviceKeys {
         return (confirm, unlock)
     }
 
-    /// The keys `create(for:)` made become the ones that sign for `macID`, once the pairing that sent them is saved.
     static func promote(for macID: String) {
         delete(for: macID, pending: false)
         for signer in [Signer.confirm, .unlock] {
@@ -59,31 +58,63 @@ nonisolated enum DeviceKeys {
             return nil
         }
         return await Task.detached {
-            // A held Face ID the keychain no longer takes is let go, and the signature asks afresh, once.
+            let at = Int(Date.now.timeIntervalSince1970)
+            guard let text = try? ConfirmMessage.text(macID: macID, deviceID: deviceID, purpose: purpose, subject: subject, at: at) else { return nil }
+            if signer == .unlock {
+                guard let key = key(.unlock, macID: macID, context: LAContext()) else { return nil }
+                switch sign(key, text) {
+                case .success(let signature):
+                    RemoteLog.log(.app, "unlock signed \(purpose.rawValue)")
+                    return ConfirmSignature(at: at, signer: signer, signature: signature).headerValue
+                case .failure(let code):
+                    RemoteLog.log(.app, "unlock signature not made: \(code)")
+                    return nil
+                }
+            }
+            // A held context the key stops honouring costs one prompt, then a fresh one is evaluated. If even that is
+            // refused, the key's own prompt signs and its context is kept: two prompts once, not one per message.
             for _ in 0..<2 {
-                var context = LAContext()
-                var held = false
-                if signer == .confirm {
-                    guard let confirmed = await faceID(reason: reason) else { return nil }
-                    (context, held) = confirmed
+                guard let grant = await hold.context(reason: reason, evaluate: { await evaluate(macID: macID, reason: $0) }),
+                      let key = key(.confirm, macID: macID, context: grant.context) else { return nil }
+                switch sign(key, text) {
+                case .success(let signature):
+                    RemoteLog.log(.app, "Face ID signed \(purpose.rawValue), \(grant.reused ? "held" : "fresh") context")
+                    return ConfirmSignature(at: at, signer: signer, signature: signature).headerValue
+                case .failure(let code):
+                    RemoteLog.log(.app, "Face ID signature refused the \(grant.reused ? "held" : "fresh") context: \(code)")
+                    hold.drop(grant.context, code: code)
+                    if grant.reused { continue }
+                    return signWithKeyPrompt(macID: macID, text: text, at: at, reason: reason)
                 }
-                let at = Int(Date.now.timeIntervalSince1970)
-                guard let text = try? ConfirmMessage.text(macID: macID, deviceID: deviceID, purpose: purpose, subject: subject, at: at),
-                      let key = key(signer, macID: macID, context: context) else {
-                    if held { drop(context); continue }
-                    return nil
-                }
-                var error: Unmanaged<CFError>?
-                guard let signature = SecKeyCreateSignature(key, .ecdsaSignatureMessageX962SHA256, Data(text.utf8) as CFData, &error) as Data? else {
-                    RemoteLog.log(.app, "\(signer == .confirm ? "Face ID" : "unlock") signature not made\(held ? " with the held Face ID" : ""): \(error.map { CFErrorGetCode($0.takeRetainedValue()) } ?? 0)")
-                    if held { drop(context); continue }
-                    return nil
-                }
-                RemoteLog.log(.app, "\(signer == .confirm ? "Face ID" : "unlock") signed \(purpose.rawValue)\(held ? ", Face ID held" : "")")
-                return ConfirmSignature(at: at, signer: signer, signature: signature).headerValue
             }
             return nil
         }.value
+    }
+
+    /// The key asks for Face ID itself, and the context it asked with is kept for the next signature.
+    private static func signWithKeyPrompt(macID: String, text: String, at: Int, reason: String) -> String? {
+        let context = LAContext()
+        context.localizedReason = reason
+        guard let key = key(.confirm, macID: macID, context: context) else { return nil }
+        switch sign(key, text) {
+        case .success(let signature):
+            hold.adopt(context)
+            RemoteLog.log(.app, "Face ID signed through the key's own prompt")
+            return ConfirmSignature(at: at, signer: .confirm, signature: signature).headerValue
+        case .failure(let code):
+            RemoteLog.log(.app, "Face ID signature not made through the key's own prompt: \(code)")
+            return nil
+        }
+    }
+
+    private enum Signed { case success(Data), failure(Int) }
+
+    private static func sign(_ key: SecKey, _ text: String) -> Signed {
+        var error: Unmanaged<CFError>?
+        guard let signature = SecKeyCreateSignature(key, .ecdsaSignatureMessageX962SHA256, Data(text.utf8) as CFData, &error) as Data? else {
+            return .failure(error.map { CFErrorGetCode($0.takeRetainedValue()) } ?? 0)
+        }
+        return .success(signature)
     }
 
     /// The app is behind its lock. A notification's answer comes from iOS's own unlock, in a process whose lock may
@@ -94,72 +125,66 @@ nonisolated enum DeviceKeys {
     }
 
     nonisolated(unsafe) private static var locked = false
+    private static let lock = NSLock()
 
     /// One Face ID holds for as long as the app is in use, so a permissive session asks once, not at every reply,
     /// however long its turns run. It ends (`expire`) when the app has been away as long as the app lock waits, and
-    /// with the process. The app lock's own Face ID counts as that first one (`adopt`).
-    nonisolated(unsafe) private static var shared: LAContext?
-    /// The Face ID prompt on screen: a second signature waits for it, since iOS cancels one of two at once.
-    nonisolated(unsafe) private static var evaluating: Task<Evaluated?, Never>?
-    /// Bumped by `expire`, so an evaluation that finishes after the app left doesn't start a grace.
-    nonisolated(unsafe) private static var epoch = 0
+    /// with the process. The app lock's own Face ID counts as that first one (`unlock`).
+    ///
+    /// What authorises a Secure Enclave key is its access control, evaluated with `LAContext.evaluateAccessControl`
+    /// and `.useKeySign`. A context that merely passed `evaluatePolicy` is not documented to satisfy it.
+    static let hold = FaceIDHold<LAContext>(invalidate: { $0.invalidate() }, log: { RemoteLog.log(.app, $0) })
 
-    /// LAContext is thread-safe but not marked Sendable.
-    private struct Evaluated: @unchecked Sendable { let context: LAContext }
-    private static let lock = NSLock()
-    /// The context that signs with the confirm key. A fresh one is evaluated for biometry here, before the keychain
-    /// sees it: only an evaluated context spares later signatures the prompt, which
-    /// `touchIDAuthenticationAllowableReuseDuration` doesn't do for a Secure Enclave key. A replaced context isn't
-    /// invalidated, as a signature may still be using it.
-    private static func faceID(reason: String) async -> (context: LAContext, held: Bool)? {
-        let (reused, pending, started) = lock.withLock { () -> (LAContext?, Task<Evaluated?, Never>, Int) in
-            if let shared { return (shared, Task { nil }, epoch) }
-            if let evaluating { return (nil, evaluating, epoch) }
-            let task = Task<Evaluated?, Never> {
-                let context = LAContext()
-                do {
-                    guard try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) else { return nil }
-                } catch {
-                    RemoteLog.log(.app, "Face ID declined: \((error as NSError).code)")
-                    return nil
-                }
-                return Evaluated(context: context)
-            }
-            evaluating = task
-            return (nil, task, epoch)
+    private static func evaluate(macID: String, reason: String) async -> FaceIDHold<LAContext>.Evaluated? {
+        guard let access = accessControl(macID: macID) else { return nil }
+        let context = LAContext()
+        context.localizedFallbackTitle = ""
+        do {
+            try await context.evaluateAccessControl(access, operation: .useKeySign, localizedReason: reason)
+        } catch {
+            RemoteLog.log(.app, "Face ID declined: \((error as NSError).code)")
+            return nil
         }
-        if let reused { return (reused, true) }
-        let context = await pending.value?.context
-        lock.withLock {
-            if evaluating == pending { evaluating = nil }
-            if let context, epoch == started { shared = context }
+        return .init(context: context)
+    }
+
+    /// The confirm key's own access control, so what is evaluated is what the key checks.
+    private static func accessControl(macID: String) -> SecAccessControl? {
+        if let key = key(.confirm, macID: macID, context: nil), let attributes = SecKeyCopyAttributes(key) as? [String: Any],
+           let value = attributes[kSecAttrAccessControl as String], CFGetTypeID(value as CFTypeRef) == SecAccessControlGetTypeID() {
+            // swiftlint:disable:next force_cast -- the type id is checked on the line above.
+            return (value as! SecAccessControl)
         }
-        return context.map { ($0, false) }
+        return SecAccessControlCreateWithFlags(nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, [.privateKeyUsage, .biometryCurrentSet], nil)
     }
 
-    /// Lets go of a held context the keychain refused, unless a newer one has replaced it.
-    private static func drop(_ context: LAContext) {
-        lock.withLock { if shared === context { shared = nil } }
+    /// The app lock's Face ID, taken as the confirm key's, so the first reply after unlocking doesn't ask again.
+    /// `unpaired` (no key yet) leaves the lock to ask its own way.
+    enum Unlock { case passed, declined, unpaired }
+
+    static func unlock(macIDs: [String], reason: String) async -> Unlock {
+        guard let macID = macIDs.first(where: { has(.confirm, for: $0) }),
+              let access = accessControl(macID: macID) else { return .unpaired }
+        let context = LAContext()
+        context.localizedFallbackTitle = ""
+        do {
+            try await context.evaluateAccessControl(access, operation: .useKeySign, localizedReason: reason)
+        } catch {
+            RemoteLog.log(.app, "app lock Face ID declined: \((error as NSError).code)")
+            return .declined
+        }
+        hold.adopt(context)
+        return .passed
     }
 
-    /// The app lock's context, just evaluated for biometry. The confirm key demands biometry (`.biometryCurrentSet`), so
-    /// an unlock by passcode isn't adopted.
-    static func adopt(_ context: LAContext) {
-        lock.withLock { shared = context }
-    }
+    static func expire(_ cause: String = "the app was away") { hold.expire(cause) }
 
-    /// Ends the held Face ID, once the app has been away too long.
-    static func expire() { lock.withLock { shared?.invalidate(); shared = nil; epoch += 1 } }
-
-    /// The terminal's signer, for `TerminalSession(confirm:)`.
     static func terminal(macID: String, deviceID: String) -> @Sendable (String) async -> String? {
         { name in
             await header(.confirm, macID: macID, deviceID: deviceID, purpose: .terminal, subject: ConfirmMessage.subject(terminal: name),
                          reason: "Open the terminal")
         }
     }
-
-    // MARK: Keychain
 
     private static var group: String? {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "SideAKeychainGroup") as? String, !group.hasPrefix(".") else { return nil }

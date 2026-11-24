@@ -4,8 +4,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// A Codex session outside Codex's shared server has no turn id; its rollout's newest typed message, as the bridge
-/// reads it, is what says someone wrote to it.
 private func codex(prompt: Double?) throws -> LiveSession {
     var object: [String: Any] = ["pid": Int(getpid()), "id": "thread-1", "status": "idle", "cwd": "/tmp/app", "started": 1_700_000_000, "agent": "codex"]
     object["promptAt"] = prompt
@@ -21,7 +19,6 @@ private func codex(prompt: Double?) throws -> LiveSession {
     let row = WireBuilders.session(live, store: store, finished: [])
     #expect(row.turnID == nil, "outside the shared server it names no turn")
     store.remote.snoozes.snooze(row, .threeHours, until: Date().timeIntervalSince1970 + 3 * 3600)
-    // The message that was already there when it was snoozed, and the agent's own output after it, wake nothing.
     #expect(WireBuilders.session(live, store: store, finished: []).snooze != nil)
     live = try codex(prompt: before)
     #expect(WireBuilders.session(live, store: store, finished: []).snooze != nil)

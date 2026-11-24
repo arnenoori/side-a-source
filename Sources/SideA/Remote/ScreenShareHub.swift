@@ -11,7 +11,6 @@ import SideAProtocol
 final class ScreenHub: @unchecked Sendable {
     let queue: DispatchQueue
     let share: ScreenShare
-    /// The pid of the terminal app showing a hosted session's Mac tab.
     let sessionApp: @MainActor @Sendable (String) async -> pid_t?
     private var viewer: ScreenViewer?
 
@@ -23,7 +22,7 @@ final class ScreenHub: @unchecked Sendable {
         let mode = ScreenMode(rawValue: raw)
         guard [.view, .control].contains(mode) else { return peer.close(4426, "unknown mode") }
         guard ScreenShare.enabled else { return Self.refuse(peer, .off) }
-        guard CGPreflightScreenCaptureAccess() else { return Self.refuse(peer, .permission) }
+        guard ScreenAccess.recording else { return Self.refuse(peer, .permission) }
         viewer?.end(.replaced)
         let viewer = ScreenViewer(peer: peer, mode: mode, hub: self)
         self.viewer = viewer
@@ -83,7 +82,6 @@ final class ScreenViewer: @unchecked Sendable {
     private var hello: ScreenHello?
     private var capture: ScreenCapture?
     private var target: ScreenTarget?
-    /// Where the captured picture is, in global display points, for mapping a tap to a click.
     private var bounds = CGRect.zero
     private var bitrate: Int
     private var wanted: Int
@@ -97,14 +95,12 @@ final class ScreenViewer: @unchecked Sendable {
     private var control: ScreenControlState?
     private var generation = 0
     private var stopped = false
-    /// Input held while its window comes forward.
     private var deferred: [Int: DispatchWorkItem] = [:]
     private var held = 0
     private var typing: [ScreenControl]?
     /// Held while a capture runs: a watched display that sleeps freezes the picture and may lock the Mac.
     private var awake: IOPMAssertionID = 0
     private var active: IOPMAssertionID = 0
-    /// Below the socket's 1 MiB limit, and low enough that a frame never waits behind more than a few others.
     private var gate: Int { route == .relay ? 128 << 10 : 256 << 10 }
 
     init(peer: WebSocketPeer, mode: ScreenMode, hub: ScreenHub) {
@@ -116,8 +112,6 @@ final class ScreenViewer: @unchecked Sendable {
         input = RemotePolicy.TokenBucket(rate: Self.inputRate, burst: Self.inputRate * 2, now: Date().timeIntervalSince1970)
         peer.sent = { [weak self] in self?.pump() }
     }
-
-    // MARK: Socket
 
     func received(_ message: WebSocketCodec.Message) {
         guard !stopped else { return }
@@ -152,7 +146,6 @@ final class ScreenViewer: @unchecked Sendable {
         ScreenHub.refuse(peer, reason, detail)
     }
 
-    /// The socket is gone: nothing keeps capturing.
     func stop() {
         guard !stopped else { return }
         stopped = true
@@ -184,9 +177,8 @@ final class ScreenViewer: @unchecked Sendable {
         checkControl()
     }
 
-    // MARK: Content
-
     private func content(_ done: @escaping @Sendable (SCShareableContent?) -> Void) {
+        if ScreenStandIn.current != nil { return queue.async { done(nil) } }
         Task {
             let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             let shared = Unchecked(content)
@@ -196,6 +188,12 @@ final class ScreenViewer: @unchecked Sendable {
 
     private func ready(_ content: SCShareableContent?) {
         guard !stopped else { return }
+        if let stand = ScreenStandIn.current {
+            let state = controlState()
+            control = state
+            RemoteLog.shared("screen: #\(peer.id) ready with the stand-in's screen")
+            return send(.ready(ScreenReady(route: route, displays: stand.displays, windows: stand.windows.map(\.info), control: state, limits: limits)))
+        }
         guard let content else { return end(.permission) }
         let displays = content.displays.enumerated().map { index, display in
             ScreenDisplay(id: display.displayID, name: CGDisplayIsBuiltin(display.displayID) != 0 ? "Built-in Display" : "Display \(index + 1)",
@@ -210,16 +208,19 @@ final class ScreenViewer: @unchecked Sendable {
             .prefix(40)
         let state = controlState()
         control = state
+        RemoteLog.shared("screen: #\(peer.id) ready with \(displays.count) displays and \(windows.count) windows")
         send(.ready(ScreenReady(route: route, displays: displays, windows: Array(windows), control: state, limits: limits)))
     }
 
-    // MARK: Capture
-
     private func begin(_ start: ScreenStart) {
+        RemoteLog.shared("screen: #\(peer.id) start \(start.target.map { "\($0)" } ?? start.session ?? "main display")")
         if let fps = start.fps { wanted = min(limits.fps, max(1, fps)) }
         generation += 1
         let generation = generation
         if let target = start.target { return content { [weak self] in self?.capture(target, in: $0, generation) } }
+        if let stand = ScreenStandIn.current, start.session != nil, let window = stand.windows.first {
+            return content { [weak self] _ in self?.capture(.window(window.info.id), in: nil, generation) }
+        }
         guard let session = start.session, let hub else {
             return content { [weak self] in self?.capture(nil, in: $0, generation) }
         }
@@ -233,30 +234,40 @@ final class ScreenViewer: @unchecked Sendable {
 
     private func capture(_ target: ScreenTarget?, in content: SCShareableContent?, _ generation: Int) {
         guard !stopped, generation == self.generation, let hello else { return }
-        guard let content else { return end(.permission) }
-        let main = content.displays.first { $0.displayID == CGMainDisplayID() } ?? content.displays.first
-        let filter: SCContentFilter
+        let filter: SCContentFilter?
         let pixels: CGSize
         let chosen: ScreenTarget
-        switch target {
-        case .window(let id)?:
-            guard let window = content.windows.first(where: { $0.windowID == id }) else {
-                return capture(nil, in: content, generation)
+        if let stand = ScreenStandIn.current {
+            let main = stand.displays.first { $0.main } ?? stand.displays[0]
+            switch target {
+            case .window(let id)? where stand.bounds(window: id) != nil: (bounds, chosen) = (stand.bounds(window: id) ?? .zero, .window(id))
+            case .display(let id)?: (bounds, chosen) = (stand.bounds(display: id), .display(id))
+            default: (bounds, chosen) = (stand.bounds(display: main.id), .display(main.id))
             }
-            filter = SCContentFilter(desktopIndependentWindow: window)
-            bounds = ScreenInput.bounds(window: id) ?? window.frame
-            pixels = CGSize(width: bounds.width * Self.scale(at: CGPoint(x: bounds.midX, y: bounds.midY)), height: bounds.height * Self.scale(at: CGPoint(x: bounds.midX, y: bounds.midY)))
-            chosen = .window(id)
-        case .display(let id)?:
-            guard let display = content.displays.first(where: { $0.displayID == id }) else { return capture(nil, in: content, generation) }
-            (filter, pixels, chosen) = Self.whole(display)
-            bounds = ScreenInput.bounds(display: id)
-        case nil:
-            guard let main else { return end(.failed, "This Mac has no display to show.") }
-            (filter, pixels, chosen) = Self.whole(main)
-            bounds = ScreenInput.bounds(display: main.displayID)
+            (filter, pixels) = (nil, CGSize(width: bounds.width * 2, height: bounds.height * 2))
+        } else {
+            guard let content else { return end(.permission) }
+            let main = content.displays.first { $0.displayID == CGMainDisplayID() } ?? content.displays.first
+            switch target {
+            case .window(let id)?:
+                guard let window = content.windows.first(where: { $0.windowID == id }) else {
+                    return capture(nil, in: content, generation)
+                }
+                bounds = ScreenInput.bounds(window: id) ?? window.frame
+                let scale = Self.scale(at: CGPoint(x: bounds.midX, y: bounds.midY))
+                (filter, pixels, chosen) = (SCContentFilter(desktopIndependentWindow: window), CGSize(width: bounds.width * scale, height: bounds.height * scale), .window(id))
+            case .display(let id)?:
+                guard let display = content.displays.first(where: { $0.displayID == id }) else { return capture(nil, in: content, generation) }
+                (filter, pixels, chosen) = Self.whole(display)
+                bounds = ScreenInput.bounds(display: id)
+            case nil:
+                guard let main else { return end(.failed, "This Mac has no display to show.") }
+                (filter, pixels, chosen) = Self.whole(main)
+                bounds = ScreenInput.bounds(display: main.displayID)
+            }
         }
         capture?.stop()
+        ScreenStandIn.current?.shown = bounds
         let size = ScreenCapture.fit(width: Int(pixels.width), height: Int(pixels.height),
                                      longEdge: min(limits.longEdge, max(hello.maxWidth, hello.maxHeight)))
         let capture = ScreenCapture(queue: queue, size: size, fps: fps(for: bitrate), bitrate: bitrate)
@@ -282,13 +293,13 @@ final class ScreenViewer: @unchecked Sendable {
         let shared = Unchecked(filter)
         Task {
             do {
-                try await capture.start(shared.value)
+                if let filter = shared.value { try await capture.start(filter) } else if let stand = ScreenStandIn.current { capture.start(standIn: stand) }
                 self.queue.async { [self] in self.started(capture, chosen) }
             } catch {
                 self.queue.async { [self] in
                     guard self.capture === capture else { return }
                     RemoteLog.shared("screen: #\(peer.id) couldn't start: \((error as NSError).domain) \((error as NSError).code)")
-                    if CGPreflightScreenCaptureAccess() {
+                    if ScreenAccess.recording {
                         end(.failed, "The Mac couldn't capture its screen: \(error.localizedDescription)")
                     } else {
                         end(.permission)
@@ -300,6 +311,7 @@ final class ScreenViewer: @unchecked Sendable {
 
     private func started(_ capture: ScreenCapture, _ target: ScreenTarget) {
         guard !stopped, self.capture === capture else { return }
+        RemoteLog.shared("screen: #\(peer.id) started \(capture.size.width)x\(capture.size.height) at \(capture.fps) fps")
         send(.started(ScreenStarted(target: target, width: capture.size.width, height: capture.size.height, fps: capture.fps)))
         sendQuality()
         guard let hub else { return }
@@ -321,7 +333,6 @@ final class ScreenViewer: @unchecked Sendable {
         return CGFloat(mode.pixelWidth) / CGFloat(mode.width)
     }
 
-    /// A window that moved or changed shape: clicks follow it, and the picture keeps its shape.
     private func refreshBounds() {
         guard case .window(let id)? = target, let now = ScreenInput.bounds(window: id), let capture, let hello else { return }
         bounds = now
@@ -331,9 +342,6 @@ final class ScreenViewer: @unchecked Sendable {
         if abs(size.width - capture.size.width) > 8 || abs(size.height - capture.size.height) > 8 { capture.set(size: size) }
     }
 
-    // MARK: Frames
-
-    /// Encodes the newest capture only while the socket has room, so what waits never grows stale.
     private func pump() {
         guard !stopped, let capture, peer.queued < gate else { return }
         capture.pull()
@@ -353,8 +361,6 @@ final class ScreenViewer: @unchecked Sendable {
         pump()
     }
 
-    // MARK: Rate
-
     private func fps(for bitrate: Int) -> Int {
         let share = Double(bitrate) / Double(limits.bitrate)
         let tier = share >= 0.5 ? limits.fps : share >= 0.2 ? limits.fps * 2 / 3 : max(5, limits.fps / 3)
@@ -367,8 +373,6 @@ final class ScreenViewer: @unchecked Sendable {
         apply()
     }
 
-    /// Every second: down a quarter when frames waited, the phone dropped some or the round trip grew; up when two
-    /// seconds of sending went cleanly. A still screen sends nothing and proves nothing, so it doesn't climb.
     private func adapt() {
         guard let capture else { return }
         let skips = capture.takeSkips()
@@ -395,13 +399,17 @@ final class ScreenViewer: @unchecked Sendable {
         if before != (capture.fps, capture.bitrate) { sendQuality() }
     }
 
+    /// The relay's ceiling is a reduction in itself. On the LAN a stream starts at two fifths of the ceiling and climbs only
+    /// while frames flow, so a still screen stays there: that is the start, not a socket that drains slowly.
+    static func reduced(bitrate: Int, on route: ScreenRoute) -> Bool {
+        route == .relay || bitrate < ScreenLimits.on(route).bitrate * 2 / 5
+    }
+
     private func sendQuality() {
         guard let capture else { return }
         send(.quality(ScreenQuality(fps: capture.fps, bitrate: capture.bitrate, width: capture.size.width, height: capture.size.height,
-                                    reduced: route == .relay || capture.bitrate < limits.bitrate / 2)))
+                                    reduced: Self.reduced(bitrate: capture.bitrate, on: route))))
     }
-
-    // MARK: Input
 
     func checkControl() {
         let state = controlState()
@@ -418,7 +426,6 @@ final class ScreenViewer: @unchecked Sendable {
         return ScreenControlState(allowed: true)
     }
 
-    /// Checked on every event, since a switch or the lock can change between ticks.
     private func take(_ event: ScreenControl) {
         guard controlState().allowed, capture != nil, target != nil else { return checkControl() }
         guard input.take(now: Date().timeIntervalSince1970) == nil else { return }
@@ -443,7 +450,7 @@ final class ScreenViewer: @unchecked Sendable {
     /// A captured window may sit under another, where a click at its place would land on the other one: it comes
     /// forward first, and the click is aimed again once it has.
     private func raiseIfCovered(_ point: CGPoint, _ pointer: ScreenPointer) {
-        guard case .window(let id)? = target else { return ScreenInput.click(point, kind: pointer.kind) }
+        guard case .window(let id)? = target, ScreenStandIn.current == nil else { return ScreenInput.click(point, kind: pointer.kind) }
         let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         let top = windows.first { info in
             guard (info[kCGWindowLayer as String] as? Int) == 0, let frame = info[kCGWindowBounds as String] as? NSDictionary,
@@ -476,7 +483,6 @@ final class ScreenViewer: @unchecked Sendable {
             if may(id), ScreenInput.focused(id) { return held.forEach(post) }
             guard !stopped, hub?.current(self) == true else { return }
             guard controlState().allowed else { return checkControl() }
-            // Through the state the phone already shows; the next tick puts it back.
             let refused = ScreenControlState(allowed: false, reason: .focus)
             control = refused
             send(.control(refused))
@@ -504,7 +510,6 @@ final class ScreenViewer: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
-    /// Asked again just before held input goes: any of these can change while a window comes forward.
     private func may(_ id: CGWindowID) -> Bool {
         !stopped && hub?.current(self) == true && controlState().allowed && capture != nil && target == .window(id)
             && ScreenInput.bounds(window: id) != nil

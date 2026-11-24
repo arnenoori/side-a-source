@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+@preconcurrency import Crypto
+#endif
 import Foundation
 import SideAProtocol
 import SideAProtocolFixtures
@@ -7,7 +11,6 @@ import Testing
 /// A known-answer vector for the push key and one envelope, computed outside Swift.
 struct PushVector: Codable {
     let macPrivateKey, devicePrivateKey, macPublicKey, devicePublicKey, deviceID: String
-    /// The relay install's Ed25519 key, and its id: base64url(SHA-256(public key)[0..<16]).
     let installPrivateKey, installPublicKey, installID: String
     let key, keyID, category, collapseID, nonce, payload, envelope, macID: String
 }
@@ -40,7 +43,6 @@ private func bytes(_ text: String) throws -> Data { try #require(Data(base64URL:
     let nonce = try ChaChaPoly.Nonce(data: bytes(v.nonce))
     #expect(try PushEnvelope.seal(plaintext, with: key, category: category, collapseID: v.collapseID, deviceID: v.deviceID, nonce: nonce) == v.envelope)
 
-    // The relay can't move it to another category, request or device.
     #expect(throws: (any Error).self) { try PushEnvelope.open(v.envelope, with: key, category: .finished, collapseID: v.collapseID, deviceID: v.deviceID) }
     #expect(throws: (any Error).self) { try PushEnvelope.open(v.envelope, with: key, category: category, collapseID: "other", deviceID: v.deviceID) }
     #expect(throws: (any Error).self) { try PushEnvelope.open(v.envelope, with: key, category: category, collapseID: v.collapseID, deviceID: "other") }
@@ -58,7 +60,6 @@ private func bytes(_ text: String) throws -> Data { try #require(Data(base64URL:
 
 @Test func bytesCantMoveBetweenFields() throws {
     let key = PushKey(key: SymmetricKey(size: .bits256), keyID: Data([1, 2, 3, 4]))
-    // Joined bare, these two AADs were the same bytes.
     let sealed = try PushEnvelope.seal(Data("x".utf8), with: key, category: PushCategory(rawValue: "REQUEST"), collapseID: "ab", deviceID: "dev")
     #expect(throws: (any Error).self) {
         try PushEnvelope.open(sealed, with: key, category: PushCategory(rawValue: "REQUES"), collapseID: "Tab", deviceID: "dev")
@@ -72,7 +73,6 @@ private func push(_ t: String, gate: AllowGate? = nil, full: Bool? = nil) -> Pus
     PushPayload(t: t, mac: "m1", sent: 0, rid: "r1", title: "Allow Bash", body: "npm test", gate: gate, full: full)
 }
 
-/// Only a lock-screen request loosens to the safe category; one cut to fit offers Open only.
 @Test(arguments: [
     (PushCategory.request, push("request", gate: .lockScreen), PushCategory.requestSafe),
     (.request, push("request", gate: .unlock), .request),
@@ -88,7 +88,6 @@ func aPushShowsTheActionsItsGateAllows(_ category: PushCategory, _ payload: Push
     #expect(category.local(for: payload) == local)
 }
 
-/// The kind travels as the plain string `t`, so a kind a phone doesn't know still decodes.
 @Test func aPushKindIsItsWireString() throws {
     let kinds: [PushKind] = [.request, .question, .plan, .finished, .limit, .health, .rotation, .test]
     #expect(kinds.map(\.rawValue) == ["request", "question", "plan", "finished", "limit", "health", "rotation", "test"])
@@ -97,7 +96,6 @@ func aPushShowsTheActionsItsGateAllows(_ category: PushCategory, _ payload: Push
     #expect(decoded.t == "later" && decoded.kind == PushKind(rawValue: "later"))
 }
 
-/// `quiet` is optional both ways: an older Mac's payload decodes to nil, and it's encoded only when set.
 @Test func quietIsOptionalOnTheWire() throws {
     let old = try JSONDecoder().decode(PushPayload.self, from: Data(#"{"v":1,"t":"finished","mac":"m1","sent":0,"title":"side-a"}"#.utf8))
     #expect(old.quiet == nil)

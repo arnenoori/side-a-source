@@ -1,7 +1,6 @@
 import SideARemoteKit
 import Testing
 
-// Every phase × event of dictation. Missing: the event leaves the phase as it was.
 @Test func everyEventFromEveryDictationPhase() {
     typealias P = DictationPhase
     let events: [P.Event] = [.refused, .started, .transcribe, .transcribed, .failed("No."), .cancelled]

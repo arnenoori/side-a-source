@@ -5,11 +5,8 @@ import SideARemoteShared
 import SwiftUI
 import UIKit
 
-/// Photos-style viewer: zooms out of its tile, pages through the session's images,
-/// pinch and double-tap zoom in a real `UIScrollView`, and drag down to send it back.
 struct ImageViewer: View {
     let images: [ImageRef]
-    /// False inside a page that has its own zoom, such as `FilePage`.
     let zooms: Bool
     @State private var current: String?
     @State private var chrome = true
@@ -106,7 +103,6 @@ struct ImageViewer: View {
         }
     }
 
-    /// The original bytes under their own type, so a PNG stays a PNG.
     private func copy() {
         let ref = image
         Task {
@@ -150,7 +146,6 @@ extension ImageViewer {
     }
 }
 
-/// One page: the thumbnail as it zooms open, the original swapped in once it's here.
 private struct ViewerPage: View {
     let ref: ImageRef
     let onTap: () -> Void
@@ -170,7 +165,6 @@ private struct ViewerPage: View {
     }
 }
 
-/// Share's item: the original file under its name, loaded when the sheet asks for it.
 private struct SharedImage: Transferable {
     let ref: ImageRef
     let store: ImageStore
@@ -188,7 +182,6 @@ private struct SharedImage: Transferable {
 }
 
 extension ImageRef {
-    /// The name it came with, else the id and the extension its type implies.
     nonisolated var fileName: String {
         if let name, !name.isEmpty { return (name as NSString).lastPathComponent }
         return "\(id.prefix(8)).\(UTType(mimeType: mime)?.preferredFilenameExtension ?? "png")"

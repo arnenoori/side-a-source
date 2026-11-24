@@ -48,7 +48,6 @@ describe('rate limits', () => {
   it('allows 30 phone requests a minute per device', async () => {
     const apns = new FakeApns();
     const { phone } = await paired(apns);
-    // pairing used one (verify)
     for (let i = 0; i < 29; i++) expect((await phoneCall(phone, 'DELETE', `/v1/device/activities/${randomId()}`)).status).toBe(204);
     expect((await phoneCall(phone, 'DELETE', `/v1/device/activities/${randomId()}`)).status).toBe(429);
   });
@@ -95,7 +94,6 @@ describe('rate limits', () => {
       expect(await response.json()).toEqual({ error: { code: 'rate_limited', message: 'Too many requests from this network', retryable: true } });
       expect(Number(response.headers.get('retry-after'))).toBeGreaterThan(0);
     }
-    // One /64 is one network.
     expect(new Set(keys).size).toBe(1);
     expect((await worker.fetch(incoming(new Request(`${BASE}/v1/health`)), flooded, context)).status).toBe(200);
   });

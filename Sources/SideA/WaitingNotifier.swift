@@ -2,7 +2,6 @@ import AppKit
 import SideACore
 import UserNotifications
 
-/// Reads Claude Code's registry directly, so nothing runs in Python while Side A's windows are closed.
 @MainActor
 final class WaitingNotifier {
     static let enabledKey = "notifyWaiting"
@@ -186,7 +185,6 @@ final class NotificationRouter: NSObject, UNUserNotificationCenterDelegate, @unc
         ])
     }
 
-    /// The account to sign in to, for the Sign In button or a click on the notification itself.
     static func signInTarget(info: [AnyHashable: Any], action: String) -> String? {
         guard action == signInAction || action == UNNotificationDefaultActionIdentifier,
               let account = info[signInKey] as? String, !account.isEmpty else { return nil }

@@ -2,8 +2,6 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// The tightest limit: the LCD plate on the Home Screen, a gauge and a line on the
-/// Lock Screen. Choosing an account arrives with the App Intent configuration.
 struct LimitWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Limit", provider: SnapshotProvider()) { entry in
@@ -20,7 +18,6 @@ struct LimitWidgetView: View {
     @Environment(\.widgetFamily) private var widgetFamily
     @Environment(\.widgetRenderingMode) private var renderingMode
     let entry: SnapshotEntry
-    /// The DEBUG gallery's family; WidgetKit's otherwise.
     var familyOverride: WidgetFamily?
     private var family: WidgetFamily { familyOverride ?? widgetFamily }
 
@@ -28,7 +25,6 @@ struct LimitWidgetView: View {
         content
             .widgetURL(URL(string: "sidea-remote://accounts"))
             .containerBackground(for: .widget) {
-                // Tinted and clear modes drop the plate for a plain fill.
                 if family == .systemSmall && renderingMode == .fullColor { LCDBackground() }
             }
     }
@@ -109,7 +105,6 @@ struct LimitWidgetView: View {
     }
 }
 
-/// The plate's glass: the LCD colour with a faint inner shade at the top, like the app's readout.
 private struct LCDBackground: View {
     var body: some View {
         Color("LCDPlate")

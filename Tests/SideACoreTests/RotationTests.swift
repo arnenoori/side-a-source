@@ -34,19 +34,15 @@ private func usage(five: Double? = nil, week: Double? = nil, fable: Double? = ni
     return AccountUsage(windows: windows, stale: stale, capacity: capacity)
 }
 
-/// Thirty days of the same activity every hour: the week's share is its share of the clock.
 private let flat = WeekRhythm((0..<30).map { offset in
     ActivitySpan(date: Date(timeIntervalSince1970: now - Double(offset) * day).formatted(.iso8601.year().month().day()), hours: Array(repeating: 10, count: 24))
 })!
 
 @Test func limitedTakesBothTheMoveAtAndARealLimit() {
-    // A low Move at leaves an account Autopilot skips, but it isn't limited yet.
     #expect(!Planner.isLimited(usage(five: 85), now: now, full: 80))
-    // A high Move at keeps using it at 98, so Limited would be a lie there too.
     #expect(!Planner.isLimited(usage(five: 98), now: now, full: 99))
     #expect(Planner.isLimited(usage(five: 99), now: now, full: 99))
     #expect(Planner.isLimited(usage(week: 100), now: now, full: 95))
-    // A window that already reset holds nothing.
     let spent = AccountUsage(windows: [UsageWindow(id: "five_hour", label: "5-hour", percent: 100, resetsAt: now - 1)])
     #expect(!Planner.isLimited(spent, now: now, full: 95))
 }
@@ -56,9 +52,7 @@ private let flat = WeekRhythm((0..<30).map { offset in
     #expect(!Planner.isLimited(out, now: now, full: 95))
     #expect(Planner.isFableOut(out, now: now, full: 95))
     #expect(Planner.backAt(out, now: now, full: 95) == now + 2 * day)
-    // A plan without a Fable cap bills it as extra usage instead.
     #expect(!Planner.isFableOut(usage(five: 10, week: 20, capacity: 1), now: now, full: 95))
-    // Limited outright says only that.
     let both = usage(five: 100, week: 20, fable: 100, capacity: 5)
     #expect(Planner.isLimited(both, now: now, full: 95) && !Planner.isFableOut(both, now: now, full: 95))
     #expect(Planner.backAt(both, now: now, full: 95) == now + 3600)
@@ -84,26 +78,21 @@ private let flat = WeekRhythm((0..<30).map { offset in
 
 @Test func combinedRunOutFallsWhereTheHoursSay() throws {
     let a = account("A"), b = account("B")
-    // Half a week gone on both: 90 of 100 used on each is 180 a week each, 360 together, so the 20 left lasts about 9 hours.
     let tight = ["A": usage(week: 90, weekResets: now + 3.5 * day), "B": usage(week: 90, weekResets: now + 3.5 * day)]
     let out = try #require(CombinedRunOut.estimate([a, b], usage: tight, rhythm: flat, now: now))
     #expect(abs(out - (now + 20.0 / 360 * 7 * day)) < 3600)
 
-    // A plan's size counts: Max is twenty Pros, so the same percentages on a mixed pair last just as long, not longer.
     let mixed = ["A": usage(week: 90, capacity: 20, weekResets: now + 3.5 * day), "B": usage(week: 90, capacity: 1, weekResets: now + 3.5 * day)]
     let weighted = try #require(CombinedRunOut.estimate([a, b], usage: mixed, rhythm: flat, now: now))
     #expect(abs(weighted - out) < 3600)
 
-    // Slow use never empties them before quota comes back.
     let easy = ["A": usage(week: 30, weekResets: now + 3.5 * day), "B": usage(week: 10, weekResets: now + 3.5 * day)]
     #expect(CombinedRunOut.estimate([a, b], usage: easy, rhythm: flat, now: now) == nil)
 
-    // A reset refills an account: the same burn outlives a pair whose first week ends soon.
     let refilled = ["A": usage(week: 95, weekResets: now + 0.1 * day), "B": usage(week: 60, weekResets: now + 3.5 * day)]
     let later = CombinedRunOut.estimate([a, b], usage: refilled, rhythm: flat, now: now)
     #expect(later.map { $0 > now + 0.1 * day } ?? true)
 
-    // An account whose week hasn't started is all room and adds no pace.
     let fresh = ["A": usage(week: 90, weekResets: now + 3.5 * day), "B": usage()]
     let longer = try #require(CombinedRunOut.estimate([a, b], usage: fresh, rhythm: flat, now: now) ?? Optional(now + 8 * day))
     #expect(longer > out)
@@ -113,15 +102,12 @@ private let flat = WeekRhythm((0..<30).map { offset in
     let a = account("A"), b = account("B")
     let good = ["A": usage(week: 90, weekResets: now + 3.5 * day), "B": usage(week: 90, weekResets: now + 3.5 * day)]
     #expect(CombinedRunOut.estimate([a, b], usage: good, rhythm: flat, now: now) != nil)
-    // No rhythm yet, no members, a member never read, a member signed out.
     #expect(CombinedRunOut.estimate([a, b], usage: good, rhythm: nil, now: now) == nil)
     #expect(CombinedRunOut.estimate([], usage: good, rhythm: flat, now: now) == nil)
     #expect(CombinedRunOut.estimate([a, b], usage: ["A": good["A"]!], rhythm: flat, now: now) == nil)
     #expect(CombinedRunOut.estimate([a, b], usage: ["A": good["A"]!, "B": usage(week: 90, stale: true, weekResets: now + 3.5 * day)], rhythm: flat, now: now) == nil)
-    // Under a day of any week to read a pace from, and no use at all.
     #expect(CombinedRunOut.estimate([a], usage: ["A": usage(week: 80, weekResets: now + 6.5 * day)], rhythm: flat, now: now) == nil)
     #expect(CombinedRunOut.estimate([a], usage: ["A": usage(week: 0, weekResets: now + 3.5 * day)], rhythm: flat, now: now) == nil)
-    // A burst a day into a week doesn't read as that pace for the whole week.
     let burst = CombinedRunOut.estimate([a], usage: ["A": usage(week: 50, weekResets: now + 5.9 * day)], rhythm: flat, now: now)
     #expect(burst.map { $0 > now + 1.5 * day } ?? true)
 }

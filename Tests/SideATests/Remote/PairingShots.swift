@@ -35,7 +35,6 @@ private let shots = ProcessInfo.processInfo.environment["SIDEA_PAIR_SHOTS"].map 
     }
 }
 
-/// Up to a minute by the clock, not 500 sleeps that a loaded machine stretches without bound or cuts short.
 @MainActor private func until(_ what: @autoclosure () -> Bool) async throws {
     let end = Date().addingTimeInterval(60)
     while !what(), Date() < end { try await Task.sleep(for: .milliseconds(10)) }
@@ -66,7 +65,6 @@ private let shots = ProcessInfo.processInfo.environment["SIDEA_PAIR_SHOTS"].map 
     }
 }
 
-/// Pair iPhone… is never just greyed out: until a phone could reach the sheet, the row says what's in the way.
 @MainActor @Test func pairIPhoneSaysWhatItWaitsFor() async throws {
     let gate = DispatchSemaphore(value: 0)
     let starting = try Rig(signs: { _ in gate.wait(); return true })
@@ -81,7 +79,6 @@ private let shots = ProcessInfo.processInfo.environment["SIDEA_PAIR_SHOTS"].map 
     #expect(refused.remote.server == nil)
 }
 
-/// Paired shows once the phone has its token, and the device is in the list by then.
 @MainActor @Test func theSheetSaysPairedOnlyOnceTheDeviceIsSaved() async throws {
     let rig = try Rig()
     defer { rig.stop() }

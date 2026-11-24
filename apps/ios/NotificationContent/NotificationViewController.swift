@@ -4,9 +4,6 @@ import UIKit
 import UserNotifications
 import UserNotificationsUI
 
-/// The long-press view for QUESTION, PLAN and the REQUEST categories. SwiftUI in a
-/// hosting controller, sized by the content's own height. A question answers from here; a plan and
-/// a request keep the category's actions below.
 final class NotificationViewController: UIViewController, UNNotificationContentExtension {
     nonisolated deinit {}
 
@@ -52,7 +49,6 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
         }
     }
 
-    /// The category's buttons, while the card is up: a typed answer or one of the actions.
     func didReceive(_ response: UNNotificationResponse, completionHandler completion: @escaping (UNNotificationContentExtensionResponseOption) -> Void) {
         guard let card else { return completion(.dismissAndForwardAction) }
         if let typed = response as? UNTextInputNotificationResponse,
@@ -67,7 +63,6 @@ final class NotificationViewController: UIViewController, UNNotificationContentE
         }
     }
 
-    /// "Write your own…": the question's actions become one text field.
     private func offerTextInput() {
         extensionContext?.notificationActions = [
             UNTextInputNotificationAction(identifier: NotificationCategories.Action.writeOwn, title: "Write Your Own…",

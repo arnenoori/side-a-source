@@ -1,8 +1,6 @@
 import Foundation
 import Observation
 
-/// Keyed by field (a session's id, or New Session's draft) so a failed recording survives the composer closing or the
-/// app quitting.
 @Observable
 final class DictationShelf {
     nonisolated deinit {}
@@ -44,7 +42,6 @@ final class DictationShelf {
         keys.remove(key)
     }
 
-    /// Reversible, so the keys come back from the folder after a relaunch.
     private static func url(_ key: String) -> URL {
         let name = Data(key.utf8).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
@@ -58,7 +55,6 @@ final class DictationShelf {
         return Data(base64Encoded: base).flatMap { String(data: $0, encoding: .utf8) }
     }
 
-    /// Files only: the kept folder itself can be older than a day.
     private static func sweep() {
         let manager = FileManager.default
         for folder in [DictationRecorder.folder, folder] {

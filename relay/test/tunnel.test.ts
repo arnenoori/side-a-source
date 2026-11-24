@@ -7,7 +7,6 @@ import { BASE, type Mac, type Phone, nth, call, context, incoming, newMac, newPh
 
 afterEach(() => vi.restoreAllMocks());
 
-// One end of a tunnel socket, as the Mac or the phone holds it.
 class End {
   messages: (string | ArrayBuffer)[] = [];
   closed?: { code: number; reason: string };
@@ -26,7 +25,6 @@ class End {
   send(data: string | Uint8Array) { this.ws.send(data); }
 
   async until<T>(find: () => T | undefined, what: string): Promise<T> {
-    // A deadline, not a count of polls: under load each 5 ms wait can take far longer.
     for (const deadline = Date.now() + 10_000; Date.now() < deadline;) {
       const found = find();
       if (found !== undefined) return found;
@@ -39,7 +37,6 @@ class End {
     return this.until(() => this.messages.filter(m => typeof m === 'string').map(m => JSON.parse(m)).find(m => m.type === type), type);
   }
 
-  // Takes the frame so the next call finds the one after it.
   frame(type?: number) {
     return this.until(() => {
       const index = this.messages.findIndex(m => typeof m !== 'string' && (type === undefined || parseFrame(m)!.type === type));
@@ -118,7 +115,6 @@ describe('the Mac socket', () => {
     const second = (await connectMac(mac)).end!;
     expect((await macEnd.closing()).code).toBe(CLOSE.replaced);
     second.send(await deviceList(...phones));
-    // The phone hears the Mac go and come back, so it drops streams that were with the old socket.
     await phone.until(() => phone.messages.filter(m => m === '{"type":"mac","online":true}').length >= 2 ? true : undefined, 'online again');
     expect(phone.messages).toContain('{"type":"mac","online":false}');
   });
@@ -214,7 +210,6 @@ describe('phones', () => {
     const { stream } = await macEnd.frame(FRAME.open);
     phone.ws.close(1000, '');
     expect(await macEnd.control('gone')).toEqual({ type: 'gone', slot: stream >>> 16 });
-    // Late bytes for a phone that has gone come back as a reset.
     macEnd.send(frame(FRAME.data, stream, utf8('late')));
     expect((await macEnd.frame(FRAME.reset)).stream).toBe(stream);
   });
@@ -316,7 +311,6 @@ describe('pairing over the relay', () => {
     const open = await macEnd.frame(FRAME.open);
     expect(JSON.parse(new TextDecoder().decode(open.payload))).toEqual({ pairing: true });
 
-    // Closing the sheet lets the pairing under way finish but starts no new one.
     macEnd.send(JSON.stringify({ type: 'pairing' }));
     await macEnd.processed();
     expect((await connectPhone(ticketed(mac, ticket))).response.status).toBe(403);
@@ -341,7 +335,6 @@ describe('pairing over the relay', () => {
       await end!.control('mac');
       macEnd.send(JSON.stringify({ type: 'pairing' }));
       await macEnd.processed();
-      // Scheduled for when the grace ends, and not closed before then.
       const scheduled = await runInDurableObject(object(mac), (_: any, state: DurableObjectState) => state.storage.getAlarm());
       expect(scheduled).toBeLessThanOrEqual(Date.now() + TUNNEL.pairGrace);
       expect(end!.closed).toBeUndefined();
@@ -371,7 +364,6 @@ describe('pairing over the relay', () => {
       await real.end!.control('mac');
       expect((await first.end!.closing()).code).toBe(CLOSE.noPairing);
       expect(second.end!.closed).toBeUndefined();
-      // The open ticket's own sockets are still limited, and its pairing isn't what the grace ends.
       expect((await connectPhone(ticketed(mac, fresh))).response.status).toBe(101);
       expect((await connectPhone(ticketed(mac, fresh))).response.status).toBe(429);
       await pastGrace(mac);
@@ -453,8 +445,6 @@ describe('pairing over the relay', () => {
     for (let stream = 1; stream <= TUNNEL.pairStreams; stream++) phone.send(frame(FRAME.open, stream));
     const opens = [];
     for (let i = 0; i < TUNNEL.pairStreams; i++) opens.push(await macEnd.frame(FRAME.open));
-    // One ends with a FIN each way and one with a reset: two more may open. A FIN from one side only (stream 3)
-    // still counts, so opening and half-closing can't get past the limit.
     macEnd.send(frame(FRAME.fin, nth(opens, 0).stream));
     const fin = await phone.frame(FRAME.fin);
     phone.send(frame(FRAME.fin, fin.stream));
@@ -479,7 +469,6 @@ describe('pairing over the relay', () => {
     for (let i = 0; i < TUNNEL.pairStreams; i++) await macEnd.frame(FRAME.open);
     macEnd.ws.close(1000);
     await phone.until(() => phone.messages.filter(m => typeof m === 'string').map(m => JSON.parse(m)).find(m => m.type === 'mac' && !m.online), 'mac offline');
-    // The phone ends one stream with a FIN and is answered with a reset, since no Mac holds the other half.
     phone.send(frame(FRAME.fin, 1));
     expect((await phone.frame(FRAME.reset)).stream).toBe(1);
     const back = (await connectMac(mac)).end!;
@@ -602,7 +591,6 @@ describe('the tunnel and the install', () => {
     expect((await macEnd.closing()).code).toBe(CLOSE.revoked);
     expect((await phoneEnd!.closing()).code).toBe(CLOSE.revoked);
     expect((await connectMac(mac)).response.status).toBe(401);
-    // The phone's socket closing after the erase mustn't write its slot back into the object.
     await new Promise(resolve => setTimeout(resolve, 50));
     const stub = env.INSTALLS.get(env.INSTALLS.idFromName(mac.installId));
     const tables = await runInDurableObject(stub, (_, state) =>
@@ -614,7 +602,6 @@ describe('the tunnel and the install', () => {
     const mac = await newMac();
     const next = await newMac();
     let reads = 0;
-    // The first read is the key the signature is checked with; the second, the key after a rotation landed meanwhile.
     const object = new Tunnel({} as DurableObjectState, () => (reads++ === 0 ? mac.publicKey : next.publicKey));
     const request = await signed(mac, 'GET', '/v1/tunnel/mac', undefined, { headers: upgrade });
     expect(await object.accept(request, 'mac')).toMatchObject({ status: 401, code: 'unauthorized' });

@@ -3,8 +3,6 @@ import Foundation
 import SideACore
 import Testing
 
-/// A fake Claude Code in a pane of a tmux server of its own, where the user's servers live, found the way a real
-/// session's pane is: by its process.
 private final class OwnTmux {
     let base = URL(fileURLWithPath: "/tmp").appendingPathComponent("sa-type-\(UUID().uuidString.prefix(8))")
     let socket = "/private/tmp/tmux-\(getuid())/sidea-type-\(UUID().uuidString.prefix(8))"
@@ -41,8 +39,6 @@ private final class OwnTmux {
     }
 }
 
-/// A session in the user's own tmux pane takes the message as typed input, past an Enter the CLI swallows, and
-/// nothing is sent over a draft or a dialog.
 @Test func aMessageIsTypedIntoASessionsOwnTmuxPane() async throws {
     let pane = OwnTmux()
     guard !pane.tmux.isEmpty else { return }
@@ -76,4 +72,35 @@ private final class OwnTmux {
         throw error
     }
     await asking.stop()
+}
+
+@MainActor @Test func settingsChangeInASessionsOwnTmuxPaneThroughClaudesPickers() async throws {
+    let own = OwnTmux()
+    guard !own.tmux.isEmpty else { return }
+    let hosted = HostedSessions(root: own.base, bridge: { _ in Data() })
+    do {
+        let pid = try await own.start()
+        let pane = try #require(await TerminalFocus.tmuxPane(of: pid))
+        await TerminalTyping.lock(pane)
+        var done = try await hosted.change(own: pane, model: "claude-sonnet-5-5", effort: "high", mode: nil)
+        #expect(done == .init(model: "claude-sonnet-5-5", effort: "high"))
+        #expect(own.lines() == ["MODEL Sonnet 5.5 high"])
+        done = try await hosted.change(own: pane, model: nil, effort: nil, mode: "plan")
+        let footer = await own.screen()
+        #expect(done.mode == "plan" && Hosting.claudeMode(screen: footer) == "plan")
+        TerminalTyping.unlock(pane)
+
+        await TerminalTyping.lock(pane)
+        let reply = Task { try await TerminalTyping.type("Please continue", into: pid, agent: .claude) }
+        // swiftlint:disable:next sleep_as_sync_in_tests sleep_literal_in_tests -- proving nothing is typed while the lock is held
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(!own.lines().contains("'Please continue'"), "\(own.lines())")
+        TerminalTyping.unlock(pane)
+        try await reply.value
+        #expect(own.lines().last == "'Please continue'")
+    } catch {
+        await own.stop()
+        throw error
+    }
+    await own.stop()
 }

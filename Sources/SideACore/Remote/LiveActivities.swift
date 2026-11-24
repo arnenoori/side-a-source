@@ -88,8 +88,6 @@ public struct LiveActivities: Sendable {
         let busy = next.working + next.waiting > 0
         if busy { idleSince = nil } else if idleSince == nil { idleSince = now }
         if busy, state.working + state.waiting == 0 { cards = cards.filter { $0.value != .dismissed && $0.value != .gaveUp } }
-        // A request arriving or settling goes at once: one answered elsewhere mustn't sit on the Lock Screen with its
-        // Allow and Deny until a low-priority update gets through. Only the working count can wait.
         let urgent = next.waiting != state.waiting || next.topRequest != state.topRequest
         state = next
         var actions: [Action] = []

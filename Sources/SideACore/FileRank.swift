@@ -5,7 +5,6 @@ import Foundation
 public enum FileRank {
     public static func matches(_ query: String, in paths: [String], limit: Int = 40) -> [String] {
         let query = query.lowercased()
-        // Nothing typed yet: the files nearest the top of the folder.
         guard !query.isEmpty else { return Array(paths.sorted { depth($0) == depth($1) ? $0 < $1 : depth($0) < depth($1) }.prefix(limit)) }
         var scored: [(score: Int, path: String)] = []
         for path in paths {

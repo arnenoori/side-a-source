@@ -2,7 +2,6 @@ import Foundation
 import SideAProtocol
 
 extension MacTools {
-    /// What the demo's handoff shows: the earlier Claude conversation behind "Add LAN mode", and the prompt Codex was given.
     func demoEarlierPage(_ conversation: String, now: Date = .now) -> TranscriptPage {
         let t = now.timeIntervalSince1970
         let messages = [
@@ -20,8 +19,6 @@ extension MacTools {
 }
 
 extension DemoData {
-    /// The 1.2 rows: a pull request on a session that is working and on one that has finished, a handoff, a failure the Mac
-    /// recognised and a snooze, so each has something to show in the demo.
     static func withNewRows(_ rows: [RemoteSession], at t: Timestamp) -> [RemoteSession] {
         var live = rows
         for index in live.indices {

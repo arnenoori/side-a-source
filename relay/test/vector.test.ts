@@ -1,7 +1,3 @@
-// The push known-answer vector from SideAProtocol (Fixtures/v1/PushVector.request-v2.json and
-// Envelope.request-v2.bin: envelope version 2, length-prefixed AAD), computed independently of the
-// Swift and relay code. The relay can't open envelopes and mustn't; it has to accept a real one,
-// relay it byte for byte, and agree on installId and macID.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fixture from '../../Packages/SideAProtocol/Sources/SideAProtocolFixtures/Fixtures/v1/PushVector.request-v2.json';
 import { b64url, fromB64url } from '../src/bytes';

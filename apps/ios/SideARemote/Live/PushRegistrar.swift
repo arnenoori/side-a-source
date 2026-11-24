@@ -7,10 +7,6 @@ import SideARemoteShared
 import UIKit
 import UserNotifications
 
-/// This iPhone's APNs token on its way to the Mac: `POST /v1/devices/push` on every connection
-/// and whenever the token or the notification settings change. The Mac registers it with the relay,
-/// which sends one silent push to prove the token is ours; `RelayDevice` answers it. A new token also goes
-/// straight to the relay, so pushes follow it while the Mac is out of reach.
 @MainActor
 final class PushRegistrar {
     nonisolated deinit {}
@@ -22,30 +18,23 @@ final class PushRegistrar {
     private let reportToRelay: (String) async -> Bool
     private let retryWait: Duration
 
-    init(defaults: UserDefaults = UserDefaults(suiteName: SharedStorage.appGroup) ?? .standard, retryWait: Duration = .seconds(5),
+    init(defaults: UserDefaults = SharedStorage.defaults, retryWait: Duration = .seconds(5),
          reportToRelay: @escaping (String) async -> Bool = { token in
              await RelayDevice.report(token: token, bundleID: PushRegistrar.bundleID, environment: PushRegistrar.environment)
          }) {
         self.defaults = defaults; self.retryWait = retryWait; self.reportToRelay = reportToRelay
     }
     private static let tokenKey = "push.apnsToken"
-    /// A new token some relay hasn't heard of yet, for want of a connection.
     private static let relayOwedKey = "push.relayOwed"
 
-    /// Hex, as APNs gave it; nil until notifications are allowed and iOS hands one over.
     var apnsToken: String? { defaults.string(forKey: Self.tokenKey) }
 
-    /// Called whenever a token changes, one per paired Mac by its id; each link reports it to its own Mac,
-    /// which registers it with its own relay install.
     var observers: [String: () -> Void] = [:]
 
     private func onChange() { for observer in observers.values { observer() } }
 
-    /// ActivityKit's token for starting this app's Live Activity by push (iOS 17.2+).
     private(set) var pushToStartToken: String?
-    /// Each running activity's update token, by activity id: the Mac learns activity ids only from these.
     private(set) var activityTokens: [String: String] = [:]
-    /// Each running activity's `MacActivityAttributes.macID`, the only thing that says whose it is.
     private var activityMacs: [String: String] = [:]
     private var watching = false
     private var retrying: Task<Void, Never>?
@@ -68,8 +57,6 @@ final class PushRegistrar {
         reportOwed()
     }
 
-    /// A token the relay hasn't heard is sent again until it has: now, and then after a wait that doubles, and at once
-    /// when the app comes forward or the network changes (each of those calls this again).
     func reportOwed() {
         guard defaults.bool(forKey: Self.relayOwedKey), apnsToken != nil else { return }
         retrying?.cancel()
@@ -88,8 +75,6 @@ final class PushRegistrar {
         }
     }
 
-    /// What a Mac hands the relay: the token, which app it belongs to (the `apns-topic`), which APNs
-    /// host (fixed by the build configuration), and what the user wants to hear about from that Mac.
     func registration(for macID: String) -> PushRegistration? {
         guard let apnsToken else { return nil }
         return PushRegistration(apnsToken: apnsToken, bundleID: Self.bundleID,
@@ -97,13 +82,10 @@ final class PushRegistrar {
                                 activityTokens: activityTokens, prefs: .stored(for: macID))
     }
 
-    /// `SideAAPNsEnvironment` from the xcconfigs: sandbox in Debug, production in Release.
     static var environment: PushRegistration.Environment {
         (Bundle.main.object(forInfoDictionaryKey: "SideAAPNsEnvironment") as? String).map(PushRegistration.Environment.init) ?? .production
     }
 
-    /// Once per launch: the push-to-start token, then every activity's tokens as it starts (by push,
-    /// with the app launched in the background) and until it ends or is swiped away.
     func watchActivities() {
         guard !watching else { return }
         watching = true
@@ -137,7 +119,6 @@ final class PushRegistrar {
         }
         Task {
             for await state in activity.activityStateUpdates where state == .ended || state == .dismissed {
-                // Swiped away or over: the Mac stops updating it and won't start another until it next goes busy.
                 activityMacs[activity.id] = nil
                 await RelayDevice.deleteActivity(activity.id, macID: macID)
                 if activityTokens.removeValue(forKey: activity.id) != nil { onChange() }
@@ -145,7 +126,6 @@ final class PushRegistrar {
         }
     }
 
-    /// Live Activity off for a Mac in Settings: nothing updates its card any more, so none stays up with Allow and Deny frozen on it.
     func endActivitiesIfOff() {
         Task {
             for activity in Activity<MacActivityAttributes>.activities {
@@ -157,11 +137,9 @@ final class PushRegistrar {
         onChange()
     }
 
-    /// The demo's activity is its own, and goes with the demo.
     static func endsWhenOff(macID: String, enabled: Bool) -> Bool { !enabled && macID != NotificationAnswer.demoMac }
 
-    /// Every running activity's update token to its Mac's relay, which is what the relay's updates and ends look up. The
-    /// relay drops them with a new device token and refuses them until the device is proven, so this runs after both.
+    /// The relay drops these with a new device token and refuses them until the device is proven, so this runs after both.
     func reportActivities() async {
         for (id, token) in activityTokens {
             guard let macID = activityMacs[id] else { continue }
@@ -189,8 +167,6 @@ final class PushRegistrar {
 }
 
 extension NotificationPrefs {
-    /// The Notifications and Live Activity switches on a Mac's page in Settings. Each Mac keeps its own under
-    /// `<key>.<macID>`; until one is set, it reads the switch from when there was one for every Mac.
     enum Key: String, CaseIterable {
         case requests = "notify.requests", questions = "notify.questions", plans = "notify.plans", finished = "notify.finished"
         case limits = "notify.limits", health = "notify.health", rotation = "notify.rotation", macQuiet = "notify.macQuiet"
@@ -212,16 +188,12 @@ extension NotificationPrefs {
                                  rotation: flag(.rotation))
     }
 
-    /// A forgotten Mac's switches go with it.
     static func forget(macID: String, in defaults: UserDefaults = .standard) {
         for key in Key.allCases { defaults.removeObject(forKey: key.key(mac: macID)) }
     }
 }
 
-/// The phone's own narrow way to the relay, with its `d1.<install>.<device>.<secret>` bearer: answering the
-/// token check, and token refreshes while the Mac is out of reach.
 enum RelayDevice {
-    /// The relay's silent check, `{"verify": {"install", "device", "challenge"}}`: true when it was ours and answered.
     static func answer(_ userInfo: [AnyHashable: Any]) async -> Bool {
         guard let verify = userInfo["verify"] as? [String: Any], let install = verify["install"] as? String,
               let device = verify["device"] as? String, let challenge = verify["challenge"] as? String,
@@ -272,8 +244,6 @@ enum RelayDevice {
         macs.first { $0.relayInstallID.map(activityMacID(install:)) == macID }
     }
 
-    /// `PUT /v1/device/activities/{id}`: the update token, without which the relay answers `gone` to every update and end.
-    /// Best effort: the next connection or token change sends it again.
     static func putActivity(_ id: String, token: String, macID: String, bundleID: String, environment: PushRegistration.Environment,
                             macs: [PairedMac] = PairedMac.all(), send: Send = deliver) async {
         guard let mac = mac(activity: macID, in: macs), var request = request("PUT", "device/activities/\(id)", mac: mac) else { return }
@@ -281,7 +251,6 @@ enum RelayDevice {
         await activityCall(request, doing: "activity token", mac: mac, send: send)
     }
 
-    /// `DELETE /v1/device/activities/{id}`: it ended or was swiped away.
     static func deleteActivity(_ id: String, macID: String, macs: [PairedMac] = PairedMac.all(), send: Send = deliver) async {
         guard let mac = mac(activity: macID, in: macs), let request = request("DELETE", "device/activities/\(id)", mac: mac) else { return }
         await activityCall(request, doing: "activity end", mac: mac, send: send)

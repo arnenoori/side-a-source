@@ -190,7 +190,6 @@ public struct IslandRequest: Sendable, Equatable {
     public var headline: String { DisplayText.escaped(action.headline) }
     public var detail: String { DisplayText.escaped(action.detail) }
 
-    /// Hidden characters or padding somewhere in what the user is asked to judge.
     public var hidesText: Bool {
         action.shownText.contains { DisplayText.suspicious($0, longLines: action.isOneLiner) } || DisplayText.suspicious(reason ?? "", longLines: false)
     }
@@ -273,12 +272,9 @@ extension IslandRisk {
         (#"\bosascript\b"#, "Scripts other apps"),
         (#"\bcrontab\s|\blaunchctl\s+(load|bootstrap|enable|submit)\b"#, "Schedules something to run later"),
     ]
-    /// The agents' own settings and hooks: a bad write there changes what every session may do.
     private static let agentConfig = #"(^|/)\.claude/(settings(\.local)?\.json$|hooks/)|(^|/)\.codex/(hooks\.json|config\.toml)$|(^|/)\.claude\.json$"#
     private static let secretPaths = #"(^|/)(\.ssh/|\.aws/|\.gnupg/|\.netrc$|\.env(\.|$)|id_(rsa|ed25519|ecdsa)|\.npmrc$|\.pypirc$|Keychains/|credentials(\.json)?$)"#
-    /// A template of an environment file holds no secrets.
     private static let secretTemplates = #"\.env\.(example|sample|template|dist)$"#
-    /// What runs by itself later: a shell's startup files, launch agents, a repository's hooks and config.
     private static let runsLater = #"(^|/)\.(zshrc|zshenv|zprofile|zlogin|bashrc|bash_profile|profile)$|(^|/)Library/Launch(Agents|Daemons)(/|$)|(^|/)\.git/(hooks(/|$)|config$)"#
 
     /// A command whose effect can't be read off it: inline code for an interpreter, a nested shell, process
@@ -321,7 +317,6 @@ extension IslandRisk {
         }
     }
 
-    /// Inline code that runs something or reaches for what runs later.
     private static let inlineRuns = #"\brm\b|\bunlink\b|\brmtree\b|\bsystem\s*\(|\bpopen\b|\bsubprocess\b|\bchild_process\b|\bexec[a-z]*\s*\(|\bspawn[a-zA-Z]*\s*\(|\bshell_exec\b|\.git\b|\bhooks\b|\.claude\b|\.codex\b|\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b|LaunchAgents"#
 
     /// Why a command needs Face ID, or nil. The rules are advice, not a boundary: they read the raw text and, word by
@@ -399,7 +394,6 @@ extension IslandRisk {
 }
 
 public enum IslandAnswer: Sendable, Equatable {
-    /// Keep Planning: the plan is denied with what should change.
     public static func revisePlan(_ text: String) -> IslandAnswer { .deny("The user wants changes to the plan before you start: \(text)") }
 
     case allow, always(IslandSuggestion), deny(String?), terminal

@@ -2,7 +2,6 @@ import Foundation
 import SideAProtocol
 
 extension MacTools.Demo {
-    /// What the demo's New Session and composer offer: the demo sessions' folders, and a short model list.
     static func sample(_ sessions: [RemoteSession], now: Date = .now) -> Self {
         let efforts: [Effort] = [.auto, .low, .medium, .high, .xhigh, .max]
         let claude = [ModelOption(id: "claude-opus-5-5", title: "Opus 5.5", agent: .claude, efforts: efforts, defaultEffort: .auto),
@@ -20,7 +19,6 @@ extension MacTools.Demo {
                                           liveSessions: sessions.filter { $0.cwd == cwd }.count))
         }
         projects.append(RemoteProject(path: "~/Documents/notes", name: "notes", lastUsedAt: now.timeIntervalSince1970 - 86_400 * 3))
-        // As the Mac lists them: the built-ins, then the user's own commands and skills.
         let claudeCommands = [("/compact", "Summarize the conversation to free up context"), ("/clear", "Start over with an empty conversation"),
                               ("/review", "Review a pull request"), ("/model", "Choose the model"), ("/effort", "Choose how hard Claude thinks"),
                               ("/context", "Show what fills the context"), ("/init", "Write a CLAUDE.md for this project"),

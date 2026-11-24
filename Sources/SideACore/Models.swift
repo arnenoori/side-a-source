@@ -72,12 +72,10 @@ public struct Configuration: Codable, Equatable, Sendable {
     public func wasRemoved(_ email: String, _ provider: AgentProvider) -> Bool {
         removedLogins?.contains(Self.loginKey(email, provider)) == true
     }
-    /// Removing an account remembers its login; an account without an email has none to remember.
     public mutating func noteRemoved(_ account: Account) {
         guard !account.email.isEmpty, !wasRemoved(account.email, account.provider) else { return }
         removedLogins = (removedLogins ?? []) + [Self.loginKey(account.email, account.provider)]
     }
-    /// Signing an account in, or adding it by hand, takes back its removal.
     public mutating func forgetRemoval(_ email: String, _ provider: AgentProvider) {
         guard wasRemoved(email, provider) else { return }
         removedLogins?.removeAll { $0 == Self.loginKey(email, provider) }
@@ -145,7 +143,6 @@ public extension AccountUsage {
     /// smaller of what is left of the Fable cap and twice what is left of the weekly limit.
     /// Nil for a plan without a Fable cap, where Fable is billed as extra usage.
     var forFable: AccountUsage? {
-        // ponytail: assumes the Fable percent is of the Fable cap (100 = limited), like every other window.
         let fable = windows.first { $0.id == "model:fable" }
         // A Max plan whose usage lists no Fable cap yet has its whole Fable share left.
         guard fable != nil || (capacity ?? 1) >= 5 else { return nil }

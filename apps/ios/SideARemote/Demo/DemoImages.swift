@@ -1,8 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// Images the demo serves in place of `GET /v1/images/{id}`: drawn once, so the bundle carries no
-/// screenshots of real apps.
 @MainActor
 enum DemoImages {
     private static var cache: [String: UIImage] = [:]
@@ -17,7 +15,6 @@ enum DemoImages {
     }
 }
 
-/// A stand-in phone screen: a list app with a status pill, varied by the seed.
 private struct MockScreen: View {
     let seed: String
 

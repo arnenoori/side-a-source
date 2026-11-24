@@ -22,7 +22,6 @@ private func titles(_ query: String) -> [String] { SettingsEntry.matching(query)
     #expect(titles("privcy").first == "Privacy")
     #expect(titles("cafeinate") == ["Keep awake while agents work"])
     #expect(titles("autopliot").first == "Autopilot")
-    // Too short to guess at: three letters have to be right.
     #expect(titles("xyz").isEmpty)
     #expect(titles("qqqqqq").isEmpty)
 }
@@ -34,14 +33,12 @@ private func titles(_ query: String) -> [String] { SettingsEntry.matching(query)
 }
 
 @Test func settingsSearchPutsTheTitleFirst() {
-    // "pool" is in three titles and one entry's other words; the titles lead.
     let pool = titles("pool")
     #expect(Set(pool.prefix(2)) == ["Pool mode", "Test Pool"])
     #expect(titles("island").prefix(2) == ["Dynamic Island", "Island shortcuts"])
 }
 
 @Test func settingsSearchShowsTheNearestWhenNothingHasEveryTerm() {
-    // No entry is about both; either beats an empty window.
     let near = titles("notch zzzzzz")
     #expect(!near.isEmpty)
     #expect(near.allSatisfy { title in SettingsEntry.all.first { $0.title == title }?.tab == .notifications })

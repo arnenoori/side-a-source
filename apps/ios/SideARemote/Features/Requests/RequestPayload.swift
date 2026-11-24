@@ -2,7 +2,6 @@ import SideAProtocol
 import SideARemoteShared
 import SwiftUI
 
-/// What Allow would approve, all of it: the command, or the file and the change to it, removed lines red and added green.
 struct RequestPayload: View {
     let request: RemoteRequest
 
@@ -25,7 +24,6 @@ struct RequestPayload: View {
         .privacySensitive()
     }
 
-    /// The full path, wrapping rather than cut: which file it is can matter as much as the change.
     private func file(_ path: String) -> some View {
         Text(Self.styled(path.abbreviatingHome, mark: ""))
             .font(.footnote.monospaced())
@@ -54,7 +52,6 @@ struct RequestPayload: View {
         return text
     }
 
-    /// A unified diff as it came, its added and removed lines tinted.
     static func patch(_ patch: String) -> AttributedString {
         var text = AttributedString()
         let lines = RequestText.lines(patch)
@@ -66,7 +63,6 @@ struct RequestPayload: View {
         return text
     }
 
-    /// Tinted by its mark, and anything hidden in it as an escape that stands out from the line.
     static func styled(_ line: String, mark: String) -> AttributedString {
         var text = AttributedString()
         for segment in RequestText.segments(line) {
@@ -94,14 +90,10 @@ struct RequestPayload: View {
 }
 
 extension RemoteRequest {
-    /// Allow from a Sessions row's swipe, a full swipe included: what the row shows whole, and nothing that needs Face ID.
     var allowsFromRow: Bool { !isQuestion && allowGate != .biometric && fitsRow }
 
-    /// Allow straight from the card: all of it shows there, so nothing waits for the sheet. A plan is reviewed, not allowed.
     func allowsOnCard(whole: Bool) -> Bool { whole && !truncated && plan == nil }
 
-    /// Short enough that a Sessions row's two lines show all of it, so its swipe can Allow; the change of an edit
-    /// never shows on a row, and a swipe never allows what needed an escape to be seen.
     var fitsRow: Bool {
         if truncated || [headline, detail, reason ?? ""].contains(where: RequestText.hasEscapes) { return false }
         // Any line break: `\r\n` is one Character, so looking for "\n" misses it.

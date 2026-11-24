@@ -22,7 +22,6 @@ final class NotificationAnswerTests: XCTestCase {
         try Outbox(file: FileManager.default.temporaryDirectory.appendingPathComponent("answers-\(UUID().uuidString).sqlite"))
     }
 
-    /// A notification's Allow and the app's are one outbox item, so whichever goes second is a replay.
     func testANotificationsAnswerIsTheItemTheAppMakes() async throws {
         let engine = SyncEngine(endpoint: endpoint, credentials: NoToken(), outbox: try outbox(), transport: Silent())
         for answer in [RemoteAnswer.allow(confirmDestructive: false), .deny(message: nil), .approvePlan(acceptEdits: true)] {
@@ -31,8 +30,6 @@ final class NotificationAnswerTests: XCTestCase {
         }
     }
 
-    /// A Mac too old to list dropped replies says only that it gave up on a session's queue: what this phone queued
-    /// there goes back in the field, once per drop.
     func testAQueueDropFromTheMacGivesBackWhatWasQueued() async throws {
         let model = AppModel.unpaired()
         let link = LiveLink(mac: PairedMac(endpoint: endpoint, deviceID: "d", deviceName: "iPhone"), outbox: try outbox(), transport: Silent())

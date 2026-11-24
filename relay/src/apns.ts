@@ -79,7 +79,7 @@ export interface Delivery {
   token: string;
   environment: Environment;
   request: ApnsRequest;
-  canFlip: boolean;   // a device token may have been registered under the wrong environment
+  canFlip: boolean;
 }
 
 export interface DeliverOptions {

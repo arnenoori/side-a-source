@@ -11,7 +11,7 @@ from pathlib import Path
 
 from test_check_env import ROOT, clean_env, stub
 
-SCRIPTS = ("check.sh", "lint-python.sh", "lint-swift.sh", "sync-bridge.sh", "scan-public-source.py", "setup-hooks.sh")
+SCRIPTS = ("check.sh", "lint-python.sh", "lint-swift.sh", "sync-bridge.sh", "test-bridge.sh", "lint-scripts.sh", "scan-public-source.py", "setup-hooks.sh")
 
 
 def git(repo, *arguments, env):
@@ -191,7 +191,6 @@ class MergePrTests(Fixture):
         super().setUp()
         (self.repo / "scripts/merge-pr.sh").write_text((ROOT / "scripts/merge-pr.sh").read_text())
         (self.repo / "scripts/merge-pr.sh").chmod(0o755)
-        # A check.sh that only records it ran and whether it "passes"; its own logic is tested above.
         self.state = self.repo.parent / "state"
         self.sha = "abc123"
         self.verdict = "pass"
@@ -206,7 +205,6 @@ class MergePrTests(Fixture):
   "pr merge"*) echo "merge $*" >> "{self.calls}" ;;
 esac'''
         )
-        # git fetch has no remote here; the script's fetch is a no-op for the fake.
         stub(self.tools, "git", 'if [[ "$1" == fetch ]]; then exit 0; fi\nexec /usr/bin/git "$@"')
 
     def merge(self):
@@ -233,7 +231,7 @@ esac'''
 
     def test_a_pass_that_could_not_be_posted_never_merges(self):
         self.install()
-        stub(self.repo / "scripts", "check.sh", f'echo "check $*" >> "{self.calls}"')  # passes, posts nothing
+        stub(self.repo / "scripts", "check.sh", f'echo "check $*" >> "{self.calls}"')
         result = self.merge()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no local-check success", result.stderr)

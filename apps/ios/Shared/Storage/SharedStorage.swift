@@ -1,25 +1,26 @@
 import Foundation
 import Security
 
-/// Where the app and its extensions keep what they share: the App Group container for files, and
-/// one keychain access group for secrets (the token, the device secret, the push key).
 public enum SharedStorage {
-    /// From the Info.plist, so a debug build (ids ending in .dev) keeps its own container.
     public static let appGroup = Bundle.main.object(forInfoDictionaryKey: "SideAAppGroup") as? String ?? "group.com.arnenoori.sidea.remote"
+
+    /// The one settings store the app, its widgets and its extensions all read.
+    nonisolated(unsafe) public static let defaults = UserDefaults(suiteName: appGroup) ?? .standard
 
     public static var container: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
     }
 
-    /// The outbox, terminal input and the widget snapshot's tables share this one SQLite file.
     public static var database: URL? { container?.appendingPathComponent("shared.sqlite") }
 }
 
-/// Generic-password items in the shared keychain group, by account name.
 public struct SharedKeychain: Sendable {
     public static let shared = SharedKeychain()
 
-    private static let service = "com.arnenoori.sidea.remote"
+    private let service: String
+
+    /// A different `service` is a separate set of items in the same group: a test's own, never the app's.
+    public init(service: String? = nil) { self.service = service ?? "com.arnenoori.sidea.remote" }
 
     /// "<team prefix>com.arnenoori.sidea.remote.shared", from the Info.plist; nil in a build without
     /// a team, where the app's own keychain stands in.
@@ -52,7 +53,7 @@ public struct SharedKeychain: Sendable {
 
     private func base(_ account: String) -> [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: Self.service,
+                                    kSecAttrService as String: service,
                                     kSecAttrAccount as String: account]
         if let group { query[kSecAttrAccessGroup as String] = group }
         return query

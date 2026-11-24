@@ -2,13 +2,10 @@ import AppKit
 import SideAProtocol
 import SwiftUI
 
-/// The bottom of a conversation that is running or just finished: what's typed goes by the phone's delivery table,
-/// and the line under the field says where it went, or why it didn't.
 struct SessionComposer: View {
     @Bindable var model: SessionStore
     let target: ComposerTarget
     @State private var height = ComposerField.lineHeight
-    /// Where the caret is; the end of the draft until the field says otherwise.
     @State private var caret = Int.max
     @State private var highlighted = 0
     /// esc closed the list for this word; typing another opens it again.
@@ -66,13 +63,10 @@ struct SessionComposer: View {
         .task { await model.loadCommands() }
     }
 
-    // MARK: Suggestions
 
-    /// Open while the word at the caret starts with "/" or "$" and something matches it.
     private var suggestions: (range: NSRange, options: [ComposerSuggestions.Option])? {
         guard let found = ComposerSuggestions.word(in: model.drafts[id] ?? "", caret: caret, codex: !target.claude), found.word != dismissed else { return nil }
         let options = ComposerSuggestions.matches(found.word, in: target.claude ? model.commands.claude : model.commands.codex)
-        // A word that already is a command, typed out in full, needs no list.
         guard !options.isEmpty, !(options.count == 1 && options[0].id == found.word) else { return nil }
         return (found.range, options)
     }
@@ -82,7 +76,6 @@ struct SessionComposer: View {
         highlighted = 0
     }
 
-    /// Send while there's text; Stop while the session works and there's none. Its menu holds the other ways to send.
     @ViewBuilder private var trailing: some View {
         if empty, let when = target.interrupt {
             Button { model.interrupt(id) } label: {
@@ -101,7 +94,6 @@ struct SessionComposer: View {
             .accessibilityLabel("Send")
             .contextMenu { sendMenu }
             .overlay(alignment: .bottomTrailing) {
-                // More than one way to send: the choice shows, as well as ⌥↩ and the button's own menu.
                 if target.queues || offersNote {
                     Menu { sendMenu } label: {
                         Image(systemName: "chevron.down.circle.fill").font(.system(size: 11)).symbolRenderingMode(.palette)
@@ -124,7 +116,6 @@ struct SessionComposer: View {
         if offersNote { Button("Send as Note") { model.compose(id, how: .note) } }
     }
 
-    /// The photos going with the next reply, each with its own remove button.
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -164,7 +155,6 @@ struct SessionComposer: View {
     }
 
     private func key(_ key: ComposerField.Key) -> Bool {
-        // An open list takes the arrows, ↩ and ⇥ to choose, and esc to close.
         if let open = suggestions {
             switch key {
             case .up: highlighted = (min(highlighted, open.options.count - 1) - 1 + open.options.count) % open.options.count; return true
@@ -191,7 +181,6 @@ struct SessionComposer: View {
         }
     }
 
-    // MARK: Under the field
 
     @ViewBuilder private var status: some View {
         if let outcome = model.outcomes[id], case .failed(let reason) = outcome.result {
@@ -221,7 +210,6 @@ struct SessionComposer: View {
         }
     }
 
-    /// A note or stop the session hasn't read yet. A note is edited, copied or deleted; there's no Take Back.
     private func waitingMail(_ live: LiveSession, kind: String) -> some View {
         HStack(spacing: 5) {
             Image(systemName: kind == "note" ? "envelope" : "pause.circle").foregroundStyle(.secondary)
@@ -268,7 +256,6 @@ struct SessionComposer: View {
     }
 }
 
-/// The suggestion list floating above the field: the command, then what it does.
 struct SuggestionList: View {
     let options: [ComposerSuggestions.Option]
     let highlighted: Int

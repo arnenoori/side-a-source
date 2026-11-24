@@ -1,3 +1,4 @@
+#if canImport(Darwin)
 import Darwin
 import Foundation
 
@@ -37,3 +38,4 @@ public struct MemoryPressure: Equatable, Sendable {
         last.map { now.timeIntervalSince($0) >= notifyEvery } ?? true
     }
 }
+#endif

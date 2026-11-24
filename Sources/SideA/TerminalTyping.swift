@@ -54,12 +54,31 @@ enum TerminalTyping {
     /// The session's process group is the one its terminal reads keys for.
     static func inFront(_ pid: Int) -> Bool { TerminalFocus.inFront(pid) }
 
-    // MARK: tmux
+
+    @MainActor private static var held: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    /// One at a time per pane, as hosted sessions' composer lock: a reply typed while a settings change walks a
+    /// picker would land in the picker, and two replies would paste into each other.
+    @MainActor static func lock(_ pane: TerminalFocus.TmuxPane) async {
+        let key = pane.socket + " " + pane.pane
+        if held[key] == nil { held[key] = []; return }
+        await withCheckedContinuation { held[key, default: []].append($0) }
+    }
+
+    @MainActor static func unlock(_ pane: TerminalFocus.TmuxPane) {
+        let key = pane.socket + " " + pane.pane
+        guard var waiting = held[key], !waiting.isEmpty else { held[key] = nil; return }
+        let next = waiting.removeFirst()
+        held[key] = waiting
+        next.resume()
+    }
 
     /// As a hosted reply goes: refused over a dialog or someone's draft, pasted, and Enter only once the composer
     /// shows what was pasted.
-    private static func tmux(_ text: String, pid: Int, agent: Hosting.Agent) async throws(Failure) {
+    @MainActor private static func tmux(_ text: String, pid: Int, agent: Hosting.Agent) async throws(Failure) {
         guard let pane = await TerminalFocus.tmuxPane(of: pid) else { throw Failure(message: "The session's tmux pane could not be found.") }
+        await lock(pane)
+        defer { unlock(pane) }
         let run = { (args: [String], input: Data?) in
             await HostedSessions.process(pane.tmux, ["-u", "-S", pane.socket] + args, input: input, timeout: 5)
         }
@@ -100,7 +119,6 @@ enum TerminalTyping {
         if Hosting.verdict(agent, expected: expected, screen: await screen()) == .pressEnter { throw Failure(message: "It's typed in but wasn't sent.") }
     }
 
-    // MARK: Ghostty
 
     /// Finds the tab by its tty. With text, pastes it and presses Enter a moment later: sent together, Claude Code
     /// reads the Enter as a line break and Codex folds it into the paste. Without, only presses Enter.

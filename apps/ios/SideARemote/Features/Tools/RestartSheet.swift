@@ -2,11 +2,8 @@ import SideAProtocol
 import SideARemoteKit
 import SwiftUI
 
-/// Restart Fresh: the handoff the Mac drafts, each part editable, a preview of it as the
-/// new session will read it, then a new hosted session in the same folder and the old one ended.
 struct RestartSheet: View {
     let session: RemoteSession
-    /// A handoff to the other agent waiting for Send: the sheet only reviews it, and Send in the composer sends it.
     var review: HandoffDraft?
     var message = ""
     let onRestarted: (HostedSession) -> Void
@@ -166,13 +163,11 @@ struct RestartSheet: View {
         }
     }
 
-    /// Edits kept with the draft: Send in the composer is what hands it off.
     private func keepReview() {
         if let draft { model.handoffs.move(session.id, .reviewed(draft)) }
         dismiss()
     }
 
-    /// As the Mac lays it out, less the turns, which it picks to fit only when the message is sent.
     static func reviewMarkdown(_ handoff: Handoff, message: String) -> String {
         var parts = [markdown(Handoff(goal: handoff.goal, branch: handoff.branch, failed: handoff.failed, next: handoff.next, lastMessages: "",
                                       cwd: handoff.cwd, project: handoff.project))]
@@ -184,7 +179,6 @@ struct RestartSheet: View {
         return parts.joined(separator: "\n\n")
     }
 
-    /// The first prompt, as the new session receives it.
     static func markdown(_ handoff: Handoff) -> String {
         var parts = ["## Goal\n\n\(handoff.goal)"]
         if let branch = handoff.branch, !branch.isEmpty { parts.append("## Branch\n\n`\(branch)`") }

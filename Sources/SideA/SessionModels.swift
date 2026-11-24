@@ -107,7 +107,6 @@ struct LiveSession: Decodable, Identifiable, Hashable, Sendable {
     /// Memory in MB of the session and everything it started, and how many processes that is.
     var memory: Int?
     var processes: Int?
-    /// TCP ports its processes listen on, such as a dev server it started.
     var ports: [Port]?
     /// Start time in whole seconds, to tell this process from a later one with the same pid.
     var started: Double?

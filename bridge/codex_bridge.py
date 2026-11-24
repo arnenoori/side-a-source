@@ -54,7 +54,6 @@ class RPC:
                 if response.get("id") == identifier and "method" not in response:
                     if "error" in response:
                         message = str((response.get("error") or {}).get("message") or "")
-                        # Keep only what the app acts on: revoked logins need sign-in, rate limits back off.
                         # Revocation first: its message also says "failed to fetch codex rate limits".
                         if "401" in message or "token_revoked" in message:
                             raise SignInAgain("Sign in again: Codex rejected this login.")
@@ -317,7 +316,6 @@ def pool_config(source_text, url, sqlite_home):
     except ImportError:
         tomllib = None
     lines = source_text.splitlines()
-    # The first table header outside a multi-line value; brackets inside strings don't count.
     first_table, depth = len(lines), 0
     for index, line in enumerate(lines):
         bare = re.sub(r"\"[^\"]*\"|'[^']*'|#.*", "", line)
@@ -332,7 +330,6 @@ def pool_config(source_text, url, sqlite_home):
         except tomllib.TOMLDecodeError:
             lines, first_table = [], 0
     top = [line for line in lines[:first_table] if key(line) not in ("model_provider", "openai_base_url")]
-    # A profile that picks its own provider would leave the pool, in a home with no login to fall back on.
     rest, table = [], ""
     for line in lines[first_table:]:
         if line.lstrip().startswith("["):

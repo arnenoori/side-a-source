@@ -56,8 +56,6 @@ async function loadRelease() {
   }
 }
 void loadRelease();
-// The poster is a 2x frame of the live scene. Live 3D only loads on capable, idle desktops;
-// everywhere else the poster is the product image.
 const fallback = document.querySelector<HTMLImageElement>('#fallback')!;
 const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
 const lightweight = matchMedia('(prefers-reduced-motion: reduce), (max-width: 600px), (pointer: coarse)').matches
@@ -86,7 +84,6 @@ if (modelContext?.registerTool) {
   }
 }
 
-// Easter egg: the logo disc turns with each tap; five quick taps shuffle the player's tracks.
 const mark = document.querySelector<HTMLElement>('.disc-mark');
 let turns = 0, taps = 0, lastTap = 0;
 mark?.addEventListener('click', event => {
@@ -99,7 +96,6 @@ mark?.addEventListener('click', event => {
 
 initLoveEggs();
 
-// The How demos and their CSS load on first interaction or idle, so the hero paints first.
 const how = document.querySelector<HTMLElement>('#how');
 if (how) {
   let started = false;
@@ -109,7 +105,6 @@ if (how) {
     // oxlint-disable-next-line promise/always-return -- the callback ends the chain; the catch below is the handler.
     import('./how').then(({ mountHow }) => {
       mountHow(how);
-      // The styled layout moves anchors inside #how, so a deep link (or the old /how/) lands again.
       const target = location.hash.length > 1 ? document.getElementById(location.hash.slice(1)) : null;
       if (target && how.contains(target)) target.scrollIntoView();
     }).catch(error => console.warn('How it works demos unavailable.', error));

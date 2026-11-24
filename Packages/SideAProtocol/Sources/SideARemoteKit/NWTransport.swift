@@ -10,9 +10,8 @@ public struct LocalNetworkDenied: Error, Sendable, Equatable {
 }
 
 /// HTTP/1.1 and WebSockets to the Mac on Network.framework, so the self-signed, IP-addressed certificate is judged by
-/// its pinned SPKI alone and App Transport Security needs no exception. `trust` pins (or observes) every connection's
-/// key exactly as it did for URLSession. Idle connections are kept per address and reused, under the Mac's 30 s idle
-/// timeout.
+/// its pinned SPKI alone and App Transport Security needs no exception. Idle connections are kept per address and
+/// reused, under the Mac's 30 s idle timeout.
 public final class NWTransport: Transport, @unchecked Sendable {
     public static let idleFor: TimeInterval = 20
 
@@ -30,8 +29,6 @@ public final class NWTransport: Transport, @unchecked Sendable {
     public init(trust: PinnedTrust, poolSize: Int = 4, dial: (@Sendable (URL) -> NWEndpoint?)? = nil) {
         self.trust = trust; self.poolSize = poolSize; self.dial = dial
     }
-
-    // MARK: HTTP
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         try await send(request, fresh: false)
@@ -132,8 +129,6 @@ public final class NWTransport: Transport, @unchecked Sendable {
         for stream in all { stream.cancel() }
     }
 
-    // MARK: Connections
-
     /// `seen` gets this connection's key, so concurrent connections each judge their own handshake.
     func parameters(_ seen: SeenKey) -> NWParameters {
         let tls = NWProtocolTLS.Options()
@@ -170,8 +165,6 @@ public final class NWTransport: Transport, @unchecked Sendable {
         return stream
     }
 
-    /// Where a new connection's time went: "connected GET 100.64.1.2:47800/v1/hello: dns 12 ms, tcp 41 ms, tls 38 ms,
-    /// 95 ms in all". On cellular this is what says whether the path or the handshake is slow.
     private static func logEstablishment(_ connection: NWConnection, _ line: String) {
         connection.requestEstablishmentReport(queue: .global(qos: .utility)) { report in
             guard let report else { return }
@@ -186,8 +179,6 @@ public final class NWTransport: Transport, @unchecked Sendable {
             KitLog.log(.transport, "connected \(line): \(parts.joined(separator: ", "))")
         }
     }
-
-    // MARK: WebSocket
 
     public func socket(_ request: URLRequest) -> any SocketConnection {
         NWSocket(request: request, transport: self)
@@ -287,7 +278,6 @@ final class HTTPStream: @unchecked Sendable {
 
     static func urlError(_ error: NWError) -> Error {
         let result = mapped(error)
-        // The NWError underneath, so a log can say which POSIX or TLS code it was.
         guard let url = result as? URLError, url.userInfo[NSUnderlyingErrorKey] == nil else { return result }
         var info = url.userInfo
         info[NSUnderlyingErrorKey] = error as NSError
@@ -396,7 +386,6 @@ final class HTTPStream: @unchecked Sendable {
             guard body.count + size <= Self.maxBody else { return .failure(.tooLarge) }
             let dataStart = lineEnd.upperBound
             if size == 0 {
-                // Trailers, if any, then the empty line that ends the message.
                 let rest = buffer[dataStart...]
                 let end: Data.Index
                 if rest.starts(with: Data("\r\n".utf8)) {

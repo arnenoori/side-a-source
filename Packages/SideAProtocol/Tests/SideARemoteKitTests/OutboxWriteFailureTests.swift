@@ -5,7 +5,6 @@ import SideAProtocolFixtures
 import SQLite3
 import Testing
 
-/// Another process (the notification extension) in the middle of a write: a second connection inside `BEGIN IMMEDIATE`.
 private final class HeldWriteLock: @unchecked Sendable {
     private var db: OpaquePointer?
     init(_ file: URL) {
@@ -31,7 +30,6 @@ private func shortTimeoutOutbox() throws -> (Outbox, URL) {
     await #expect(throws: Outbox.Failure.self) { try await outbox.enqueue(item) }
     lock.release()
     #expect(await outbox.items(for: "mac1").isEmpty)
-    // Once the lock is gone the same item goes in.
     try await outbox.enqueue(item)
     #expect(await outbox.items(for: "mac1") == [item])
 }
@@ -49,7 +47,6 @@ private func shortTimeoutOutbox() throws -> (Outbox, URL) {
 
     let lock = HeldWriteLock(file)
     let item = await sync.reply("s", RemoteReply(text: "go on"))
-    // The caller hears it at once, through the outcome the screens already turn into "Not sent" and Retry.
     let state = await sync.state
     #expect(state.outcomes[item.id] == .notDelivered)
     #expect(state.pending.isEmpty)
@@ -58,7 +55,6 @@ private func shortTimeoutOutbox() throws -> (Outbox, URL) {
 
     let again = try #require(await sync.retry(itemID: item.id))
     try await until("delivered") { if case .delivered = await sync.state.outcomes[again.id] { true } else { false } }
-    // A reply settled `notDelivered` goes again under its first key, which the Mac runs as new when it never had it.
     #expect(again.id != item.id && mac.calls.compactMap { $0.value(forHTTPHeaderField: "Idempotency-Key") } == [item.id])
     await sync.stop()
 }

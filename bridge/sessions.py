@@ -53,14 +53,12 @@ CREATE INDEX IF NOT EXISTS handoffs_to ON handoffs(to_conversation);
 # Reading an unindexed FTS column reads the whole row, message text included, so `rows` maps each
 # message to its session; matching and deleting never touch the text. A version 3 index gets it at the
 # start of the next index pass; until then search reads the session from the FTS row.
-# 7: the viewer's rows carry their role and whether they're inherited as columns, so no query reads `data` to filter.
 VERSION = 7
 TITLE_RANK = {"custom": 0, "codex": 1, "ai": 2, "agent": 3, "summary": 4, "prompt": 5}
 TEXT_LIMIT = 8000
 SKIP = (b'"toolUseResult"', b'"type":"attachment"', b'"type":"queue-operation"', b'"type":"file-history-',
         b'"type":"atis-latch"', b'"type":"permission-mode"', b'"type":"mode"', b'"type":"last-prompt"',
         b'"type":"api-request-blob"')
-# The viewer reads tool results and queued prompts, so it skips less than the search index.
 VIEW_SKIP = SKIP[2:]
 
 
@@ -76,7 +74,6 @@ def connect(root):
                          "DROP TABLE IF EXISTS views; DROP TABLE IF EXISTS view_state; DROP TABLE IF EXISTS images;")
         db.execute(f"PRAGMA user_version={VERSION}")
     elif version < VERSION and "inherited" not in {row[1] for row in db.execute("PRAGMA table_info(views)")}:
-        # The viewer's cache from an older version starts over in this one's shape; the search index stays.
         db.executescript("DROP TABLE IF EXISTS views; DROP TABLE IF EXISTS view_state;")
     db.executescript(SCHEMA)
     if version in (4, 5, 6):
@@ -262,12 +259,10 @@ def load(db, session_id, agent, path):
 
 # Image bytes stay in the transcripts. The index records where each one starts, so the app can seek
 # and read it; nothing here ever writes base64 anywhere else.
-# Only the short header is matched by pattern; the base64 after it runs to the next quote, found with
-# bytes.find, which is several times faster than a regex over megabytes.
 SPAN = re.compile(rb'"type":"base64","(?:media_type":"([a-z0-9/+.-]+)","data":"|data":")')
 MEDIA_AFTER = re.compile(rb'","media_type":"([a-z0-9/+.-]+)"')
 DATA_URL = re.compile(rb'"(?:image_url|result)":"(?:data:(image/[a-z0-9+.-]+);base64,)?([A-Za-z0-9+/=]{256,})"')
-BLANK_KEYS = (b'"data":"', b'"base64":"', b'"image_url":"', b'"result":"')  # Claude's two, then Codex's
+BLANK_KEYS = (b'"data":"', b'"base64":"', b'"image_url":"', b'"result":"')
 BIG_LINE = 65536
 BASE64 = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
 TOOL_USE = re.compile(rb'"type":"tool_use","id":"([^"]+)","name":"([^"]+)"')
@@ -294,7 +289,6 @@ def blank(line):
                 body = start
                 if line.startswith(b"data:image/", start):
                     body = line.find(b",", start, start + 64) + 1 or start
-                # Its ends are enough to tell base64 from a long string of text.
                 if not (line[body:body + 512] + line[end - 64:end]).translate(None, BASE64):
                     cuts.append((start, end))
             at = line.find(key, end)
@@ -599,7 +593,6 @@ def index_claude(db, path, offset, state):
             offset += len(line)
             entry = images.feed(line, at) if images else None
             big = len(line) > BIG_LINE
-            # Scanning a screenshot line for every marker costs more than the parse feed already did.
             if (entry is not None and entry.get("type") == "attachment") or (not big and b'"queued_command"' in line):
                 entry = entry if entry is not None else parse(line)
                 prompt = queued_prompt(entry or {})
@@ -788,12 +781,10 @@ def _index(root, seconds, paths=None):
     deadline = time.time() + seconds
     found = []
     if paths is not None:
-        # The app watches the transcript folders and names what changed, so nothing else is listed or statted.
         # A profile's `sessions` is a link to the shared folder; file its rollouts under the one real path.
         paths = [Path(os.path.realpath(p)) if "/profiles/" in p else Path(p) for p in paths if p.endswith(".jsonl")]
         sources = (("claude", [p for p in paths if "/.claude/projects/" in str(p)]),
                    ("codex", [p for p in paths if is_codex_path(p)]))
-        # Only the named files' rows: the table has one per transcript ever read, each with its parser's state.
         named = [str(p) for p in paths]
         known = {row[0]: row for start in range(0, len(named), 500) for row in db.execute(
             f"SELECT path, session, offset, size, mtime, state FROM files WHERE path IN ({','.join('?' * len(named[start:start + 500]))})",
@@ -812,9 +803,7 @@ def _index(root, seconds, paths=None):
             row = known.get(str(path))
             if row is None or row[3] != stat.st_size or row[4] != stat.st_mtime:
                 found.append((stat.st_mtime, agent, path, stat))
-    # The listing already stat'ed what it found; only a known file it didn't list needs a look.
     present = listed | {p for p in known if p not in listed and Path(p).exists()}
-    # What backfill needs of each file's row, kept as this pass changes them rather than read back.
     rows = {path: (row[4], row[1], row[2], row[5]) for path, row in known.items() if path in present}
     for gone in set(known) - present:
         session = known[gone][1]
@@ -856,7 +845,6 @@ def _index(root, seconds, paths=None):
         db.execute("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?,?)", (str(path), session, offset, stat.st_size, stat.st_mtime, rows[str(path)][3]))
         db.commit()
         done += 1
-    # Spare time keeps the newest conversations ready to open; one already current costs a stat.
     for session_id, path, agent in db.execute("SELECT id, path, agent FROM sessions WHERE prompts > 0 ORDER BY last_ts DESC LIMIT 20").fetchall():
         if time.time() > deadline:
             break
@@ -866,7 +854,6 @@ def _index(root, seconds, paths=None):
             # Skipped, and tried again on the next pass; stderr is where the app's log picks it up.
             print(f"sessions: couldn't rebuild the view of {session_id}: {error}", file=sys.stderr)
     result = {"remaining": len(found) - done, "indexed": done}
-    # The upkeep reads whole tables, so it runs on the passes over everything, not after each file that changed.
     if paths is None:
         result["images_remaining"] = backfill(db, deadline, rows)
         tidy(root, db)
@@ -880,7 +867,6 @@ VIEWS_KEPT = 300
 
 def tidy(root, db):
     """Keeps the viewer's cache to the conversations opened most recently, and the file to what it holds."""
-    # By session, which is the cache's key: a NOT IN over the kept ones reads every cached row to delete none.
     for (session,) in db.execute("SELECT session FROM view_state ORDER BY used DESC LIMIT -1 OFFSET ?", (VIEWS_KEPT,)).fetchall():
         db.execute("DELETE FROM views WHERE session=?", (session,))
         db.execute("DELETE FROM view_state WHERE session=?", (session,))
@@ -899,7 +885,6 @@ def backfill(db, deadline, rows):
     pending = []
     for path, (_, session, offset, state) in sorted(rows.items(), key=lambda item: item[1][0] or 0, reverse=True):
         state = state or "{}"  # noqa: PLW2901 -- normalizes the loop value in place
-        # Nearly every file is done; its state says so in plain text, so only the rest are parsed.
         if f'"img": {offset},' in state or f'"img": {offset}}}' in state:
             continue
         state = json.loads(state)  # noqa: PLW2901 -- normalizes the loop value in place
@@ -1057,7 +1042,6 @@ def search(root, text, agent=None, project=None, days=None, automated=False, lim
     query, short = fts_query(text)
     where, args = filters(agent, project, days, automated)
     if query:
-        # Every word must appear somewhere in the conversation, not all in one message.
         words = query.split('" "')
         # Joining sessions here makes SQLite run the full-text match once per session; filter in Python instead.
         allowed = {row[0] for row in db.execute(f"SELECT s.id FROM sessions s WHERE {where}", args)}
@@ -1076,7 +1060,6 @@ def search(root, text, agent=None, project=None, days=None, automated=False, lim
         ranked = [(rowid, score) for rowid, session, score in db.execute(
             f"SELECT m.rowid, {column}, bm25(msgs) FROM {source} WHERE msgs MATCH ? ORDER BY bm25(msgs)",
             [match]) if session in keep][:800] if keep else []
-        # Snippets are the costly part, so only the best messages get one.
         scores = dict(ranked)
         details = db.execute(
             "SELECT rowid, session, uuid, role, ts, snippet(msgs, 0, char(2), char(3), '…', 64) FROM msgs "
@@ -1476,7 +1459,6 @@ class Rows:
     def __init__(self, start=0, seed=(), fetch=None, calls=None):
         self.start, self.new, self.old, self.fetch = start, list(seed), {}, fetch
         self.calls = {} if calls is None else calls
-        # When the line before the current one was written: Claude's thinking took from then to its own line.
         self.last_ts = self.new[-1]["ts"] if self.new and self.new[-1] else None
 
     def get(self, seq):
@@ -1706,7 +1688,6 @@ def update_view(db, session_id, path, agent, sub=False, owner=None):
     owner = owner or (session_id, None)
     state = db.execute("SELECT path, offset, head, count, generation, used FROM view_state WHERE session=?", (session_id,)).fetchone()
     if state and state[0] == str(path) and head.startswith(state[2] or "-") and state[1] == size and state[4]:
-        # Already current: no write lock, and `used` (what tidy keeps by) is only rewritten once it's a minute old.
         if time.time() - (state[5] or 0) > USED_STALE:
             db.execute("UPDATE view_state SET used=? WHERE session=?", (time.time(), session_id))
             db.commit()
@@ -1909,7 +1890,6 @@ def show(root, session_id, limit=4000, around=None):
                 last = first + limit if first + limit < total - 20 else total
     start = starts[first] if first < total else count
     end = starts[last] if last < total else count
-    # Thinking rows are Remote's; leaving them out also lets the tool calls around them merge as before.
     messages = merged([message for message in (viewer_row(row[0]) for row in db.execute(
         "SELECT data FROM views WHERE session=? AND seq>=? AND seq<? ORDER BY seq", (session_id, start, end))) if message["role"] != "thinking"])
     meta = db.execute(f"SELECT {','.join(SESSION_COLUMNS)} FROM sessions WHERE id=?", (session_id,)).fetchone()
@@ -2154,8 +2134,6 @@ def prompt_uuid(entry):
     pasted = isinstance(content, list) and any(isinstance(part, dict) and part.get("type") == "image" for part in content)
     return entry.get("uuid") if prompt_text(text_of(content)) or pasted else None
 
-# A transcript's tail, read once per size and modification time: live() runs on every change to any transcript,
-# and most running sessions' transcripts have not moved since the last one.
 TAILS = {}
 TODO_STATUS = {"in_progress": "inProgress"}
 
@@ -2257,7 +2235,6 @@ def tail_facts(lines, plan=None, board=None):
         if prompt and plan and all(item["status"] == "completed" for item in plan["steps"]):
             plan = None
             board["items"] = {key: item for key, item in board["items"].items() if item["status"] != "completed"}
-        # When the conversation was last compacted, so a typed /compact can be seen to have happened.
         if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
             compacted = epoch(entry.get("timestamp")) or compacted
         if entry.get("type") not in ("user", "assistant"):
@@ -2301,7 +2278,6 @@ def tail_facts(lines, plan=None, board=None):
     return calls[-6:], failures, context, step, mode, turn, compacted, error, plan, board
 
 
-# The Mac needs only enough of an error to tell which kind it is.
 ERROR_TEXT = 600
 
 
@@ -2552,7 +2528,6 @@ def rollout_meta(path):
     return known[1]
 
 
-# What live reads from a rollout's tail, kept per size and modification time like TAILS.
 CODEX_TAILS = {}
 
 
@@ -2600,7 +2575,7 @@ def codex_status(entries, whole, mtime):
         payload = entry.get("payload") or {}
         kind = payload.get("type")
         if entry.get("type") == "event_msg" and kind == "user_message":
-            prompt = epoch(entry.get("timestamp")) or prompt  # a message typed, from any terminal or Side A
+            prompt = epoch(entry.get("timestamp")) or prompt
         if entry.get("type") == "turn_context":
             policy, model = payload.get("approval_policy", policy), payload.get("model") or model
         elif kind == "task_started":
@@ -2741,7 +2716,6 @@ def live_codex(root, memory, children, started, ports, parents, args, db):
         thread = meta.get("id")
         row = db.execute("SELECT title, model FROM sessions WHERE id=?", (thread,)).fetchone() if thread else None
         found.append((pid, info, main, subagents, meta, row, *facts))
-    # Codex's own title only for a thread the index has none for yet.
     threads = codex_threads(root, [item[4].get("id") for item in found if not (item[5] and item[5][0])])
     rows = []
     for pid, info, main, subagents, meta, row, status, health, mtime in found:
@@ -2758,7 +2732,6 @@ def live_codex(root, memory, children, started, ports, parents, args, db):
 SETTINGS_KEEP = 7 * 86400
 
 
-# The statusline and hook files of every running session are read on each live(); most haven't changed since.
 SAVED = {}
 
 
@@ -2890,7 +2863,6 @@ def live(root):
     finally:
         db.close()
     import hosting
-    # A hosted session runs under one of the panes of Side A's tmux server; when several reach one pane, the closest keeps it.
     hosting.match(sessions, parents, panes)
     order = {"waiting": 0, "busy": 1}
     sessions.sort(key=lambda s: (order.get(s["status"], 2), -(s["since"] or 0)))
@@ -3081,7 +3053,6 @@ def images(root, session_id, limit=200, before=None):
         for id_, mime, size, width, height, source, file, uuid, ts, agent_id in found:
             key = f"{session_id}/{agent_id}" if agent_id else session_id
             if key not in rows:
-                # Each uuid's first row, read once per conversation rather than searched for per image.
                 rows[key] = {}
                 for seq, uuids in db.execute("SELECT seq, uuids FROM views WHERE session=? ORDER BY seq", (key,)):
                     for name in uuids.split():

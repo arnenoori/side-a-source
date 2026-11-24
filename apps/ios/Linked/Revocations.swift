@@ -16,7 +16,6 @@ enum Revocations {
         var relayDone = false
     }
 
-    /// A month of trying is enough: the Mac was most likely set up again or thrown away.
     static let giveUpAfter: TimeInterval = 30 * 86_400
 
     static func pending(_ keychain: SharedKeychain = .shared) -> [Pending] {
@@ -44,7 +43,6 @@ enum Revocations {
         store(pending(keychain).filter { $0.mac.endpoint.macID != macID }, keychain)
     }
 
-    /// Tries each one once; what doesn't get through waits for the next call.
     static func run(keychain: SharedKeychain = .shared) async {
         for entry in pending(keychain) {
             switch await revoke(entry) {
@@ -81,7 +79,6 @@ enum Revocations {
         }
     }
 
-    /// The relay forgets the device, so no more pushes come while the Mac is out of reach.
     private static func relayForget(_ entry: Pending) async -> Bool {
         guard let install = entry.mac.relayInstallID, let relay = entry.mac.relayURL, let secret = entry.secret,
               let url = URL(string: "\(relay)/v1/device") else { return false }
@@ -94,7 +91,6 @@ enum Revocations {
         return (200..<300).contains(status) || status == 401 || status == 404
     }
 
-    /// Gone from the Mac: its credentials go too, unless the same Mac was paired again meanwhile.
     private static func settle(_ entry: Pending, keychain: SharedKeychain) {
         store(pending(keychain).filter { $0 != entry }, keychain)
         if PairedMac.load(entry.mac.endpoint.macID, keychain: keychain) == nil { drop(entry.mac, keychain: keychain) }

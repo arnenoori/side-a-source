@@ -46,8 +46,6 @@ enum Perf {
     }
 }
 
-/// Logs when the main thread doesn't answer for 2 s or more. A utility-queue timer sends one ping at a time and waits for
-/// the main queue to run it; when idle that is one tiny block a second, coalesced by the timer's leeway.
 final class StallWatchdog: @unchecked Sendable {
     static let shared = StallWatchdog()
     static let threshold: Duration = .seconds(2)
@@ -72,7 +70,6 @@ final class StallWatchdog: @unchecked Sendable {
     private func tick() {
         let now = SuspendingClock.now
         if let sent {
-            // Still blocked: say so once while it lasts, in case it never comes back.
             if !noted, sent.duration(to: now) >= Self.threshold {
                 noted = true
                 Perf.log.error("stall: main thread blocked for 2 s and counting, during \(Perf.inFlight.joined(separator: ", "), privacy: .public)")

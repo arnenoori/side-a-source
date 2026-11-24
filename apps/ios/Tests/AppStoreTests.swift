@@ -1,7 +1,6 @@
 import XCTest
 @testable import SideARemote
 
-/// What App Store review reads from the bundle.
 final class AppStoreTests: XCTestCase {
     private var bundles: [URL] {
         get throws {
@@ -51,7 +50,6 @@ final class AppStoreTests: XCTestCase {
         for bundle in try bundles.dropFirst() {
             XCTAssertEqual(Bundle(url: bundle)?.infoDictionary?["UIDeviceFamily"] as? [Int], [1, 2], bundle.lastPathComponent)
         }
-        // Dictation records from the message field, so the microphone and, for on-device transcription, speech recognition are asked for.
         XCTAssertFalse((info["NSMicrophoneUsageDescription"] as? String ?? "").isEmpty)
         XCTAssertFalse((info["NSSpeechRecognitionUsageDescription"] as? String ?? "").isEmpty)
     }

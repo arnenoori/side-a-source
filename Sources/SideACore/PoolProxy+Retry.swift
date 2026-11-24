@@ -1,3 +1,4 @@
+#if canImport(Network)
 import Foundation
 
 extension PoolProxy {
@@ -27,3 +28,4 @@ extension PoolProxy {
         return ["/v1/messages", "/codex/responses", "/v1/messages/count_tokens"].contains(path)
     }
 }
+#endif

@@ -2,7 +2,6 @@ import Foundation
 @testable import SideACore
 import Testing
 
-/// A client frame, masked as a client must.
 private func clientFrame(_ opcode: UInt8, _ payload: Data, fin: Bool = true, mask: [UInt8] = [1, 2, 3, 4]) -> Data {
     var out = Data([(fin ? 0x80 : 0) | opcode])
     if payload.count < 126 { out.append(0x80 | UInt8(payload.count)) } else { out.append(0x80 | 126); out.append(UInt8(payload.count >> 8)); out.append(UInt8(payload.count & 0xFF)) }
@@ -45,7 +44,7 @@ private func clientFrame(_ opcode: UInt8, _ payload: Data, fin: Bool = true, mas
     }
     #expect(failure(Data([0x81, 0x01, 0x41])) == 1002)
     let tooLong = UInt64(1 << 20) + 1
-    #expect(failure(Data([0x81, 0x80 | 127]) + Data((0..<8).reversed().map { UInt8(tooLong >> UInt64($0 * 8) & 0xFF) }) + Data([1, 2, 3, 4])) == 1009)
+    #expect(failure(Data([0x81, 0x80 | 127] as [UInt8]) + Data((0..<8).reversed().map { UInt8(tooLong >> UInt64($0 * 8) & 0xFF) }) + Data([1, 2, 3, 4])) == 1009)
     #expect(failure(clientFrame(1, Data([0xC3, 0x28]))) == 1007)
     #expect(failure(clientFrame(9, Data(count: 2), fin: false)) == 1002)
     #expect(failure(clientFrame(0, Data("x".utf8))) == 1002)

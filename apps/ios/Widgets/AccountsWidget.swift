@@ -2,8 +2,6 @@ import SideARemoteShared
 import SwiftUI
 import WidgetKit
 
-/// Up to four accounts as ring pairs: weekly outside, 5-hour inside, the tighter
-/// percent under the name.
 struct AccountsWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Accounts", provider: SnapshotProvider()) { entry in
@@ -65,7 +63,6 @@ struct AccountsWidgetView: View {
     }
 }
 
-/// Two concentric rings, drawn still: the fills are accentable for tinted and clear modes.
 private struct RingPair: View {
     let fiveHour: Double?
     let weekly: Double?

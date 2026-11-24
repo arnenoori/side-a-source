@@ -14,18 +14,14 @@ struct RemoteDevice: Codable, Identifiable, Equatable, Sendable {
     let hash: Data
     /// base64url SHA-256 of the phone's relay secret, registered with the relay; the secret stays on the phone.
     let secretHash: String
-    /// The push key and its id, from pairing or the last rekey (relay-and-release, Key exchange).
     var pushKey: Data?
     var pushKeyID: Data?
     /// The phone's Secure Enclave keys (X9.63): one behind Face ID, one usable only while unlocked. Nil for a pairing
     /// made before they existed, which may then do only what a locked phone may.
     var confirmKey: String?
     var unlockKey: String?
-    /// What the phone last reported in `POST /v1/devices/push`.
     var push: PushRegistration?
-    /// The phone's latest `hello` listed `rotation`. Kept here because pushes go out while its socket is closed.
     var rotationPushes: Bool?
-    /// The phone's latest `hello` listed `ready.groups`: it gets Ready as one grouped push, not one per turn.
     var readyGroups: Bool?
     /// The relay's last word on this device: ok, gone, retry, rejected, unverified.
     var pushResult: String?
@@ -38,7 +34,6 @@ struct RemoteDevice: Codable, Identifiable, Equatable, Sendable {
 @MainActor @Observable
 final class DeviceStore {
     private(set) var devices: [RemoteDevice] = []
-    /// Set when the Keychain item couldn't be read: Remote then accepts no device.
     private(set) var unreadable: String?
     @ObservationIgnored private let keychain: RemoteKeychain
     @ObservationIgnored private var lastWrite = Date.distantPast
@@ -59,7 +54,6 @@ final class DeviceStore {
         }
     }
 
-    /// For the server: nil while the list can't be read, so no token matches.
     var confirmKeys: [String: ConfirmGate.Keys] {
         Dictionary(devices.map { ($0.id, ConfirmGate.Keys(confirm: $0.confirmKey, unlock: $0.unlockKey)) }, uniquingKeysWith: { a, _ in a })
     }
@@ -74,7 +68,6 @@ final class DeviceStore {
 
     func remove(_ id: String) throws { try save(devices.filter { $0.id != id }) }
 
-    /// Changes one device's record; false when it isn't paired.
     @discardableResult
     func update(_ id: String, _ change: (inout RemoteDevice) -> Void) throws -> Bool {
         guard let index = devices.firstIndex(where: { $0.id == id }) else { return false }
@@ -84,7 +77,6 @@ final class DeviceStore {
         return true
     }
 
-    /// Starting over after "Paired devices couldn't be read": the user chose to pair again.
     func reset() throws {
         keychain.deleteDevices()
         unreadable = nil
@@ -101,10 +93,8 @@ final class DeviceStore {
         if first || -lastWrite.timeIntervalSinceNow > 600 { flush() }
     }
 
-    /// How long a new pairing has to make its first authenticated request.
     static let claimTime: TimeInterval = 600
 
-    /// Paired, but the phone never used its token: its save failed, or it was killed before saving.
     func orphans(now: Date = Date()) -> [RemoteDevice] {
         devices.filter { $0.lastSeen == nil && now.timeIntervalSince1970 - $0.created > Self.claimTime }
     }

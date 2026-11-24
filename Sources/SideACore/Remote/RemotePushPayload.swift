@@ -53,7 +53,6 @@ public enum RemotePushPayload {
         }
     }
 
-    /// A health flag that just started on a session.
     public static func health(_ session: RemoteSession, flag: SessionFlag, mac: String, now: Timestamp) -> PushPayload {
         cut(flag.text) { PushPayload(t: PushKind.health.rawValue, mac: mac, sent: now, sid: session.id, title: session.title, body: $0, agent: session.agent) }
     }
@@ -64,8 +63,20 @@ public enum RemotePushPayload {
     }
 
     public static func limit(_ account: RemoteAccount, window: UsageWindow, mac: String, now: Timestamp) -> PushPayload {
-        PushPayload(t: PushKind.limit.rawValue, mac: mac, sent: now, title: account.name, account: account.name, window: window.label,
-                    percent: min(max(Int(window.percent.rounded()), 0), 100), resetsAt: window.resetsAt)
+        let percent = min(max(Int(window.percent.rounded()), 0), 100)
+        return PushPayload(t: PushKind.limit.rawValue, mac: mac, sent: now, title: "\(account.name) is at \(percent)%", account: account.name,
+                           window: window.label, percent: percent, resetsAt: window.resetsAt)
+    }
+
+    /// Replaces a request's notification that nobody answered. In health's words, the one kind with no words of its own to
+    /// add, so every phone shows it; the relay's own "Answered" would be untrue.
+    public static func withdrawn(_ request: RemoteRequest, why: String, mac: String, now: Timestamp) -> PushPayload {
+        PushPayload(t: PushKind.health.rawValue, mac: mac, sent: now, sid: request.sessionID, title: request.headline, body: why, agent: request.agent)
+    }
+
+    /// Replaces a request's notification left from before the Mac restarted, which nothing can answer now.
+    public static func closedAfterRestart(mac: String, now: Timestamp) -> PushPayload {
+        PushPayload(t: PushKind.health.rawValue, mac: mac, sent: now, title: "Request closed", body: "Side A restarted. Check the terminal.")
     }
 
     /// What Autopilot did, in account names and a limit's numbers. Never a session's title or words.

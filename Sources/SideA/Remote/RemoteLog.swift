@@ -70,7 +70,6 @@ final class RemoteLog: @unchecked Sendable {
 
     var recent: [String] { queue.sync { lines } }
 
-    /// remote.log becomes remote.1.log, remote.1.log becomes remote.2.log, and the oldest goes.
     private func rotate() {
         guard let url else { return }
         try? file?.close()
@@ -94,7 +93,6 @@ final class RemoteLog: @unchecked Sendable {
         return "/" + parts.joined(separator: "/")
     }
 
-    /// Which network an address is on, as the Remote tab names them.
     static func network(_ address: String) -> String {
         if address.hasPrefix("127.") || address == "::1" { return "loopback" }
         if address.lowercased().hasPrefix("fd7a:115c:a1e0:") { return "tailnet" }
@@ -109,7 +107,6 @@ final class RemoteLog: @unchecked Sendable {
 final class SplicedPeers: @unchecked Sendable {
     static let shared = SplicedPeers()
     private let lock = NSLock()
-    /// The line for the log, and the bare address for per-address limits.
     private var peers: [UInt16: (peer: String, source: String)] = [:]
 
     func set(_ port: UInt16, _ peer: String, source: String) {

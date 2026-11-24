@@ -1,7 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// One block of parsed Markdown: what `PresentationIntent` says a run of text is.
 public struct MarkdownBlock: Identifiable, Hashable {
     public enum Kind: Hashable {
         case paragraph
@@ -20,10 +19,7 @@ public struct MarkdownBlock: Identifiable, Hashable {
     public init(id: Int, kind: Kind, text: AttributedString) { self.id = id; self.kind = kind; self.text = text }
 }
 
-/// Markdown into blocks, natively (the app and the notification extension share it): `AttributedString(markdown:)` with full syntax, then a walk over
-/// each run's `PresentationIntent`. Inline styles stay in the `AttributedString`.
 public enum MarkdownParser {
-    /// Views re-create their Markdown on every parent update; a transcript row would re-parse each time without this.
     /// NSCache is thread-safe (so `unsafe` is sound here) and evicts under memory pressure; the limit keeps a streaming
     /// reply's many partial texts from piling up.
     nonisolated(unsafe) private static let cache: NSCache<NSString, Parsed> = {
@@ -176,7 +172,6 @@ public enum FileLink {
         return path.isEmpty ? nil : path
     }
 
-    /// Extensions inline code can carry without a folder and still be a file: `README.md` is one, `self.view` isn't.
     static let known: Set<String> = [
         "md", "markdown", "txt", "rtf", "pdf", "csv", "tsv", "json", "jsonl", "yaml", "yml", "toml", "xml", "plist", "html", "htm", "css",
         "js", "mjs", "cjs", "ts", "tsx", "jsx", "swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "rs", "go", "py", "rb", "java", "kt",
@@ -195,11 +190,9 @@ public enum FileLink {
         return path.contains("/") || known.contains(ext) ? path : nil
     }
 
-    /// `a.swift:42` and `a.swift:42:7` as `a.swift`.
     static func withoutLine(_ path: String) -> String {
         var parts = path.split(separator: ":", omittingEmptySubsequences: false)
         while parts.count > 1, let last = parts.last, !last.isEmpty, last.allSatisfy(\.isNumber) { parts.removeLast() }
         return parts.joined(separator: ":")
     }
 }
-

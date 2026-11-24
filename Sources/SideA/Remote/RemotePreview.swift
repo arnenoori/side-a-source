@@ -48,7 +48,6 @@ final class RemotePreviews {
         previews.values.first { $0.session == session && $0.port == port && $0.expires > Date() }?.url
     }
 
-    /// Expired ones, and ones whose session no longer listens on the port.
     func prune(listening: [SessionKey: Set<Int>]) {
         let next = previews.filter { $0.value.expires > Date() && listening[$0.value.session]?.contains($0.value.port) == true }
         if next.count != previews.count {
@@ -62,7 +61,6 @@ final class RemotePreviews {
         if next.count != previews.count { previews = next; changed() }
     }
 
-    /// Remote off: a new server knows none of these credentials, so no session may go on offering them.
     func revokeAll() {
         guard !previews.isEmpty else { return }
         previews = [:]
@@ -87,7 +85,6 @@ final class RemotePreviews {
     }
 }
 
-/// Dev server previews through Side A's own listener.
 extension RemoteRoutes {
     static let previewRoutes: [Route] = [
         Route("POST", "v1/sessions/{id}/ports/{port}/preview", openPreview),
@@ -147,12 +144,10 @@ enum PortOwner {
 /// One request to the dev server on `127.0.0.1`. Redirects come back to the page as they are, with the dev server's
 /// own origin taken off, so they stay inside the preview.
 enum PreviewProxy {
-    /// One response's most, counted as it streams in: a dev server that sends more is cut off there, not collected.
     static let maxBody = 32 << 20
     /// Requests forwarded at once, the rest waiting their turn, so at most `concurrent × maxBody` is ever held.
     static let concurrent = 4
 
-    /// Collects each task's body up to the budget and cancels the task past it. Redirects come back unfollowed.
     private final class Collector: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         private struct Pending {
             var data = Data()
@@ -178,7 +173,6 @@ enum PreviewProxy {
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
             guard let http = response as? HTTPURLResponse else { completionHandler(.cancel); return finish(dataTask, .failure(URLError(.badServerResponse))) }
-            // Said too large up front: no byte of it is read.
             if http.expectedContentLength > Int64(maxBody) { completionHandler(.cancel); return finish(dataTask, .failure(TooLarge())) }
             lock.withLock { tasks[dataTask.taskIdentifier]?.response = http }
             completionHandler(.allow)
@@ -204,7 +198,6 @@ enum PreviewProxy {
 
     struct TooLarge: Error {}
 
-    /// Waiting turns for `concurrent` forwarding slots.
     private actor Slots {
         private var free = PreviewProxy.concurrent
         private var waiting: [CheckedContinuation<Void, Never>] = []
@@ -288,7 +281,6 @@ enum PreviewProxy {
         return response
     }
 
-    /// `http://localhost:5173/login` → `/login`; anything else stays.
     static func local(_ location: String, port: UInt16) -> String {
         for origin in ["http://localhost:\(port)", "http://127.0.0.1:\(port)", "http://[::1]:\(port)"] where location.hasPrefix(origin) {
             let rest = String(location.dropFirst(origin.count))

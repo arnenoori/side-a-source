@@ -20,7 +20,6 @@ MAX_REPOS = 50
 MAX_CWDS = 400
 GIT_TIMEOUT = 10
 STALE_AFTER = 7 * 86400
-# Ignored folders a build or install brings back; anything else ignored (.env, local data) blocks removal.
 REGENERABLE = {"node_modules", ".build", "build", "dist", ".venv", "__pycache__", ".next", "target", "DerivedData",
                ".cache", ".DS_Store"}
 
@@ -35,7 +34,6 @@ def archive_dir(root):
     return Path(root) / "archive"
 
 
-# Codex profiles' shared history lives in Side A's own folder, which need not be under the home folder.
 OWN = ".side-a-root"
 
 
@@ -148,7 +146,7 @@ def reindex(root, paths):
         result = sessions.index(root, 20, [str(p) for p in paths])
         if result.get("remaining", 0) >= 0:
             return True
-        time.sleep(1)  # the background indexer holds the lock for a few seconds
+        time.sleep(1)
     return False
 
 
@@ -196,7 +194,6 @@ def restore(root):
     restored, skipped, back = [], [], []
     if not source.is_dir():
         return {"restored": [], "skipped": [], "reindexed": True}
-    # Transcripts and their companion folders move back as the units archive() moved.
     units = []
     for agent, folder in stores(root):
         base = archived_path(root, folder)
@@ -405,7 +402,6 @@ def worktree_info(repo, entry, base, now, cwds=None):
     info["dirty"] = bool(status) if code == 0 else None
     if base and info["head"]:
         code, _, _ = git("merge-base", "--is-ancestor", info["head"], base, cwd=repo)
-        # A worktree just made from the base is "in" it too, so that alone isn't merged.
         if code in (0, 1):
             fresh = (own_commits(repo, info["branch"], info["head"]) or 0) < 1
             info["merged"] = code == 0 and (not fresh or (info["age"] or 0) >= STALE_AFTER)

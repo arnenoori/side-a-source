@@ -5,8 +5,6 @@ import SideAProtocol
 import SideARemoteKit
 import Testing
 
-/// The preview proxy through the real listener to a real dev server: its credential opens one port and nothing else,
-/// the cookie carries a page's absolute links, and an expired one, another site's page or a bare request get nothing.
 @Test func aPreviewOpensOnePortForItsOwnPagesOnly() async throws {
     let keychain = try TestKeychain()
     let site = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sidea-preview-\(UUID().uuidString)")
@@ -44,7 +42,6 @@ import Testing
         let (body, response) = try await transport.send(request)
         return (response.statusCode, String(decoding: body, as: UTF8.self), response)
     }
-    // Until the dev server is up the link stays unspent (502); its first page load spends it.
     var first: (Int, String, HTTPURLResponse)?
     await eventually {
         if let got = try? await get("/v1/preview/live/"), got.0 == 200 { first = got; return true }
@@ -53,18 +50,14 @@ import Testing
     let (status, body, response) = try #require(first)
     #expect(status == 200 && body == "<h1>Dev</h1>")
     #expect(response.value(forHTTPHeaderField: "Set-Cookie")?.hasPrefix("sidea_preview=live; Path=/;") == true)
-    // After that the link needs the cookie its first load set: copied to another browser it opens nothing.
     let session = ["Cookie": "sidea_preview=live"]
     #expect(try await get("/v1/preview/live/").0 == 404)
     #expect(try await get("/v1/preview/live/app.js", session).1 == "absolute")
-    // A page's absolute link, with the cookie.
     #expect(try await get("/app.js", ["Cookie": "theme=dark; sidea_preview=live"]).1 == "absolute")
-    // The page's own origin may send Origin; another site's may not.
     #expect(try await get("/v1/preview/live/", ["Origin": "https://127.0.0.1:\(port)", "Sec-Fetch-Site": "same-origin"].merging(session) { $1 }).0 == 200)
     #expect(try await get("/v1/preview/live/", ["Origin": "https://evil.example"]).0 == 403)
     #expect(try await get("/app.js", ["Cookie": "sidea_preview=live", "Sec-Fetch-Site": "cross-site"]).0 == 403)
 
-    // Nothing else opens it, and it opens nothing else.
     #expect(try await get("/app.js").0 == 401)
     #expect(try await get("/v1/preview/guess/").0 == 401)
     #expect(try await get("/v1/preview/old/").0 == 404)
@@ -72,12 +65,10 @@ import Testing
     #expect(try await get("/v1/sessions", ["Cookie": "sidea_preview=live"]).0 == 401)
     #expect(try await get("/v1/preview/dead/").0 == 502)
 
-    // Paired again under the same id: the old token's previews go, by path and by cookie.
     server.setDevices([(id: "d1", hash: DeviceToken.hash(DeviceToken.make()))])
     #expect(try await get("/v1/preview/live/").0 == 401)
     #expect(try await get("/app.js", ["Cookie": "sidea_preview=live"]).0 == 401)
 
-    // Only while the dev server it opened on still listens there: another process on the port gets nothing.
     #expect(PortOwner.listens(pid: dev.processIdentifier, port: devPort))
     #expect(!PortOwner.listens(pid: dev.processIdentifier, port: devPort &+ 1) && !PortOwner.listens(pid: getpid(), port: devPort))
     server.setPreviews(["owned": .init(port: devPort, pid: dev.processIdentifier, device: "d1", expires: Date().addingTimeInterval(60)),
@@ -89,7 +80,6 @@ import Testing
     #expect(PreviewProxy.local("https://example.com/", port: 5173) == "https://example.com/")
 }
 
-/// A dev server that never stops sending, or says it will send too much, is cut off at the budget, not collected.
 @Test func aPreviewResponseIsCutOffAtItsBudget() async throws {
     let port = freePort()
     let script = """

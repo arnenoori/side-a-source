@@ -248,7 +248,6 @@ enum ShellWords {
     private static let findRuns: Set<String> = ["-exec", "-execdir", "-ok", "-okdir"]
     private static let findWrites: Set<String> = ["-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]
 
-    /// What `find -exec` runs, as words of its own.
     static func findCommand(_ words: [String]) -> [String]? {
         guard words.first == "find", let flag = words.firstIndex(where: findRuns.contains) else { return nil }
         return Array(words[(flag + 1)...].prefix { $0 != ";" && $0 != "+" })
@@ -261,7 +260,6 @@ enum ShellWords {
 
     static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "csh", "tcsh"]
 
-    /// A language runtime that takes a script as text.
     static func interpreter(_ name: String) -> Bool {
         name.range(of: #"^(python[0-9.]*|perl|ruby|node|deno|bun|php|lua)$"#, options: .regularExpression) != nil
     }

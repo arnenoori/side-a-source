@@ -1,13 +1,8 @@
 import SideAProtocol
 import SwiftUI
 
-/// The Search tab is History (sections 4.11, 4.14). Before typing: Pinned, then Recent by project with
-/// forks under their parents, then Show Archived. Typing searches the Mac's index of asks, replies and
-/// commands. Everything pages by the Mac's cursors. With several Macs shown, typing searches every one and
-/// each Mac's results sit under its name; before typing, each Mac shows its pinned and latest conversations.
 struct HistoryView: View {
     @Environment(AppRoot.self) private var root
-    /// Owned by the Search tab's stack, which carries the field.
     let query: String
     @State private var lists: [String: HistoryList] = [:]
     @State private var searches: [String: HistorySearch] = [:]
@@ -45,7 +40,6 @@ struct HistoryView: View {
             }
         }
         .task(id: [trimmed] + macs.map(\.macID)) {
-            // Searches once typing pauses; the next keystroke cancels this one. Every Mac at once.
             if !trimmed.isEmpty { try? await Task.sleep(for: .milliseconds(250)) }
             guard !Task.isCancelled else { return }
             let text = trimmed
@@ -59,7 +53,6 @@ struct HistoryView: View {
     }
 }
 
-/// One Mac's History: the browse, or its results.
 private struct OneMacHistory: View {
     let list: HistoryList?
     let search: HistorySearch?
@@ -67,7 +60,6 @@ private struct OneMacHistory: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        // Capabilities arrive with the Mac's hello; until then there's nothing to say.
         if model.mac.state == .live && !model.tools.can(.history) && !model.tools.can(.search) {
             ContentUnavailableView("Update Side A on \(model.mac.name)", systemImage: "arrow.down.circle")
         } else if !query.isEmpty, let search {
@@ -78,9 +70,7 @@ private struct OneMacHistory: View {
     }
 }
 
-/// Pushes from History: a past transcript, the archive, or one Mac's whole History, each on its Mac.
 enum HistoryRoute: Hashable {
-    /// With the uuid of the message a search matched.
     case past(PastSession, match: String?, mac: String)
     case archive(mac: String)
     case mac(String)
@@ -115,13 +105,9 @@ extension View {
 }
 
 extension HistoryList {
-    /// What a pin, archive or rename changes in a list: rows keyed by id slide between sections.
     fileprivate var layout: [String] { sessions.map { "\($0.id)|\($0.isPinned)|\($0.title)" } }
 }
 
-// MARK: Every Mac
-
-/// A Mac's name over its part of History, as in Sessions.
 private struct MacHeader: View {
     @Environment(AppModel.self) private var model
 
@@ -136,7 +122,6 @@ private struct MacHeader: View {
     }
 }
 
-/// Before typing, with several Macs: each Mac's pinned conversations and latest five, then all of its History.
 private struct EveryMacBrowse: View {
     let macs: [AppModel]
     let lists: [String: HistoryList]
@@ -185,7 +170,6 @@ private struct MacRecent: View {
     }
 }
 
-/// One Mac's whole History, pushed from its part of the list.
 private struct MacHistoryPage: View {
     @Environment(AppModel.self) private var model
     @State private var list: HistoryList?
@@ -204,7 +188,6 @@ private struct MacHistoryPage: View {
     }
 }
 
-/// Typing, with several Macs: each Mac's results under its name, paging on their own.
 private struct EveryMacResults: View {
     let macs: [AppModel]
     let lists: [String: HistoryList]
@@ -226,7 +209,6 @@ private struct EveryMacResults: View {
             }
         }
         .listStyle(.insetGrouped)
-        // Each Mac's section settles in as that Mac answers; no haptic per keystroke or result.
         .animation(Motion.smooth(reduceMotion), value: macs.map { searches[$0.macID]?.results.map(\.id) ?? [] })
         .overlay {
             Group {
@@ -249,7 +231,6 @@ private struct MacResults: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        // A Mac with nothing to say about this query stays out of the way.
         if !search.results.isEmpty || offline || search.error != nil {
             Section {
                 ForEach(search.results) { past in
@@ -271,8 +252,6 @@ private struct MacResults: View {
         }
     }
 }
-
-// MARK: Browse
 
 private struct HistoryBrowse: View {
     @Environment(AppModel.self) private var model
@@ -323,7 +302,6 @@ private struct HistoryBrowse: View {
     }
 }
 
-/// History's forks sit under the conversation they came from; each project is a section, newest first.
 enum HistoryTree {
     struct Row { let session: PastSession; let depth: Int }
     struct Group { let project: String; let rows: [Row] }
@@ -358,8 +336,6 @@ enum HistoryTree {
         return groups.map { Group(project: $0.project, rows: $0.rows) }
     }
 }
-
-// MARK: Search
 
 private struct HistoryResults: View {
     @Environment(AppModel.self) private var model
@@ -397,8 +373,6 @@ private struct HistoryResults: View {
         .animation(Motion.smooth(reduceMotion), value: search.query == query && !search.searching)
     }
 }
-
-// MARK: Archive
 
 private struct ArchiveView: View {
     @Environment(AppModel.self) private var model
@@ -438,8 +412,6 @@ private struct ArchiveView: View {
     }
 }
 
-// MARK: Row
-
 private struct HistoryRow: View {
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
@@ -457,7 +429,6 @@ private struct HistoryRow: View {
 
     private var large: Bool { typeSize.isAccessibilitySize }
 
-    /// The live session running this conversation, if one is: tapping opens that instead.
     private var live: RemoteSession? {
         model.sessions.sessions.first { $0.conversationID == past.id || $0.id == past.id }
     }
@@ -487,8 +458,6 @@ private struct HistoryRow: View {
             }
         }
         .contextMenu { menu }
-        // Pin and archive come from a swipe or a context menu, which play their own; only a rename,
-        // confirmed by the Mac after the alert, gets .success. A refusal gets .error with its alert.
         .sensoryFeedback(.success, trigger: renamed)
         .sensoryFeedback(.error, trigger: failed)
         .alert("Rename", isPresented: $renaming) {
@@ -504,7 +473,6 @@ private struct HistoryRow: View {
     }
 
     private var label: some View {
-        // Accessibility sizes: the glyph sits above and the title and facts wrap instead of truncating.
         let layout = large ? AnyLayout(VStackLayout(alignment: .leading, spacing: Space.xxs))
             : AnyLayout(HStackLayout(alignment: .top, spacing: Space.s))
         return layout {
@@ -574,7 +542,6 @@ private struct HistoryRow: View {
                 let updated = try await list.change(past, change)
                 search?.apply(updated)
                 if change.title != nil { renamed += 1 }
-                // The row has left this list; the pill says where it went and can bring it back.
                 if let archived = change.archived {
                     Pill.undoable(archived ? "Archived" : "Unarchived") { undo(updated, archived ? (wasPinned ? HistoryChange(pinned: true) : HistoryChange(archived: false)) : HistoryChange(archived: true)) }
                 }
@@ -586,8 +553,6 @@ private struct HistoryRow: View {
         }
     }
 
-    /// Puts a pin, an archive or an unarchive back; the list reloads, since the row may have left it. Archiving unpins on
-    /// the Mac, so undoing one that was pinned pins it again, which also brings it back.
     private func undo(_ session: PastSession, _ change: HistoryChange) {
         guard let list else { return }
         Task {

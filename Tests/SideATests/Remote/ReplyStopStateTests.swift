@@ -22,7 +22,6 @@ private typealias S = ReplyReceipts.StopState
     }
 }
 
-// Resend without send isn't something the Mac's routes ask for.
 @MainActor @Test func whatFollowsACodexInterrupt() {
     typealias F = CodexTerminals.Interrupt.Follows
     let table: [(send: Bool, resend: Bool, F, holds: Bool)] = [

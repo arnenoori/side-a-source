@@ -4,7 +4,6 @@ import SideAProtocol
 import SideAProtocolFixtures
 import Testing
 
-/// A snapshot event's JSON with its own epoch and seq, as a relaunched Mac would send it.
 private func snapshotEvent(epoch: String, seq: Int) throws -> ServerEvent {
     var event = try #require(JSONSerialization.jsonObject(with: Fixtures.data("ServerEvent.snapshot")) as? [String: Any])
     var data = try #require(event["data"] as? [String: Any])
@@ -14,9 +13,6 @@ private func snapshotEvent(epoch: String, seq: Int) throws -> ServerEvent {
     return try JSONDecoder().decode(ServerEvent.self, from: JSONSerialization.data(withJSONObject: event))
 }
 
-/// Row S3 of docs/remote/sync-state-machine.md: a list asked for under one epoch and answered after the next epoch's
-/// snapshot is the old Mac's. It must not replace what the new snapshot said, however large its `seq` is: the new
-/// epoch counts from 0 again, and the lists carry no epoch of their own.
 @Test func aSliceAnsweredAfterANewEpochsSnapshotIsLeftOut() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -34,7 +30,6 @@ private func snapshotEvent(epoch: String, seq: Int) throws -> ServerEvent {
     let refreshes = [Task { try await sync.refreshRequests() }, Task { try await sync.refreshAccounts() }]
     try await until("all asked") { gates.allSatisfy { $0.arrived == 1 } }
 
-    // The Mac relaunches while they wait: a new epoch, seq from 2, with state of its own.
     first.serverClose(1001)
     let second = try await mac.socket(1)
     second.push(nil, welcome("f00d", seq: 2, replay: false))
@@ -51,7 +46,6 @@ private func snapshotEvent(epoch: String, seq: Int) throws -> ServerEvent {
     await sync.stop()
 }
 
-/// The same lists, answered in the epoch they were asked in, still refresh their slices.
 @Test func aSliceAnsweredInTheSameEpochStillRefreshes() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)

@@ -1,3 +1,4 @@
+#if canImport(Darwin)
 import Foundation
 import Testing
 @testable import SideACore
@@ -28,3 +29,4 @@ import Testing
     #expect(!MemoryPressure.shouldNotify(now: now, last: now.addingTimeInterval(-1800)))
     #expect(MemoryPressure.shouldNotify(now: now, last: now.addingTimeInterval(-3600)))
 }
+#endif

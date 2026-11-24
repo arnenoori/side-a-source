@@ -2,7 +2,7 @@ import Foundation
 import Network
 import SideAProtocol
 
-/// Where a Mac's relay tunnel is, from pairing (docs/remote/tunnel.md). A paired phone authenticates with its relay
+/// Where a Mac's relay tunnel is, from pairing. A paired phone authenticates with its relay
 /// credential; a phone mid-pairing with the sheet's ticket from the QR code.
 public struct RelayRoute: Codable, Hashable, Sendable {
     public let url: URL
@@ -135,8 +135,6 @@ public final class RelayBridge: @unchecked Sendable {
         }
     }
 
-    // MARK: Proxy
-
     private func listen() {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
@@ -205,7 +203,6 @@ public final class RelayBridge: @unchecked Sendable {
         }
     }
 
-    /// A stream ended: the longest-waiting connection takes its place.
     private func next() {
         while mux.count < Self.maxStreams, !queued.isEmpty {
             let (connection, initial) = queued.removeFirst()
@@ -228,9 +225,6 @@ public final class RelayBridge: @unchecked Sendable {
         return nextStream
     }
 
-    // MARK: Relay socket
-
-    /// Runs `then` once the relay has said whether the Mac is there, opening the socket if needed.
     private func whenOpen(_ then: @escaping (Bool) -> Void) {
         if case .open(let mac) = state { return then(mac) }
         openWaiters.append(then)

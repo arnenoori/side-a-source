@@ -29,7 +29,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     try await until("events") { await sync.state.seq == 44 }
     state = await sync.state
     #expect(state.requests.isEmpty && state.resolved[rid]?.by == .device && state.finished.isEmpty && state.sessions[sid] == nil)
-    // A duplicate is ignored.
     socket.push(44, .hostedRemove(name: "sa-app-3f9c"))
     socket.push(45, .hostedRemove(name: "nothing"))
     try await until("seq 45") { await sync.state.seq == 45 }
@@ -48,7 +47,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     try socket.push(fixture: "ServerEvent.snapshot")
     try await until("snapshot") { await sync.state.seq == 41 }
     let id = try #require(await sync.state.accounts.keys.first)
-    // What an older phone makes of account.remove: a type it doesn't know.
     socket.push(42, .unknown(type: "account.archive"))
     try await until("unknown") { await sync.state.seq == 42 }
     #expect(await sync.state.accounts[id] != nil && mac.sockets.count == 1)
@@ -72,7 +70,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     #expect(second.sent.first == .hello(epoch: "e5b0c7d2a1f3", lastSeq: 41, capabilities: [.events, .transcriptStream]))
     #expect(await sync.state.hosted.count == 1)
 
-    // The server replays from its ring.
     second.push(nil, welcome("e5b0c7d2a1f3", seq: 43, replay: true))
     second.push(42, .finishedResolve(sessionID: sid, reason: "expired"))
     second.push(43, .hostedRemove(name: "sa-app-3f9c"))
@@ -98,7 +95,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
     socket.push(raw: String(decoding: try JSONSerialization.data(withJSONObject: frame), as: UTF8.self))
     socket.push(43, .hostedRemove(name: "sa-app-3f9c"))
     try await until("both") { await sync.state.seq == 43 }
-    // Not a gap: no reconnect, and the state the lost event changed is read again.
     #expect(mac.sockets.count == 1)
     #expect(mac.calls.contains { $0.url?.path == "/v1/state" })
     await sync.stop()
@@ -137,7 +133,6 @@ private let rid = "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b"
 
     let second = try await mac.socket(1)
     #expect(second.sent.first == .hello(epoch: "e5b0c7d2a1f3", lastSeq: 41, capabilities: [.events, .transcriptStream]))
-    // The Mac relaunched: new epoch, seq from 0. Events before the snapshot don't apply.
     second.push(nil, welcome("f00d", seq: 2, replay: false))
     second.push(1, .hostedRemove(name: "sa-app-3f9c"))
     try await until("welcome") { await sync.state.connection.isLive }
@@ -225,8 +220,6 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     return (sync, socket)
 }
 
-/// Reading one session, then tapping through to another: the first screen's late goodbye leaves the second one's
-/// presence, so the Mac keeps holding back that session's banners.
 @Test func aTranscriptLeftLateKeepsTheNextOnesPresence() async throws {
     let (sync, socket) = try await liveWithTranscripts()
     _ = await sync.watch("a")
@@ -239,7 +232,6 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     await sync.stop()
 }
 
-/// The same session on screen twice: the first to go doesn't end the other's feed or presence.
 @Test func aTranscriptOnScreenTwiceKeepsItsFeedUntilBothGo() async throws {
     let (sync, socket) = try await liveWithTranscripts()
     let first = await sync.watch(sid)
@@ -263,7 +255,6 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     await sync.stop()
 }
 
-/// Only `queueDropped` says the Mac gave up on what the phone queued; the phone gives each one back.
 @Test func aQueueTheMacGaveUpOnCountsADrop() async throws {
     let mac = FakeMac()
     let sync = try engine(mac)
@@ -281,7 +272,6 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     await sync.stop()
 }
 
-/// What a notification action makes for the same answer, so a tap after it replays rather than answers twice.
 @Test func theEnginesAnswerAndReplyAreTheSharedItems() async throws {
     let sync = try engine(FakeMac())
     let allow = RemoteAnswer.allow(confirmDestructive: false)
@@ -399,7 +389,6 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     let first = try await mac.socket(0)
     #expect(await sync.endpoint.addresses.contains(URL(string: "https://10.0.0.9:47800")!))
 
-    // The paired addresses stop answering: the learned one is tried without a relaunch.
     mac.unreachable(["100.101.12.4", "192.168.1.20", "macbook-pro.tail1234.ts.net"])
     first.serverClose(1001)
     let second = try await mac.socket(1)
@@ -434,12 +423,10 @@ private func liveWithTranscripts() async throws -> (SyncEngine, FakeSocket) {
     try await until("snapshot") { await sync.state.seq == 41 }
     first.serverClose(1001)
 
-    // Offline, accounts refresh to seq 44: seq stays at 41.
     try await sync.refreshAccounts()
     var state = await sync.state
     #expect(state.seq == 41 && state.accounts.isEmpty && state.sliceSeq[.accounts] == 44)
 
-    // The replay still applies 42 (another slice) and skips the account events the list already reflects.
     let second = try await mac.socket(1)
     #expect(second.sent.first == .hello(epoch: "e5b0c7d2a1f3", lastSeq: 41, capabilities: [.events, .transcriptStream]))
     second.push(nil, welcome("e5b0c7d2a1f3", seq: 45, replay: true))

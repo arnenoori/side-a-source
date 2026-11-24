@@ -3,8 +3,6 @@ import Foundation
 import SideARemoteShared
 import Speech
 
-/// Apple's on-device speech, for when the Mac can't transcribe. SpeechTranscriber where the device has it, the older
-/// dictation model elsewhere; either downloads its language once.
 enum PhoneTranscriber {
     enum Failure: Error { case unsupportedLanguage }
 

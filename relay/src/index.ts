@@ -164,9 +164,6 @@ async function registrationGate(request: Request, env: Env, now: number): Promis
   return { ledger, dayEnds, fullFor: full ? Math.ceil((dayEnds - now) / 1000) : 0 };
 }
 
-// Every signed or bearer request wakes an install's object, billed, before anything is proved. 600 a
-// minute per network is ten times what one Mac may send (LIMITS.sendsPerMinute) and twice what ten
-// phones may ask (LIMITS.phonePerMinute), so only a flood of guesses reaches it.
 async function requestGate(request: Request, env: Env, now: number): Promise<Reply | undefined> {
   const missing = unkeyed(env);
   if (missing) return missing;
@@ -229,7 +226,6 @@ function count(env: Env, event: string, reason = '', value = 1) {
 
 const log = (event: string, fields: Record<string, unknown>) => console.error(JSON.stringify({ event, ...fields }));
 
-// Whether this Live Activity token belongs to the proven device that wants to use it.
 async function ownsToken(env: Env, target: Target, ownerToken: string, now: number): Promise<boolean> {
   const name = b64url(await sha256(utf8(target.delivery.token)));
   const owner = b64url(await sha256(utf8(ownerToken)));
@@ -253,7 +249,6 @@ async function push(env: Env, target: Target, now: number): Promise<Report> {
 async function send(env: Env, stub: DurableObjectStub<Install>, devices: string[], plan: Plan, now: number): Promise<Reply> {
   if (!configured(env)) return failure(503, 'not_configured', 'The relay has no APNs key');
   const reports = await Promise.all(plan.targets.map(target => push(env, target, now)));
-  // Successes too: the object keeps a last-send date for its 90-day cleanup.
   const settle = reports.filter(({ outcome }) => outcome.result === 'ok' || outcome.result === 'gone');
   if (settle.length) await stub.settle(settle);
   for (const { outcome } of reports) {
@@ -264,7 +259,6 @@ async function send(env: Env, stub: DurableObjectStub<Install>, devices: string[
   return { status: 200, body: { results } };
 }
 
-// The verification push for a new token. Its outcome only matters if APNs says the token is gone.
 async function challenge(env: Env, stub: DurableObjectStub<Install>, result: Answer, now: number, ctx: ExecutionContext): Promise<Reply> {
   if (result.challenge && configured(env)) {
     const target = result.challenge;
@@ -323,7 +317,6 @@ async function route(request: Request, env: Env, ctx: ExecutionContext, url: URL
   return { reply: await send(env, stub, op.op === 'send' ? op.send.devices : [], result, now), install: signature.install };
 }
 
-// The upgrade only says which install; the install's object checks the signature, credential or ticket.
 async function tunnel(request: Request, env: Env, path: string, now: number): Promise<{ reply: Reply; install?: string; socket?: Response }> {
   if (request.method !== 'GET') return { reply: failure(405, 'method_not_allowed', 'GET with Upgrade: websocket') };
   if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return { reply: failure(426, 'upgrade_required', 'This route is a WebSocket') };
@@ -334,7 +327,6 @@ async function tunnel(request: Request, env: Env, path: string, now: number): Pr
   if (!install) return { reply: failure(401, 'unauthorized', 'Missing or malformed credential') };
   const missing = unkeyed(env);
   if (missing) return { reply: missing, install };
-  // Nothing has been proved yet, and what follows wakes an object: a well-formed guess costs its sender.
   const ip = request.headers.get('cf-connecting-ip');
   if (ip && !(await env.TUNNEL_LIMIT.limit({ key: await clientKey(env, ip, Math.floor(now / 86_400_000)) })).success) {
     return { reply: failure(429, 'rate_limited', 'Too many tunnel connections from this network', 10), install };
@@ -342,7 +334,6 @@ async function tunnel(request: Request, env: Env, path: string, now: number): Pr
   const response = await env.INSTALLS.get(env.INSTALLS.idFromName(install)).fetch(request);
   count(env, `tunnel.${path.endsWith('mac') ? 'mac' : 'phone'}`, String(response.status));
   if (response.webSocket) return { reply: { status: response.status }, install, socket: response };
-  // Refusals go out like every other reply, with the relay's Date for a Mac whose clock is off.
   const error = (await response.json<{ error?: { code: string; message: string } }>().catch(() => null))?.error;
   const retryAfter = response.headers.get('retry-after');
   return { reply: failure(response.status, error?.code ?? 'tunnel_refused', error?.message ?? '', retryAfter === null ? undefined : Number(retryAfter)), install };

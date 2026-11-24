@@ -1,7 +1,6 @@
 import SwiftUI
 import UIKit
 
-/// What the key bar drives: the terminal view behind it.
 @MainActor
 protocol KeyBarKeys: AnyObject {
     var applicationCursor: Bool { get }
@@ -10,8 +9,6 @@ protocol KeyBarKeys: AnyObject {
     func hideKeyboard()
 }
 
-/// The keys a phone keyboard lacks, as glass capsules riding it: Esc, a sticky Control,
-/// Tab, the arrows (they repeat on hold), ⌃C, the shell's punctuation, and hide the keyboard.
 struct KeyBar: View {
     let keys: any KeyBarKeys
     @State private var control = false
@@ -56,7 +53,6 @@ struct KeyBar: View {
         .buttonStyle(.plain)
         .foregroundStyle(.white)
         .environment(\.colorScheme, .dark)
-        // The bar has one row's height above the keyboard.
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .sensoryFeedback(.selection, trigger: taps)
         .onReceive(NotificationCenter.default.publisher(for: Self.controlReset)) { _ in control = false }
@@ -96,14 +92,12 @@ private struct KeyCap: View {
         .padding(.horizontal, 4)
         .foregroundStyle(lit ? Color.black : Color.white)
         .background { if lit { Capsule().fill(.white).transition(.opacity) } }
-        // A latched Control answers the tap with its fill alone; the bar's tick is the only haptic.
         .animation(Motion.snappy(reduceMotion), value: lit)
         .glassEffect(.regular.interactive(), in: .capsule)
         .contentShape(.capsule)
     }
 }
 
-/// A key that fires on touch down and repeats while held, like the keyboard's own.
 private struct RepeatingKey: View {
     let text: String
     let action: () -> Void

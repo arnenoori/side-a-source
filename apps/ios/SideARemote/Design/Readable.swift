@@ -1,18 +1,12 @@
 import SwiftUI
 
-/// The widest a column of prose gets. A phone held upright never reaches it; on iPad the transcript and its composer
-/// stay this wide, centred, rather than running a line across the whole display.
 enum Readable {
     static let width: CGFloat = 720
 
-    /// A tab's side margins in a window `width` wide: cards `Readable.width` wide, centred, and never less than the
-    /// usual inset.
     static func margin(in window: CGFloat) -> CGFloat { max((window - Self.width) / 2, Space.l) }
 }
 
 extension View {
-    /// The transcript and its composer at most `Readable.width` wide on iPad; an iPhone, landscape included, keeps
-    /// its full width.
     func readableWidth() -> some View { modifier(ReadableWidth()) }
 
     /// A tab of lists and forms on a full-width iPad: its cards in one centred column. The margins are the scroll

@@ -49,7 +49,6 @@ import Testing
     @Test func handoffPhotosAreAnAdditiveOptionalField() throws {
         let photos = try JSONDecoder().decode(RestartRequest.self, from: try Fixtures.data("RestartRequest.agent-photos"))
         #expect(photos.agent == .claude && photos.attachments == ["0123456789ab", "ba9876543210"])
-        // Without photos nothing about the body changes, so a Mac from before them signs and decodes it as it always did.
         let plain = RestartRequest(handoff: photos.handoff, agent: .codex, message: "m", attachments: [])
         let json = String(decoding: try JSONEncoder().encode(plain), as: UTF8.self)
         #expect(plain.attachments == nil && !json.contains("attachments"))

@@ -1,3 +1,4 @@
+#if canImport(Darwin)
 import Foundation
 @testable import SideACore
 import Testing
@@ -48,3 +49,4 @@ import Testing
     #expect(ProcessEnvironment.origin(["/usr/sbin/cron"]) == "cron")
     #expect(ProcessEnvironment.origin([]) == nil)
 }
+#endif

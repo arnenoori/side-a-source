@@ -8,7 +8,6 @@ import SideAProtocol
 @MainActor struct SessionCommands {
     let store: AccountStore
 
-    /// Longest reply or note, in characters.
     nonisolated static let maxReply = 20_000
 
     struct Failure: Error, Equatable {
@@ -63,7 +62,6 @@ import SideAProtocol
 
         var hint: String? { details?["hint"] }
 
-        /// The words for the Sessions window, where the phone's own advice doesn't fit.
         var macMessage: String {
             switch hint {
             case "continueOnPhone"?: "This session isn't running where Side A can reach it. Resume it to reply."
@@ -83,7 +81,6 @@ import SideAProtocol
         /// The finished turn this follows up on; a reply to one that has moved on is refused.
         var turnID: String?
         var submit: ReplySubmit?
-        /// The queued reply this takes the place of.
         var replaces: String?
         /// The phone that sent it and what it proved, for a reply that waits. Nil from the Mac.
         var origin: Island.QueuedFollowUp.Origin?
@@ -97,7 +94,6 @@ import SideAProtocol
         let key: SessionKey
         let live: LiveSession?
         let row: Island.Ready?
-        /// The app server's status for a Codex session reached through it.
         let codex: SessionStatus?
         var conversation: String? { live?.sessionID ?? row?.finish.sessionID }
 
@@ -123,7 +119,6 @@ import SideAProtocol
         }
     }
 
-    // MARK: What a session takes
 
     /// Its status as the phone sees it: Codex's app server's when it reaches the session, and finished, not idle, while
     /// its finished turn is on the island. `finished` is the island's finished conversations, when a caller has them.
@@ -139,18 +134,15 @@ import SideAProtocol
         let codex = store.remote.codex
         var abilities: Set<SessionAbility> = [.transcript]
         if live.hosted != nil {
-            // A hosted session takes typing and keys at any time, and Esc while it works.
             abilities.formUnion([.type, .terminal])
             // Mid-turn Claude queues what's typed; Codex steers on Enter and queues on Tab.
             if status == .working { abilities.formUnion([.interrupt, .followUp]) }
         } else if live.provider == .claude, island.installed[.claude] == true {
-            // An unhosted Claude session takes notes and stops through its mail hooks, and follow-ups through its Stop waiter.
             if status == .working { abilities.formUnion([.note, .interrupt, .followUp]) }
             if status == .waiting { abilities.insert(.note) }
             // Idle, its inbox hook wakes it with a reply, as a note Claude Code shows the model.
             if status == .idle || status == .finished, store.remote.inbox.watching(live) { abilities.insert(.replyInbox) }
         } else if live.provider == .codex, codex.reach(live) == .attached {
-            // Reached through Codex's app server: a reply shows in its terminal, and mid-turn it steers or queues.
             abilities.insert(.replyTerminal)
             if status == .working { abilities.formUnion([.interrupt, .followUp]) }
         } else if live.provider == .codex, island.installed[.codex] == true {
@@ -159,17 +151,16 @@ import SideAProtocol
             if notes, status == .working || status == .waiting { abilities.insert(.note) }
         }
         if let id = live.sessionID, island.hasWaiter(id) { abilities.insert(.followUp) }
-        // Idle in a terminal Side A can type into, with nothing better waiting: a reply is typed there.
         if status == .idle || status == .finished, abilities.isDisjoint(with: [.type, .replyInbox, .replyTerminal, .followUp]), store.remote.typer.reach(live) != nil {
             abilities.insert(.replyTyped)
         }
         if store.hosted.available, HostedSessions.continueRefusal(live) == nil { abilities.insert(.continueOnPhone) }
-        // Codex's app server: the settings it can change for the next turns.
         abilities.formUnion(codex.row(live)?.abilities ?? [])
         // The bridge reads a Claude turn's diff from its transcript, so every Claude session with a turn has one.
         if live.provider == .claude, live.turnID != nil { abilities.insert(.turnDiff) }
-        // Hosted Claude: its own pickers and /compact, while idle.
-        if live.provider == .claude { abilities.formUnion(Self.claudeTyped(live, status: status, asking: asking(live)).abilities) }
+        if live.provider == .claude {
+            abilities.formUnion(Self.claudeTyped(live, reach: store.remote.typer.reach(live), status: status, asking: asking(live)).abilities)
+        }
         return abilities
     }
 
@@ -178,7 +169,7 @@ import SideAProtocol
     func reasons(_ live: LiveSession, status: SessionStatus) -> [String: String]? {
         var reasons = store.remote.codex.row(live)?.reasons ?? [:]
         if live.provider == .claude {
-            reasons.merge(Self.claudeTyped(live, status: status, asking: asking(live)).reasons) { $1 }
+            reasons.merge(Self.claudeTyped(live, reach: store.remote.typer.reach(live), status: status, asking: asking(live)).reasons) { $1 }
             reasons[SessionAbility.review.rawValue] = "Ask Claude in a reply."
         }
         if live.provider == .codex, live.hosted == nil, store.island.installed[.codex] == true, store.island.codexMail == "review",
@@ -195,12 +186,10 @@ import SideAProtocol
         return .some(settings?.mode)
     }
 
-    /// A request of this session's is open on the Mac.
     private func asking(_ live: LiveSession) -> Bool {
         store.island.pending.contains { $0.request.sessionID != nil && $0.request.sessionID == live.sessionID || $0.request.pid == live.pid }
     }
 
-    /// A reply Codex or Claude dropped, quoted, else the bridge's health flag.
     func flag(_ live: LiveSession) -> SessionFlag? {
         if let text = store.remote.codex.unsent(live) { return SessionFlag(kind: .unsent, text: "Didn't reach Codex: \u{201C}\(String(text.prefix(80)))\u{201D}") }
         if let text = store.remote.inbox.unsent(live) { return SessionFlag(kind: .unsent, text: "Didn't reach Claude: \u{201C}\(String(text.prefix(80)))\u{201D}") }
@@ -210,7 +199,6 @@ import SideAProtocol
     /// The reply a dropped one carried, in full: the quote in the flag is cut at 80 characters.
     func unsent(_ live: LiveSession) -> String? { store.remote.codex.unsent(live) ?? store.remote.inbox.unsent(live) }
 
-    // MARK: Talk
 
     /// What a reply comes to on the main actor: delivered already, or typing still to do.
     enum Plan: Sendable {
@@ -219,9 +207,7 @@ import SideAProtocol
         case type(name: String, key: SessionKey, working: Bool)
         /// `guarded`: a request is pending, so the keys could answer it and need Face ID.
         case keys(name: String, key: SessionKey, guarded: Bool)
-        /// A Codex session started in a terminal, through Codex's app server.
         case codex(LiveSession, key: SessionKey, text: String, queue: Bool)
-        /// Typed into the session's own terminal tab, as the user's message.
         case terminal(LiveSession, key: SessionKey, text: String)
     }
 
@@ -385,9 +371,7 @@ import SideAProtocol
             }
             return .keys(name: hosted, key: target.key, guarded: open.pending)
         case .refused(let refusal):
-            // Idle with no Stop hook waiting: a Claude session started in a terminal still has its inbox.
             if state == .idle, message.mode != .keys, let inboxed = inbox(text, target: target) { return inboxed }
-            // With no hook waiting either, its own terminal tab still takes typing.
             if state == .idle, message.mode == .auto || message.mode == .followUp, let live = target.live, store.remote.typer.reach(live) != nil {
                 return .terminal(live, key: target.key, text: text)
             }
@@ -445,7 +429,6 @@ import SideAProtocol
         do { try await store.hosted.reply(hosted, text: text, submit: .steer, key: last.key) } catch { receipts.release(carried.map(\.key)) }
     }
 
-    /// Withdraws the note or stop a session hasn't read yet.
     func takeBack(_ id: String) throws(Failure) {
         guard let live = Target(id, store: store)?.live else { throw .noSession }
         guard store.sessions.cancelMail(live) else {

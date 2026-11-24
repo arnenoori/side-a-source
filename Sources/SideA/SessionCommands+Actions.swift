@@ -2,11 +2,9 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// Quitting, stopping a server, starting a hosted session and Restart Fresh, for the phone and the Sessions window.
 extension SessionCommands {
     nonisolated static func internalFailure(_ message: String) -> Failure { Failure(status: 500, code: .internalError, message: message) }
 
-    // MARK: Quit
 
     /// Any interactive session: hosted ones end with their tmux session, others get SIGTERM (Claude Code saves on it).
     func quit(_ id: String) async throws(Failure) {
@@ -60,7 +58,6 @@ extension SessionCommands {
         Task { try? await Task.sleep(for: .seconds(1)); await sessions.refreshLive() }
     }
 
-    // MARK: Start
 
     /// A new, resumed or forked session in Side A's tmux. `origin` names who asked, for the session's record.
     func start(_ start: StartHosted, images: [String] = [], key: String? = nil, origin: String) async throws(Failure) -> String {
@@ -93,14 +90,12 @@ extension SessionCommands {
         }
     }
 
-    /// A Claude conversation that is running, forked into a new hosted session in its folder.
     func fork(_ id: String, origin: String) async throws(Failure) -> String {
         guard let live = Target(id, store: store)?.live, let conversation = live.sessionID, let cwd = live.cwd else { throw .noSession }
         return try await start(StartHosted(cwd: cwd, agent: live.provider, accountID: store.sessions.accountID(of: live), resume: conversation, fork: true),
                                origin: origin)
     }
 
-    // MARK: Restart Fresh
 
     /// A draft only: the conversation's first prompt as the goal, its health flag as what failed, its branch and its
     /// last few turns, to edit and hand to `restart`.
@@ -130,7 +125,6 @@ extension SessionCommands {
         try await restarted(id, body, key: key, origin: origin).name
     }
 
-    /// The other agent's start answers with the link, so the phone can show where it came from at once.
     func restarted(_ id: String, _ body: RestartRequest, images: [String] = [], key: String? = nil,
                    origin: String) async throws(Failure) -> (name: String, link: HandoffLink?) {
         if let agent = body.agent, let live = Target(id, store: store)?.live, agent != live.provider {
@@ -178,7 +172,6 @@ extension SessionCommands {
                 }).joined(separator: "\n\n")
     }
 
-    /// A bridge read that failed, as the phone hears it.
     nonisolated static func readFailure(_ error: Error) -> Failure {
         switch error {
         case let failure as RemoteTranscript.Failure where failure.missing: .noSession

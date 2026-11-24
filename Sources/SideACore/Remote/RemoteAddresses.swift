@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 
 /// Which of the Mac's addresses Remote listens on: its tailnet addresses, and with Wi-Fi pairing on, its LAN ones.
@@ -48,6 +47,7 @@ public struct RemoteAddresses: Sendable, Equatable {
         return withUnsafeBytes(of: v4) { Array($0) }
     }
 
+#if canImport(Darwin)
     /// The Mac's interfaces now, up and with an address; `primary`'s first.
     public static func current(primary: String? = nil) -> RemoteAddresses {
         var list: UnsafeMutablePointer<ifaddrs>?
@@ -66,4 +66,5 @@ public struct RemoteAddresses: Sendable, Equatable {
         }
         return classify(interfaces.filter { $0.name == primary } + interfaces.filter { $0.name != primary })
     }
+#endif
 }

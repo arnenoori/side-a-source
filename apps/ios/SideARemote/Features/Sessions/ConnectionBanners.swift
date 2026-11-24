@@ -3,8 +3,6 @@ import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
 
-/// What the connection says in a list, as inset rows under the navigation bar: reconnecting, offline and why, pair
-/// again, and a Mac that wants this iPhone paired again to approve things. Sessions and Accounts share it.
 struct ConnectionBanners: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openURL) private var openURL
@@ -12,14 +10,8 @@ struct ConnectionBanners: View {
 
     var body: some View { banners }
 
-    /// Under the navigation bar as an inset row, never a toast; the content below keeps its age.
     @ViewBuilder private var banners: some View {
         switch model.mac.shown {
-        case .reconnecting:
-            // The chip says "Reconnecting…"; the row joins once the data is a minute old.
-            if let age = Formatting.age(of: model.mac.lastSeen) {
-                Section { BannerRow(symbol: "arrow.trianglehead.2.clockwise", text: "\(age) · Reconnecting…") }
-            }
         case .offline(let reason) where reason.needsPairing:
             Section {
                 BannerRow(symbol: reason == .keyChanged ? "key.slash" : "iphone.slash", text: reason.message(mac: model.mac.name),
@@ -63,8 +55,6 @@ struct ConnectionBanners: View {
     }
 }
 
-/// A Mac whose Side A predates what this app version uses: the one row that says so, in place of features that just
-/// aren't there. Sessions only, so it isn't repeated on every screen.
 struct UpdateMacBanner: View {
     @Environment(AppModel.self) private var model
 

@@ -4,8 +4,6 @@ import SideARemoteShared
 import SwiftUI
 import UserNotifications
 
-/// Test Connection on the phone (setup, "Diagnostics"): four plain answers, each naming the first thing wrong. The
-/// relay is checked on its own, so a broken relay shows even while a direct path carries everything.
 @Observable
 final class ConnectionTest {
     nonisolated deinit {}
@@ -24,7 +22,6 @@ final class ConnectionTest {
 
     private(set) var steps: [Step]
     private(set) var running = false
-    /// Nil in the demo, whose Macs have no pairing: its runs are made up and nothing is sent.
     let mac: PairedMac?
     let name: String
 
@@ -65,7 +62,6 @@ final class ConnectionTest {
         if let path {
             steps[Self.reaching].outcome = .passed(Self.reached(path, mac: name))
         } else {
-            // With no path the hello fails at once, with the reason the race found none.
             let error: Error? = if case .failure(let error) = hello { error } else { nil }
             let tailnet = mac.endpoint.addresses.contains { Tailscale.isTailnet($0.host() ?? "") }
             let vpnUp = await Tailscale.vpnUp()
@@ -114,13 +110,19 @@ final class ConnectionTest {
         return false
     }
 
-    /// `client` is nil when the Mac can't be asked.
-    private func notificationsOutcome(client: RemoteClient?) async -> Outcome {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        switch settings.authorizationStatus {
-        case .authorized, .provisional, .ephemeral: break
-        default: return .failed("Notifications are off for Side A Remote.", detail: "Turn them on in Settings › Notifications.")
+    /// iOS has no Settings page for an app that never asked, so one that hasn't is asked here, not pointed at Settings.
+    static let notAsked = Outcome.failed("Notifications aren't turned on for Side A Remote.", detail: nil)
+
+    static func notificationsOff(_ status: UNAuthorizationStatus) -> Outcome? {
+        switch status {
+        case .authorized, .provisional, .ephemeral: nil
+        case .notDetermined: notAsked
+        default: .failed("Notifications are off for Side A Remote.", detail: "Turn them on in Settings › Notifications.")
         }
+    }
+
+    private func notificationsOutcome(client: RemoteClient?) async -> Outcome {
+        if let off = Self.notificationsOff(await UNUserNotificationCenter.current().notificationSettings().authorizationStatus) { return off }
         guard mac?.relayURL != nil else { return .notChecked("Allowed here. \(name) needs the relay to send them.") }
         guard let client else { return .notChecked("Allowed here. \(name) couldn't be asked about its last one.") }
         return await Self.pushStatus(client, mac: name)
@@ -167,7 +169,6 @@ final class ConnectionTest {
         }
     }
 
-    /// The engine's events socket is live, or comes up within `within` of being asked to reconnect now.
     static func live(_ engine: SyncEngine?, within: Duration = .seconds(6)) async -> Bool {
         guard let engine else { return false }
         if await engine.state.connection.isLive { return true }
@@ -180,7 +181,6 @@ final class ConnectionTest {
         return false
     }
 
-    /// Asks the Mac for one test notification, whatever else this screen has found.
     func sendTestNotification() async {
         running = true
         defer { running = false }
@@ -207,8 +207,6 @@ final class ConnectionTest {
         }
     }
 
-    /// `GET /v1/setup`'s push line. "unverified": the relay holds this iPhone's token but the iPhone hasn't confirmed it
-    /// yet, so the Mac's pushes go nowhere until it does.
     static func pushStatus(_ client: RemoteClient, mac: String) async -> Outcome {
         guard let push = try? await client.setup().push else { return .notChecked("Allowed here. \(mac) didn't say how its last one went.") }
         guard push.registered else { return .notChecked("Allowed here. This \(ThisDevice.kind) isn't registered with \(mac) yet.") }
@@ -238,7 +236,6 @@ final class ConnectionTest {
     }
 }
 
-/// Tests `link`'s Mac with that Mac's own engine, whichever Mac the screen it was opened from shows.
 struct TestConnectionView: View {
     private let link: LiveLink?
     @State private var test: ConnectionTest
@@ -259,7 +256,17 @@ struct TestConnectionView: View {
             Section {
                 ForEach(test.steps) { step in
                     StepRow(step: step) {
-                        if step.id - 1 == ConnectionTest.notifications, step.outcome != .running {
+                        if step.id - 1 == ConnectionTest.notifications, step.outcome == ConnectionTest.notAsked {
+                            Button("Turn On Notifications", systemImage: "bell.badge") {
+                                Task {
+                                    await NotificationsCard.requestAccess()
+                                    await test.run(engine: link?.engine)
+                                }
+                            }
+                            .font(.subheadline)
+                            .buttonStyle(.borderless)
+                            .disabled(test.running)
+                        } else if step.id - 1 == ConnectionTest.notifications, step.outcome != .running {
                             Button("Send Test Notification", systemImage: "bell.badge") { Task { await test.sendTestNotification() } }
                                 .font(.subheadline)
                                 .buttonStyle(.borderless)
@@ -327,7 +334,6 @@ struct TestConnectionView: View {
     }
 }
 
-/// The rolling log, joined into one text file when Share Logs is tapped.
 struct LogExport: Transferable {
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .plainText) { _ in

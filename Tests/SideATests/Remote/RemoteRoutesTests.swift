@@ -7,7 +7,6 @@ import SideACore
 import SideAProtocol
 import Testing
 
-/// A demo store keeps everything in its temp folder; the scene is set by hand, with no hook server or tmux.
 @MainActor
 private final class Scene {
     /// A root of its own: demo stores share one by default, and a photo is named by its pixels, so another test's sweep of an aged
@@ -18,8 +17,6 @@ private final class Scene {
         try? FileManager.default.removeItem(at: folder)
     }
 
-    /// A signed caller, for what these tests are about; SignedRoutesTests checks real signatures. Face ID for a start,
-    /// Autopilot, an account, a trust or rotation still reaches the scene's missing server.
     init() {
         store = AccountStore(demo: true, root: folder)
         store.remote.confirmCheck = { _, _, purpose, _, needs in
@@ -65,7 +62,6 @@ private final class Scene {
 private func code(_ object: [String: Any]) -> String? { (object["error"] as? [String: Any])?["code"] as? String }
 private func hint(_ object: [String: Any]) -> String? { ((object["error"] as? [String: Any])?["details"] as? [String: String])?["hint"] }
 
-/// A hosted pane reaches the phone as it starts and ends, in the event stream and in a snapshot.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
@@ -118,7 +114,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     #expect(second.approvals.map(\.resolution.requestID) == (0..<10).reversed().map { String(format: "r%02d", $0) } && second.next == nil)
 
     let scene = Scene()
-    // A request answered while Remote records lands in the log with what it asked.
     let events = RemoteEvents(store: scene.store, hub: EventHub(queue: DispatchQueue(label: "test.hub"), epoch: "e1",
         snapshot: { { seq, epoch in StateSnapshot(seq: seq, epoch: epoch) } },
         hello: { Hello(app: "", build: 0, mac: MacInfo(id: "", name: ""), capabilities: [], epoch: "e1", serverTime: 0, endpoints: Endpoints(tailnet: ""), keyID: "") }),
@@ -133,7 +128,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     scene.store.remote.approvals.forget()
 }
 
-/// A burst of changes: the first goes out at once, the rest together within the window, as the latest state.
 @MainActor @Test func aBurstOfLiveChangesGoesOutAtOnceThenTogether() async throws {
     let scene = Scene()
     let queue = DispatchQueue(label: "test.hub")
@@ -161,14 +155,12 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     #expect(upserts() == [.working, .waiting])
     #expect(events.session("s1")?.status == .waiting && events.session("nope") == nil)
 
-    // Quiet again: the next goes at once.
     scene.store.sessions.live.removeAll()
     try scene.live(pid: 4242, id: "s1", status: "busy")
     events.liveChanged()
     #expect(upserts() == [.working, .waiting, .working])
 }
 
-/// Sparkle's check runs only where the app offers one, and the capability says so.
 @MainActor @Test func anUpdateCheckGoesOnlyWhereTheAppOffersOne() async throws {
     let scene = Scene()
     #expect(try await scene.call("POST", "v1/update/check").0 == 503)
@@ -186,7 +178,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     let worth = try #require(WireBuilders.worth(rows))
     #expect(worth.days7 > 0 && abs(worth.days30 - 2 * worth.days7) < 0.0001 && worth.currency == "USD")
     #expect(WireBuilders.worth([]) == nil)
-    // Mac-wide: the demo's report, every account together.
     #expect(MacStats.state(AccountStore(demo: true)).worth != nil)
 }
 
@@ -209,7 +200,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     try scene.live(pid: 103, id: "s-idle", status: "idle")
     try scene.pending(session: "s-wait", pid: 102, command: "npm test")
 
-    // Working: auto leaves a note, followUp queues until the turn ends, at most five.
     var (status, body) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": " check the logs ", "mode": "auto", "attachments": []])
     #expect(status == 200 && body["delivery"] as? String == "note" && body["sessionID"] as? String == "s-work")
     #expect(scene.mail(101) == ["kind": "note", "text": "check the logs"])
@@ -221,7 +211,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     #expect(status == 409 && code(body) == "cannot_deliver" && hint(body) == "queueFull")
     #expect(scene.store.island.queued["s-work"]?.count == 5)
 
-    // An open request blocks replies but takes a note; keys need a hosted session.
     (status, body) = try await scene.call("POST", "v1/sessions/s-wait/reply", ["text": "hi", "mode": "auto", "attachments": []])
     #expect(status == 409 && code(body) == "session_waiting")
     (status, body) = try await scene.call("POST", "v1/sessions/s-wait/reply", ["text": "", "mode": "keys", "keys": ["enter"], "attachments": []])
@@ -252,7 +241,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     #expect(row().mail?.kind == .stop && at >= asked.rounded(.down) - 1 && at <= Date().timeIntervalSince1970 + 1)
     (status, _) = try await scene.call("DELETE", "v1/sessions/s-work/mail")
     #expect(status == 204 && scene.mail(201) == nil && row().mail == nil)
-    // Nothing left to take back, or the session already took it: the phone says it was read.
     (status, body) = try await scene.call("DELETE", "v1/sessions/s-work/mail")
     #expect(status == 404 && code(body) == "not_found")
     (status, _) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": "check the logs", "mode": "note", "attachments": []])
@@ -261,7 +249,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     (status, body) = try await scene.call("DELETE", "v1/sessions/s-work/mail")
     #expect(status == 404 && code(body) == "not_found")
 
-    // No conversation id yet: the session goes by its process and start time.
     (status, body) = try await scene.call("POST", "v1/sessions/pid-202-1700000000/interrupt", ["when": "nextStep"])
     #expect(status == 409 && code(body) == "cannot_deliver")
     (status, _) = try await scene.call("POST", "v1/sessions/s-work/interrupt", ["when": "later"])
@@ -284,13 +271,11 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     }
     #expect(resolution.by == .device && resolution.deviceName == "Pocket" && resolution.answer == .allow)
     #expect(island.pending.isEmpty)
-    // The second answer learns who settled it.
     guard case .conflict(let first) = island.remoteAnswer(rid, .deny(message: nil), device: "d2", name: "Other", proven: .none) else {
         Issue.record("A second answer went through"); return
     }
     #expect(first.deviceID == "d1")
 
-    // A destructive Allow needs Face ID's signature; the phone saying it confirmed counts for nothing.
     let rm = try scene.pending(session: "s1", pid: 301, command: "rm -rf build")
     #expect(island.remoteAnswer(rm.id.uuidString, .allow(confirmDestructive: true), device: "d1", name: "Pocket", proven: .unlock) == .refused("needs_confirm"))
     #expect(island.pending.count == 1)
@@ -316,7 +301,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     #expect((try? JSONDecoder().decode([String: String].self, from: Data(contentsOf: codexMail))) == ["kind": "note", "text": "psst"])
     (status, _) = try await scene.call("POST", "v1/sessions/c-work/interrupt")
     #expect(status == 409 && scene.mail(401) == nil)
-    // Until the user trusts the mail hooks in Codex, notes are off and the row says why.
     scene.store.island.codexMail = "review"
     let row = try #require(WireBuilders.session(scene.store.sessions.live.first { $0.pid == 401 }!, store: scene.store, finished: []))
     #expect(!row.abilities.contains(.note) && row.reason(.note) == "Codex asks you to review Side A's two new hooks before notes reach it.")
@@ -325,7 +309,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     scene.store.island.codexMail = "trusted"
     #expect(WireBuilders.session(scene.store.sessions.live.first { $0.pid == 401 }!, store: scene.store, finished: []).abilities.contains(.note))
 
-    // A hosted idle session is typed into. This pane isn't one of HostedSessions', so the hosting lane refuses it.
     (status, body) = try await scene.call("POST", "v1/sessions/h-idle/reply", ["text": "go on", "mode": "auto", "attachments": []])
     #expect(status == 409 && code(body) == "not_hosted")
     (status, body) = try await scene.call("POST", "v1/sessions/h-idle/reply", ["text": "", "mode": "keys", "keys": ["esc"], "attachments": []])
@@ -349,7 +332,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     let wire = WireBuilders.session(scene.store.sessions.live[0], store: scene.store, finished: [])
     #expect(wire.settings == SessionSettings(model: "claude-opus-5-5", effort: .init(rawValue: "high"), mode: .acceptEdits, fast: false))
     #expect(wire.model == "claude-opus-5-5" && wire.effort == "high" && wire.contextPercent == 37 && wire.cost == 1.25 && wire.backgroundTasks == 1)
-    // A session the bridge read nothing about says nothing, rather than "default".
     let bare = WireBuilders.session(scene.store.sessions.live[1], store: scene.store, finished: [])
     #expect(bare.settings == nil && bare.contextPercent == nil && bare.backgroundTasks == nil)
 }
@@ -363,7 +345,6 @@ func hostedSessionsAreRecordedAndInTheSnapshot() async throws {
     #expect(try memory.identity() == nil)
 }
 
-/// A JPEG that says where it was taken.
 private func photoWithGPS() throws -> Data {
     let source = try #require(CGImageSourceCreateWithData(TranscriptFixture.image as CFData, nil))
     let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
@@ -396,16 +377,13 @@ private func photoWithGPS() throws -> Data {
     (status, body) = try await scene.call("POST", "v1/uploads", Data("not a photo".utf8))
     #expect(status == 415 && code(body) == "unsupported_media")
 
-    // Unhosted, the path goes into the note under the text.
     (status, body) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": "like this", "mode": "note", "attachments": [id]])
     #expect(status == 200 && scene.mail(501)?["text"] == "like this\n" + path)
     (status, body) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": "", "mode": "note", "attachments": ["0123456789ab"]])
     #expect(status == 422 && code(body) == "invalid_reply")
-    // Another phone's photo is unknown to this one, even by its right id.
     (status, body) = try await scene.call("POST", "v1/sessions/s-work/reply", ["text": "stolen", "mode": "note", "attachments": [id]], device: "d2")
     #expect(status == 422 && code(body) == "invalid_reply" && scene.mail(501)?["text"] == "like this\n" + path)
 
-    // A week later it's gone.
     try FileManager.default.setAttributes([.creationDate: Date().addingTimeInterval(-8 * 86_400)], ofItemAtPath: path)
     RemoteUploads.sweep(root: scene.store.root)
     #expect(!FileManager.default.fileExists(atPath: path) && RemoteUploads.paths([id], root: scene.store.root, device: "d1") == nil)
@@ -434,7 +412,6 @@ private func photoWithGPS() throws -> Data {
     #expect(projects.first?["path"] as? String == project.path && projects.first?["name"] as? String == "app")
     #expect(projects.first?["gitRoot"] as? String == project.path && projects.first?["branch"] as? String == "main")
 
-    // The demo has no tmux server.
     (status, body) = try await scene.call("POST", "v1/hosted", ["cwd": project.path, "agent": "claude", "worktree": false, "attachments": [], "fork": false])
     #expect(status == 503 && code(body) == "tmux_missing")
     (status, _) = try await scene.call("GET", "v1/hosted")
@@ -471,13 +448,11 @@ private func photoWithGPS() throws -> Data {
     #expect(RemoteOptions.codexCommands(home: home).suffix(3) == [.init(id: "/prompts:explain", label: "Explain the diff"),
                                                                    .init(id: "$ship", label: "Ship it"), .init(id: "$imagegen", label: "Make an image")])
     #expect(!RemoteOptions.claudeCommands(home: home).contains { $0.id.contains("imagegen") || $0.id.contains("hidden") })
-    // Without Codex to ask, the configured model, with no efforts to offer.
     #expect(await RemoteOptions.codexModels(codex: nil, home: home).map(\.id) == ["gpt-6-astra"])
     let models = RemoteOptions.claudeModels(used: ["claude-opus-5-5", "gpt-6-astra", "<synthetic>", "claude-opus-5-5", "claude-opus-4-5-20251101"])
     #expect(models.map(\.id) == ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-opus-4-5-20251101"] && models[3].title == "Opus 5.5")
     #expect(models[3].efforts == [.auto, .low, .medium, .high, .xhigh, .max] && models[4].efforts == [.auto, .low, .medium, .high])
 
-    // Codex's own catalog: hidden models left out, none and minimal never offered, its own default.
     let catalog = try JSONDecoder().decode(RemoteOptions.CodexCatalog.self, from: Data(#"""
     {"models": [{"slug": "gpt-6.1-sol", "display_name": "GPT-6.1-Sol", "default_reasoning_level": "low", "visibility": "list",
                  "supports_reasoning_effort_updates": true, "supported_reasoning_levels": [{"effort": "minimal"}, {"effort": "low"}, {"effort": "ultra"}]},
@@ -494,9 +469,6 @@ private func photoWithGPS() throws -> Data {
     #expect(RemoteOptions.refusal(effort: "high", model: "gpt-unknown", agent: .codex, options: options) != nil)
 }
 
-/// POST /v1/hosted end to end against real tmux and the fake Claude: what the phone sends becomes the
-/// launcher's origin, idempotency key and first prompt, a retried request gets the same session, and DELETE ends it.
-/// (GET needs the running server's event hub, which this scene doesn't start.)
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
@@ -515,7 +487,6 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         try #require(hosted.available)
         let start: [String: Any] = ["cwd": fixture.project.path, "agent": "claude", "worktree": false, "attachments": [], "fork": false,
                                     "prompt": "Fix the build; then run the tests"]
-        // A photo another phone uploaded isn't this phone's to attach.
         var (status, body) = try await scene.call("POST", "v1/uploads", try photoWithGPS())
         let photo = try #require(body["id"] as? String)
         (status, body) = try await scene.call("POST", "v1/hosted", start.merging(["attachments": [photo]]) { $1 }, device: "d2")
@@ -532,7 +503,6 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         #expect(await option("@sidea_key") == "phone-d1-K1")
         #expect(await waitUntil { (try? String(contentsOf: fixture.submitted.appendingPathExtension("args"), encoding: .utf8)) == "['--', 'Fix the build; then run the tests']" })
 
-        // A retry with the same key is the same session, not a second one.
         (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "K1")])
         #expect(status == 201 && body["name"] as? String == name && hosted.sessions.count == 1)
 
@@ -541,8 +511,6 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         (status, body) = try await scene.call("DELETE", "v1/hosted/\(name)")
         #expect(status == 404 && code(body) == "not_found")
 
-        // A mode goes on the command line. One that raises needs Face ID, signed over the start; one the agent can't
-        // start in is refused before anything runs.
         var moded = start
         moded["prompt"] = nil
         moded["permissionMode"] = "acceptEdits"
@@ -551,8 +519,6 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         #expect(await waitUntil { (try? String(contentsOf: fixture.submitted.appendingPathExtension("args"), encoding: .utf8)) == "['--permission-mode', 'acceptEdits']" })
         moded["permissionMode"] = "bypassPermissions"
         (status, body) = try await scene.call("POST", "v1/hosted", moded, headers: [("Idempotency-Key", "K3")])
-        // The scene has no server to check a signature with, so the confirm step answers not_ready (RemoteServerTests
-        // covers the signature); what matters is that nothing started.
         #expect(status == 503 && code(body) == "not_ready", "\(body)")
         moded["agent"] = "codex"
         moded["permissionMode"] = "plan"
@@ -560,7 +526,6 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
         #expect(status == 422 && code(body) == "invalid_option", "\(body)")
         #expect(hosted.sessions.count == 1)
 
-        // Trust and start: an unknown name is 404; a known one goes to the confirm step before any key.
         (status, body) = try await scene.call("POST", "v1/hosted/sa-nope/trust", headers: [("Idempotency-Key", "K5")])
         #expect(status == 404 && code(body) == "not_found", "\(body)")
         let running = try #require(hosted.sessions.first?.name)
@@ -570,8 +535,6 @@ func aPhoneStartsAHostedSessionOnceAndEndsIt() async throws {
     await fixture.cleanUp()
 }
 
-/// New Session with photos: they are uploaded before the session exists, and the start names them. The first prompt
-/// reaches Claude with the photos' paths under it; a photo the Mac doesn't have starts nothing.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func aPhoneStartsAHostedSessionWithPhotosItUploadedFirst() async throws {
@@ -590,7 +553,6 @@ func aPhoneStartsAHostedSessionWithPhotosItUploadedFirst() async throws {
         try #require(hosted.available)
         var start: [String: Any] = ["cwd": fixture.project.path, "agent": "claude", "worktree": false, "attachments": ["0123456789ab"], "fork": false,
                                     "prompt": "What is in this picture?"]
-        // A photo the Mac doesn't have: refused, nothing started.
         var (status, body) = try await scene.call("POST", "v1/hosted", start, headers: [("Idempotency-Key", "P1")])
         #expect(status == 422 && ((body["error"] as? [String: Any])?["details"] as? [String: Any])?["reason"] as? String == "unknown_upload", "\(body)")
         #expect(hosted.sessions.isEmpty)
@@ -617,8 +579,6 @@ private func waitUntil(_ seconds: Double = 10, _ condition: () async -> Bool) as
     await eventually(seconds, condition)
 }
 
-/// A pairing the phone never used (its Keychain save failed, or it was killed first) goes after ten minutes; one that
-/// made a single authenticated request stays, and so does every older device.
 @MainActor @Test func aPairingThePhoneNeverUsedIsSweptAfterTenMinutes() async throws {
     let remote = Scene().store.remote
     func device(_ id: String, created: Double, seen: Double?) -> RemoteDevice {
@@ -642,7 +602,6 @@ private func waitUntil(_ seconds: Double = 10, _ condition: () async -> Bool) as
 @MainActor @Test func aPhoneRegistersForPushRekeysAndHearsTheRelayIsDown() async throws {
     let scene = Scene()
     let remote = scene.store.remote
-    // The demo has no relay unless one is named.
     var (status, body) = try await scene.call("POST", "v1/diagnostics/push")
     #expect(status == 503 && code(body) == "relay_unavailable")
     remote.relayURL = URL(string: "http://127.0.0.1:9")!
@@ -658,12 +617,10 @@ private func waitUntil(_ seconds: Double = 10, _ condition: () async -> Bool) as
     (status, _) = try await scene.call("POST", "v1/devices/push", registration)
     #expect(status == 204)
     #expect(remote.devices.devices.first?.push?.prefs.finished == false)
-    // Nothing listens on port 9.
     for _ in 0..<100 where remote.push.relayState != "unreachable" { try await Task.sleep(for: .milliseconds(20)) }
     (status, body) = try await scene.call("GET", "v1/setup")
     #expect(body["relay"] as? String == "unreachable" && (body["push"] as? [String: Any])?["registered"] as? Bool == true)
 
-    // The phone derives the same new key from what the Mac answers.
     let phone = Curve25519.KeyAgreement.PrivateKey()
     (status, body) = try await scene.call("POST", "v1/devices/rekey", ["devicePublicKey": phone.publicKey.rawRepresentation.base64URL])
     let mac = try #require((body["macPublicKey"] as? String).flatMap { Data(base64URL: $0) })
@@ -697,7 +654,6 @@ private func waitUntil(_ seconds: Double = 10, _ condition: () async -> Bool) as
     (status, body) = try await call("POST", "v1/sessions/s77/ports/5173/preview")
     let url = try #require(body["url"] as? String)
     #expect(status == 200 && url.hasPrefix("https://100.64.0.1:47800/v1/preview/") && url.hasSuffix("/"))
-    // Opened again, a fresh credential replaces the last: each link opens one page load.
     let again = try #require(try await call("POST", "v1/sessions/s77/ports/5173/preview").1["url"] as? String)
     #expect(again != url && scene.store.remote.previews.previews.count == 1)
     #expect(scene.store.remote.previews.url(session: "s77", port: 5173) == again)
@@ -705,8 +661,6 @@ private func waitUntil(_ seconds: Double = 10, _ condition: () async -> Bool) as
     #expect(status == 204 && scene.store.remote.previews.previews.isEmpty)
 }
 
-/// Continue on phone's refusals: no tmux, an unknown session, one that's working or in an unknown state, one
-/// that ended before the re-check; and an already hosted session answers with itself, so a retry is harmless.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func continueOnPhoneRefusesWhatItCantMoveAndAnswersARetry() async throws {
@@ -750,8 +704,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     return live
 }
 
-/// Quit signals only the process the phone saw (same pid and start time), never a headless run; Quit Idle takes only
-/// the sessions idle longer than asked.
 @MainActor @Test func quitEndsOnlyTheSessionThePhoneSawAndQuitIdleOnlyTheStaleOnes() async throws {
     let scene = Scene()
     let now = Date().timeIntervalSince1970
@@ -768,7 +720,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(status == 404 && code(body) == "session_not_found")
     (status, body) = try await scene.call("POST", "v1/sessions/q-sdk/quit")
     #expect(status == 409 && code(body) == "cannot_deliver")
-    // Same pid, another start time: a reused pid is never signalled.
     (status, body) = try await scene.call("POST", "v1/sessions/q-reused/quit")
     #expect(status == 404)
     #expect(ProcessCheck.alive(target.pid))
@@ -798,7 +749,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(status == 400)
 }
 
-/// History lists pins first and leaves the archive out; changes are Side A's own and show at once; search pages.
 @MainActor @Test func historyPinsRenamesArchivesAndSearchPages() async throws {
     let scene = Scene()
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("sa-history-\(UUID().uuidString.prefix(8))")
@@ -823,7 +773,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(try await listed("v1/history") == ["h3", "h2", "h1"])
     var (status, body) = try await scene.call("POST", "v1/history/h1", ["pinned": true, "title": " Billing "])
     #expect(status == 200 && body["pinned"] as? Bool == true && body["customTitle"] as? String == "Billing" && body["title"] as? String == "Billing")
-    // A live row of it shows the same title.
     try scene.live(pid: 4242, id: "h1", status: "idle")
     #expect(WireBuilders.session(scene.store.sessions.live.last!, store: scene.store, finished: []).title == "Billing")
     scene.store.sessions.live.removeLast()
@@ -835,7 +784,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(try await listed("v1/history?archived=1") == ["h2"])
     #expect(try await listed("v1/history?archived=0") == ["h1", "h3"])
     #expect(try await listed("v1/history?project=/tmp/other").isEmpty)
-    // Archiving a pinned one unpins it; pinning brings it back.
     (status, body) = try await scene.call("POST", "v1/history/h1", ["archived": true])
     #expect(status == 200 && body["pinned"] as? Bool == false && !sessions.isPinned("h1"))
     (status, body) = try await scene.call("POST", "v1/history/h1", ["pinned": true])
@@ -847,7 +795,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     (status, _) = try await scene.call("GET", "v1/history?cursor=zz")
     #expect(status == 400)
 
-    // Search leaves the archived h2 out, one result a page here.
     (status, body) = try await scene.call("GET", "v1/search?q=build&limit=1")
     let first = try #require(body["results"] as? [[String: Any]])
     #expect(status == 200 && first.count == 1 && body["next"] as? String == "o1", "\(body)")
@@ -860,7 +807,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(status == 400)
 }
 
-/// The harness's past conversations page through history, newest first, and its forks name their parents.
 @MainActor @Test func theHarnessHistorySpansPagesWithForks() async throws {
     let scene = Scene()
     let home = FileManager.default.temporaryDirectory.appendingPathComponent("sa-past-\(UUID().uuidString.prefix(8))")
@@ -884,7 +830,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(parent["past-03-fork"] == "past-03" && parent["past-03-fork-2"] == "past-03-fork" && parent["past-03"] == .some(nil))
 }
 
-/// A demo's Clean Up moves only the harness's own transcripts; with no harness home it touches nothing.
 @MainActor @Test func aDemosCleanUpStaysInItsOwnHome() async throws {
     let scene = Scene()
     var (status, _) = try await scene.call("POST", "v1/cleanup/archive", ["olderThanDays": 90])
@@ -916,7 +861,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     scene.store.sessions.live = [owner]
     var (status, body) = try await scene.call("POST", "v1/sessions/srv/ports/4000/stop")
     #expect(status == 404 && code(body) == "port_not_found")
-    // The session's own process is never the server that gets stopped.
     (status, body) = try await scene.call("POST", "v1/sessions/srv/ports/9229/stop")
     #expect(status == 404 && ProcessCheck.alive(owner.pid))
     (status, _) = try await scene.call("POST", "v1/sessions/srv/ports/3000/stop")
@@ -932,7 +876,6 @@ private func idleSession(_ id: String, since: Double, kind: String? = "interacti
     #expect(!prompt.contains("What failed") && !prompt.contains("Last messages"))
 }
 
-/// The draft comes from the conversation itself; Restart starts the new hosted session with it, then ends the old one.
 @MainActor
 @Test(.enabled(if: ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].contains { FileManager.default.isExecutableFile(atPath: $0) }))
 func restartFreshDraftsAHandoffAndRunsIt() async throws {
@@ -972,8 +915,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     await fixture.cleanUp()
 }
 
-/// Clean Up against a throwaway home: what Archive would move at 30, 60 and 90 days, worktrees with why one is kept,
-/// a pin that stays, Archive and Restore, and a removal that never forces.
 @MainActor @Test func cleanUpReportsArchivesRestoresAndRemovesOnlyCleanWorktrees() async throws {
     let scene = Scene()
     let base = FileManager.default.temporaryDirectory.appendingPathComponent("sa-cleanup-\(UUID().uuidString.prefix(8))")
@@ -1078,7 +1019,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     store.outage = nil
 }
 
-/// A JSON GET carries its body's hash as an ETag; sending it back gets a 304 with no body until the answer changes.
 @MainActor @Test func bigGetsAnswerNotModifiedForTheSameBody() async throws {
     let scene = Scene()
     func get(_ path: String, _ tag: String? = nil) async -> HTTPResponse {
@@ -1087,7 +1027,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
                                   headers: HTTPHeaders(tag.map { [("If-None-Match", $0)] } ?? []), body: Data())
         return await RemoteRoutes.route(request, RemoteServer.Caller(device: "d1", connection: 1), scene.store.remote)
     }
-    // State, sessions, accounts and history need a running server or a bridge; the tag is the router's, the same for every route.
     for path in ["v1/projects", "v1/options"] {
         let first = await get(path)
         let tag = try #require(first.headers["ETag"], "\(path) \(first.status)")
@@ -1098,7 +1037,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
         #expect(await get(path, "\"other\", W/\(tag)").status == 304)
         #expect(await get(path, "\"other\"").status == 200)
     }
-    // A change is a new body and a new tag.
     func request(_ method: String, _ tag: String?) -> HTTPRequest {
         HTTPRequest(method: method, target: "/v1/state", path: ["v1", "state"], query: [:], headers: HTTPHeaders(tag.map { [("If-None-Match", $0)] } ?? []), body: Data())
     }
@@ -1107,14 +1045,11 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     #expect(RemoteRoutes.tagged(.json(200, Data(#"{"seq":1}"#.utf8)), request("GET", tag)).status == 304)
     let two = RemoteRoutes.tagged(.json(200, Data(#"{"seq":2}"#.utf8)), request("GET", tag))
     #expect(two.status == 200 && two.headers["ETag"] != tag && two.body == Data(#"{"seq":2}"#.utf8))
-    // Errors, other methods and images (which tag themselves) are left as they are.
     #expect(RemoteRoutes.tagged(.json(404, Data("{}".utf8)), request("GET", nil)).headers["ETag"] == nil)
     #expect(RemoteRoutes.tagged(.json(200, Data("{}".utf8)), request("POST", nil)).headers["ETag"] == nil)
     #expect(await get("v1/requests/\(UUID().uuidString)").headers["ETag"] == nil)
 }
 
-/// Account actions: switching the Mac-wide login and Autopilot both wait on the confirm key, after checks that need no
-/// key; the work behind them is the same PLAY and toggle the Mac's own controls run.
 @MainActor @Test func accountActionsCheckBeforeTheConfirmAndShareTheMacsControls() async throws {
     let scene = Scene()
     let store = scene.store
@@ -1125,8 +1060,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     store.config.accounts[1].ready = false
     (status, body) = try await scene.call("POST", "v1/accounts/\(studio.id)/use", [String: String](), headers: [("Idempotency-Key", "A2")])
     #expect(status == 409 && code(body) == "account_not_ready", "\(body)")
-    // Ready, it goes to the confirm step; the scene has no server to check a signature with (RemoteServerTests covers
-    // the signature), and nothing switched.
     store.config.accounts[1].ready = true
     (status, body) = try await scene.call("POST", "v1/accounts/\(studio.id)/use", [String: String](), headers: [("Idempotency-Key", "A3")])
     #expect(status == 503 && code(body) == "not_ready", "\(body)")
@@ -1137,7 +1070,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     (status, body) = try await scene.call("POST", "v1/autopilot", ["enabled": false], headers: [("Idempotency-Key", "A5")])
     #expect(status == 503 && code(body) == "not_ready", "\(body)")
     #expect(store.config.smartMode)
-    // Answering with the recommended choice waits on the same key, and needs no shell switching.
     #expect(RemoteController.capabilities.contains(.autopilotAnswers))
     (status, body) = try await scene.call("POST", "v1/autopilot/answers", ["enabled": "yes"], headers: [("Idempotency-Key", "A4a")])
     #expect(status == 400 && code(body) == "bad_request", "\(body)")
@@ -1145,8 +1077,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     #expect(status == 503 && code(body) == "not_ready", "\(body)")
     #expect(store.config.answerRecommended == nil)
 
-    // Shell switching off, the phone can't turn it on: a Claude switch and Autopilot on are refused before the
-    // confirm, while Autopilot off and a Codex switch still go to it.
     store.shellSwitching = false
     (status, body) = try await scene.call("POST", "v1/accounts/\(studio.id)/use", [String: String](), headers: [("Idempotency-Key", "A6")])
     #expect(status == 409 && code(body) == "cannot_deliver" && hint(body) == "shellSwitching", "\(body)")
@@ -1162,7 +1092,6 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     store.shellSwitching = true
     store.config.smartMode = true
 
-    // What runs once confirmed: PLAY's switch and the toggle's setter.
     try await store.use(studio.id)
     #expect(store.activeIDs[.claude] == studio.id)
     try await store.use(studio.id)
@@ -1172,14 +1101,12 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     #expect(store.config.smartMode)
 }
 
-/// One hash for every id made from text: the first 8 bytes of SHA-256, as worktree ids, upload folders and the Mac id were.
 @Test func idsMadeFromTextAreTheirHashesFirstEightBytes() {
     #expect(IDs.hashed("abc") == "ba7816bf8f01cfea")
     #expect(RemoteRoutes.worktreeID("abc") == "ba7816bf8f01cfea")
     #expect(IDs.safe("a41f.813_0-x") && !IDs.safe("--root") && !IDs.safe(""))
 }
 
-/// What the phone queues is served at these literal routes; the phone's outbox builds the same method and path.
 @Test func theRoutesThePhoneQueuesAreRegisteredAtTheirLiteralPaths() {
     let table = RemoteRoutes.appRoutes.map { "\($0.method) \($0.pattern.joined(separator: "/"))" }
     for route in ["POST v1/requests/{rid}/answer", "POST v1/sessions/{id}/reply", "POST v1/sessions/{id}/interrupt", "DELETE v1/sessions/{id}/mail"] {

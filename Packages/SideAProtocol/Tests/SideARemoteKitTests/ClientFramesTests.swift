@@ -3,7 +3,6 @@ import SideAProtocol
 @testable import SideARemoteKit
 import Testing
 
-/// What the phone makes of the Mac's frames: lenient, and every violation is `.invalid`.
 @Test func clientFramesReadTheMacsFramesLeniently() {
     var frames = ClientFrames()
     let mac = { (opcode: WebSocketFrames.Opcode, payload: Data) in WebSocketFrames.frame(opcode, payload, from: .server) }

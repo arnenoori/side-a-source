@@ -14,7 +14,6 @@ final class TestKeychain {
 
     let keychain: SecKeychain
     let path: String
-    /// A named keychain outlives the run, for a harness that restarts on the same pairings.
     let kept: Bool
 
     init(named name: String? = nil) throws {
@@ -91,7 +90,6 @@ final class TestKeychain {
     }
 }
 
-/// Raw bytes over TLS, pinned the way the phone pins: by the key's SPKI hash, whatever the certificate says.
 final class PinnedClient: @unchecked Sendable {
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "test.client")
@@ -173,11 +171,9 @@ func maskedFrame(_ opcode: UInt8, _ payload: Data) -> Data {
     return out
 }
 
-/// A short Claude conversation: a prompt with a pasted image, a Bash call and an Edit with its patch.
 enum TranscriptFixture {
     static let image = png()
 
-    /// `day` as yyyy-MM-dd; today's keeps it in the bridge's recent list.
     static func lines(session: String, cwd: String, day: String = "2026-10-01") -> [[String: Any]] {
         func entry(_ type: String, _ uuid: String, _ second: Int, _ content: [[String: Any]], extra: [String: Any] = [:]) -> [String: Any] {
             ["type": type, "uuid": uuid, "sessionId": session, "timestamp": "\(day)T10:00:0\(second)Z", "cwd": cwd,
@@ -196,7 +192,6 @@ enum TranscriptFixture {
         ]
     }
 
-    /// Where Claude Code would keep it, under `home`.
     static func write(_ lines: [[String: Any]], session: String, home: URL) throws {
         let project = home.appendingPathComponent(".claude/projects/-fixture")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -212,7 +207,6 @@ enum TranscriptFixture {
         return formatter.string(from: Date())
     }
 
-    /// What Side A's own loop does in the app: index `home`'s transcripts into `root`, so `sessions recent` lists them.
     static func index(home: URL, root: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -224,7 +218,6 @@ enum TranscriptFixture {
         process.waitUntilExit()
     }
 
-    /// The repository's own bridge, which the built app copies into its resources.
     static let bridge = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../bridge/sidea_bridge.py").standardized
 
     private static func png() -> Data {
@@ -234,8 +227,6 @@ enum TranscriptFixture {
             var crc = UInt32(tagged.withUnsafeBytes { crc32(0, $0.bindMemory(to: UInt8.self).baseAddress, uInt($0.count)) }).bigEndian
             return Data(bytes: &length, count: 4) + tagged + Data(bytes: &crc, count: 4)
         }
-        // 40 by 30, 8-bit RGB: a blue-to-orange gradient, so a phone showing it shows something (a near-black one
-        // looked like a broken tile).
         let header = Data([0, 0, 0, 40, 0, 0, 0, 30, 8, 2, 0, 0, 0])
         var raw = Data()
         for y in 0..<30 {

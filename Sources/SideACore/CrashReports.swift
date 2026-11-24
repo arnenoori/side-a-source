@@ -1,7 +1,5 @@
 import Foundation
 
-/// macOS's own crash reports for Side A, read at launch so a crash leaves a line in Side A's log instead of only a
-/// file nobody opens.
 public enum CrashReports {
     public struct Crash: Equatable, Sendable {
         public let at: Date

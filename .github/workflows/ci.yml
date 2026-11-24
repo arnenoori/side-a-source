@@ -57,9 +57,9 @@ jobs:
           sudo xcode-select -s "$newest"
           swift --version
       - name: Bridge unit and PTY integration tests
-        run: python3 -m unittest discover -s bridge/tests -v
+        run: ./scripts/test-bridge.sh -v
       - name: Prepare app bridge resources
-        run: rm -f Sources/SideA/Resources/*.py && cp bridge/*.py Sources/SideA/Resources/
+        run: ./scripts/sync-bridge.sh
       - name: Swift tests
         run: swift test
       - name: Build and validate application

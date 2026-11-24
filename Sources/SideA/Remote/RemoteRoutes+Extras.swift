@@ -3,8 +3,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// What only Side A offers (protocol, Only in Side A endpoints): quitting sessions, the Mac itself, and past
-/// conversations with Side A's own pins, titles and archive. Each is gated by its capability in `Hello`.
 extension RemoteRoutes {
     static let extraRoutes: [Route] = [
         Route("POST", "v1/sessions/quit-idle", quitIdle),
@@ -31,14 +29,11 @@ extension RemoteRoutes {
         Route("POST", "v1/update/check", checkForUpdates),
     ]
 
-    /// Answered requests, newest first: who answered each and how.
     @Sendable static func approvals(_ context: Context) async -> HTTPResponse {
         let cursor = context.request.query["cursor"].map(Cursor.init)
         return json(200, await MainActor.run { context.controller.approvals.page(after: cursor) })
     }
 
-    /// Sparkle's own background check. A newer version shows in Side A's menu on the Mac, as any found update does;
-    /// nothing installs from here.
     @Sendable static func checkForUpdates(_ context: Context) async -> HTTPResponse {
         guard await MainActor.run(body: { context.controller.checkForUpdates?() }) == true else {
             return RemoteServer.error(503, .notReady, "Side A can't check for updates right now.")
@@ -46,10 +41,7 @@ extension RemoteRoutes {
         return HTTPResponse(status: 202)
     }
 
-    /// Rows per history or search page.
     static let pageSize = 50
-
-    // MARK: Quit
 
     /// Any interactive session: hosted ones end with their tmux session, others get SIGTERM (Claude Code saves on it).
     @Sendable static func quit(_ context: Context) async -> HTTPResponse {
@@ -58,7 +50,6 @@ extension RemoteRoutes {
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.quit(id) }
     }
 
-    /// Idle sessions untouched for at least the given minutes, checked again against a fresh list before each goes.
     @Sendable static func quitIdle(_ context: Context) async -> HTTPResponse {
         guard let body = context.body(QuitIdleRequest.self), body.olderThanMinutes >= 0 else { return badJSON }
         if let refused = await refusal(context, .quitIdle, body: body) { return refused }
@@ -66,8 +57,6 @@ extension RemoteRoutes {
             QuitIdleResult(quit: try await commands.quitIdle(olderThanMinutes: body.olderThanMinutes))
         }
     }
-
-    // MARK: The Mac
 
     @Sendable static func macSettings(_ context: Context) async -> HTTPResponse {
         guard let body = context.body(MacSettings.self) else { return badJSON }
@@ -80,10 +69,6 @@ extension RemoteRoutes {
         }
     }
 
-    // MARK: History
-
-    /// Pinned conversations first (on the first page only), then the rest by last activity. `archived=true` (or `1`) lists
-    /// the archive instead, which holds no pins.
     @Sendable static func history(_ context: Context) async -> HTTPResponse {
         let query = context.request.query
         let archived = ["true", "1"].contains(query["archived"] ?? "")
@@ -143,9 +128,6 @@ extension RemoteRoutes {
         }
     }
 
-    // MARK: Search
-
-    /// The bridge's best 60 matches, in pages; archived conversations stay out, as in the Sessions window.
     @Sendable static func search(_ context: Context) async -> HTTPResponse {
         let query = context.request.query
         let text = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,17 +144,12 @@ extension RemoteRoutes {
         }
     }
 
-    // MARK: Stop Server
-
     @Sendable static func stopServer(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? "", number = context.params["port"].flatMap(Int.init)
         if let refused = await refusal(context, .stopServer, target: "\(id):\(context.params["port"] ?? "")") { return refused }
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.stopServer(id, port: number) }
     }
 
-    // MARK: Restart Fresh
-
-    /// A draft only, for the phone to edit and send back to `restart`.
     @Sendable static func handoff(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.handoff(id) }
@@ -201,8 +178,6 @@ extension RemoteRoutes {
         }
     }
 
-    // MARK: Clean Up
-
     static func cleanup(_ context: Context, _ args: [String], timeout: TimeInterval) async throws -> Data {
         let run = await MainActor.run { () -> (@MainActor @Sendable ([String], TimeInterval) async throws -> Data)? in
             if let override = context.controller.cleanupBridge { return override }
@@ -226,7 +201,6 @@ extension RemoteRoutes {
         return try await run(["cleanup"] + args, timeout)
     }
 
-    /// Pinned conversations are never archived; running ones the bridge leaves alone itself.
     static func keep(_ context: Context) async -> [String] {
         await MainActor.run { context.controller.store?.sessions.pins.flatMap { ["--keep", $0] } ?? [] }
     }
@@ -247,7 +221,6 @@ extension RemoteRoutes {
                                        archived: all.archived.count, worktrees: found.worktrees.map(Self.left)))
     }
 
-    /// A worktree as the phone lists it: an id that doesn't show the path in URLs, and why Clean Up keeps it.
     static func left(_ tree: Worktree) -> CleanupReport.LeftWorktree {
         typealias Keep = CleanupReport.LeftWorktree.Keep
         let keep: Keep? = tree.blocked.map { label, reason in
@@ -281,12 +254,10 @@ extension RemoteRoutes {
         return json(200, CleanupResult(count: count))
     }
 
-    /// How many items the bridge's answer lists under `key`.
     static func count(_ data: Data, _ key: String) -> Int? {
         ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?[key].flatMap { $0 as? [Any] }?.count
     }
 
-    /// Never forced: the bridge checks the worktree again and refuses one with changes.
     @Sendable static func removeWorktree(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         if let refused = await refusal(context, .removeWorktree, target: id) { return refused }
@@ -305,8 +276,6 @@ extension RemoteRoutes {
         guard result.removed else { return RemoteServer.error(409, .worktreeKept, result.error ?? "git refused to remove it.", details: ["reason": "changes"]) }
         return HTTPResponse(status: 204)
     }
-
-    // MARK: Autopilot
 
     @Sendable static func autopilot(_ context: Context) async -> HTTPResponse {
         let found = await MainActor.run { () -> (URL, AccountStore)? in context.controller.store.map { ($0.root.appendingPathComponent("runtime/autopilot.log"), $0) } }
@@ -333,7 +302,6 @@ extension RemoteRoutes {
     static let shellSwitchingOff = RemoteServer.error(409, .cannotDeliver, "Turn on shell switching in Side A on your Mac first.",
                                                       details: ["hint": "shellSwitching"])
 
-    /// Autopilot on or off, signed by the confirm key after Face ID over the state the user chose.
     @Sendable static func setAutopilot(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, .badRequest, "Send enabled, true or false.") }
         // Turning it on would turn on shell switching, which edits the shell's startup file: only the Mac does that.
@@ -349,7 +317,6 @@ extension RemoteRoutes {
         return await onMain(context) { store in json(200, Autopilot.state(store, log: text)) }
     }
 
-    /// Answering with the recommended choice on or off, signed by the confirm key after Face ID like Autopilot itself.
     @Sendable static func setAutopilotAnswers(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, .badRequest, "Send enabled, true or false.") }
         if let refusal = await refusal(context, .autopilot, subject: ConfirmMessage.subject(autopilotAnswers: change), needs: .biometric) { return refusal }
@@ -357,7 +324,6 @@ extension RemoteRoutes {
         return await autopilot(context)
     }
 
-    /// Asking sessions a limit stopped to carry on, on or off, signed the same way: it types into sessions by itself.
     @Sendable static func setAutopilotContinues(_ context: Context) async -> HTTPResponse {
         guard let change = context.body(AutopilotChange.self) else { return RemoteServer.error(400, .badRequest, "Send enabled, true or false.") }
         if let refusal = await refusal(context, .autopilot, subject: ConfirmMessage.subject(autopilotContinues: change), needs: .biometric) { return refusal }
@@ -365,8 +331,6 @@ extension RemoteRoutes {
         return await autopilot(context)
     }
 
-    /// Makes an account its provider's Mac-wide login, as PLAY does, signed by the confirm key after Face ID; answers
-    /// with the account list. 409 `account_not_ready` for one that's signed out or whose login expired.
     @Sendable static func useAccount(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         let notFound = RemoteServer.error(404, .notFound, "That account isn't on the Mac.")
@@ -391,7 +355,6 @@ extension RemoteRoutes {
         return await accounts(context)
     }
 
-    /// History and search cursors are offsets: `o<n>`. None is the first page.
     static func offset(_ cursor: String?) -> Int? {
         guard let cursor else { return 0 }
         guard cursor.hasPrefix("o"), let value = Int(cursor.dropFirst()), (0...100_000).contains(value) else { return nil }
@@ -399,7 +362,6 @@ extension RemoteRoutes {
     }
 }
 
-/// The Mac's power and memory as the phone's Mac card shows them.
 enum MacStats {
     @MainActor static func state(_ store: AccountStore) -> MacState {
         let power = store.keepAwake.power
@@ -423,7 +385,6 @@ enum MacStats {
         return max(pages, 0) * Int(getpagesize())
     }
 
-    /// Whether a new reading is worth an event: anything but memory, or memory used moving by 256 MB.
     static func changed(_ old: MacState?, _ new: MacState) -> Bool {
         guard let old else { return true }
         return old.onPower != new.onPower || old.battery != new.battery || old.memoryPressure != new.memoryPressure || old.keepAwake != new.keepAwake
@@ -432,9 +393,7 @@ enum MacStats {
     }
 }
 
-/// Autopilot's decisions for the phone, read back from `runtime/autopilot.log`, and the move it holds.
 enum Autopilot {
-    /// The log's last 64 KiB.
     static func tail(_ url: URL) -> String {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
         defer { try? handle.close() }
@@ -461,7 +420,6 @@ enum Autopilot {
             .continuing(store.config.continueStopped != false)
     }
 
-    /// A record's sessions as the phone lists them: each one's title now if it's still running, else its folder.
     @MainActor private static func moved(_ sessions: [RotationRecord.Session], store: AccountStore) -> [AutopilotDecision.Moved] {
         sessions.map { session in
             let live = store.sessions.live.first { WireBuilders.key($0) == session.id }
@@ -489,13 +447,10 @@ enum Autopilot {
         return Array((structured + lines).sorted { $0.at > $1.at }.prefix(50))
     }
 
-    /// Starts the line `AccountStore.autoAnswered` writes: `Auto-answered in <session>: <answer>`.
     static let answeredPrefix = "Auto-answered in "
-    /// Start the lines `AccountStore.continueStopped` writes, each followed by the session's folder.
     static let continuedPrefix = "Continued "
     static let notContinuedPrefix = "Couldn't continue "
 
-    /// Moves, waits, failures, primed windows and answers given by itself, newest first, at most 50. Other lines (reads, settings) are left out.
     static func decisions(_ log: String) -> [AutopilotDecision] {
         var out: [AutopilotDecision] = []
         for line in log.split(separator: "\n").reversed() where out.count < 50 {

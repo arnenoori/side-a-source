@@ -117,7 +117,6 @@ private struct Projects {
     try claude.session(106, "busy", cwd: "/Users/me/Library/Application Support/SideA")
     try claude.session(107, "busy")
     try Data("{\"pid\":".utf8).write(to: claude.registry.appendingPathComponent("108.json"))
-    // A long silent command isn't stale before three hours.
     try claude.session(109, "busy", written: 2 * 3_600)
     try claude.session(110, "busy", written: 4 * 3_600)
     #expect(claude.working(excluding: "/Users/me/Library/Application Support/SideA", dead: [107]) == 3)

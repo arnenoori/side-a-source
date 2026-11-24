@@ -1,23 +1,18 @@
 import SideAProtocol
 import SwiftUI
 
-/// Claude's `AskUserQuestion`, inline in the transcript: one question at a time,
-/// lettered options, answered questions folded into summary lines above the current one.
 struct QuestionCard: View {
     @Environment(AppModel.self) private var model
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let request: RemoteRequest
-    /// Typed text in the composer: the current question's "write your own" answer. Next takes it and clears it.
     @Binding var typed: String
     var focusComposer: () -> Void = {}
 
     @State private var index = 0
     @State private var picks: [Int: [String]] = [:]
-    /// Each question's "write your own" answer, by index, taken from the composer on Next.
     @State private var written: [Int: String] = [:]
     @State private var forward = true
     @State private var selections = 0
-    /// The pick that will advance after 250 ms; cancelled by another tap. Only between questions: sending is never a tap on an option.
     @State private var pendingAdvance: Int?
 
     private var questions: [IslandQuestion] {
@@ -25,10 +20,7 @@ struct QuestionCard: View {
     }
 
     private var single: Bool { Self.isSingle(questions) }
-    /// One single-choice question: a tap selects and Send Answer commits. Among several, a pick moves on to the next
-    /// question, and Send Answers at the end commits them all.
     static func isSingle(_ questions: [IslandQuestion]) -> Bool { questions.count == 1 && questions.first?.multiSelect == false }
-    /// Whether tapping a single-choice option moves to the next question by itself.
     static func advancesOnPick(_ questions: [IslandQuestion]) -> Bool { questions.count > 1 }
     private var finished: Bool { index >= questions.count }
 
@@ -144,7 +136,6 @@ struct QuestionCard: View {
         .padding(.top, Space.xs)
     }
 
-    /// Starts each single-choice question on Claude's recommended answer, as the Mac does.
     private func preselect() {
         for (offset, question) in questions.enumerated() where !question.multiSelect && picks[offset] == nil {
             if let option = question.options.first(where: \.recommended) { picks[offset] = [option.label] }
@@ -166,8 +157,6 @@ struct QuestionCard: View {
 
     private var trimmedTyped: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// Next takes the composer's text as this question's own answer; a typed single-choice answer replaces the pick,
-    /// as the notification does.
     private func next() {
         if index < questions.count, !trimmedTyped.isEmpty {
             written[index] = trimmedTyped
@@ -202,7 +191,6 @@ struct QuestionCard: View {
     }
 }
 
-/// A lettered option: badge, label, description under it; "(Recommended)" as a quiet suffix.
 private struct OptionRow: View {
     let letter: String?
     let option: IslandQuestion.Option
@@ -252,7 +240,6 @@ private struct OptionRow: View {
     }
 }
 
-/// A row's highlight while a finger is on it: on at once, fading out once it lifts.
 private struct Pressed: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

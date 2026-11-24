@@ -3,8 +3,6 @@ import SideARemoteKit
 import XCTest
 @testable import SideARemote
 
-/// The second UX pass: drafts that survive a kill, unsent replies that join, a transcript that says it can't load,
-/// a question that waits for Send, and the Mac that needs an update.
 @MainActor
 final class PassTwoTests: XCTestCase {
     private func model() -> AppModel {
@@ -12,8 +10,6 @@ final class PassTwoTests: XCTestCase {
                  requests: RequestsStore([]), transcripts: TranscriptStore([:]), accounts: AccountsStore([]),
                  history: HistoryStore([]), isDemo: false, paired: true)
     }
-
-    // MARK: Drafts
 
     func testADraftSurvivesTheCacheRoundTrip() throws {
         let before = model()
@@ -58,8 +54,6 @@ final class PassTwoTests: XCTestCase {
         XCTAssertEqual(saves, 2, "setting what's already there isn't a change")
     }
 
-    // MARK: Unsent replies
-
     private func flight(_ turn: String, _ text: String, at: Double, attachments: [String] = []) -> ReplyFlight {
         ReplyFlight(session: "s", turn: turn, body: RemoteReply(text: text, attachments: attachments), at: at, phase: .unsent(reason: "No."))
     }
@@ -101,8 +95,6 @@ final class PassTwoTests: XCTestCase {
         XCTAssertEqual(store.drafts["s"], "typing something else")
     }
 
-    // MARK: A transcript that won't load
-
     func testALoadFailureIsKeptUntilOneLoads() {
         let store = TranscriptStore([:])
         store.loadFailed(true, for: "s")
@@ -131,8 +123,6 @@ final class PassTwoTests: XCTestCase {
         XCTAssertNil(live.transcripts.messages["s"], "nothing is shown as loaded")
     }
 
-    // MARK: Questions
-
     private func question(multi: Bool = false) -> IslandQuestion {
         IslandQuestion(question: "Which?", header: nil, options: [.init(label: "A", description: nil), .init(label: "B", description: nil)], multiSelect: multi)
     }
@@ -147,8 +137,6 @@ final class PassTwoTests: XCTestCase {
         XCTAssertTrue(QuestionCard.advancesOnPick([question(), question()]))
         XCTAssertFalse(QuestionCard.isSingle([question(multi: true)]))
     }
-
-    // MARK: Older Macs
 
     func testAMacWithEverythingIsCurrent() {
         XCTAssertFalse(MacTools.lacksExpected(MacTools.everything))
@@ -170,8 +158,6 @@ final class PassTwoTests: XCTestCase {
         XCTAssertFalse(MacTools.lacksExpected([]))
         XCTAssertFalse(MacTools().needsMacUpdate)
     }
-
-    // MARK: Accounts with the Mac away
 
     func testEmptyAccountsSayNoAccountsOnlyOnceTheMacsAreLive() {
         XCTAssertEqual(AccountsView.emptyState([.live]), .noAccounts)

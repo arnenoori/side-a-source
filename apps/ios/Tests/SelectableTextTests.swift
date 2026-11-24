@@ -43,7 +43,6 @@ final class SelectableTextTests: XCTestCase {
         XCTAssertTrue(Self.hasInk(image, rows: 0.6..<0.95), "second line")
     }
 
-    /// Whether any pixel in that band of rows (fractions of the height) is dark, as text is on the white it's drawn on.
     private static func hasInk(_ image: UIImage, rows: Range<CGFloat>) -> Bool {
         guard let cg = image.cgImage, let data = cg.dataProvider?.data, let bytes = CFDataGetBytePtr(data) else { return false }
         let perPixel = cg.bitsPerPixel / 8

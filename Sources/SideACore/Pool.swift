@@ -110,7 +110,6 @@ public enum Pool {
         return (json["UserProfile"] as? [String: Any])?["LoginName"] as? String
     }
 
-    /// What another Mac runs to use this one's pool.
     public static func joinCommand(address: String, port: UInt16, key: String) -> String {
         "sidea pool join http://\(address.contains(":") ? "[\(address)]" : address):\(port) \(key)"
     }
@@ -129,9 +128,7 @@ public struct PoolRoom: Equatable, Sendable {
     /// Nil when no account has a 5-hour limit, as with verified Ultra accounts.
     public var fiveHourLeft: Double?
     public var weeklyLeft: Double
-    /// Accounts out of room now.
     public var limited: Int
-    /// When the first of those gets room back, and which one.
     public var refill: (name: String, at: Double)?
 
     public init?(_ members: [Account], usage: [String: AccountUsage], full: Double, now: Double) {

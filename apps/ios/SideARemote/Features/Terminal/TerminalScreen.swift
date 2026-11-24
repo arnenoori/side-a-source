@@ -5,19 +5,16 @@ import SwiftTerm
 import SwiftUI
 import UIKit
 
-/// The terminal: full bleed and always dark, SwiftTerm on the hosted session's
-/// `ws/term`, a glass key bar riding the keyboard, Chat and the session's name floating on top.
 struct TerminalScreen: View {
     let name: String
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @AppStorage("terminal.fontSize") private var fontSize = 13.0
+    @AppStorage(PrefKey.terminalFontSize) private var fontSize = 13.0
     @State private var terminal: TerminalModel
     @State private var chromeVisible = true
     @State private var hud: String?
     @State private var lastTyped = Date.distantPast
-    /// Text the session asked to put on the clipboard, waiting for the user's answer.
     @State private var clipboardRequest: String?
     @State private var copied = 0
     @State private var attached = false
@@ -78,7 +75,6 @@ struct TerminalScreen: View {
         .statusBarHidden()
         .preferredColorScheme(.dark)
         .sensoryFeedback(.success, trigger: copied)
-        // Attaching waits on the Mac; a reconnect or exit is the Mac's doing and stays quiet.
         .sensoryFeedback(.start, trigger: attached) { _, new in new }
         .onChange(of: terminal.phase) { old, new in
             if old == .attaching, new == .live { attached = true }
@@ -86,7 +82,6 @@ struct TerminalScreen: View {
         .onAppear { terminal.start() }
         .onDisappear { terminal.stop() }
         .task(id: lastTyped) {
-            // Chrome fades after three seconds of typing; a tap near the top brings it back.
             guard lastTyped != .distantPast else { return }
             try? await Task.sleep(for: .seconds(3))
             withAnimation(Motion.smooth(reduceMotion)) { chromeVisible = false }
@@ -120,13 +115,11 @@ struct TerminalScreen: View {
         }
         .foregroundStyle(.white)
         .lineLimit(1)
-        // Chrome over a fixed-size grid: it grows with Dynamic Type only so far.
         .dynamicTypeSize(...DynamicTypeSize.xxLarge)
         .padding(.horizontal, Space.m)
         .padding(.top, Space.xs)
         .opacity(chromeVisible ? 1 : 0)
         .background(alignment: .top) {
-            // A tap near the top edge while the chrome is hidden brings it back.
             if !chromeVisible {
                 Color.clear.frame(height: 56).contentShape(.rect)
                     .onTapGesture { withAnimation(Motion.smooth(reduceMotion)) { chromeVisible = true } }
@@ -184,7 +177,6 @@ struct TerminalScreen: View {
     }
 }
 
-/// SwiftTerm's `TerminalView`, wired to the model: output in, keys and size out, pinch for the font.
 private struct TerminalHost: UIViewRepresentable {
     let terminal: TerminalModel
     @Binding var fontSize: Double
@@ -224,10 +216,8 @@ private struct TerminalHost: UIViewRepresentable {
 
     func updateUIView(_ view: TerminalView, context: Context) {
         context.coordinator.parent = self
-        // Nothing more to type once the process is gone.
         if case .ended = terminal.phase, view.isFirstResponder { view.resignFirstResponder() }
         if view.font.pointSize != CGFloat(fontSize) { view.font = Self.font(fontSize) }
-        // The Mac decides the size (its own client wins while it's typing); lay out to it.
         if let size = terminal.size, terminal.phase == .live {
             let grid = view.getTerminal()
             if grid.cols != size.cols || grid.rows != size.rows, size.owner == "mac" {
@@ -270,7 +260,6 @@ private struct TerminalHost: UIViewRepresentable {
         nonisolated func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
             MainActor.assumeIsolated {
                 guard !applyingMacSize else { return }
-                // Rotations and pinches settle before the Mac hears about it.
                 resizeTask?.cancel()
                 resizeTask = Task { [weak self] in
                     try? await Task.sleep(for: .milliseconds(150))
@@ -291,7 +280,6 @@ private struct TerminalHost: UIViewRepresentable {
             MainActor.assumeIsolated { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
         }
         nonisolated func clipboardCopy(source: TerminalView, content: Data) {
-            // The remote side asking to set the clipboard (OSC 52); the screen asks the user first.
             MainActor.assumeIsolated { parent.onClipboard(String(decoding: content, as: UTF8.self)) }
         }
         nonisolated func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}

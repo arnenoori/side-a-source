@@ -55,7 +55,6 @@ private func codex(_ composer: String, above: [String] = []) -> String {
     #expect(Hosting.composer(.claude, screen: claude("❯\u{00A0}                ", above: echoed)) == .empty)
     #expect(Hosting.composer(.claude, screen: claude("❯\u{00A0}hello there      ", above: echoed)) == .text("hello there"))
     #expect(Hosting.composer(.claude, screen: claude("❯\u{00A0}[Pasted text #1 +30 lines]")) == .text("[Pasted text #1 +30 lines]"))
-    // An echoed prompt and a dialog row use a plain space, so neither is taken for the composer.
     #expect(Hosting.composer(.claude, screen: echoed.joined(separator: "\n")) == .none)
     #expect(Hosting.composer(.claude, screen: "  ❯ 1. Yes\n    2. Not now") == .none)
 }
@@ -80,7 +79,6 @@ private func codex(_ composer: String, above: [String] = []) -> String {
     #expect(Hosting.claudeMode(screen: screen("  ⏸ plan mode on (shift+tab to cycle)")) == "plan")
     #expect(Hosting.claudeMode(screen: screen("  ⏵⏵ auto mode on (shift+tab to cycle)")) == "auto")
     #expect(Hosting.claudeMode(screen: screen("  ⏵⏵ bypass permissions on (shift+tab to cycle)")) == "bypassPermissions")
-    // Only the footer counts, never the conversation above the composer.
     #expect(Hosting.claudeMode(screen: screen("  ? for shortcuts", above: ["⏺ Turn plan mode on with Shift+Tab: ⏸ plan mode on"])) == nil)
     #expect(Hosting.claudeMode(screen: "  ⏸ plan mode on") == nil)
 }
@@ -110,15 +108,12 @@ private func codex(_ composer: String, above: [String] = []) -> String {
     #expect(Hosting.verdict(.claude, expected: expected, screen: claude("❯\u{00A0}" + shown)) == .pressEnter)
     #expect(Hosting.verdict(.claude, expected: expected, screen: claude("❯\u{00A0}\u{1B}[2mTry \"fix lint errors\"\u{1B}[0m")) == .taken)
     #expect(Hosting.verdict(.claude, expected: expected, screen: "Session ended (status 0).") == .stop)
-    // Someone typed more, or replaced it: ambiguous, so the user is asked instead.
     #expect(Hosting.verdict(.claude, expected: expected, screen: claude("❯\u{00A0}" + shown + " it")) == .unsent)
-    // A different paste number is someone else's paste.
     let paste = try #require(Hosting.owned(sent: "a\nb\nc", composer: .text("[Pasted text #2 +3 lines]")))
     #expect(Hosting.verdict(.claude, expected: paste, screen: claude("❯\u{00A0}[Pasted text #3 +3 lines]")) == .unsent)
     // Codex drew its update prompt under an empty composer; that is never "taken".
     let update = codex("› \u{1B}[2mAsk Codex to do anything\u{1B}[0m") + "\n  Update available · 0.156.1 → 0.163.0\n› 1. Update now (runs `brew upgrade --cask codex`)\n  2. Skip"
     #expect(Hosting.verdict(.codex, expected: "hello", screen: update) == .unsent)
-    // Short text must match whole; a draft that merely starts the same way is someone else's.
     #expect(Hosting.owned(sent: "yes", composer: .text("yes please do it")) == nil)
     #expect(Hosting.owned(sent: "yes", composer: .text("yes")) == "yes")
     #expect(Hosting.owned(sent: "fix it", composer: .text("[Pasted text #2 +3 lines]")) == nil)
@@ -126,7 +121,6 @@ private func codex(_ composer: String, above: [String] = []) -> String {
     #expect(Hosting.owned(sent: sent, composer: .empty) == nil)
     // Pasted image paths become chips ahead of the text, in both CLIs.
     #expect(Hosting.owned(sent: "What is this?", composer: .text("[Image #2] [Image #3] What is this?")) == "[Image #2] [Image #3] What is this?")
-    // Before they turn into chips, the photos are their quoted paths; the reply is still Side A's, then and after.
     let typed = "'/Users/a/Side A/runtime/uploads/20261018/79f1d249.jpg' '/Users/a/Side A/runtime/uploads/20261018/5406.JPG' What's in these photos?"
     let photos = try #require(Hosting.owned(sent: "What's in these photos?", composer: .text(typed)))
     #expect(Hosting.verdict(.claude, expected: photos, screen: claude("❯\u{00A0}" + typed)) == .pressEnter)
@@ -168,7 +162,6 @@ private let slider = """
     let top = try #require(Hosting.modelPicker(screen: moved))
     #expect(top.row == 1 && top.label == "Default (recommended)" && top.effort == "medium")
     #expect(Hosting.modelPicker(screen: picker.replacingOccurrences(of: "◉ xHigh effort ←/→ to adjust", with: "Effort not supported"))?.effort == nil)
-    // The slash-command list above the composer isn't the picker.
     #expect(Hosting.modelPicker(screen: "  ❯ /model      Set the AI model for Claude Code") == nil)
 }
 
@@ -212,7 +205,6 @@ private let slider = """
     ❯\u{00A0}/model
     """
     #expect(Hosting.slashSuggestion(screen: typing) == "/model")
-    // A prompt echoed in the conversation isn't a list.
     #expect(Hosting.slashSuggestion(screen: "❯ /model\n  ⎿  Set model to Opus 5.5 for this session only\n\(rule)\n❯\u{00A0}") == nil)
 }
 

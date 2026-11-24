@@ -86,8 +86,6 @@ public enum Hosting {
         return nil
     }
 
-    // MARK: Reading the screen
-
     /// What the composer holds, read from `capture-pane -p -e` (with colours, so a placeholder,
     /// which both CLIs draw dim, reads as empty).
     public enum Composer: Equatable, Sendable {
@@ -105,10 +103,8 @@ public enum Hosting {
         screen.split(separator: "\n", omittingEmptySubsequences: false).map { Line(raw: String($0), plain: plain(String($0))) }
     }
 
-    /// A capture's lines without their escape sequences.
     public static func plainLines(_ screen: String) -> [String] { lines(screen).map(\.plain) }
 
-    /// The text of a captured line without its escape sequences.
     static func plain(_ raw: String) -> String {
         var out = ""
         var scalars = raw.unicodeScalars.makeIterator()
@@ -235,9 +231,6 @@ public enum Hosting {
         return nil
     }
 
-    // MARK: Claude's model picker and effort slider
-
-    /// Slash commands Side A types into a hosted Claude itself (`HostedSessions.command`).
     public static let typedCommands: Set<String> = ["/compact"]
 
     /// The command Claude's slash-command list highlights above the composer (`  ❯ /model   Set the AI model…`, a plain
@@ -290,10 +283,12 @@ public enum Hosting {
         var best: (String, Int)?
         for level in claudeEfforts {
             // Each label stands alone in the row: "low     medium     high     xhigh      max".
-            guard let start = (0..<names.count).first(where: { i in
-                String(names[i..<min(names.count, i + level.count)]) == level
-                    && (i == 0 || names[i - 1] == " ") && (i + level.count == names.count || names[i + level.count] == " ")
-            }) else { return nil }
+            let standsAlone = { (i: Int) -> Bool in
+                let end = i + level.count
+                return String(names[i..<min(names.count, end)]) == level
+                    && (i == 0 || names[i - 1] == " ") && (end == names.count || names[end] == " ")
+            }
+            guard let start = (0..<names.count).first(where: standsAlone) else { return nil }
             let distance = abs(start + level.count / 2 - at)
             if best == nil || distance < best!.1 { best = (level, distance) }
         }
@@ -330,8 +325,6 @@ public enum Hosting {
         let name = family.capitalized + " " + parts.dropFirst().joined(separator: ".")
         return { $0 == name }
     }
-
-    // MARK: Pressing Enter again
 
     /// What the composer showed right after Side A pasted `sent`, when it can only be Side A's:
     /// its start, or a paste placeholder for long or multi-line text. The result is recorded and

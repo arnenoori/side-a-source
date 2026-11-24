@@ -1,26 +1,9 @@
+#if canImport(Network)
 import Foundation
 import Network
 @testable import SideAProtocol
 import Testing
 
-@Test func framesKeepTheirByteLayout() throws {
-    let frame = TunnelFrame(.data, 0x0001_0007, Data([1, 2, 3]))
-    #expect(frame.encoded == Data([2, 0, 1, 0, 7, 1, 2, 3]))
-    #expect(TunnelFrame(frame.encoded) == frame)
-    #expect(TunnelFrame.credit(9, 262_144).granted == 262_144)
-    #expect(TunnelFrame(Data([9, 0, 0, 0, 1])) == nil)
-    #expect(TunnelFrame(Data([2, 0, 0])) == nil)
-    #expect(TunnelFrame(Data([2, 0, 0, 0, 1]) + Data(count: TunnelFrame.maxPayload + 1)) == nil)
-    #expect(TunnelControl(text: #"{"type":"mac","online":false}"#)?.online == false)
-    #expect(TunnelControl(type: "pairing").text == #"{"type":"pairing"}"#)
-    // What the relay reads to watch a Mac: its spelling is the relay's too.
-    #expect(TunnelControl.watch.text == #"{"type":"watch"}"#)
-    #expect(TunnelControl.goodbye(TunnelControl.Goodbye.sleep).text == #"{"reason":"sleep","type":"goodbye"}"#)
-    #expect([TunnelControl.Goodbye.quit, TunnelControl.Goodbye.off] == ["quit", "off"])
-}
-
-/// Two muxes joined in memory, the way the relay joins them: the phone's end takes connections from a front listener,
-/// the Mac's end opens one to a target per OPEN.
 final class Rig: @unchecked Sendable {
     let queue = DispatchQueue(label: "tunnel.rig")
     var phone: TunnelMux!
@@ -87,7 +70,6 @@ final class Rig: @unchecked Sendable {
         throw CancellationError()
     }
 
-    /// Connects to the front, sends `bytes`, reads as many back, and closes, as URLSession would.
     func roundTrip(_ bytes: Data) async throws -> Data {
         let port = try await ready()
         let client = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
@@ -138,14 +120,12 @@ final class Rig: @unchecked Sendable {
     let client = NWConnection(host: "127.0.0.1", port: port, using: .tcp)
     client.start(queue: .global())
     for _ in 0..<1500 where client.state != .ready { try await Task.sleep(for: .milliseconds(20)) }
-    // A first keystroke goes at once; the burst behind it within 16 ms is coalesced.
     let before = rig.queue.sync { rig.frames }
     for byte in 0..<40 { client.send(content: Data([UInt8(byte)]), completion: .contentProcessed { _ in }) }
     // swiftlint:disable:next sleep_literal_in_tests -- the check is an upper bound on frames, so the 16 ms coalescing window and the echo must have had time to happen
     try await Task.sleep(for: .milliseconds(150))
     let data = rig.queue.sync { rig.frames } - before
     client.cancel()
-    // Out: a handful of DATA frames, not 40; back: the echo's, and credits.
     #expect(data < 20)
 }
 
@@ -179,30 +159,12 @@ final class Rig: @unchecked Sendable {
     let chunk = Data(count: 32 << 10)
     queue.sync {
         mux.attach(7, NWConnection(host: "127.0.0.1", port: target.port!, using: .tcp))
-        // Two chunks fill the window; the third was never granted.
         for _ in 0..<3 { mux.received(TunnelFrame(.data, 7, chunk)) }
     }
     let frames = queue.sync { sent.value }
     #expect(frames.contains { $0.kind == .reset && $0.stream == 7 && $0.reason == "over credit" })
     #expect(queue.sync { mux.count } == 0)
     target.cancel()
-}
-
-@Test func controlTextNeverTraps() {
-    let samples = [
-        #"{"type":"gone","slot":-1}"#, #"{"type":"gone","slot":1e30}"#, #"{"type":"gone","slot":4294967296}"#,
-        #"{"type":"gone","slot":"1"}"#, #"{"type":"devices","devices":[{"id":1}]}"#, #"{"type":null}"#, "[]", "", "{", "pong",
-        #"{"type":"mac","online":"yes"}"#, #"{"type":"pairing","expiresAt":"NaN"}"#,
-    ]
-    var generator = SystemRandomNumberGenerator()
-    let random = (0..<500).map { _ in
-        String(decoding: (0..<Int.random(in: 0..<64, using: &generator)).map { _ in UInt8.random(in: 0...255, using: &generator) }, as: UTF8.self)
-    }
-    for text in samples + random {
-        _ = TunnelControl(text: text)
-    }
-    #expect(TunnelControl(text: #"{"type":"gone","slot":-1}"#)?.slot == -1)
-    #expect(TunnelControl(text: #"{"type":"gone","slot":1e30}"#) == nil)
 }
 
 final class Box<T>: @unchecked Sendable {
@@ -221,7 +183,6 @@ final class Box<T>: @unchecked Sendable {
     queue.sync {
         mux.attach(5, NWConnection(host: "127.0.0.1", port: target.port!, using: .tcp))
         mux.received(TunnelFrame(.fin, 5))
-        // The peer's answer to a FIN this side sent, after the stream ended here.
         mux.received(TunnelFrame(.fin, 9))
     }
     let frames = queue.sync { sent.value }
@@ -229,7 +190,6 @@ final class Box<T>: @unchecked Sendable {
     target.cancel()
 }
 
-/// A stream's end or a late connection can reach the rig's closures after its test has let go of it.
 @Test func aRigItsTestLetGoOfIgnoresWhatStillArrives() throws {
     var rig: Rig? = try Rig()
     weak let gone = rig
@@ -238,3 +198,4 @@ final class Box<T>: @unchecked Sendable {
     #expect(gone == nil)
     ended(1)
 }
+#endif

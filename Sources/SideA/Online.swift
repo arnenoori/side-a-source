@@ -1,7 +1,6 @@
 import Foundation
 import Network
 
-/// Whether this Mac has a network path, as the system last said.
 final class Online: @unchecked Sendable {
     static let shared = Online()
     private let monitor = NWPathMonitor()

@@ -245,7 +245,6 @@ public struct PairingClient: Sendable {
                                       macPublicKey: macKey, devicePublicKey: attempt.privateKey.publicKey.rawRepresentation,
                                       installID: relay.installID, deviceID: response.deviceID)
         }
-        // Paired through the relay, the hello's addresses are the ones to try first; the relay stays the fallback.
         let reported = URL(string: "https://\(response.hello.endpoints.tailnet)")
         let base = attempt.client.address.host == Paths.relayHost ? reported ?? attempt.client.address : attempt.client.address
         let relayInfo = response.relay.flatMap { relay in

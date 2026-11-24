@@ -8,7 +8,6 @@ import SideAProtocol
 /// `HostedSessions` on the main actor.
 final class TerminalHub: @unchecked Sendable {
     static let maxViewers = 4
-    /// How long a viewer's `applied` outlives its socket.
     static let remembered: TimeInterval = 120
     static let evaluateEvery: TimeInterval = 5
 
@@ -16,23 +15,17 @@ final class TerminalHub: @unchecked Sendable {
     let epoch: String
     private let hosted: @MainActor () -> HostedSessions?
     private var viewers: [UInt64: TerminalViewer] = [:]
-    /// By device and viewer id: the last input seq written to the PTY.
     private var records: [String: (seq: UInt32, until: Date)] = [:]
-    /// How sessions whose agent just exited ended, read when their viewers' clients go.
     private var endings: [String: (status: Int?, reason: TermExitReason)] = [:]
-    /// What each session's window was last set to, so an unchanged decision runs no tmux.
     private var applied: [String: RemoteTerminal.Size] = [:]
     private var evaluating: Set<String> = []
     private var again: Set<String> = []
     private var timer: DispatchSourceTimer?
-    /// Tests stand in a slower start for the tmux client.
     var launch: (@Sendable (TerminalViewer.Command) -> TerminalViewer.Command)?
 
     init(queue: DispatchQueue, epoch: String, hosted: @escaping @MainActor () -> HostedSessions?) {
         self.queue = queue; self.epoch = epoch; self.hosted = hosted
     }
-
-    // MARK: Sockets
 
     func attach(_ peer: WebSocketPeer, name: String) {
         let viewer = TerminalViewer(peer: peer, name: name, hub: self)
@@ -58,13 +51,11 @@ final class TerminalHub: @unchecked Sendable {
         startTimer()
     }
 
-    /// Last seq written for this viewer in this epoch, nil without a record.
     func record(_ key: String) -> UInt32? {
         records = records.filter { $0.value.until > Date() }
         return records[key]?.seq
     }
 
-    /// Typing in the phone's terminal: a pending re-press of an earlier reply must not fire.
     func typed(_ name: String) {
         let hosted = hosted
         Task { @MainActor in hosted()?.cancelVerifier(name) }
@@ -91,8 +82,6 @@ final class TerminalHub: @unchecked Sendable {
         }
     }
 
-    // MARK: Size
-
     private func startTimer() {
         guard timer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -102,14 +91,12 @@ final class TerminalHub: @unchecked Sendable {
         self.timer = timer
     }
 
-    /// From the hosted watcher's wakes and the timer.
     func evaluateAll() {
         let names = Set(viewers.values.map(\.name))
         if names.isEmpty { timer?.cancel(); timer = nil }
         for name in names { evaluate(name) }
     }
 
-    /// Decision 5, hosting's Resize. One evaluation per session at a time; a request during one runs it again after.
     func evaluate(_ name: String) {
         guard !evaluating.contains(name) else { again.insert(name); return }
         evaluating.insert(name)
@@ -147,15 +134,12 @@ final class TerminalHub: @unchecked Sendable {
     }
 }
 
-/// One phone's terminal view: its socket, its tmux client and the client's PTY.
 final class TerminalViewer: @unchecked Sendable {
     typealias Command = (path: String, args: [String], environment: [String: String])
 
-    /// Output is held while this much waits on the socket, below the socket's own 1 MiB limit.
     static let pauseAt = 768 * 1024
     static let coalesce: DispatchTimeInterval = .milliseconds(4)
     static let ackEvery: DispatchTimeInterval = .milliseconds(50)
-    /// How long tmux's startup queries are answered here.
     static let queryWindow: TimeInterval = 6
 
     let peer: WebSocketPeer
@@ -168,9 +152,7 @@ final class TerminalViewer: @unchecked Sendable {
     private(set) var active: TimeInterval = 0
     private(set) var started = false
     private(set) var recordKey: String?
-    /// The last seq whose bytes are all in the PTY.
     private(set) var written: UInt32 = 0
-    /// The next frame is partly in the PTY.
     private(set) var partial = false
     private var input = RemoteTerminal.Input()
     private var command: Command?
@@ -191,10 +173,7 @@ final class TerminalViewer: @unchecked Sendable {
     private var acked: UInt32 = 0
     private var queries = RemoteTerminal.Queries()
     private var queriesUntil = Date.distantFuture
-    /// What waits to go into the PTY, in order. Nil bytes is a refused frame, acked with `too_large` when reached; nil seq
-    /// is a reply to one of tmux's startup queries.
     private var outbox: [(seq: UInt32?, bytes: Data?)] = []
-    /// The first of `outbox` is partly in the PTY, so nothing may go ahead of it.
     private var midWrite = false
     /// tmux flushes its terminal's input when it takes the terminal over, and only writes after. Bytes in the PTY before
     /// the client's first output would be acked and lost.
@@ -205,8 +184,6 @@ final class TerminalViewer: @unchecked Sendable {
         self.peer = peer; self.name = name; self.hub = hub; queue = hub.queue
         peer.sent = { [weak self] in self?.drained() }
     }
-
-    // MARK: Socket
 
     func resolved(_ command: Command) {
         self.command = command
@@ -255,8 +232,6 @@ final class TerminalViewer: @unchecked Sendable {
         guard let data = try? JSONEncoder().encode(control) else { return }
         peer.send(.text(String(decoding: data, as: UTF8.self)))
     }
-
-    // MARK: Client
 
     private func startIfReady() {
         guard helloed, !started, !stopped, let command, let key = recordKey, let hub else { return }
@@ -351,8 +326,6 @@ final class TerminalViewer: @unchecked Sendable {
         reader.resume()
     }
 
-    // MARK: Input
-
     private func take(_ seq: UInt32, _ bytes: Data) {
         switch input.take(seq: seq, bytes: bytes) {
         case .again: if outbox.isEmpty { ack(force: true) }
@@ -367,7 +340,6 @@ final class TerminalViewer: @unchecked Sendable {
         }
     }
 
-    /// Writes queued frames in order, each in one write when the PTY takes it, waiting for room when it doesn't.
     private func pump() {
         guard master >= 0 else { return dropOutbox() }
         guard clientUp else { return }
@@ -417,7 +389,6 @@ final class TerminalViewer: @unchecked Sendable {
         ack(force: false)
     }
 
-    /// At most every 50 ms, and at once when the outbox drains.
     private func ack(force: Bool) {
         guard written > acked || force else { return }
         if force || acking == nil {
@@ -432,8 +403,6 @@ final class TerminalViewer: @unchecked Sendable {
             queue.asyncAfter(deadline: .now() + Self.ackEvery, execute: work)
         }
     }
-
-    // MARK: Size and the end
 
     func show(_ window: TerminalHub.Window) {
         guard started, !stopped else { return }
@@ -454,7 +423,6 @@ final class TerminalViewer: @unchecked Sendable {
         peer.close(4410, "session ended")
     }
 
-    /// The socket closed: SIGHUP the client, SIGKILL a second later if it's still there.
     func stop() {
         guard !stopped else { return }
         stopped = true

@@ -3,7 +3,6 @@ import Foundation
 import SideACore
 import SideAProtocol
 
-/// The phone's push tokens, its push-key rotation and Test Connection's notification.
 extension RemoteRoutes {
     static let pushRoutes: [Route] = [
         Route("POST", "v1/devices/push", registerPush),
@@ -26,7 +25,6 @@ extension RemoteRoutes {
         return HTTPResponse(status: 204)
     }
 
-    /// Relay-and-release, Key rotation: a fresh exchange, the new key replacing the old at once on the Mac.
     @Sendable static func rekey(_ context: Context) async -> HTTPResponse {
         guard let request = context.body(RekeyRequest.self), let raw = Data(base64URL: request.devicePublicKey),
               let phone = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: raw) else { return badJSON }

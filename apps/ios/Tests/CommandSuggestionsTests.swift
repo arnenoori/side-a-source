@@ -13,7 +13,6 @@ final class CommandSuggestionsTests: XCTestCase {
         AgentOptions.Option(id: "$repo-lint", label: "Lint the repository"),
     ]
 
-    /// What the list shows with the caret at `|` (the end when there's none).
     private func ids(_ typed: String, _ agent: AgentProvider = .claude) -> [String] {
         let caret = typed.firstIndex(of: "|").map { typed[..<$0].utf16.count } ?? typed.utf16.count
         let text = typed.replacingOccurrences(of: "|", with: "")
