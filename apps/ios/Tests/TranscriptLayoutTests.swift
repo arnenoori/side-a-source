@@ -201,8 +201,8 @@ final class FormattingTests: XCTestCase {
     }
 
     func testMemoryOnlyFromOneGigabyte() {
-        XCTAssertNil(Formatting.memory(900_000_000))
-        XCTAssertEqual(Formatting.memory(1_400_000_000), "1.4 GB")
+        XCTAssertNil(MemorySize.gigabytesText(900_000_000))
+        XCTAssertEqual(MemorySize.gigabytesText(MemorySize.bytes(mebibytes: 1434)), "1.4 GB")
     }
 
     func testAgeIsQuietWhileFresh() {

@@ -1,0 +1,18 @@
+[Unit]
+Description=Side A daemon (Side A Remote for this computer)
+Documentation=https://getsidea.com
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/side-a/sidead.env
+ExecStart=@BIN@ run $SIDEAD_ARGS
+Restart=on-failure
+RestartSec=3
+# Quits cleanly: connected phones are told, and hosted sessions keep running in their own tmux.
+KillMode=process
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

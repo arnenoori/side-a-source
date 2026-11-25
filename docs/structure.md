@@ -3,8 +3,8 @@
 Status: audit and plan. Step 0 and the "Done now" items are in the tree; everything else is a proposal. Taken from the
 tree after the Linux spike merged (`docs/ports/phase-0.md`). Counts are lines of Swift unless stated.
 
-One repository ships six things: the Mac app, Side A Remote (iOS), the push relay, the website, and, coming, the Linux
-daemon and the Windows port. Work is done mostly by coding agents in parallel worktrees, so the structure has two jobs
+One repository ships six things: the Mac app, Side A Remote (iOS), the push relay, the website, the Linux daemon (`Daemon`,
+built; see [linux.md](ports/linux.md)) and, coming, the Windows port (WSL 2 only so far; see [windows.md](ports/windows.md)). Work is done mostly by coding agents in parallel worktrees, so the structure has two jobs
 beyond tidiness: an agent should find the one place a rule or a constant lives, and two agents working on different
 platforms should rarely touch the same file.
 
@@ -94,6 +94,20 @@ Ordered by risk of drifting. "Cheapest source" is the smallest change that makes
 | Site gate (`npm ci`, lint, test, build) in three places | `check.sh`, `local-ci.sh`, `vercel.json` build command | Open; falls out of step 2 |
 | "Build an archive of HEAD and scan it" | `check.sh` (public scan), `ship.sh`, `publish-source.sh` | Intended: each scans the thing it publishes |
 
+## 2a. What the Linux daemon added (copies to fold in at step 10)
+
+The daemon was built beside the Mac app, not on a shared core, so each row is a second copy that step 10 should collapse.
+The first row is the only code taken out of Mac-only files; everything else is new in `Daemon/` or `bridge/`.
+
+| What | Mac | Daemon | Note |
+| --- | --- | --- | --- |
+| Extracted from Mac code | `Sources/SideA/Remote/Pairing.swift`: `PairingSession.link` forwards to `PairingLink.make` | `Sources/SideACore/Remote/PairingLink.swift`, `RequestGate.swift`, `RemoteAddresses.swift` (Linux interfaces) | Mechanical moves into `SideACore`; the Mac builds and passes unchanged |
+| Request gate, device table, idempotency ledger, pairing broker | `RemoteServer.swift`, `DeviceStore.swift`, `Pairing.swift` | `Daemon/Sources/SideADaemonKit/` `Server`, `Devices`, `Ledger`, `PairingBroker`, `EventHub` | Same rules written on NIO; `RequestGate` is already shared |
+| Relay REST client (signed requests, clock skew, registration) | `Sources/SideA/Remote/RelayClient.swift` | `RelayHTTP.swift` | Uses `RelaySignature` from `SideACore` |
+| Relay tunnel (OPEN, DATA, CREDIT, FIN, RESET splice to the local TLS port) | `TunnelClient.swift` and `TunnelMux.swift` on Network.framework | `RelayTunnel.swift` on NIO | Both speak `TunnelFrame` and `TunnelControl` from `SideAProtocol` |
+| Account limits read-out | `bridge/sidea_bridge.py` `claude_usage` | `Accounts.swift` `UsageReader` | Same URL, header and window labels; the daemon never refreshes a login |
+| Hosting, transcripts, live rows | `bridge/hosting.py`, `bridge/sessions.py` | The same Python, through `HostedTmux`, `SessionBridge`, `LiveSessions` | Only `bridge/hostos.py` is new (the OS seam, step 13 in small) |
+
 ## 3. Target layout
 
 Principles: a platform-neutral core is a SwiftPM package that builds on every OS; a platform shell is as thin as its UI;
@@ -174,9 +188,9 @@ work in flight today (comment sweep, iOS design pass, screen sharing, release fi
 | 9 | Move `SideACore` to `Packages/SideACore`; delete the `Daemon/Dependencies` symlink; simplify the root manifest | M | `Sources/SideACore`, `Tests/SideACoreTests`, `Package.swift`, `Daemon/Package.swift`, `.swiftlint.yml`, baseline, `scripts/check.sh`, `linux-check.sh`, `.vercelignore` | **no**: quiet window, after the comment sweep merges | Proposed |
 | 10 | Split `RemoteServer` into listener and handler; create `SideARemoteCore` with the 30 import-free files (5,066 lines), then the rest as protocols land | L | `Sources/SideA/Remote`, `Tests/SideATests/Remote` | no (touches the screen-sharing files last) | Proposed |
 | 11 | `SideASessionCore`: stores off `@MainActor` behind actors | L | `AccountStore*`, `SessionStore*`, `HostedSessions*`, `Island*` | no | Proposed |
-| 12 | Daemon on the shared core: NIO `Listener`, Linux platform implementations, fake-agent tests on Linux | L | `Daemon`, `Packages/SideAPlatformLinux` | after 8, 9, 10 | Proposed |
-| 13 | `bridge/platform.py` | M | `bridge/sidea_bridge.py`, `bridge/sessions.py`, `bridge/island_hook.py` | in parallel with 12; not with bridge feature work | Proposed |
-| 14 | Windows CI job and spike (`windows-2025`, core targets only) | M | `.github/workflows`, `Packages/SideAPlatformWindows` | after 9 | Proposed |
+| 12 | Daemon on the shared core: NIO `Listener`, Linux platform implementations, fake-agent tests on Linux | L | `Daemon`, `Packages/SideAPlatformLinux` | after 8, 9, 10 | The daemon exists and runs (section 2a); moving it onto the shared core is still proposed |
+| 13 | `bridge/platform.py` (started as `bridge/hostos.py`: tmux, shell, folders) | M | `bridge/sidea_bridge.py`, `bridge/sessions.py`, `bridge/island_hook.py` | in parallel with 12; not with bridge feature work | Proposed |
+| 14 | Windows CI job and spike (`windows-2025`, core targets only) | M | `.github/workflows`, `Packages/SideAPlatformWindows` | after 9 | Proposed; the WSL 2 route is documented, untried (`docs/ports/windows.md`) |
 
 Steps 0 and 1 are the only ones done. Order that matters: 8 before 10 (a route cannot move until what it calls is behind a
 protocol), 9 before 10 and 12, 3 before 9 (so the move is checked on Linux), 5 and 7 any time the owning lane is quiet.

@@ -61,19 +61,18 @@ struct MenuPlayer: View {
                 Text(error).font(.system(size: 11)).foregroundStyle(.red).lineLimit(4)
                     .onTapGesture { store.error = nil }
             }
-            if let version = updates.available {
+            switch updates.notice() {
+            case .available(let version, let failed):
                 Button { updates.install() } label: {
                     Label("Update to \(version)", systemImage: "arrow.down.circle.fill").font(.system(size: 11, weight: .medium))
                 }.buttonStyle(.borderless).disabled(!updates.canUpdate).help("Restart Side A with the new version")
-            } else if let version = updates.updated() {
+                if failed { downloadLink }
+            case .updated(let version):
                 Link(destination: UpdateHistory.notes(version)) {
                     Label("Updated to \(version)", systemImage: "checkmark.circle").font(.system(size: 11, weight: .medium))
                 }.buttonStyle(.borderless).foregroundStyle(.secondary).help("What's new in \(version)")
-            }
-            if updates.failure != nil {
-                Link(destination: URL(string: "https://getsidea.com")!) {
-                    Label("Update didn't install · Download it", systemImage: "exclamationmark.arrow.circlepath").font(.system(size: 11, weight: .medium))
-                }.help("Download the latest Side A and replace this copy")
+            case .failed: downloadLink
+            case nil: EmptyView()
             }
             Divider()
             HStack(spacing: 0) {
@@ -99,6 +98,13 @@ struct MenuPlayer: View {
             store.showSessions = { openWindow(id: "sessions") }
         }
     }
+    private var downloadLink: some View {
+        // swiftlint:disable:next force_unwrapping -- a literal URL
+        Link(destination: URL(string: "https://getsidea.com")!) {
+            Label("Update didn't install · Download it", systemImage: "exclamationmark.arrow.circlepath").font(.system(size: 11, weight: .medium))
+        }.help("Download the latest Side A and replace this copy")
+    }
+
     @ViewBuilder private var usage: some View {
         if let report = store.report, !report.days.isEmpty {
             // Calendar days: an idle day counts as zero, not as the last active day.

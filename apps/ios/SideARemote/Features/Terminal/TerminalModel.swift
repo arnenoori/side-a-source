@@ -13,7 +13,7 @@ final class TerminalModel {
 
     enum Phase: Equatable {
         case attaching, live, reconnecting
-        case ended(String)
+        case ended(TerminalEnd)
     }
 
     let name: String
@@ -84,9 +84,7 @@ final class TerminalModel {
         let grid = grid()
         reconnect = Task { [weak self] in
             guard await OwnerAuth.confirm(reason: "Type into \(self?.name ?? "the session") on \(self?.kind.your() ?? HostOS.macos.your())") else {
-                let biometry = Biometry.current
-                self?.phase = .ended(biometry == .passcode ? "Your passcode is needed to use the terminal."
-                                                           : "\(biometry.name) or your passcode is needed to use the terminal.")
+                self?.phase = .ended(.notUnlocked)
                 return
             }
             do {
@@ -97,6 +95,14 @@ final class TerminalModel {
                 self.schedule()
             }
         }
+    }
+
+    /// Asks again after a refusal the person can fix (a cancelled unlock, a screen left open elsewhere).
+    func retry() {
+        guard case .ended(let end) = phase, end.canRetry, !closed else { return }
+        phase = .attaching
+        attempt = 0
+        connect()
     }
 
     private func schedule() {
@@ -126,15 +132,16 @@ final class TerminalModel {
         case .copyMode(let on): copyMode = on
         case .notice(let text): notice = text
         case .exit(_, let reason):
-            phase = .ended(reason == .killed ? "The session was ended." : "The session ended.")
+            phase = .ended(.exited(killed: reason == .killed))
         case .closed(let code):
             switch code {
-            case 4410, 4404: if case .ended = phase {} else { phase = .ended("The session ended.") }
-            case 4401: phase = .ended("This \(ThisDevice.kind) isn't paired anymore.")
-            case 4426: phase = .ended("Update Side A to use the terminal.")
-            case 4409: phase = .ended("Open on too many screens. Close one and try again.")
             case 1000 where closed: break
-            default: if case .ended = phase {} else { schedule() }
+            default:
+                if let end = TerminalEnd(closeCode: code) {
+                    // An exit already on screen keeps its own words; a refusal replaces them.
+                    if end == .exited(killed: false), case .ended = phase { break }
+                    phase = .ended(end)
+                } else if case .ended = phase {} else { schedule() }
             }
         }
     }

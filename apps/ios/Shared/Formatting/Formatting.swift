@@ -46,12 +46,6 @@ public enum Formatting {
         return date.formatted(.dateTime.month(.abbreviated).day())
     }
 
-    /// "1.4 GB", shown only from 1 GB as on the Mac.
-    public static func memory(_ bytes: Int) -> String? {
-        guard bytes >= 1_000_000_000 else { return nil }
-        return String(format: "%.1f GB", Double(bytes) / 1_000_000_000)
-    }
-
     public static func size(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }

@@ -5,10 +5,12 @@ from pathlib import Path
 import re
 import subprocess
 
+import hostos
+
 SOCKET = "sidea"
 MINIMUM = (3, 4)
-CANDIDATES = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/opt/local/bin/tmux"]
-SYSTEM_TERMINFO = ["/usr/share/terminfo"]
+CANDIDATES = hostos.tmux_candidates()
+SYSTEM_TERMINFO = hostos.system_terminfo()
 
 CONFIG = """\
 # Written by Side A at launch; edits are overwritten. Your own ~/.tmux.conf is not read.
@@ -253,6 +255,14 @@ def write_private(path, text, mode=0o600):
     os.replace(temp, path)
 
 
+def adapted(text):
+    """CONFIG for a host that isn't a Mac: its own shell, and no `pbcopy`. A Mac's text is returned as it is."""
+    if hostos.DARWIN:
+        return text
+    lines = [line for line in text.splitlines(keepends=True) if "copy-command" not in line]
+    return "".join(f"set -g  default-shell {hostos.login_shell()}\n" if "default-shell" in line else line for line in lines)
+
+
 def config(terminfo=None):
     """CONFIG for this Mac. Panes are tmux-256color, described by the app's own terminfo when it
     ships one (Contents/Resources/terminfo) or by the system's; with neither, screen-256color,
@@ -260,10 +270,10 @@ def config(terminfo=None):
     entry = "74/tmux-256color"
     if terminfo and "'" not in str(terminfo) and (Path(terminfo) / entry).is_file():
         # The trailing colon keeps the system's own entries for every other terminal.
-        return CONFIG + f"set-environment -g TERMINFO_DIRS '{terminfo}:'\n"
+        return adapted(CONFIG) + f"set-environment -g TERMINFO_DIRS '{terminfo}:'\n"
     if any((Path(folder) / entry).is_file() for folder in SYSTEM_TERMINFO):
-        return CONFIG
-    return CONFIG.replace('default-terminal "tmux-256color"', 'default-terminal "screen-256color"')
+        return adapted(CONFIG)
+    return adapted(CONFIG).replace('default-terminal "tmux-256color"', 'default-terminal "screen-256color"')
 
 
 def install(root, bundled=None):
@@ -275,7 +285,8 @@ def install(root, bundled=None):
     binary = find_tmux(bundled)
     terminfo = Path(binary).parent.parent / "Resources/terminfo" if binary and binary == bundled else None
     write_private(folder / "tmux.conf", config(terminfo))
-    write_private(folder / "sidea-tmux", LAUNCHER, 0o700)
+    if hostos.has_launcher():
+        write_private(folder / "sidea-tmux", LAUNCHER, 0o700)
     if not binary:
         (folder / "tmux-path").unlink(missing_ok=True)
         return {"tmux": None, "running": False}

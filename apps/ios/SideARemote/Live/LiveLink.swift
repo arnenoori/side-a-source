@@ -235,14 +235,21 @@ final class LiveLink {
         for (id, entry) in sent {
             if case .sending(let item, _) = entry.attempt, case .failed(let error)? = state.outcomes[item] { model?.tools.noteRefusal(error) }
             let (delivery, next) = entry.attempt.advanced(in: state, request: id)
+            let resolution = state.resolved[id]
             if let delivery {
-                transcripts.deliver(id, in: entry.session, delivery)
+                transcripts.deliver(id, in: entry.session, delivery, macLine: resolutionLine(resolution))
             } else if transcripts.answered[entry.session]?.first(where: { $0.id == id })?.delivery == .unknown {
-                transcripts.deliver(id, in: entry.session, .answeredElsewhere)
+                // Settled while this phone's answer was in doubt: it is ours when this device's own answer resolved it.
+                let settled = TranscriptStore.Delivery.afterDoubt(resolution, thisDevice: mac.deviceID)
+                transcripts.deliver(id, in: entry.session, settled, macLine: resolutionLine(resolution))
             }
             if let next { sent[id]?.attempt = next } else { sent[id] = nil }
         }
         flights.trackSteering(state)
+    }
+
+    private func resolutionLine(_ resolution: RequestResolution?) -> String? {
+        resolution?.line(thisDevice: mac.deviceID, host: mac.endpoint.kind.isMac ? "Mac" : mac.endpoint.name)
     }
 
     /// The next snapshot covers a refresh that never gets through.
@@ -337,7 +344,7 @@ final class LiveLink {
         // Until the first snapshot the engine's state is empty, and the cache drawn at launch stays.
         if state.epoch != nil {
             model.sessions.replace(Array(state.sessions.values), finished: state.finished)
-            model.requests.replace(state.requests) { [mac] id in state.resolved[id]?.line(thisDevice: mac.deviceID, host: mac.endpoint.kind.isMac ? "Mac" : mac.endpoint.name) }
+            model.requests.replace(state.requests) { [self] id in resolutionLine(state.resolved[id]) }
             model.accounts.replace(Array(state.accounts.values))
             placeKeptAnswers(state, in: model.transcripts)
             saveSoon()

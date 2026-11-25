@@ -49,7 +49,7 @@ struct AccountsView: View {
         }
         .overlay {
             if macs.allSatisfy({ $0.accounts.accounts.isEmpty }) {
-                switch Self.emptyState(macs.map(\.mac.state)) {
+                switch Self.emptyState(macs.map(\.mac.shown)) {
                 case .noAccounts: ContentUnavailableView("No Accounts", systemImage: "person.crop.circle")
                 case .pairAgain(let reason):
                     PairAgainView(reason: reason, mac: root.current.mac.name).background(Color(.systemGroupedBackground))

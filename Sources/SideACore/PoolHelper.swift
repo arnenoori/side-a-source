@@ -323,7 +323,7 @@ public enum PoolBridge {
         do {
             let port = try await proxy.start(port: self.port, exactly: true)
             guard !files.appRunning else { proxy.stop(); return }
-            try Self.writePrivate("http://127.0.0.1:\(port) \(key) \(ProcessInfo.processInfo.processIdentifier)\n", to: files.pool)
+            try PrivateFile.write(text: "http://127.0.0.1:\(port) \(key) \(ProcessInfo.processInfo.processIdentifier)\n", to: files.pool)
             self.proxy = proxy
             self.decisions = decisions
             lastFailure = nil
@@ -332,15 +332,6 @@ public enum PoolBridge {
             proxy.stop()
             failed("couldn't open port \(self.port): \(error.localizedDescription)")
         }
-    }
-
-    /// Never readable by others, not even for a moment: the file holds the pool's key.
-    private static func writePrivate(_ text: String, to url: URL) throws {
-        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: temporary.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
     }
 
     private func stop(_ reason: String) {

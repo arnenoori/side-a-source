@@ -244,7 +244,7 @@ final class TranscriptStore {
 
     struct AnsweredRequest: Hashable, Identifiable {
         let request: RemoteRequest
-        let outcome: RequestOutcome
+        var outcome: RequestOutcome
         var delivery: Delivery = .delivered
         var id: RequestID { request.id }
     }
@@ -307,9 +307,11 @@ final class TranscriptStore {
         }
     }
 
-    func deliver(_ request: RequestID, in session: SessionKey, _ delivery: Delivery) {
-        guard let index = answered[session]?.firstIndex(where: { $0.id == request }),
-              answered[session]?[index].delivery != delivery else { return }
+    /// `macLine` is what the Mac says settled the request; it replaces this phone's own outcome when the phone's answer didn't win.
+    func deliver(_ request: RequestID, in session: SessionKey, _ delivery: Delivery, macLine: String? = nil) {
+        guard let index = answered[session]?.firstIndex(where: { $0.id == request }) else { return }
+        if delivery == .answeredElsewhere, let macLine { answered[session]?[index].outcome = .elsewhere(macLine) }
+        guard answered[session]?[index].delivery != delivery else { return }
         answered[session]?[index].delivery = delivery
     }
 

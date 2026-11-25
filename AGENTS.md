@@ -1,6 +1,6 @@
 # Side A
 
-Side A is a macOS menu-bar app that keeps several Claude Code and Codex accounts within their limits (Autopilot trades logins between sessions), answers agent permission requests from the notch ("island"), and hosts sessions in tmux. Side A Remote is its iPhone companion: it reaches the Mac over TLS (LAN, Tailscale or a relay tunnel) and gets push through a Cloudflare relay. A headless Linux daemon and a Windows port are being added from the same Swift core (`docs/ports/windows-linux-prd.md`, `docs/ports/phase-0.md`).
+Side A is a macOS menu-bar app that keeps several Claude Code and Codex accounts within their limits (Autopilot trades logins between sessions), answers agent permission requests from the notch ("island"), and hosts sessions in tmux. Side A Remote is its iPhone companion: it reaches the Mac over TLS (LAN, Tailscale or a relay tunnel) and gets push through a Cloudflare relay. `sidead`, a headless Linux daemon built from the same Swift core, pairs with the phone, hosts sessions under tmux, lists accounts, tunnels through the relay and ships as a tarball and `.deb`; Windows runs it in WSL 2, and a native Windows port is not started (`docs/ports/linux.md`, `docs/ports/windows.md`, plan in `docs/ports/windows-linux-prd.md`).
 
 Many agents work in parallel git worktrees and one coordinator merges them. Stay in your worktree and your area, commit on your branch, and do not push or open pull requests unless told to. `CLAUDE.md` only imports this file; edit this one. Area rules live in the nested `AGENTS.md` files and load when you work there.
 
@@ -13,7 +13,7 @@ Many agents work in parallel git worktrees and one coordinator merges them. Stay
 | `Sources/SideAKeepAwake`, `Sources/SideAKeepAwakeCore`, `Sources/SideAPool`, `Sources/CSideAPTY` | Root keep-awake helper and its XPC contract, pool proxy helper, C PTY shim | macOS |
 | `Packages/SideAProtocol` | The wire (`SideAProtocol`), frozen fixtures, `SideARemoteKit` (phone client, Apple only) | macOS, iOS, Linux (not the client) |
 | `apps/ios` | Side A Remote: app, notification extensions, widgets | iOS |
-| `Daemon` | `sidead`, the Linux daemon spike (own package) | Linux |
+| `Daemon` | `sidead`, the Linux daemon (own package) | Linux |
 | `bridge` | Stdlib-only Python the app runs for logins, transcripts, hosting, island hooks | macOS, later Linux |
 | `relay` | Cloudflare Worker: push and tunnel relay | Cloudflare |
 | `site` | Download page and docs site (Vite, TypeScript) | Vercel |
@@ -21,7 +21,7 @@ Many agents work in parallel git worktrees and one coordinator merges them. Stay
 | `Tests` | `Tests/SideATests` (app), `Tests/SideACoreTests` | not shipped |
 | `docs`, `releases`, `design` | Design docs, public release notes, Blender and icon sources | |
 
-Read first: `docs/architecture.md`, `docs/remote/protocol.md` (wire), `SECURITY.md` (what Side A touches), `CONTRIBUTING.md`.
+Read first: `docs/architecture.md`, `docs/remote/protocol.md` (wire), `SECURITY.md` (what Side A touches), `CONTRIBUTING.md`. How Claude Code and Codex hooks really behave: `docs/remote/terminal-hooks-findings.md`.
 
 ## Commands
 
@@ -39,6 +39,7 @@ Run everything below, and every check, lint and test, outside any command sandbo
 | Site | `npm --prefix site ci && npm --prefix site run lint && npm --prefix site test && npm --prefix site run build` |
 | Linux (Docker) | `scripts/linux-check.sh` (`--amd64` for x86_64, `--here` on a Linux host) |
 | Daemon | `swift test --package-path Daemon` |
+| Daemon end to end (Mac, Docker) | `scripts/linux-e2e.sh` |
 | Script tests | `python3 -m unittest discover -s scripts/tests` |
 | Lint | `scripts/lint-swift.sh`, `scripts/lint-python.sh`, `scripts/lint-scripts.sh` |
 | Scan for private data | `git archive HEAD \| tar -x -C <empty dir> && python3 scripts/scan-public-source.py <empty dir>` |
@@ -47,6 +48,11 @@ Run everything below, and every check, lint and test, outside any command sandbo
 
 - `scripts/check.sh` runs the gates the changed files need (against `origin/main`; `--all` runs every one). The pre-push hook (`.githooks/pre-push`) runs it; `scripts/setup-hooks.sh` installs the hook and `dev.sh` and `check.sh` call it. Hosted CI runs only on manual dispatch.
 - A pass on a clean tree with nothing skipped posts a `local-check` status on the commit. `scripts/merge-pr.sh <number>` refuses a pull request without it and squash-merges. Merge only that way, squash only, and never use `--no-verify` or `gh pr merge`.
+- Landing a branch from a worktree: merge `origin/main`, confirm a clean tree, run `scripts/check.sh origin/main` there, push, `scripts/check.sh --post <sha>`, then `scripts/merge-pr.sh <n>`. Without a status it re-checks the commit in a tree under the git directory, where a fresh checkout has no `relay/node_modules`: check a relay change where they are installed.
+- `CHANGELOG.md` merges by union locally (`.gitattributes`), which GitHub does not apply: a PR can show as conflicting until `origin/main` is merged into the branch locally.
+- A terminal Side A launched in pool mode breaks the gate (three bridge tests fail): run `scripts/check.sh`, and a `git push` (its hook runs it), as `env -u SIDE_A_POOL -u ANTHROPIC_BASE_URL -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_SECURESTORAGE_CONFIG_DIR ...`.
+- Judge a gate by its exit status, never by piped output: `| tail` hides a failure.
+- SwiftLint's baseline does not match in a checkout whose real path is under `/private/var`, `/private/tmp` or `/private/etc`, and `scripts/lint-swift.sh` refuses there. Use a worktree under the repository or home folder.
 - A `Packages/` change also runs the iOS tests, since `apps/ios` builds against `Packages/SideAProtocol`. A skipped gate means no pass is recorded.
 - The owner's yes is required for: releases (`scripts/ship.sh`), App Store and TestFlight submissions, relay deploys, and any push to the public source repository.
 

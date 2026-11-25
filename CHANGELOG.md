@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+## 0.5.61 — 2026-11-25
+
+Pool mode notices a limit reset early, such as a weekly reset you redeemed: the account takes requests again as soon as a reading shows the limit emptied, instead of resting until the old reset time, and when every account is resting the pool tries one again every so often in case its limit was reset.
+Side A for Linux, and for Windows through WSL 2 as a preview, can be installed with `curl -fsSL https://getsidea.com/install.sh | sh`: it picks the package for your computer, checks its SHA-256 sum and installs `sidead` for your user. The Linux page on getsidea.com lists what works and what does not yet.
+On Linux, `sidead` reaches your iPhone from anywhere through Side A's relay unless you pass `--no-relay`, as the Mac does; `--relay URL` names another relay.
+Side A Remote's terminal no longer says "Process Exited" when the real reason is a cancelled Face ID, a phone that is no longer paired, an app that needs updating, or too many screens open; each says what happened, and a cancelled Face ID or a full screen limit offers Try Again.
+An error about an account or pool mode now goes away once that account signs in, renews or switches, or pool mode starts, instead of staying in the menu. An account you signed in to again no longer keeps its "Sign in again" label beside a working Use button.
+Side A Remote no longer says "Denied" on a request you denied after the Mac had already allowed it; the row says what the Mac did. An answer from your phone that settled the request after a flaky connection now reads as delivered instead of "Answered on the Mac first".
+The Sessions window no longer says "Can't Open This Conversation" when something else went wrong, such as a terminal that wouldn't open or a quit that skipped a session; that message now shows only for the conversation that failed to load.
+The red error under Remote settings (a relay key that couldn't be read, or a pairing or revoke that couldn't be saved) now goes away once that works again, instead of staying until you restart Side A.
+Side A Remote no longer flips a session back to "Needs you" with no buttons after you answer it while the connection is reconnecting; the row goes back to working, and returns to "Needs you" only if the answer never gets through.
+Side A Remote no longer reads out "Reconnecting…" (in VoiceOver, the Mac menu and the Mac's status sheet) while its connection dot is still green during a brief drop; the text now follows the dot.
+The menu no longer says "Update didn't install" under "Updated to" when the Mac is already on the new version.
+
+Side A Remote shows a session's memory the way the Mac does, so a process that reads 1.0 GB on the Mac no longer reads 1.1 GB on the phone.
+The folder that holds the pool's key is now closed to other accounts on the Mac, including one that an earlier version created open.
+A Claude Code installed with npm (in `~/.npm-global/bin`) is now found when you sign in to an account, the same as everywhere else in Side A, instead of saying to install Claude Code first.
+
 ## 0.5.60 — 2026-11-24
 
 Pool mode uploads far less. Claude Code sends the whole conversation again on every turn, and the pool now compresses it on the way to Anthropic, to about two fifths of its size. With many sessions working at once, that is the difference between a home connection that stalls and one that doesn't. Codex requests go as before.

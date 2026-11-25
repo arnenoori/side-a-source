@@ -175,7 +175,7 @@ struct SessionRow: View {
     }
 
     private var portsText: String? {
-        let parts = (session.ports ?? []).map { ":\($0.port)" } + [session.memoryBytes.flatMap(Formatting.memory)].compactMap { $0 }
+        let parts = (session.ports ?? []).map { ":\($0.port)" } + [session.memoryBytes.flatMap(MemorySize.gigabytesText)].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 

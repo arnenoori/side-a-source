@@ -73,7 +73,7 @@ test('the text pages build next to the home page and render availability with th
   }
   assert.match(read('../index.html'), /<a href="\.\/privacy\/">Full privacy policy<\/a>/);
   const sitemap = read('../public/sitemap.xml');
-  for (const page of ['remote', 'privacy']) assert.match(sitemap, new RegExp(`https://getsidea\\.com/${page}/`));
+  for (const page of ['remote', 'linux', 'windows', 'privacy']) assert.match(sitemap, new RegExp(`https://getsidea\\.com/${page}/`));
   assert.doesNotMatch(sitemap, /\/pair/, 'the pairing page is only for links from a Mac');
 });
 
@@ -101,6 +101,6 @@ test('universal links open the app for /pair only, served as JSON', () => {
 
 test('/pair without a slash, as phones open it, serves the pairing page and not the home page', () => {
   const vercel = JSON.parse(read('../../vercel.json'));
-  assert.deepEqual(vercel.routes[0], { src: '^/(pair|remote|privacy)$', dest: '/$1/index.html' });
+  assert.deepEqual(vercel.routes[0], { src: '^/(pair|remote|privacy|linux|windows)$', dest: '/$1/index.html' });
   assert.match(read('../vite.config.ts'), /appType: 'mpa'/);
 });

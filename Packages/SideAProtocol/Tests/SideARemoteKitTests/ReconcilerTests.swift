@@ -216,3 +216,42 @@ private let resolution = RequestResolution(requestID: rid, by: .terminal, at: 5)
     value.project()
     #expect(value.state.requests.isEmpty)
 }
+
+private func answerItem(for request: String) -> Outbox.Item {
+    Outbox.Item(macID: "mac1", path: "/v1/requests/\(request)/answer", createdAt: 1, expiresAt: 99)
+}
+
+@Test func aRowWhoseOnlyRequestIsBeingAnsweredStopsWaitingOnIt() throws {
+    var value = try reconciler()
+    var session = try #require(value.state.sessions.values.first)
+    session.status = .waiting
+    session.openRequests = [rid]
+    _ = value.apply(.sessionUpsert(session))
+    #expect(value.state.sessions[session.id]?.openRequests == [rid] && value.state.sessions[session.id]?.status == .waiting)
+
+    value.state.pending = [answerItem(for: rid)]
+    value.project()
+    #expect(value.state.requests[rid] == nil)
+    #expect(value.state.sessions[session.id]?.openRequests.isEmpty == true && value.state.sessions[session.id]?.status == .working)
+
+    // A newer row from the Mac while the answer is still out stays answered too.
+    _ = value.apply(.sessionUpsert(session))
+    #expect(value.state.sessions[session.id]?.openRequests.isEmpty == true && value.state.sessions[session.id]?.status == .working)
+
+    // The answer never went: the request and the row's wait come back.
+    value.state.pending = []
+    value.project()
+    #expect(value.state.requests[rid] != nil)
+    #expect(value.state.sessions[session.id]?.openRequests == [rid] && value.state.sessions[session.id]?.status == .waiting)
+}
+
+@Test func aRowWithAnotherRequestOpenKeepsWaiting() throws {
+    var value = try reconciler()
+    var session = try #require(value.state.sessions.values.first)
+    session.status = .waiting
+    session.openRequests = [rid, "other"]
+    _ = value.apply(.sessionUpsert(session))
+    value.state.pending = [answerItem(for: rid)]
+    value.project()
+    #expect(value.state.sessions[session.id]?.openRequests == ["other"] && value.state.sessions[session.id]?.status == .waiting)
+}

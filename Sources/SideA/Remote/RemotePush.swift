@@ -41,7 +41,7 @@ final class RemotePush {
 
     var relay: RelayClient? {
         if let client { return client }
-        guard let controller, let base = controller.relayURL, let key = controller.installKey else { return nil }
+        guard let controller, let base = controller.relayURL, let key = controller.readInstallKey() else { return nil }
         client = RelayClient(base: base, key: key)
         return client
     }

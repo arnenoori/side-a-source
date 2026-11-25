@@ -30,12 +30,18 @@ def codex_home():
     return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
 
 
+def binary_candidates(name):
+    """Where Side A looks for a CLI, in order. The one list every caller shares, so a login and the setup check agree."""
+    return [Path.home() / ".local/bin" / name, Path.home() / ".npm-global/bin" / name, Path("/opt/homebrew/bin") / name, Path("/usr/local/bin") / name]
+
+
+def installed_binaries(name):
+    return [path for path in binary_candidates(name) if path.is_file() and os.access(path, os.X_OK)]
+
+
 def find_binary(name):
-    home = Path.home()
-    for path in [home / ".local/bin" / name, home / ".npm-global/bin" / name, Path("/opt/homebrew/bin") / name, Path("/usr/local/bin") / name]:
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
-    return None
+    found = installed_binaries(name)
+    return str(found[0]) if found else None
 
 
 def tool(name):

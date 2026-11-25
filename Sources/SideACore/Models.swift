@@ -524,9 +524,17 @@ public enum PrivateFile {
     public static func write<T: Encodable>(_ value: T, to url: URL) throws {
         try write(data: try JSONEncoder().encode(value), to: url)
     }
-    public static func write(data: Data, to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    /// A secret as text (a key). It lives in a folder Side A owns, so one an older build made too open is tightened too.
+    public static func write(text: String, to url: URL) throws {
+        try write(data: Data(text.utf8), to: url, tightenFolder: true)
+    }
+    public static func write(data: Data, to url: URL, tightenFolder: Bool = false) throws {
+        let folder = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Only group and other bits go: a folder the owner made read-only stays read-only.
+        if tightenFolder, let mode = (try FileManager.default.attributesOfItem(atPath: folder.path)[.posixPermissions] as? NSNumber)?.intValue, mode & 0o077 != 0 {
+            try FileManager.default.setAttributes([.posixPermissions: mode & ~0o077], ofItemAtPath: folder.path)
+        }
         // Never readable by others, not even for a moment, and replaced whole.
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
         guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {

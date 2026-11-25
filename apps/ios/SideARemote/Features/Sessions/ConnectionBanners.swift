@@ -59,7 +59,7 @@ struct UpdateMacBanner: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if model.mac.state == .live, model.tools.needsMacUpdate {
+        if model.mac.shown == .live, model.tools.needsMacUpdate {
             Section { BannerRow(symbol: "arrow.down.circle", text: "Update Side A on \(model.mac.name)") }
         }
     }

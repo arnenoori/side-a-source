@@ -13,6 +13,7 @@ import bisect
 import contextlib
 import fcntl
 import hashlib
+import hostos
 import json
 import math
 import os
@@ -160,7 +161,7 @@ def tool_summary(name, value):
 
 
 def claude_files():
-    folders = [Path.home() / ".claude" / "projects"]
+    folders = [folder / "projects" for folder in hostos.claude_dirs()]
     for folder in folders:
         if folder.is_dir():
             yield from folder.glob("*/*.jsonl")
@@ -783,7 +784,7 @@ def _index(root, seconds, paths=None):
     if paths is not None:
         # A profile's `sessions` is a link to the shared folder; file its rollouts under the one real path.
         paths = [Path(os.path.realpath(p)) if "/profiles/" in p else Path(p) for p in paths if p.endswith(".jsonl")]
-        sources = (("claude", [p for p in paths if "/.claude/projects/" in str(p)]),
+        sources = (("claude", [p for p in paths if is_claude_path(p)]),
                    ("codex", [p for p in paths if is_codex_path(p)]))
         named = [str(p) for p in paths]
         known = {row[0]: row for start in range(0, len(named), 500) for row in db.execute(
@@ -1120,7 +1121,7 @@ def transcript_path(root, session_id):
         return Path(row[0]), row[1]
     if not AGENT_ID.fullmatch(session_id or ""):
         return None, None
-    for path in (Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"):
+    for path in claude_transcripts(session_id):
         return path, "claude"
     for home in codex_homes(root):
         for path in (home / "sessions").glob(f"**/rollout-*{session_id}.jsonl") if (home / "sessions").is_dir() else ():
@@ -2830,11 +2831,21 @@ def claude_settings(root, session_id, mode=None, mode_at=0):
     return {key: value for key, value in settings.items() if value is not None and not (isinstance(value, str) and not value)}
 
 
+def claude_transcripts(session_id):
+    """Every transcript of a session, one per Claude folder that holds it."""
+    for folder in hostos.claude_dirs():
+        yield from (folder / "projects").glob(f"*/{session_id}.jsonl")
+
+
+def is_claude_path(path):
+    text = str(path)
+    return "/.claude/projects/" in text or any(text.startswith(str(folder / "projects") + "/") for folder in hostos.claude_dirs())
+
+
 def running_claude():
     """Each record in Claude Code's session registry whose process is alive, with its pid. pid 0 and 1 never are:
     kill(0, 0) reaches this process's own group and always succeeds, and 1 is launchd."""
-    folder = Path.home() / ".claude" / "sessions"
-    for path in folder.glob("*.json") if folder.is_dir() else ():
+    for path in (entry for folder in hostos.claude_dirs() for entry in (folder / "sessions").glob("*.json")):
         try:
             data = json.loads(path.read_text())
             pid = int(data["pid"])
@@ -2855,7 +2866,7 @@ def claude_transcript(session_id):
         return None
     known = TRANSCRIPTS.get(session_id)
     if known is None or not known.exists():
-        known = next((Path.home() / ".claude" / "projects").glob(f"*/{session_id}.jsonl"), None)
+        known = next(claude_transcripts(session_id), None)
         if known is None:
             TRANSCRIPTS.pop(session_id, None)
         else:
@@ -2934,7 +2945,6 @@ def rename_live(session_id, name, timeout=2.0):
     title = " ".join(str(name or "").split())
     if not session_id or not title:
         return {"renamed": False, "reason": "empty"}
-    folder = Path.home() / ".claude" / "sessions"
     for data, pid in running_claude():
         if data.get("sessionId") != session_id:
             continue
@@ -2949,6 +2959,7 @@ def rename_live(session_id, name, timeout=2.0):
             return {"renamed": False, "reason": "no-inbox"}
         lines = []
         # macOS doesn't require the auth line, but a session that published its key gets it.
+        folder = next((f / "sessions" for f in hostos.claude_dirs() if (f / "sessions" / f"{pid}.json").exists()), Path.home() / ".claude" / "sessions")
         key = folder / f"{pid}.{hashlib.sha256(address.encode()).hexdigest()}.key"
         with contextlib.suppress(OSError, ValueError, TypeError, AttributeError):
             token = json.loads(key.read_text()).get("peerToken")

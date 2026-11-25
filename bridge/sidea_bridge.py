@@ -21,6 +21,7 @@ import math
 import os
 from pathlib import Path
 import re
+import setup
 import shlex
 import signal
 import subprocess
@@ -113,9 +114,9 @@ def clean_environment(profile):
 
 
 def claude_binary():
-    for path in [Path.home()/".local/bin/claude", Path("/opt/homebrew/bin/claude"), Path("/usr/local/bin/claude")]:
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
+    path = setup.find_binary("claude")
+    if path:
+        return path
     raise ValueError("Install Claude Code first: https://code.claude.com/docs/en/setup")
 
 
@@ -2292,7 +2293,7 @@ def island_command(root, agent, launcher=None):
 
 
 def codex_hooks_path():
-    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "hooks.json"
+    return setup.codex_home() / "hooks.json"
 
 
 def island_settings(agent):
@@ -2320,9 +2321,7 @@ def claude_versions():
     """The version of every claude this Mac has where Side A looks, None for one that wouldn't say. The native
     installer links claude to versions/<version>, so most are read without starting one."""
     found = []
-    for path in [Path.home() / ".local/bin/claude", Path.home() / ".npm-global/bin/claude", Path("/opt/homebrew/bin/claude"), Path("/usr/local/bin/claude")]:
-        if not (path.is_file() and os.access(path, os.X_OK)):
-            continue
+    for path in setup.installed_binaries("claude"):
         real = path.resolve()
         text = real.name if real.parent.name == "versions" else ""
         if not re.fullmatch(r"\d+\.\d+\.\d+", text):
@@ -2623,7 +2622,6 @@ def main():
         print(json.dumps(hosting.install(root, args.bundled)))
         return
     if args.command == "setup":
-        import setup
         print(json.dumps(setup.overview(root) if args.action == "overview" else setup.mcp_health()))
         return
     if args.command == "cleanup":

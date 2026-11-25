@@ -33,7 +33,7 @@ final class AccountStore {
     private(set) var dependencies = DependencyReport()
     private(set) var checkingDependencies = false
     let analytics: AppAnalytics
-    var error: String?
+    var error: String? { didSet { errorSubject = nil } }; var errorSubject: ErrorSubject?
     /// Accounts that own the Mac-wide Claude and Codex logins, when they are in the library.
     var activeIDs: [AgentProvider: String] = [:] { didSet { remoteUsageChanged() } }
     var unknownLogins: [AgentProvider: String] = [:]
@@ -171,7 +171,7 @@ final class AccountStore {
     @ObservationIgnored var stuckNotified: Set<String> = []
     @ObservationIgnored var slotMovedAt: [String: Double] = [:]
     @ObservationIgnored var codexPoolHomes: [Bool: String] = [:]
-    @ObservationIgnored var poolBlocked: [String: Double] = [:]
+    @ObservationIgnored var poolBlocked = PoolRests()
     @ObservationIgnored var signInWarned: Set<String> = []
     /// Accounts already named in "is full; sign in to X", once per lapse.
     @ObservationIgnored var signInAsked: Set<String> = []
@@ -603,7 +603,7 @@ final class AccountStore {
         guard !signingIn.contains(id) else { return false }
         signingIn.insert(id); defer { signingIn.remove(id) }
         do { _ = try await bridgeOutput(["login", id], timeout: 600) }
-        catch { self.error = "Sign-in did not finish. Try again."; return false }
+        catch { report("Sign-in did not finish. Try again.", for: .account(id)); return false }
         let ok = await verify(id)
         // The login just changed, so what a read of the old one backed off from no longer applies.
         if ok { perAccount[id]?.backoffUntil = nil; await refreshUsage(id) }
@@ -661,9 +661,9 @@ final class AccountStore {
         }
         verifying[id] = check
         switch await check.value {
-        case .success(let saved): return saved
+        case .success(let saved): resolve(.account(id)); return saved
         case .failure(let failure):
-            if reportError { self.error = failure.localizedDescription }
+            if reportError { report(failure.localizedDescription, for: .account(id)) }
             return false
         }
     }
@@ -721,7 +721,7 @@ final class AccountStore {
         Task { await activate(account.id) }
     }
     func activate(_ id: String) async {
-        do { try await use(id) } catch { self.error = error.localizedDescription }
+        do { try await use(id); resolve(.account(id)) } catch { report(error.localizedDescription, for: .account(id)) }
     }
     /// Makes an account its provider's Mac-wide login, for PLAY and the phone alike; already active, nothing happens.
     /// Throws what the bridge said.
@@ -826,7 +826,7 @@ final class AccountStore {
             }
             if let hit = limitHits[id], hit.at > started.timeIntervalSince1970 { value = value.hitting(hit.limit, at: hit.at) }
             warnAboutPaidUsage(id, before: usage[id], after: value)
-            usage[id] = value
+            poolTookReading(id, value, at: started.timeIntervalSince1970); usage[id] = value
             readAt[id] = max(started, readAt[id] ?? started)
             perAccount[id]?.failing = false
             health[id] = nil
@@ -866,16 +866,16 @@ final class AccountStore {
     /// Limits a running session saw (a Claude reply's headers, Codex's app server), kept when newer than the last
     /// reading. Returns whether they were.
     @discardableResult
-    func takeLive(_ windows: [UsageWindow], for id: String, at: Double) -> Bool {
+    func takeLive(_ windows: [UsageWindow], for id: String, at: Double, exact: Bool = false) -> Bool {
         guard !windows.isEmpty, at > (readAt[id]?.timeIntervalSince1970 ?? 0) else { return false }
         // A reply that began before a trade reports the previous login's limits; its weekly reset gives it away.
-        if Planner.belongsElsewhere(windows, known: usage[id], now: Date().timeIntervalSince1970) { return false }
+        if !exact, Planner.belongsElsewhere(windows, known: usage[id], now: Date().timeIntervalSince1970) { return false }
         var merged = usage[id] ?? AccountUsage(windows: [])
         for window in windows {
             if let index = merged.windows.firstIndex(where: { $0.id == window.id }) { merged.windows[index] = window } else { merged.windows.append(window) }
         }
         merged.stale = false
-        usage[id] = merged
+        poolTookReading(id, merged, at: at); usage[id] = merged
         readAt[id] = Date(timeIntervalSince1970: at)
         // A session's own reading is current even when the endpoint wants a sign-in, so the account can still move.
         perAccount[id]?.failing = false
@@ -947,7 +947,7 @@ final class AccountStore {
         perAccount[id, default: PerAccount()].renewedAt = Date()
         do {
             _ = try await bridgeOutput(["renew", id], timeout: 120)
-            perAccount[id]?.backoffUntil = nil
+            perAccount[id]?.backoffUntil = nil; resolve(.account(id))
             await refreshUsage(id)
         } catch {
             let message = error.localizedDescription
@@ -979,7 +979,7 @@ final class AccountStore {
     func wake(_ id: String) async {
         perAccount[id]?.renewedAt = nil
         await renew(id)
-        if health[id] == .idle { self.error = "\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be renewed. Sign in to it again." }
+        if health[id] == .idle { report("\(config.accounts.first { $0.id == id }?.name ?? "This account") could not be renewed. Sign in to it again.", for: .account(id)) }
     }
     var plannable: [String: AccountUsage] { usage.filter { perAccount[$0.key]?.failing != true } }
     /// Read in the last hour and not failing: a pace worked out from anything older would be a guess.
@@ -1089,7 +1089,7 @@ final class AccountStore {
         // the back-off and any old reading belonged to the previous login.
         for (id, stamp) in value.logins ?? [:] {
             if let seen = perAccount[id]?.loginStamp, seen != stamp {
-                perAccount[id]?.backoffUntil = nil; perAccount[id]?.usageAt = nil; health[id] = nil; perAccount[id]?.failing = false
+                perAccount[id]?.backoffUntil = nil; perAccount[id]?.usageAt = nil; forgetOldLoginHealth(id); perAccount[id]?.failing = false
             }
             perAccount[id, default: PerAccount()].loginStamp = stamp
         }

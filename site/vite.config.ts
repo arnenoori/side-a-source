@@ -21,7 +21,7 @@ export default defineConfig({
   build: {
     modulePreload: { polyfill: false },
     rollupOptions: {
-      input: { main: 'index.html', 'how-redirect': 'how/index.html', privacy: 'privacy/index.html', remote: 'remote/index.html', pair: 'pair/index.html' },
+      input: { main: 'index.html', 'how-redirect': 'how/index.html', privacy: 'privacy/index.html', remote: 'remote/index.html', pair: 'pair/index.html', linux: 'linux/index.html', windows: 'windows/index.html' },
     },
   },
 });

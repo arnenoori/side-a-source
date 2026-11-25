@@ -7,7 +7,8 @@ Status: built and shipping (Side A 0.5.44). Written as the plan in October 2026;
 [`remote/`](remote/) fill this in: [protocol](remote/protocol.md) (every wire shape; it wins over
 this file), [mac-server](remote/mac-server.md), [bridge](remote/bridge.md),
 [hosting](remote/hosting.md), [ios-app](remote/ios-app.md),
-[relay-and-release](remote/relay-and-release.md) and [setup](remote/setup.md).
+[relay-and-release](remote/relay-and-release.md), [setup](remote/setup.md) and
+[terminal-hooks-findings](remote/terminal-hooks-findings.md) (measured Claude Code and Codex hook behaviour).
 
 ## Why
 

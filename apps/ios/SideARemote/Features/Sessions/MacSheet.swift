@@ -18,7 +18,7 @@ struct MacSheet: View {
                         }
                     }
                     LabeledContent("Last seen") {
-                        if mac.state == .live {
+                        if mac.shown == .live {
                             Text("Now")
                         } else {
                             Text(mac.lastSeen, format: .relative(presentation: .named))

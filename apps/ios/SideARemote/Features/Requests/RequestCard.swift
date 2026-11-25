@@ -106,18 +106,10 @@ struct AnsweredLine: View {
         }
     }
 
-    private var line: String {
-        switch answered.outcome {
-        case .denied where answered.request.plan != nil: return "Kept planning"
-        case .allowed, .denied, .elsewhere:
-            if case .command(let command) = answered.request.action { return "\(answered.outcome.line) · \(answered.request.tool) \(command)" }
-            return "\(answered.outcome.line) · \(answered.request.headline)"
-        default: return answered.outcome.line
-        }
-    }
+    private var line: String { answered.line }
 
     private var icon: String {
-        switch (answered.delivery, answered.outcome) {
+        switch (answered.delivery, answered.shownOutcome) {
         case (.sending, _): "arrow.up.circle"
         case (.unknown, _), (.failed, _): "exclamationmark.circle"
         case (.gone, _): "questionmark.circle"
@@ -128,7 +120,7 @@ struct AnsweredLine: View {
     }
 
     private var iconStyle: AnyShapeStyle {
-        switch (answered.delivery, answered.outcome) {
+        switch (answered.delivery, answered.shownOutcome) {
         case (.sending, _): AnyShapeStyle(.tertiary)
         case (.unknown, _): AnyShapeStyle(Color.amber)
         case (.failed, _): AnyShapeStyle(Color.destructive)

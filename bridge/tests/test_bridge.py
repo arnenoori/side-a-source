@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import uuid
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
 SPEC = importlib.util.spec_from_file_location('bridge', Path(__file__).parents[1] / 'sidea_bridge.py')
 bridge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bridge)
@@ -30,6 +31,15 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge.percent(float('nan')), 0.0)
         self.assertEqual(bridge.epoch(2_000_000_000_000), 2_000_000_000.0)
         self.assertEqual(bridge.epoch(2_000_000_000), 2_000_000_000.0)
+
+    def test_claude_binary_finds_an_npm_global_install(self):
+        home = self.root / 'home'
+        binary = home / '.npm-global/bin/claude'
+        binary.parent.mkdir(parents=True)
+        binary.write_text('#!/bin/sh\n'); binary.chmod(0o755)
+        with patch.object(Path, 'home', return_value=home):
+            self.assertEqual(bridge.claude_binary(), str(binary))
+            self.assertEqual(bridge.setup.find_binary('claude'), str(binary))
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

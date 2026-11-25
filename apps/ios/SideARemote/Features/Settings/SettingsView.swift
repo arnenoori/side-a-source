@@ -170,7 +170,7 @@ private struct MacRow: View {
                 .overlay(alignment: .bottomTrailing) { ConnectionDot(state: mac.shown).offset(x: 2, y: 2) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(mac.name)
-                Text([version.map { "Side A \($0)" }, mac.state == .live ? mac.status : Formatting.age(of: mac.lastSeen)]
+                Text([version.map { "Side A \($0)" }, mac.shown == .live ? mac.status : Formatting.age(of: mac.lastSeen)]
                         .compactMap { $0 }.joined(separator: " · "))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -193,7 +193,7 @@ struct MacDetailView: View {
         Form {
             Section {
                 NavigationLink(value: SettingsPage.name(model.macID)) { LabeledContent("Name", value: model.mac.name) }
-                LabeledContent("Connection", value: model.mac.state == .live ? model.mac.route?.title ?? "Connected" : model.mac.state.title)
+                LabeledContent("Connection", value: model.mac.shown == .live ? model.mac.route?.title ?? "Connected" : model.mac.shown.title)
                 if let link {
                     LabeledContent("Address", value: (link.state.address ?? link.mac.endpoint.baseURL).host() ?? "")
                     if let hello = link.state.hello {

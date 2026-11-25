@@ -29,7 +29,8 @@ final class RemoteController {
     private(set) var port: UInt16
     private(set) var pairing: PairingSession?
     private(set) var keyID: String?
-    var error: String?
+    var error: String? { didSet { errorSource = nil } }
+    @ObservationIgnored var errorSource: RemoteErrorSource?
     let key = KeyCheck()
     private(set) var portsRanOut = false
     @ObservationIgnored private(set) var opened = false
@@ -46,7 +47,7 @@ final class RemoteController {
     @ObservationIgnored private(set) lazy var devices = DeviceStore(keychain: keychain)
     @ObservationIgnored private(set) lazy var transcription = RemoteTranscription(keychain: keychain)
     nonisolated let cache = RemoteCache()
-    @ObservationIgnored private let keychain: RemoteKeychain
+    @ObservationIgnored let keychain: RemoteKeychain
     @ObservationIgnored private let fixed: [String]?
     @ObservationIgnored private var identity: RemoteKeychain.Identity?
     @ObservationIgnored var server: RemoteServer?
@@ -288,7 +289,7 @@ final class RemoteController {
     }
 
     private func startTunnel() {
-        guard on, anywhereOn, tunnel == nil, let server, let base = relayURL, let key = installKey else { return }
+        guard on, anywhereOn, tunnel == nil, let server, let base = relayURL, let key = readInstallKey() else { return }
         let tunnel = TunnelClient(base: base, key: key, register: { try await RelayClient(base: base, key: key).register() }) { [weak server] done in
             guard let server else { return done(nil) }
             server.tunnelPort(done)
@@ -467,12 +468,9 @@ final class RemoteController {
         ?? (store?.isDemo != false ? nil
             : URL(string: Bundle.main.bundleIdentifier == AppCopies.releaseID ? "https://push.getsidea.com" : "https://push-staging.getsidea.com"))
 
-    var installKey: Curve25519.Signing.PrivateKey? {
-        do { return try keychain.installKey() } catch {
-            self.error = error.localizedDescription
-            return nil
-        }
-    }
+    /// For what shows in a view: reading it never changes what the settings say, since a view body may read it. Acting on
+    /// the key goes through `readInstallKey`.
+    var installKey: Curve25519.Signing.PrivateKey? { try? keychain.installKey() }
 
     var installID: String? { installKey.map { RelaySignature.installID($0.publicKey.rawRepresentation) } }
 
@@ -500,7 +498,7 @@ final class RemoteController {
     func beginPairing() {
         guard on else { return }
         pairing?.end()
-        pairing = PairingSession(installID: installID)
+        pairing = PairingSession(installID: readInstallKey().map { RelaySignature.installID($0.publicKey.rawRepresentation) })
         pairTicket = Data(Secret.bytes(16))
         tunnel?.setPairing(ticket: pairTicket)
         refresh()
@@ -545,11 +543,12 @@ final class RemoteController {
         let replacedSameID = devices.devices.contains { $0.id == device.id }
         do { try devices.add(device, replacing: request.replaces) } catch {
             RemoteLog.shared("pairing: \(device.name) approved, but saving it failed: \(error.localizedDescription)")
-            self.error = error.localizedDescription
+            report(error.localizedDescription, from: .pairing)
             pairing?.finished(attemptID, saved: false)
             return nil
         }
         pairing?.finished(attemptID, saved: true)
+        resolve(.pairing)
         RemoteLog.shared("pairing: paired \(device.name) (device \(device.id.prefix(6)))" + (request.replaces.map { ", replacing \($0.prefix(6))" } ?? ""))
         if let old = request.replaces, old != device.id { invalidate(old) }
         if replacedSameID { invalidate(device.id, keepPush: true) }
@@ -560,7 +559,8 @@ final class RemoteController {
     }
 
     func revoke(_ id: String) {
-        do { try devices.remove(id) } catch { self.error = error.localizedDescription; return }
+        do { try devices.remove(id) } catch { report(error.localizedDescription, from: .devices); return }
+        resolve(.devices)
         invalidate(id)
         devicesChanged()
     }

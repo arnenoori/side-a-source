@@ -18,15 +18,21 @@ public struct RemoteAddresses: Sendable, Equatable {
     public static func classify(_ interfaces: [Interface]) -> RemoteAddresses {
         var out = RemoteAddresses()
         for interface in interfaces {
-            if interface.name.hasPrefix("utun"), isTailnet(interface.address) {
+            if interface.name.hasPrefix("utun") || interface.name.hasPrefix("tailscale"), isTailnet(interface.address) {
                 if !out.tailnet.contains(interface.address) { out.tailnet.append(interface.address) }
-            } else if interface.name.hasPrefix("en"), isPrivateIPv4(interface.address), !out.lan.contains(interface.address) {
+            } else if isLANInterface(interface.name), isPrivateIPv4(interface.address), !out.lan.contains(interface.address) {
                 out.lan.append(interface.address)
             }
         }
         // IPv4 first: it's the one the QR code carries.
         out.tailnet.sort { ($0.contains(":") ? 1 : 0, $0) < ($1.contains(":") ? 1 : 0, $1) }
         return out
+    }
+
+    /// A Mac's `en0`; on Linux the wired and wireless names (`eth0`, `enp3s0`, `wlan0`, `wlp2s0`), never the bridges and
+    /// virtual ports that containers add.
+    static func isLANInterface(_ name: String) -> Bool {
+        ["en", "eth", "wlan", "wlp", "wlo"].contains { name.hasPrefix($0) }
     }
 
     public static func isTailnet(_ address: String) -> Bool {
@@ -62,6 +68,26 @@ public struct RemoteAddresses: Sendable, Equatable {
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             guard getnameinfo(address, socklen_t(address.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
             let name = String(decoding: UnsafeRawBufferPointer(start: entry.ifa_name, count: strlen(entry.ifa_name)), as: UTF8.self)
+            interfaces.append(Interface(name, String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)))
+        }
+        return classify(interfaces.filter { $0.name == primary } + interfaces.filter { $0.name != primary })
+    }
+#elseif canImport(Glibc)
+    /// This computer's interfaces now, up and with an address. Linux has no `sa_len`, so the length comes from the family.
+    public static func current(primary: String? = nil) -> RemoteAddresses {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return RemoteAddresses() }
+        defer { freeifaddrs(list) }
+        var interfaces: [Interface] = []
+        for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let entry = pointer.pointee
+            guard entry.ifa_flags & UInt32(IFF_UP) != 0, let address = entry.ifa_addr else { continue }
+            let family = Int32(address.pointee.sa_family)
+            let length = family == AF_INET ? MemoryLayout<sockaddr_in>.size : family == AF_INET6 ? MemoryLayout<sockaddr_in6>.size : 0
+            guard length > 0 else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(address, socklen_t(length), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 else { continue }
+            let name = String(cString: entry.ifa_name)
             interfaces.append(Interface(name, String(decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)))
         }
         return classify(interfaces.filter { $0.name == primary } + interfaces.filter { $0.name != primary })

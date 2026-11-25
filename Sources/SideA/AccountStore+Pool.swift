@@ -91,6 +91,7 @@ extension AccountStore: PoolDecisions {
         guard !isDemo || checksLogins else { return }
         guard config.pool == true else {
             pool?.stop()
+            resolve(.pool)
             // A start under way sees pool mode off when it finishes, and stops.
             if case .starting = poolRun {} else { poolRun = .off }
             poolShareGeneration += 1
@@ -124,7 +125,7 @@ extension AccountStore: PoolDecisions {
             // A Quit while the port is being taken must still take the claim away, or the helper reopens Side A.
             watchQuit()
             // Claimed before the port: the helper lets it go within a second of seeing this process named here.
-            try writePrivate(PoolFiles.claim(), to: poolFiles.app)
+            try PrivateFile.write(text: PoolFiles.claim(), to: poolFiles.app)
             let port: UInt16
             do { port = try await takePoolPort(proxy) } catch {
                 // Nobody serves under this claim, so the helper mustn't stand down for it.
@@ -136,8 +137,8 @@ extension AccountStore: PoolDecisions {
             // Turning pool mode off and on while the port opened removed the claim.
             // The file first: a pool with no file to find would serve nobody and block every retry.
             do {
-                try writePrivate(PoolFiles.claim(), to: poolFiles.app)
-                try writePrivate("http://127.0.0.1:\(port) \(proxy.key) \(ProcessInfo.processInfo.processIdentifier)\n", to: poolFile)
+                try PrivateFile.write(text: PoolFiles.claim(), to: poolFiles.app)
+                try PrivateFile.write(text: "http://127.0.0.1:\(port) \(proxy.key) \(ProcessInfo.processInfo.processIdentifier)\n", to: poolFile)
             } catch {
                 proxy.stop()
                 try? FileManager.default.removeItem(at: poolFiles.app)
@@ -146,6 +147,7 @@ extension AccountStore: PoolDecisions {
             poolRun = .running(proxy, port: port)
             poolFailures = 0
             poolRetryAt = nil
+            resolve(.pool)
             autopilotLog.write("Pool mode on, at 127.0.0.1:\(port).")
             writePoolPlan()
             registerPoolHelper()
@@ -155,7 +157,7 @@ extension AccountStore: PoolDecisions {
             poolRun = config.pool == true ? .failed(error.localizedDescription) : .off
             poolFailures += 1
             poolRetryAt = Date().addingTimeInterval(min(60 * Double(1 << min(poolFailures - 1, 4)), 900))
-            self.error = "Pool mode couldn't start: \(error.localizedDescription)"
+            report("Pool mode couldn't start: \(error.localizedDescription)", for: .pool)
         }
     }
 
@@ -185,7 +187,7 @@ extension AccountStore: PoolDecisions {
         guard plan != lastPoolPlan || !FileManager.default.fileExists(atPath: poolFiles.plan.path),
               let data = try? JSONEncoder().encode(plan) else { return }
         do {
-            try writePrivate(String(decoding: data, as: UTF8.self), to: poolFiles.plan)
+            try PrivateFile.write(text: String(decoding: data, as: UTF8.self), to: poolFiles.plan)
             lastPoolPlan = plan
         } catch {
             autopilotLog.note("pool plan", "Pool: the plan for while Side A is closed couldn't be saved: \(error.localizedDescription)")
@@ -198,7 +200,7 @@ extension AccountStore: PoolDecisions {
 
     private func claimApp() {
         watchQuit()
-        do { try writePrivate(PoolFiles.claim(), to: poolFiles.app) } catch {
+        do { try PrivateFile.write(text: PoolFiles.claim(), to: poolFiles.app) } catch {
             autopilotLog.note("pool helper", "Side A couldn't note that it is running, so it won't be reopened after a crash: \(error.localizedDescription)")
         }
     }
@@ -234,17 +236,8 @@ extension AccountStore: PoolDecisions {
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw CocoaError(.featureUnsupported) }
         let key = bytes.map { String(format: "%02x", $0) }.joined()
-        try writePrivate(key + "\n", to: file)
+        try PrivateFile.write(text: key + "\n", to: file)
         return key
-    }
-
-    private func writePrivate(_ text: String, to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
-        guard FileManager.default.createFile(atPath: temporary.path, contents: Data(text.utf8), attributes: [.posixPermissions: 0o600]) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
     }
 
     func poolMembers(_ provider: AgentProvider) -> [Account] {
@@ -270,7 +263,34 @@ extension AccountStore: PoolDecisions {
         }
         poolConversations = poolRouter.conversations
         if chosen != nil, let session { stopped { $0.served(session) } }
-        return chosen
+        return chosen ?? poolProbe(provider, excluding: excluding, now: now)
+    }
+
+    private func poolProbe(_ provider: AgentProvider, excluding: Set<String>, now: Double) -> String? {
+        guard provider == .claude else { return nil }
+        let planned = planning(usage)
+        var freeAt: [String: Double] = [:]
+        for account in poolMembers(provider) where !excluding.contains(account.id) && health[account.id]?.takesWork != false {
+            let read = Planner.nextAvailable([account], usage: planned, full: config.moveAt, now: now)?.1 ?? 0
+            freeAt[account.id] = max(poolBlocked[account.id] ?? 0, read)
+        }
+        guard let id = poolBlocked.probe(freeAt, now: now) else { return nil }
+        let name = config.accounts.first { $0.id == id }?.name ?? id
+        autopilotLog.note("pool probe \(id)", "Pool: every account is resting; trying \(name) in case its limit was reset.")
+        return id
+    }
+
+    /// Room alone never ends a rest: the usage endpoint lags a 429 and leaves out model caps.
+    func poolTookReading(_ id: String, _ value: AccountUsage, at: Double) {
+        let now = Date().timeIntervalSince1970
+        let early = Planner.resetEarly(before: usage[id], after: value, now: now)
+        guard !early.isEmpty else { return }
+        let name = config.accounts.first { $0.id == id }?.name ?? id
+        let limits = early.map { $0 == "seven_day" ? "weekly" : "5-hour" }.joined(separator: " and ")
+        autopilotLog.note("reset \(id)", "\(name)'s \(limits) limit was reset early; it takes work again.")
+        if poolBlocked.end(id, readAt: at, now: now) {
+            autopilotLog.note("pool \(id)", "Pool: \(name) has room again; it takes requests.")
+        }
     }
 
     func poolHasRoom(_ provider: AgentProvider, now: Double) -> Bool {
@@ -310,10 +330,11 @@ extension AccountStore: PoolDecisions {
         let found = config.accounts.first { $0.id == account }
         let name = found?.name ?? account
         let codex = found?.provider == .codex
-        takeLive(codex ? Pool.codexLimits(headers) : Pool.limits(headers), for: account, at: now)
+        // The pool knows which account answered, so a moved weekly reset here is a reset, not another login's reply.
+        takeLive(codex ? Pool.codexLimits(headers) : Pool.limits(headers), for: account, at: now, exact: true)
         switch status {
         case 429:
-            poolBlocked[account] = codex ? Pool.codexRetryAt(headers, now: now) : Pool.retryAt(headers, now: now)
+            poolBlocked.rest(account, until: codex ? Pool.codexRetryAt(headers, now: now) : Pool.retryAt(headers, now: now), at: now, limit: true)
             autopilotLog.note("pool \(account)", "Pool: \(name) is at its limit; new requests go to another account.")
         case 403:
             poolBlocked[account] = now + 600

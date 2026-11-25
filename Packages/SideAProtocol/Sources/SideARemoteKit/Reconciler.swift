@@ -15,6 +15,9 @@ struct Reconciler {
     var state = RemoteState()
     /// Every request the Mac has open; `state.requests` is these less the ones with an answer pending.
     var open: [RequestID: RemoteRequest] = [:]
+    /// The sessions as the Mac sent them; `state.sessions` is these with the requests answered from here taken off, so an
+    /// answer that is later dropped brings its request back to the row.
+    private var heard: [SessionKey: RemoteSession] = [:]
     private var resolvedOrder: [RequestID] = []
     /// A welcome that can't replay came: events wait for the snapshot that follows it.
     var awaitingSnapshot = false
@@ -96,6 +99,7 @@ struct Reconciler {
     mutating func project() {
         let answering = Set(state.pending.compactMap(\.answering))
         state.requests = open.filter { !answering.contains($0.key) }
+        state.sessions = heard.mapValues { $0.answered(answering) }
     }
 
     static func keyed<T, K: Hashable>(_ values: [T], _ key: KeyPath<T, K>) -> [K: T] {
@@ -117,7 +121,8 @@ struct Reconciler {
         state.seq = snapshot.seq
         state.epoch = snapshot.epoch
         state.sliceSeq = [:]
-        state.sessions = Self.keyed(snapshot.sessions, \.id)
+        heard = Self.keyed(snapshot.sessions, \.id)
+        state.sessions = heard
         state.finished = Self.keyed(snapshot.finished, \.sessionID)
         open = Self.keyed(snapshot.requests, \.id)
         state.hosted = Self.keyed(snapshot.hosted, \.name)
@@ -130,8 +135,8 @@ struct Reconciler {
 
     mutating func apply(_ event: ServerEvent) -> [Effect] {
         switch event {
-        case .sessionUpsert(let session): state.sessions[session.id] = session
-        case .sessionRemove(let id, _): state.sessions[id] = nil
+        case .sessionUpsert(let session): heard[session.id] = session; project()
+        case .sessionRemove(let id, _): heard[id] = nil; project()
         case .requestAdd(let request): open[request.id] = request
         case .requestResolve(let resolution): return resolve(resolution)
         case .finishedAdd(let finished): state.finished[finished.sessionID] = finished
@@ -164,5 +169,20 @@ struct Reconciler {
             effects.append(.settle(item, resolution))
         }
         return effects
+    }
+}
+
+extension RemoteSession {
+    /// The row once the requests in `answering` have an answer on its way: they are not open for the person any more, so
+    /// the row neither lists them nor waits on them.
+    func answered(_ answering: Set<RequestID>) -> RemoteSession {
+        guard !answering.isEmpty, openRequests.contains(where: answering.contains) else { return self }
+        var row = self
+        row.openRequests.removeAll(where: answering.contains)
+        if row.openRequests.isEmpty, row.status == .waiting {
+            row.status = .working
+            row.waitingFor = nil
+        }
+        return row
     }
 }

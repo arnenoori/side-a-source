@@ -673,7 +673,7 @@ struct IdleFold: View {
 
 enum Megabytes {
     static func text(_ mb: Int) -> String {
-        mb >= 1024 ? String(format: "%.1f GB", Double(mb) / 1024) : "\(mb) MB"
+        MemorySize.text(bytes: MemorySize.bytes(mebibytes: mb))
     }
 }
 

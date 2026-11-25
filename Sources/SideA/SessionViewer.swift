@@ -25,15 +25,15 @@ struct SessionViewer: View {
                 .transition(.asymmetric(insertion: Ink.rise(8), removal: .opacity))
             } else if model.loading {
                 ProgressView().controlSize(.small)
-            } else if let error = model.error {
-                ContentUnavailableView("Can't Open This Conversation", systemImage: "exclamationmark.bubble", description: Text(error))
+            } else if let message = model.loadFailure {
+                ContentUnavailableView("Can't Open This Conversation", systemImage: "exclamationmark.bubble", description: Text(message))
             } else {
                 Welcome()
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) {
-            if model.detail != nil, let error = model.error {
+            if let error = model.error {
                 Label(error, systemImage: "exclamationmark.circle").font(.callout)
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(.regularMaterial, in: Capsule())

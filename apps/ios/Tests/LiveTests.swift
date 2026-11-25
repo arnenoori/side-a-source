@@ -116,8 +116,9 @@ final class LiveTests: XCTestCase {
         XCTAssertEqual(mac.status, "Connected")
         mac.route = .relay
         XCTAssertEqual(mac.status, "Connected via Relay")
-        mac.state = .reconnecting(since: .now)
-        XCTAssertEqual(mac.status, "Reconnecting…")
+        // A drop from live shows only after the blip (ShownConnectionTests); an offline Mac shows at once.
+        mac.state = .offline(.macUnreachable)
+        XCTAssertEqual(mac.status, mac.state.title)
     }
 
     func testOnlyAPinnedLinkInTheMacsFormPairs() {

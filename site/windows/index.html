@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
+  <meta name="theme-color" content="#f7f8f7" />
+  <meta name="description" content="Run the Side A daemon on Windows through WSL 2 and answer Claude Code and Codex sessions from your iPhone. Preview." />
+  <link rel="canonical" href="https://getsidea.com/windows/" />
+  <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+  <title>Side A for Windows</title>
+  <script type="module" src="/src/linux.ts"></script>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <a class="wordmark" href="../" aria-label="Side A home"><span class="disc-mark" aria-hidden="true"></span>Side A</a>
+    </header>
+    <main class="doc">
+      <h1>Side A for Windows <span class="tag">Preview</span></h1>
+      <p class="lead">Answer your Windows PC’s Claude Code and Codex sessions from your iPhone.</p>
+      <p class="requirements">Windows 11, or Windows 10 22H2, with WSL 2. Runs inside WSL 2, and only sees Claude Code and Codex installed there. Not yet tried on a Windows PC.</p>
+
+      <div class="actions">
+        <p class="remote-soon" id="linux-status" role="status">Coming soon</p>
+      </div>
+      <noscript><p><a href="https://github.com/arnenoori/side-a-releases/releases">View available downloads</a></p></noscript>
+
+      <section id="linux-install" hidden>
+        <h2>Install</h2>
+        <ol class="steps">
+          <li><span>In PowerShell, run <code>wsl --install -d Ubuntu-24.04</code> and restart.</span></li>
+          <li><span>In Ubuntu, turn on systemd once with <code>printf '[boot]\nsystemd=true\n' | sudo tee /etc/wsl.conf</code>, then run <code>wsl --shutdown</code> in PowerShell and open Ubuntu again.</span></li>
+          <li><span>In Ubuntu, install Side A:</span></li>
+        </ol>
+        <div class="command">
+          <pre><code id="install-command">curl -fsSL https://getsidea.com/install.sh | sh</code></pre>
+          <button type="button" id="copy-command">Copy</button>
+        </div>
+        <p>Then run <code>sidead pair</code> and scan the code in Side A Remote. Check that both show the same six digits.</p>
+      </section>
+
+      <h2>What works</h2>
+      <ul>
+        <li>Claude Code and Codex sessions running in WSL, their transcripts and replies.</li>
+        <li>Starting sessions from the phone, kept in tmux.</li>
+        <li>Each Claude account’s 5-hour and weekly limits.</li>
+        <li>Reaching the PC away from home, and a push when a session finishes.</li>
+      </ul>
+
+      <h2>Not yet</h2>
+      <ul>
+        <li>Claude Code and Codex installed on Windows itself, outside WSL.</li>
+        <li>A Windows app or tray icon. The iPhone is the only interface.</li>
+        <li>Everything <a href="../linux/">Side A for Linux</a> doesn’t do yet.</li>
+      </ul>
+      <p><a href="https://github.com/arnenoori/side-a-source/blob/main/docs/ports/windows.md">Windows details</a></p>
+
+      <h2>Remove</h2>
+      <p>In Ubuntu, run <code>~/.local/share/side-a/uninstall.sh</code>. <code>sidead</code> adds nothing to your shell, <code>~/.claude</code> or <code>~/.codex</code>.</p>
+    </main>
+    <footer><a href="https://arne.ai">Made with love by Arne Noori</a><p class="fine"><a href="https://github.com/arnenoori/side-a-source/blob/main/SECURITY.md">Security details</a> · <a href="../privacy/">Privacy</a></p></footer>
+  </div>
+</body>
+</html>

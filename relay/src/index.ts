@@ -1,6 +1,7 @@
 // sidea-push: holds the APNs key and nothing worth reading. Spec: docs/remote/relay-and-release.md.
 import { CLOCK_SKEW, ID, parseDeviceBearer, parseSignature, signedString } from './auth';
 import { b64url, fromB64url, sha256, utf8 } from './bytes';
+import { errorBody } from './errors';
 import { deliver, type Outcome } from './apns';
 import { PAGE_AFTER, probe } from './health';
 import type { Ledger } from './ledger';
@@ -23,8 +24,7 @@ function respond(reply: Reply): Response {
   const headers: Record<string, string> = { date: new Date().toUTCString() };
   if (reply.retryAfter !== undefined) headers['retry-after'] = String(reply.retryAfter);
   if (reply.code) {
-    const retryable = reply.status === 429 || reply.status >= 500;
-    return Response.json({ error: { code: reply.code, message: reply.message ?? '', retryable } }, { status: reply.status, headers });
+    return Response.json(errorBody(reply.status, reply.code, reply.message ?? ''), { status: reply.status, headers });
   }
   if (reply.body === undefined) return new Response(null, { status: reply.status, headers });
   return Response.json(reply.body, { status: reply.status, headers });

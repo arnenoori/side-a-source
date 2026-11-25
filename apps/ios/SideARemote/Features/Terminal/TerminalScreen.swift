@@ -48,13 +48,18 @@ struct TerminalScreen: View {
             }
         }
         .overlay {
-            if case .ended(let reason) = terminal.phase {
+            if case .ended(let end) = terminal.phase {
                 ContentUnavailableView {
-                    Label("Process Exited", systemImage: "xmark.octagon")
+                    Label(end.title, systemImage: end.systemImage)
                 } description: {
-                    Text(reason)
+                    Text(end.message)
                 } actions: {
-                    Button("Back to Chat") { dismiss() }.buttonStyle(.glassProminent)
+                    if end.canRetry {
+                        Button("Try Again") { terminal.retry() }.buttonStyle(.glassProminent)
+                        Button("Back to Chat") { dismiss() }.buttonStyle(.glass)
+                    } else {
+                        Button("Back to Chat") { dismiss() }.buttonStyle(.glassProminent)
+                    }
                 }
                 .foregroundStyle(.white)
                 .background(Color.terminalBackground.opacity(0.85))

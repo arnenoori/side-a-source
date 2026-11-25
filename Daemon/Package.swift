@@ -34,6 +34,7 @@ let package = Package(
         .executableTarget(name: "sidead", dependencies: ["SideADaemonKit"]),
         .testTarget(name: "SideADaemonTests", dependencies: [
             "SideADaemonKit",
+            .product(name: "SideACore", package: "side-a"),
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),

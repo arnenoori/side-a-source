@@ -29,6 +29,24 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
 }
 
+@Test func aSecretIsWrittenWholeIntoAFolderOnlyTheOwnerCanOpen() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let runtime = directory.appendingPathComponent("runtime")
+    try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o755])
+    let key = runtime.appendingPathComponent("pool-key")
+    try PrivateFile.write(text: "first\n", to: key)
+    try PrivateFile.write(text: "second\n", to: key)
+    #expect(try String(contentsOf: key, encoding: .utf8) == "second\n")
+    func mode(_ url: URL) throws -> Int? { (try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue }
+    #expect(try mode(key) == 0o600)
+    #expect(try mode(runtime) == 0o700)
+    // A folder this call creates starts closed as well.
+    let fresh = directory.appendingPathComponent("fresh/pool-key")
+    try PrivateFile.write(text: "x", to: fresh)
+    #expect(try mode(fresh.deletingLastPathComponent()) == 0o700)
+}
+
 @Test func oldClaudeProfilesKeepIdentityAndConsent() throws {
     let id = UUID().uuidString.lowercased()
     let data = Data("""

@@ -125,7 +125,7 @@ enum WireBuilders {
                              mail: sessions.mail[live.pid].map { MailState(kind: .init(rawValue: $0), at: sessions.mailAt[live.pid] ?? Date().timeIntervalSince1970) },
                              hosted: live.hosted, abilities: commands.abilities(live, status: status),
                              ports: live.ports.map { $0.map { ListeningPort(port: $0.port, process: $0.command ?? "", previewURL: store.remote.previews.url(session: WireBuilders.key(live), port: $0.port)) } },
-                             memoryBytes: live.memory.map { $0 << 20 }, contextPercent: daemon?.contextPercent ?? live.contextPercent,
+                             memoryBytes: live.memory.map { MemorySize.bytes(mebibytes: $0) }, contextPercent: daemon?.contextPercent ?? live.contextPercent,
                              abilityReasons: commands.reasons(live, status: status), settings: daemon?.settings ?? settings(live),
                              turnID: daemon?.turnID ?? live.turnID, plan: daemon?.plan ?? live.plan, backgroundTasks: live.runningTasks,
                              limit: live.sessionID.flatMap { rows.limits[$0] })

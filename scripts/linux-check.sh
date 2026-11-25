@@ -51,12 +51,25 @@ step "SideACore: build and test"
 sw core . build --build-tests
 sw core . test --skip-build
 
-step "sidead: build, test (TLS 1.3 hello over a pinned key), and start the binary"
+# The session tests drive a real tmux and the Python bridge; the image has neither, and Ubuntu 24.04's tmux is 3.4, the oldest
+# hosting supports.
+if ! command -v tmux >/dev/null || ! command -v python3 >/dev/null; then
+  step "installing tmux, python3 and procps"
+  apt_get="apt-get"; [[ "$(id -u)" == 0 ]] || apt_get="sudo apt-get"
+  $apt_get update -qq && DEBIAN_FRONTEND=noninteractive $apt_get install -y -qq --no-install-recommends tmux python3 procps lsof >/dev/null
+fi
+tmux -V
+
+# The part of the Python bridge the daemon relies on that is not macOS-only (the whole suite is: it drives the Keychain).
+step "bridge: the host seam"
+python3 -m unittest bridge/tests/test_hostos.py
+
+step "sidead: build, test (TLS 1.3 hello over a pinned key, pairing, sessions through tmux and the bridge), and start the binary"
 sw daemon Daemon build --build-tests
 sw daemon Daemon test --skip-build
 daemon_bin="$(sw daemon Daemon build --show-bin-path)/sidead"
 daemon_log="$(mktemp)"
-"$daemon_bin" --port 47831 >"$daemon_log" &
+"$daemon_bin" --port 47831 --no-relay >"$daemon_log" &
 daemon=$!
 trap 'kill "$daemon" 2>/dev/null || true; rm -f "$daemon_log"' EXIT
 for _ in $(seq 1 50); do grep -q listening "$daemon_log" && break; sleep 0.1; done

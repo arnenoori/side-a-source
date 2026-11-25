@@ -214,8 +214,10 @@ final class MacConnection: Identifiable {
         }
     }
 
+    /// What every visible line says about the connection: `shown`, as the chip does, so a blip of reconnecting never
+    /// reads "Reconnecting…" beside a green dot.
     var status: String {
-        guard state == .live, let route else { return state.title }
+        guard shown == .live, let route else { return shown.title }
         return "Connected via \(route.title)"
     }
 

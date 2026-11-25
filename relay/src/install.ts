@@ -4,6 +4,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { NONCE_WINDOW, installIdFor, verifyEd25519 } from './auth';
 import { b64url, equalBytes, sha256 } from './bytes';
+import { errorBody } from './errors';
 import { deliver, type Delivery, type Environment, type Outcome } from './apns';
 import { MAX_DEVICES, activityRequest, alertRequest, challengeRequest, macIDFor, quietRequest, type Quiet, type Send } from './send';
 import { Tunnel, type Refusal } from './tunnel';
@@ -174,8 +175,7 @@ export class Install extends DurableObject<Env> {
       : { status: 401, code: 'unauthorized', message: 'Unknown install' };
     if (result instanceof Response) return result;
     const headers: Record<string, string> = result.retryAfter === undefined ? {} : { 'retry-after': String(result.retryAfter) };
-    const retryable = result.status === 429 || result.status >= 500;
-    return Response.json({ error: { code: result.code, message: result.message, retryable } }, { status: result.status, headers });
+    return Response.json(errorBody(result.status, result.code, result.message), { status: result.status, headers });
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {

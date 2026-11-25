@@ -229,7 +229,7 @@ final class SessionStore {
     var remaining = 0
     var total = 0
     var loading = false
-    var error: String?
+    var error: String?; var loadError: LoadFailure?
     var listError: String?
     var showsSections: Bool { !filtered && !searching }
     var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -808,7 +808,7 @@ final class SessionStore {
         }
         if let cached = cache[id] {
             if detail?.session.id != id { detail = cached }
-            error = nil
+            error = nil; loadError = nil
             loading = false
             return
         }
@@ -816,9 +816,9 @@ final class SessionStore {
         Task {
             do {
                 let value = try await load(id)
-                if selectedID == id { detail = value; error = nil }
+                if selectedID == id { detail = value; error = nil; loadError = nil }
             } catch {
-                if selectedID == id { detail = nil; self.error = error.localizedDescription }
+                if selectedID == id { detail = nil; loadError = LoadFailure(id: id, message: error.localizedDescription) }
             }
             if selectedID == id || selectedID == nil { loading = false }
         }
@@ -829,7 +829,7 @@ final class SessionStore {
         if let page = pages[key] {
             detail = page
             focus = page.focus ?? uuid
-            error = nil
+            error = nil; loadError = nil
             loading = false
             return
         }
@@ -842,9 +842,9 @@ final class SessionStore {
                 guard selectedID == id else { return }
                 detail = page
                 focus = page.focus
-                error = nil
+                error = nil; loadError = nil
             } catch {
-                if selectedID == id { detail = nil; self.error = error.localizedDescription }
+                if selectedID == id { detail = nil; loadError = LoadFailure(id: id, message: error.localizedDescription) }
             }
         }
     }

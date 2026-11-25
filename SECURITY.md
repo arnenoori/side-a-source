@@ -444,6 +444,30 @@ text, and nothing of a session's content goes into the logs.
   phone, where its unlock key can't sign. So a stolen token can silence that phone's notifications or
   change what it wants to hear about, until you revoke it. It runs nothing and reads nothing.
 
+## Linux and Windows (`sidead`)
+
+`sidead`, the headless daemon for Linux and for Windows through WSL 2 ([docs/ports/linux.md](docs/ports/linux.md)), speaks the
+same wire as the Mac and holds the same line: every call in the table above needs what it needs there.
+
+**Files.** It writes its state folder (`~/.local/state/side-a`, mode 0700, secrets in 0600 files: the TLS key, the relay key,
+the paired phones' hashed tokens), accounts you add under `~/.local/share/side-a/accounts`, the bridge's runtime under the state
+folder (a `tmux.conf` and per-session launch scripts), and the service's `~/.config/side-a/sidead.env` and
+`~/.config/systemd/user/sidead.service`. The installer puts the binary, the bridge and `uninstall.sh` under `~/.local`
+(`/usr/bin` and `/usr/share/side-a` for the `.deb`). It never edits `~/.bashrc`, `~/.zshrc`, `~/.claude` or `~/.codex`, and
+never copies, moves or refreshes a login: a Claude account is a folder started with `CLAUDE_CONFIG_DIR`, and its token is read
+only to ask for its limits. `uninstall.sh` removes everything above except the state folder, which `--purge` also removes.
+
+**Network.** The TLS 1.3 listener (port 47800; the tailnet and loopback unless `--lan`), pinned by the phone to the daemon's key.
+By default it also keeps one outbound connection to the relay at `push.getsidea.com`, as the Mac does, which is what lets the
+phone reach it from anywhere and carries push; `--no-relay` (or `SIDEAD_RELAY_URL=off`) turns that off, and `--relay URL` names
+another. A relay install is an Ed25519 key the daemon made, registered with no name or machine details; the relay moves bytes
+it cannot read. One request per Claude account to `api.anthropic.com`, at most a minute apart, with that account's own token,
+for its limits. `install.sh` from getsidea.com downloads one tarball and its SHA-256 sums from the public releases repository
+on GitHub (and asks `api.github.com` for the latest version), and installs nothing when the sum does not match.
+
+**Not on Linux yet.** Permission requests are not answered from the phone: the daemon does not run Claude Code's hook, so
+nothing waits on the phone for an approval.
+
 Report a vulnerability privately through GitHub's security advisories on
 [arnenoori/side-a-source](https://github.com/arnenoori/side-a-source/security/advisories/new).
 

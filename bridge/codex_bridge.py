@@ -92,8 +92,10 @@ class RPC:
 
 
 def codex_binary():
-    for path in [Path.home()/".local/bin/codex", Path.home()/".npm-global/bin/codex", Path("/opt/homebrew/bin/codex"), Path("/usr/local/bin/codex")]:
-        if path.is_file() and os.access(path, os.X_OK): return str(path)
+    import setup
+    path = setup.find_binary("codex")
+    if path:
+        return path
     raise ValueError("Install Codex CLI first: https://developers.openai.com/codex/cli")
 
 

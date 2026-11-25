@@ -184,7 +184,7 @@ private struct MacSessions: View {
     var body: some View {
         if header {
             Section {
-                if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.mac.state == .live {
+                if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.mac.shown == .live {
                     Text("No sessions running").foregroundStyle(.secondary)
                 }
             } header: {
