@@ -144,6 +144,12 @@ final class RemoteEvents: Island.Watcher {
     }
 
     func queued(session: String, text: String, became outcome: Island.QueuedFollowUp) {
+        let named = "reply \(IDs.hashed(text)) for session \(session.prefix(8))"
+        switch outcome {
+        case .waiting: RemoteLog.shared("queued: \(named) waits for the turn to end")
+        case .delivered: RemoteLog.shared("queued: \(named) delivered")
+        case .dropped(let why): RemoteLog.shared("queued: \(named) given back (\(why))")
+        }
         switch outcome {
         case .waiting: break
         case .delivered: record(.finishedResolve(sessionID: session, reason: Island.ReadyReason.sentQueued.rawValue))

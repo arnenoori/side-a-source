@@ -137,7 +137,7 @@ final class Island {
     var replying: Ready.ID?
     /// Per session, follow-ups queued while it works: on disk, because the Stop hook that takes them can outlast this app.
     @ObservationIgnored var queued: [String: [QueuedFollowUp]] = [:] { didSet { if queued != oldValue { queuedChanged() } } }
-    @ObservationIgnored private var queuedGoneSince: [String: Date] = [:]
+    @ObservationIgnored var queuedGoneSince: [String: Date] = [:]
     @ObservationIgnored lazy var queuedFile: URL? = store.flatMap { $0.isDemo ? nil : $0.root.appendingPathComponent("runtime/queued-followups.json") }
     @ObservationIgnored var keepsFinished: (() -> Bool)?
     /// How long a session must stay off the live list before what's queued for it counts as lost.
@@ -164,7 +164,7 @@ final class Island {
     static var on: Bool { UserDefaults.standard.bool(forKey: onKey) }
     var keepsWaiters: Bool { Self.on && Self.setting(Self.finishedKey) || store?.remote.active == true }
 
-    @ObservationIgnored private weak var store: AccountStore?
+    @ObservationIgnored weak var store: AccountStore?
     @ObservationIgnored private var server: IslandServer?
     @ObservationIgnored private let hotKeys = HotKeys()
     @ObservationIgnored private(set) var timers = IslandTimers()
@@ -318,13 +318,13 @@ final class Island {
         if let id, !pending.contains(where: { $0.id == id }) { return false }
         guard let item = id.flatMap({ id in pending.first { $0.id == id } }) ?? current else { return false }
         if by == .mac, let arrived, arrived.id == item.id, -arrived.at.timeIntervalSinceNow < Self.arrivalGuard {
-            NSSound.beep()
+            Sounds.beep()
             return false
         }
         if case .allow = answer, case .plan = item.request.action {
             return respond(.approvePlan(input: item.request.input, acceptEdits: false), item.id, quietly: quietly, by: by)
         }
-        if case .allow = answer, case .question = item.request.action { if case .remote = by {} else { NSSound.beep() }; return false }
+        if case .allow = answer, case .question = item.request.action { if case .remote = by {} else { Sounds.beep() }; return false }
         // A mode switch rides on an Allow; a plan's own approval and a question's answers have their own shapes.
         if case .allowMode = answer {
             switch item.request.action {
@@ -334,7 +334,7 @@ final class Island {
         }
         if !item.request.accepts(answer, confirmed: confirmed) {
             if case .remote = by { return false }
-            NSSound.beep()
+            Sounds.beep()
             announce("\(item.request.riskReason ?? "This request is destructive"). Click Allow Anyway to approve it.", high: true)
             return false
         }
@@ -616,14 +616,14 @@ final class Island {
         return false
     }
 
-    private func queuedNeeds(_ session: String) -> ConfirmProof {
+    func queuedNeeds(_ session: String) -> ConfirmProof {
         guard let store else { return .biometric }
         // swiftlint:disable:next redundant_nil_coalescing -- permissionMode returns a double optional; `?? nil` flattens it.
         return ConfirmProof(ConfirmPolicy.session(mode: SessionCommands(store: store).permissionMode(session) ?? nil))
     }
 
     /// Everything queued for a session that can no longer take it. What was promised as Queued is said to be lost.
-    private func dropQueued(_ session: String, _ why: QueuedFollowUp.Drop) {
+    func dropQueued(_ session: String, _ why: QueuedFollowUp.Drop) {
         guard let lost = queued.removeValue(forKey: session) else { return }
         queuedGoneSince[session] = nil
         saveQueued()
@@ -645,7 +645,7 @@ final class Island {
         }
     }
 
-    private func reportDropped(_ session: String, _ text: String, _ why: QueuedFollowUp.Drop, from origin: QueuedFollowUp.Origin?) {
+    func reportDropped(_ session: String, _ text: String, _ why: QueuedFollowUp.Drop, from origin: QueuedFollowUp.Origin?) {
         // A removed phone has nobody to tell, and what the Mac queued was never promised to a phone.
         if let origin, let reason = why.wire { keepDropped(session, text, device: origin.device, reason) }
         watcher?.queued(session: session, text: text, became: .dropped(why))

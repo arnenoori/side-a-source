@@ -63,14 +63,21 @@ struct QuitButton: View {
     let session: RemoteSession?
     var title: String?
     var undoable = false
+    /// In a swipe action the button is red but not `.destructive`: UIKit takes that role as "this row is deleted" and
+    /// removes the cell at once, and a quit that asks first (or fails) leaves the row in the data, so the next list
+    /// update trips "invalid number of items in section" and aborts the app.
+    var swipe = false
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
 
+    static func role(swipe: Bool) -> ButtonRole? { swipe ? nil : .destructive }
+
     var body: some View {
         if let session, !session.headless, model.tools.can(.quit) {
-            Button(title ?? (SessionActions.quitAsks(session) ? "Quit Session…" : "Quit Session"), systemImage: "xmark.circle", role: .destructive) {
+            Button(title ?? (SessionActions.quitAsks(session) ? "Quit Session…" : "Quit Session"), systemImage: "xmark.circle", role: Self.role(swipe: swipe)) {
                 actions.on(model).requestQuit(session, undoable: undoable)
             }
+                .tint(swipe ? .red : nil)
                 .disabled(actions.isBusy(session.id))
         }
     }
@@ -97,13 +104,15 @@ struct PortButtons: View {
 
 struct QuitIdleButton: View {
     var title = "Quit Idle Sessions…"
+    var swipe = false
     @Environment(AppModel.self) private var model
     @Environment(SessionActions.self) private var actions
 
     var body: some View {
         let count = SessionActions.idleCount(model.sessions.sessions)
         if model.tools.can(.quit), count > 0 {
-            Button(title, systemImage: "xmark.circle", role: .destructive) { actions.on(model).quittingIdle = count }
+            Button(title, systemImage: "xmark.circle", role: QuitButton.role(swipe: swipe)) { actions.on(model).quittingIdle = count }
+                .tint(swipe ? .red : nil)
                 .disabled(actions.isBusy(SessionActions.quitIdleKey))
         }
     }

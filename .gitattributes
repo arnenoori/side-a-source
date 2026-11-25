@@ -4,3 +4,4 @@ relay/DEPLOY.md export-ignore
 docs/remote/staging-runbook.md export-ignore
 docs/remote/tunnel-field-test.md export-ignore
 .github/workflows/local-release.yml export-ignore
+CHANGELOG.md merge=union

@@ -97,6 +97,8 @@ public final class PoolProxy: @unchecked Sendable {
     private var serving = 0
     private var stopping = false
     private var invalidated = false
+    /// Set once the service turns a gzip body down; every request after goes plain until this process ends.
+    private var plainOnly = false
     /// Requests being answered right now, streams included; a relaunch would cut them off.
     public var inFlight: Int { servingLock.withLock { serving } }
 
@@ -247,19 +249,19 @@ public final class PoolProxy: @unchecked Sendable {
             excluded.insert(account)
             do {
                 var credential = try await token(account, refused: false)
-                var (bytes, response) = try await reach(request, to: url, as: service.provider, credential)
-                if response.statusCode == 401 {
-                    bytes.task.cancel()
+                var answer = try await reach(request, to: url, as: service.provider, credential)
+                if answer.response.statusCode == 401 {
+                    answer.cancel()
                     let renewed = try await self.token(account, refused: true)
                     if renewed != credential {
                         credential = renewed
-                        (bytes, response) = try await reach(request, to: url, as: service.provider, credential)
+                        answer = try await reach(request, to: url, as: service.provider, credential)
                     }
                 }
-                let headers = Self.headers(response)
-                await decisions?.poolAnswered(account, status: response.statusCode, headers: headers)
-                if [401, 403, 429].contains(response.statusCode) { bytes.task.cancel(); continue }
-                await client.stream(status: response.statusCode, headers: headers, bytes: bytes)
+                let headers = Self.headers(answer.response)
+                await decisions?.poolAnswered(account, status: answer.response.statusCode, headers: headers)
+                if [401, 403, 429].contains(answer.response.statusCode) { answer.cancel(); continue }
+                await client.stream(status: answer.response.statusCode, headers: headers, answer)
                 return
             } catch let error as PoolTokenError {
                 await decisions?.poolTokenFailed(account, error.underlying)
@@ -292,7 +294,7 @@ public final class PoolProxy: @unchecked Sendable {
     }
 
     /// `send`, tried again while the network is away, for as long as `patience`. A client that hangs up ends the wait.
-    private func reach(_ request: HTTPRequest, to url: URL, as provider: AgentProvider, _ credential: PoolCredential) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+    private func reach(_ request: HTTPRequest, to url: URL, as provider: AgentProvider, _ credential: PoolCredential) async throws -> PoolAnswer {
         let deadline = Date().addingTimeInterval(patience)
         var pause = 0.5
         var resent = !Self.resends(request.target, method: request.method)
@@ -315,10 +317,12 @@ public final class PoolProxy: @unchecked Sendable {
         error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
-    private func send(_ request: HTTPRequest, to url: URL, as provider: AgentProvider, _ credential: PoolCredential) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+    private func send(_ request: HTTPRequest, to url: URL, as provider: AgentProvider, _ credential: PoolCredential) async throws -> PoolAnswer {
         var outgoing = URLRequest(url: url)
         outgoing.httpMethod = request.method
-        outgoing.httpBody = request.body.isEmpty ? nil : url.path == "/v1/messages" ? Pool.hourLongCache(request.body) : request.body
+        let body = url.path == "/v1/messages" ? Pool.hourLongCache(request.body) : request.body
+        let packed = servingLock.withLock { plainOnly } ? nil : Self.squeezed(body, as: provider, headers: request.headers)
+        outgoing.httpBody = body.isEmpty ? nil : packed ?? body
         var betas: [String] = []
         for (name, value) in request.headers.fields where !Self.dropped.contains(name.lowercased()) {
             if provider == .claude, name.lowercased() == "anthropic-beta" { betas += value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } } else {
@@ -333,9 +337,15 @@ public final class PoolProxy: @unchecked Sendable {
         if let workspace = credential.accountID { outgoing.setValue(workspace, forHTTPHeaderField: "chatgpt-account-id") }
         outgoing.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         outgoing.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        if packed != nil { outgoing.setValue("gzip", forHTTPHeaderField: "Content-Encoding") }
         let (bytes, response) = try await session.bytes(for: outgoing)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        return (bytes, http)
+        let answer = PoolAnswer(response: http, bytes: bytes)
+        guard packed != nil, [400, 415].contains(http.statusCode) else { return answer }
+        let read = try await Self.drained(answer)
+        guard Self.refusedEncoding(http.statusCode, read.held) else { return read }
+        servingLock.withLock { plainOnly = true }
+        return try await send(request, to: url, as: provider, credential)
     }
 
     private static func headers(_ response: HTTPURLResponse) -> HTTPHeaders {
@@ -400,17 +410,20 @@ private final class PoolClient: @unchecked Sendable {
         }
     }
 
-    func stream(status: Int, headers: HTTPHeaders, bytes: URLSession.AsyncBytes) async {
+    func stream(status: Int, headers: HTTPHeaders, _ answer: PoolAnswer) async {
         var head = "HTTP/1.1 \(status) \(HTTPResponse.reason(status))\r\n"
         for (name, value) in headers.fields { head += "\(name): \(value)\r\n" }
         head += "Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
         write(Data(head.utf8))
+        if !answer.held.isEmpty { write(Self.framed(answer.held)) }
         var chunk = Data()
         do {
             // Server-sent events end each line with a newline, so flushing there keeps the reply as live as it came.
-            for try await byte in bytes {
-                chunk.append(byte)
-                if byte == 0x0A || chunk.count >= 16 << 10 { write(Self.framed(chunk)); chunk.removeAll(keepingCapacity: true) }
+            if let bytes = answer.bytes {
+                for try await byte in bytes {
+                    chunk.append(byte)
+                    if byte == 0x0A || chunk.count >= 16 << 10 { write(Self.framed(chunk)); chunk.removeAll(keepingCapacity: true) }
+                }
             }
             if !chunk.isEmpty { write(Self.framed(chunk)) }
             write(Data("0\r\n\r\n".utf8))

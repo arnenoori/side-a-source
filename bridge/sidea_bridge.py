@@ -2454,7 +2454,7 @@ def run_sessions(root, args):
     elif args.action == "search":
         result = sessions.search(root, args.text, args.agent, args.project, args.days, args.automated)
     elif args.action == "show" and args.format == "remote":
-        result = sessions.page(root, args.text, args.limit, args.before, args.after, args.around, args.agent_id, args.turns)
+        result = sessions.page(root, args.text, args.limit, args.before, args.after, args.around, args.agent_id, args.turns, args.max_bytes)
     elif args.action == "show":
         result = sessions.show(root, args.text, args.limit or 4000, args.around)
     elif args.action == "message":
@@ -2553,6 +2553,7 @@ def build_parser():
     sessions_command.add_argument("--seq", type=int)
     sessions_command.add_argument("--generation")
     sessions_command.add_argument("--agent-id")
+    sessions_command.add_argument("--max-bytes", type=int)
     sessions_command.add_argument("--recheck", action="store_true")
     sessions_command.add_argument("--turns", action="store_true")
     sessions_command.add_argument("--turn")

@@ -77,8 +77,24 @@ final class RemoteServer: @unchecked Sendable {
         attempts = RemotePolicy.TokenBucket(rate: 1, burst: 10, now: Date().timeIntervalSince1970)
     }
 
+    /// One line a minute of what moved, when anything did (`Traffic`): where the bytes go, as nothing else says.
+    private var trafficTimer: DispatchSourceTimer?
+    static let trafficEvery = 60
+
+    private func logTraffic() {
+        guard trafficTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .seconds(Self.trafficEvery), repeating: .seconds(Self.trafficEvery))
+        timer.setEventHandler {
+            if let line = Traffic.summary(Traffic.shared.drain(), seconds: Self.trafficEvery) { RemoteLog.shared(line) }
+        }
+        timer.resume()
+        trafficTimer = timer
+    }
+
     func serve(addresses: [String], port: UInt16, names: Set<String> = []) {
         queue.async { [self] in
+            logTraffic()
             if port != self.port {
                 for address in Array(listeners.keys) { stopListener(address) }
                 self.port = port
@@ -92,6 +108,7 @@ final class RemoteServer: @unchecked Sendable {
 
     func stop() {
         queue.sync {
+            trafficTimer?.cancel(); trafficTimer = nil
             tunnel = false
             for address in Array(listeners.keys) { stopListener(address) }
             stopInner()
@@ -574,6 +591,21 @@ final class RemoteServer: @unchecked Sendable {
         }
     }
 
+    /// A JSON body over a kilobyte, gzipped for a client that said it takes gzip. The ETag stays the plain body's.
+    static func compressed(_ response: HTTPResponse, for request: HTTPRequest) -> HTTPResponse {
+        #if canImport(Compression)
+        guard response.status == 200, response.body.count >= Gzip.threshold, request.headers.tokens("Accept-Encoding").contains("gzip"),
+              response.headers["Content-Type"] == "application/json", response.headers["Content-Encoding"] == nil,
+              let packed = Gzip.compress(response.body), packed.count < response.body.count else { return response }
+        var out = HTTPResponse(status: 200, headers: response.headers, body: packed)
+        out.headers.add("Content-Encoding", "gzip")
+        out.headers.add("Vary", "Accept-Encoding")
+        return out
+        #else
+        return response
+        #endif
+    }
+
     func stamp(_ response: inout HTTPResponse) {
         response.headers.add("X-SideA-Protocol", "1")
         response.headers.add("X-SideA-Epoch", epoch)
@@ -619,6 +651,8 @@ final class HTTPConnection: @unchecked Sendable {
     private(set) var lastActive = Date()
     private var peer: WebSocketPeer?
     private var ended = false
+    private var bytesIn = 0
+    private var bytesOut = 0
     private let from: String
     /// The bare address behind it, for per-address limits. A tunnel stream's slot may be recorded only once its side
     /// is ready, after the accept, so a loopback peer is looked up again on first use.
@@ -669,8 +703,8 @@ final class HTTPConnection: @unchecked Sendable {
     private func finish() {
         guard !ended else { return }
         ended = true
-        RemoteLog.shared("#\(id) closed after \(milliseconds(since: opened)) ms, \(served) request\(served == 1 ? "" : "s")"
-                         + (secured ? "" : ", before TLS finished"))
+        RemoteLog.shared("#\(id) closed after \(milliseconds(since: opened)) ms, \(served) request\(served == 1 ? "" : "s"), "
+                         + "\(Traffic.size(bytesOut)) out, \(Traffic.size(bytesIn)) in" + (secured ? "" : ", before TLS finished"))
         headTimer?.cancel(); bodyTimer?.cancel(); idleTimer?.cancel()
         server?.closed(id)
     }
@@ -678,7 +712,7 @@ final class HTTPConnection: @unchecked Sendable {
     private func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, complete, error in
             guard let self else { return }
-            if let data, !data.isEmpty { self.received(data) }
+            if let data, !data.isEmpty { self.bytesIn += data.count; self.received(data) }
             if let error, !self.ended {
                 RemoteLog.shared("#\(self.id) \(self.secured ? "read failed" : "TLS failed") after \(self.milliseconds(since: self.opened)) ms from \(self.from): \(error)")
             }
@@ -750,13 +784,16 @@ final class HTTPConnection: @unchecked Sendable {
         idleTimer?.cancel()
         served += 1
         let started = Date(), line = "#\(id) \(request.method) \(RemoteLog.path(request))"
-        server.handle(request, on: self) { [weak self] response in
+        server.handle(request, on: self) { [weak self] plain in
             guard let self else { return }
-            RemoteLog.shared("\(line) \(response.status) \(milliseconds(since: started)) ms")
+            let response = RemoteServer.compressed(plain, for: request)
+            RemoteLog.shared("\(line) \(response.status) \(milliseconds(since: started)) ms"
+                             + (response.body.isEmpty ? "" : ", \(Traffic.size(response.body.count))"))
             self.queue.async {
                 guard self.peer == nil else { return }
                 let close = !request.keepAlive || self.served >= RemoteServer.requestsPerConnection
-                self.write(response, close: close)
+                let sent = self.write(response, close: close)
+                Traffic.shared.add(Traffic.key(method: request.method, path: request.path), count: 1, received: request.wireSize, sent: sent)
                 self.busy = false
                 if close { self.closing = true; return }
                 self.armIdle()
@@ -775,12 +812,15 @@ final class HTTPConnection: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + timeouts.idle, execute: timer)
     }
 
-    private func write(_ response: HTTPResponse, close: Bool) {
+    @discardableResult private func write(_ response: HTTPResponse, close: Bool) -> Int {
         var response = response
         server?.stamp(&response)
-        connection.send(content: response.encoded(close: close), completion: .contentProcessed { [weak self] _ in
+        let data = response.encoded(close: close)
+        bytesOut += data.count
+        connection.send(content: data, completion: .contentProcessed { [weak self] _ in
             if close { self?.cancel() }
         })
+        return data.count
     }
 
     /// Writes the 101, then hands every later byte, including any already read, to the socket.
@@ -788,7 +828,9 @@ final class HTTPConnection: @unchecked Sendable {
         self.peer = peer
         busy = false
         idleTimer?.cancel(); headTimer?.cancel(); bodyTimer?.cancel()
-        connection.send(content: response.encoded(close: false), completion: .contentProcessed { _ in })
+        let head = response.encoded(close: false)
+        bytesOut += head.count
+        connection.send(content: head, completion: .contentProcessed { _ in })
         attach()
         let rest = parser.takeRemainder()
         if !rest.isEmpty { peer.received(rest) }
@@ -796,10 +838,12 @@ final class HTTPConnection: @unchecked Sendable {
     }
 
     func send(_ data: Data, done: @escaping @Sendable () -> Void) {
+        bytesOut += data.count
         connection.send(content: data, completion: .contentProcessed { _ in done() })
     }
 
     func sendThenClose(_ data: Data) {
+        bytesOut += data.count
         connection.send(content: data, completion: .contentProcessed { [weak self] _ in self?.cancel() })
     }
 }
@@ -818,6 +862,10 @@ final class WebSocketPeer: @unchecked Sendable {
     private var queuedBytes = 0
     private var closed = false
     private var heard = Date()
+    private let opened = Date()
+    private var bytesIn = 0
+    private var bytesOut = 0
+    private lazy var trafficKey = Traffic.key(method: "WS", path: path)
     private var pinger: DispatchSourceTimer?
     /// Set by the owner on the server's queue.
     var message: ((WebSocketCodec.Message) -> Void)?
@@ -845,6 +893,8 @@ final class WebSocketPeer: @unchecked Sendable {
     func received(_ data: Data) {
         guard !closed else { return }
         heard = Date()
+        bytesIn += data.count
+        Traffic.shared.add(trafficKey, received: data.count)
         for result in parser.feed(data) {
             switch result {
             case .failure(let failure): close(failure.code, failure.reason); return
@@ -864,6 +914,8 @@ final class WebSocketPeer: @unchecked Sendable {
         guard !closed, let connection else { return }
         if queuedBytes + frame.count > Self.maxQueued { close(4008, "too slow"); return }
         queuedBytes += frame.count
+        bytesOut += frame.count
+        Traffic.shared.add(trafficKey, sent: frame.count)
         connection.send(frame) { [weak self] in
             guard let self else { return }
             queuedBytes -= frame.count
@@ -871,9 +923,11 @@ final class WebSocketPeer: @unchecked Sendable {
         }
     }
 
+    private var totals: String { "\(Traffic.size(bytesOut)) out, \(Traffic.size(bytesIn)) in over \(Int(-opened.timeIntervalSinceNow)) s" }
+
     func close(_ code: UInt16, _ reason: String) {
         guard !closed else { return }
-        RemoteLog.shared("#\(id) WebSocket closed \(code)" + (reason.isEmpty ? "" : " \(reason)"))
+        RemoteLog.shared("#\(id) WebSocket closed \(code)" + (reason.isEmpty ? "" : " \(reason)") + ", \(totals)")
         closed = true
         pinger?.cancel()
         connection?.sendThenClose(WebSocketCodec.frame(.close(code: code, reason: reason)))
@@ -881,7 +935,7 @@ final class WebSocketPeer: @unchecked Sendable {
     }
 
     func ended() {
-        if !closed { RemoteLog.shared("#\(id) WebSocket dropped without a close") }
+        if !closed { RemoteLog.shared("#\(id) WebSocket dropped without a close, \(totals)") }
         closed = true
         pinger?.cancel()
         let ending = ending

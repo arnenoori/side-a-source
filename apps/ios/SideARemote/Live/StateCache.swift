@@ -15,6 +15,8 @@ struct StateCache: Codable {
     /// New Session's folders, models and commands, so the sheet works while the Mac is out of reach. Missing in older files.
     var projects: [RemoteProject]?
     var options: OptionsList?
+    /// Where each kept transcript stood on the Mac, so reopening one asks only for newer rows. Missing in older files.
+    var resume: [SessionKey: TranscriptStore.ResumePoint]?
 
     static let keptTranscripts = 12
     static let keptMessages = 60
@@ -56,6 +58,7 @@ extension AppModel {
         accounts.replace(cache.accounts)
         for (session, list) in cache.transcripts {
             transcripts.set(list, hasEarlier: (list.first?.seq ?? 0) > 0, for: session)
+            if let point = cache.resume?[session] { transcripts.resume[session] = point }
         }
         for (session, text) in cache.drafts ?? [:] where transcripts.drafts[session, default: ""].isEmpty { transcripts.drafts[session] = text }
         tools.restore(options: cache.options, projects: cache.projects)
@@ -65,11 +68,16 @@ extension AppModel {
     func cache(finished: [SessionKey: FinishedSession]) -> StateCache {
         let recent = sessions.sessions.sorted { ($0.statusAt ?? 0) > ($1.statusAt ?? 0) }.map(\.id)
         var kept: [SessionKey: [TranscriptMessage]] = [:]
+        var points: [SessionKey: TranscriptStore.ResumePoint] = [:]
         for id in recent where kept.count < StateCache.keptTranscripts {
-            if let list = transcripts.messages[id], !list.isEmpty { kept[id] = Array(list.suffix(StateCache.keptMessages)) }
+            guard let list = transcripts.messages[id], !list.isEmpty else { continue }
+            kept[id] = Array(list.suffix(StateCache.keptMessages))
+            // Cut at the head, the cursor for the rows before it would point at rows not kept.
+            if list.count <= StateCache.keptMessages { points[id] = transcripts.resume[id] }
         }
         let drafts = transcripts.drafts.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return StateCache(sessions: sessions.sessions, finished: finished, accounts: accounts.accounts, transcripts: kept, savedAt: .now,
-                          drafts: drafts.isEmpty ? nil : drafts, projects: tools.projects.isEmpty ? nil : tools.projects, options: tools.options)
+                          drafts: drafts.isEmpty ? nil : drafts, projects: tools.projects.isEmpty ? nil : tools.projects, options: tools.options,
+                          resume: points.isEmpty ? nil : points)
     }
 }

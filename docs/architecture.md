@@ -140,7 +140,9 @@ its bundle), the app removes `runtime/pool` when it quits, so commands use login
 The proxy answers only Claude Code's user agent and forwards only `/v1/` routes to
 `api.anthropic.com` (`Pool.upstream`). Behind it Claude Code takes itself for an API-key caller and
 asks for five-minute cache breakpoints; `Pool.hourLongCache` makes them hour-long, as it does for a
-subscriber, so a pause over five minutes doesn't write the conversation to cache again. A 401 asks
+subscriber, so a pause over five minutes doesn't write the conversation to cache again. A Claude request body of a kilobyte or more goes upstream gzip-compressed
+(`PoolProxy.squeezed`), since Claude Code resends the whole conversation each turn; if the API ever refuses the
+encoding, that request is resent plain and the rest go plain until the process restarts. Codex bodies are not compressed. A 401 asks
 the bridge to renew that exact token (`pool-token --refused`) unless a session already has; a
 token that can't be read for a moment benches the account for two minutes, and only "sign in
 again" marks it.

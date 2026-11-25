@@ -31,9 +31,9 @@ public actor Paths {
         public var directTimeout: TimeInterval = 2.5
         public var relayTimeout: TimeInterval = 8
         /// After the relay answers, how long a direct address still has to win.
-        public var preferDirect: TimeInterval = 0.3
+        public var preferDirect: TimeInterval = 1.0
         /// While on the relay, how often the direct addresses are tried again.
-        public var recheck: TimeInterval = 30
+        public var recheck: TimeInterval = 15
         /// A direct address takes over from the relay only after answering this many checks in a row.
         public var promoteAfter = 2
         /// After a race finds nothing, no new race for 1 s, doubling to this; a network change or the foreground ends the wait.
@@ -283,6 +283,7 @@ public actor Paths {
             sockets = sockets.filter { $0.value.socket != nil }
         }
         streak = [:]
+        if case .direct = path { directMissed = false }
         rechecking?.cancel()
         if path.isRelay { rechecking = Task { await self.recheckWhileRelayed() } } else { Task { await self.warmRelay() } }
         for listener in listeners.values { listener(path) }
@@ -315,7 +316,7 @@ public actor Paths {
         let (winner, failures) = await race(candidates)
         self.failures = failures
         let direct = candidates.filter { !$0.isRelay }
-        if case .direct? = winner { directMissed = false } else if !direct.isEmpty, direct.allSatisfy({ failures[$0] != nil }) { directMissed = true }
+        if case .direct? = winner { directMissed = false } else if !direct.isEmpty, winner == .relay || direct.allSatisfy({ failures[$0] != nil }) { directMissed = true }
         KitLog.log(.transport, "race \(candidates.map(\.description).joined(separator: ", ")): "
                    + (winner.map { "\($0) in \(KitLog.ms(since: start)) ms" } ?? "nothing answered after \(KitLog.ms(since: start)) ms"))
         return winner

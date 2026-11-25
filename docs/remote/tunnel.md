@@ -243,7 +243,7 @@ end-to-end test, where URLSession's pool kept "winning" on a stopped listener.
 Choosing a path, with `Paths` as one actor per Mac per process:
 
 1. **Race** `GET /v1/hello` on every direct address and on the relay at once. The first direct
-   answer wins outright. If the relay answers first, keep waiting up to 300 ms for a direct one,
+   answer wins outright. If the relay answers first, keep waiting up to 1 s for a direct one (a cold direct handshake over Tailscale often takes more than 300 ms, which let the already-open relay win),
    then take the relay. A direct probe times out at 2.5 s, the relay at 8 s. A connection that
    goes to `waiting` fails at once (refused, no route), except for a Local Network prompt, which
    is waited out up to the timeout and then throws `LocalNetworkDenied` (TN3179). An address that
@@ -251,7 +251,7 @@ Choosing a path, with `Paths` as one actor per Mac per process:
    since a Mac whose port was taken moves up; the pinned key decides whether what answers is the Mac.
 2. **Keep the relay warm** (bridge socket open, no TLS stream) while on a direct path.
 3. **Re-race** on an `NWPathMonitor` change (interface added or lost, Wi-Fi ↔ cellular), on a
-   connection-level failure of the current path, and every 30 s while on the relay. Promotion has
+   connection-level failure of the current path, and every 15 s while on the relay. Promotion has
    hysteresis: a direct path must answer two probes in a row before it replaces the relay. That is
    DERP's rule in miniature. A relay that doesn't answer sits out races for 5 s, doubling to 1 min,
    except within 10 s of a network change or of the app coming to the foreground: then its probe is

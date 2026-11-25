@@ -36,6 +36,8 @@ public struct HTTPRequest: Sendable, Equatable {
     public let body: Data
 
     public var keepAlive: Bool { !headers.tokens("Connection").contains("close") }
+    /// About what it took on the wire: the request line, the headers and the body.
+    public var wireSize: Int { method.count + target.count + 12 + headers.fields.reduce(0) { $0 + $1.name.count + $1.value.count + 4 } + body.count }
     public var wantsUpgrade: Bool { headers.tokens("Connection").contains("upgrade") && headers["Upgrade"]?.lowercased() == "websocket" }
 
     public init(method: String, target: String, path: [String], query: [String: String], headers: HTTPHeaders, body: Data) {

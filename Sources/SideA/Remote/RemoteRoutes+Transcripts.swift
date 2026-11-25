@@ -12,6 +12,10 @@ extension RemoteRoutes {
         Route("GET", "v1/images/{sha1}/thumb", thumb),
     ]
 
+    /// What one page may carry, in the stored JSON of its rows (at least one row always goes): a long session's newest fifty
+    /// rows held megabytes of tool output, fetched again at every open. The page says `before` where it stopped.
+    static let pageBytes = 96 << 10
+
     static let noImage = RemoteServer.error(404, .imageNotFound, "That image isn't on the Mac any more.")
 
     static func conversation(_ context: Context) async -> String? {
@@ -46,7 +50,8 @@ extension RemoteRoutes {
         let query = context.request.query
         if query["before"] != nil, query["after"] != nil { return RemoteServer.error(400, .badRequest, "Send before or after, not both.") }
         guard let conversation = await conversation(context) else { return noSession }
-        var options = ["--format", "remote", "--limit", String(min(max(query["limit"].flatMap(Int.init) ?? 50, 1), 200))]
+        var options = ["--format", "remote", "--limit", String(min(max(query["limit"].flatMap(Int.init) ?? 50, 1), 200)),
+                       "--max-bytes", String(pageBytes)]
         for key in ["before", "after"] {
             guard let cursor = query[key] else { continue }
             guard IDs.safe(cursor) else { return RemoteServer.error(400, .badRequest, "That cursor isn't one this Mac gave out.") }
@@ -56,7 +61,10 @@ extension RemoteRoutes {
             guard IDs.safe(agent) else { return noSession }
             options += ["--agent-id", agent]
         }
-        do { return json(200, try RemoteTranscript.page(try await bridge(context, "show", conversation, options))) } catch { return failed(error) }
+        do {
+            let page = try RemoteTranscript.page(try await bridge(context, "show", conversation, options))
+            return json(200, query["agent"] == nil ? SentReplies.shared.annotate(page, conversation: conversation) : page)
+        } catch { return failed(error) }
     }
 
     @Sendable static func message(_ context: Context) async -> HTTPResponse {

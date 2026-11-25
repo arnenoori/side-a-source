@@ -49,6 +49,11 @@ public struct Capability: OpenEnum {
     /// `POST /v1/hosted/{name}/show` brings the session's Mac terminal tab forward, opening one when none is attached, and
     /// `StartHosted.openOnMac` opens that tab as the session starts.
     public static let hostedShow = Self(rawValue: "hosted.show")
+    /// The Mac gzips JSON responses (`Accept-Encoding: gzip`, nothing else needed) and, to a phone that names this capability in its
+    /// `hello`, sends every event frame over 1 KiB as a binary frame holding the gzipped JSON.
+    public static let gzip = Self(rawValue: "gzip")
+    /// `TranscriptMessage.replyID` names the reply a user row came from.
+    public static let repliesEcho = Self(rawValue: "replies.echo")
 }
 
 public struct MacInfo: Codable, Hashable, Sendable {

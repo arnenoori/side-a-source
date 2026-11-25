@@ -371,6 +371,12 @@ import SideAProtocol
             }
             return .keys(name: hosted, key: target.key, guarded: open.pending)
         case .refused(let refusal):
+            // Its turn paused on background work: the Stop hook that paused it waits for a note, so this reaches it.
+            if state == .idle, message.mode != .keys, hooks, let live = target.live, live.provider == .claude, live.hosted == nil,
+               (live.runningTasks ?? 0) > 0 {
+                do throws(Failure) { try mail("note", text: text, to: live) } catch { return .failed(error) }
+                return .done(ReplyResult(delivery: .note, sessionID: target.key))
+            }
             if state == .idle, message.mode != .keys, let inboxed = inbox(text, target: target) { return inboxed }
             if state == .idle, message.mode == .auto || message.mode == .followUp, let live = target.live, store.remote.typer.reach(live) != nil {
                 return .terminal(live, key: target.key, text: text)

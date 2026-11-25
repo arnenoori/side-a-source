@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.5.60 — 2026-11-24
+
+Pool mode uploads far less. Claude Code sends the whole conversation again on every turn, and the pool now compresses it on the way to Anthropic, to about two fifths of its size. With many sessions working at once, that is the difference between a home connection that stalls and one that doesn't. Codex requests go as before.
+A session you start from the phone is one row from the tap onward. It sits at the top of Working with the working spinner while it boots, keeps that row when the Mac's real session arrives, and no longer shows as Idle for the seconds before the first prompt lands. Handoffs and restarts behave the same, and the old separate Starting group is gone.
+Side A Remote no longer asks for Face ID right after you send a message. It asks when you open the app or come back to it, and holds that for as long as you use it. If the phone locked in between and iOS dropped it, the ask comes when you return, not at the next Send.
+Messages queued from the phone while a session works are no longer stuck. A session that ends its turn while background tasks still run never told Side A it had finished, so what you queued waited for good and its "send now" had nowhere to go. Queued messages now reach it as a note a few seconds after the turn pauses, "send now" and a new message do the same while only background tasks run, and a queue left after Side A was closed or updated is delivered to the session's inbox or handed back to the phone as not sent. Side A's remote log now says when a reply was accepted, queued, delivered or handed back, by id and never by text.
+
+Side A Remote reconnects over the relay a second faster when no direct address answers.
+
+Side A Remote no longer crashes when you quit a session from a swipe. Swiping Quit on a session that asks first (working, waiting, or running a server), on the idle group, or on one whose quit fails, made the list drop the row by itself and abort on the next update. The swipe button is now red without being a delete, and a session you quit from the phone closes its page and returns to the list.
+
+The New Session button beside the tab bar is a native glass button, so holding it opens your recent folders on a real finger too.
+
+Side A Remote uses far less data. Opening a long session used to fetch its newest fifty messages whatever they held, megabytes of tool output in a long one; a page now stops at about 96 KB and the phone asks for earlier ones as you scroll up. Reopening a session, or reconnecting, asks only for what came after the messages the phone already has, which is a few hundred bytes when nothing changed. The Mac and the phone compress what they send, and the subagent view no longer re-reads its whole transcript every three seconds.
+
+A message you send shows once in the transcript. The Mac now says which message each of your turns was, so the copy the phone shows while it waits goes as soon as the Mac's own appears, including a message the agent took mid-turn and one sent while the phone was offline.
+
+Scrolling a long session no longer goes blank for a screen when it refreshes: a refresh keeps the messages on screen and adds only what is new.
+
+The phone now moves onto a direct connection to the Mac (home Wi-Fi or Tailscale) more readily, and checks for one every 15 seconds while it is on the relay.
+
+Remote's log (Settings, iPhone, Copy Diagnostics) now says how much each connection and each route moved, and adds a line a minute of the heaviest routes, so a heavy one can be found.
+
+Side A Remote shows the app icon you picked on the lock screen, the welcome screen and the notifications card, and they change the moment you pick another. The in-app icon art is sharper. The lock screen follows the Light or Dark choice in Settings. A computer that isn't a Mac reads as one in the "goes quiet" notification setting and in a kept worktree's note. On the Mac, the refusal beep when you click Allow too soon or on a destructive request is silent when sound effects are off.
+
 ## 0.5.59 — 2026-11-24
 
 Side A Remote asks for Face ID once while you use it, as 1.2 meant to, not at every message. Face ID now unlocks the key the way Apple documents for a Secure Enclave key, the app lock's Face ID counts as that first one, and a key that refuses a held Face ID asks once more and keeps the answer. The diagnostics log says why each Face ID prompt appeared.

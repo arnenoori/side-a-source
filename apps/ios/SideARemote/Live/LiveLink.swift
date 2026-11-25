@@ -137,11 +137,17 @@ final class LiveLink {
         let feed = await engine.watch(session)
         let windows = await feed.windows()
         let start = ContinuousClock.now
+        if let point = model?.transcripts.resume[session], let rows = model?.transcripts.messages[session], !rows.isEmpty, rows.count <= StateCache.keptMessages {
+            await feed.seed(TranscriptWindow(generation: point.generation, messages: rows, hasEarlier: point.before != nil, before: point.before, after: point.after))
+        }
         await loadLatest(feed, session)
         let shown = model?.transcripts.messages[session]?.count ?? 0
         RemoteLog.log(.sync, "transcript \(session.prefix(8)) latest page in \(Launch.ms(since: start)) ms, \(shown) shown before it")
         for await window in windows {
             model?.transcripts.set(window.messages, hasEarlier: window.hasEarlier, for: session)
+            if let after = window.after, !window.generation.isEmpty {
+                model?.transcripts.resume[session] = .init(generation: window.generation, before: window.before, after: after)
+            }
             saveSoon()
         }
         await engine.unwatch(session)

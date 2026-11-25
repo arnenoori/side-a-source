@@ -67,6 +67,7 @@ extension TranscriptStore {
     func bind(_ id: String, item: String, in session: SessionKey) {
         guard let index = outgoing[session]?.firstIndex(where: { $0.id == id }), outgoing[session]?[index].item != item else { return }
         outgoing[session]?[index].item = item
+        settleByEcho(session)
     }
 
     func keepPhotos(_ photos: [String], on id: String, in session: SessionKey) {
@@ -264,6 +265,7 @@ extension TranscriptStore {
 
     func noteRead(in session: SessionKey) {
         for turn in outgoing[session] ?? [] where turn.state == .note { move(turn.id, in: session, .progress(.read)) }
+        settleOutgoing(session)
     }
 
     /// A user turn in the Mac's transcript up to this much older than the phone's send can still be it: the two clocks
@@ -280,8 +282,10 @@ extension TranscriptStore {
     }
 
     func settleOutgoing(_ session: SessionKey) {
+        settleByEcho(session)
         guard let turns = outgoing[session], turns.contains(where: { ReplyBubble.showable.contains($0.state) }) else { return }
-        var users = (messages[session] ?? []).filter { $0.role == .user && settledBy[session]?.contains($0.uuid) != true }
+        // A row the Mac says came from a reply (`replyID`) is that reply's and no look-alike's.
+        var users = (messages[session] ?? []).filter { $0.role == .user && $0.replyID == nil && settledBy[session]?.contains($0.uuid) != true }
         var shown: [Outgoing] = []
         for turn in turns.sorted(by: { $0.at < $1.at }) where ReplyBubble.showable.contains(turn.state) {
             guard let index = users.firstIndex(where: { user in

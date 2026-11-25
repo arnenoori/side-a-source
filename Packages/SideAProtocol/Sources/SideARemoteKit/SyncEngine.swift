@@ -617,7 +617,7 @@ public actor SyncEngine {
                 let message = try await socket.receive()
                 guard !Task.isCancelled else { return .stop(.idle) }
                 proven()
-                guard case .text(let text) = message else { continue }
+                guard let text = Self.frameText(message) else { continue }
                 guard let envelope = try? JSONDecoder().decode(EventEnvelope.self, from: Data(text.utf8)) else {
                     await skipped(Data(text.utf8))
                     continue

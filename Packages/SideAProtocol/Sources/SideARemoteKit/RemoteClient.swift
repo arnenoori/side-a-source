@@ -76,7 +76,7 @@ public struct ClientInfo: Sendable, Hashable {
         #endif
         return ClientInfo(version: info["CFBundleShortVersionString"] as? String ?? "0", build: Int(info["CFBundleVersion"] as? String ?? "") ?? 0,
                           system: "\(name) \(os.majorVersion).\(os.minorVersion)",
-                          capabilities: [.events, .transcriptStream, .images, .diffs, .answersQuestions, .answersPlans, .rotation, .readyGroups])
+                          capabilities: [.events, .transcriptStream, .images, .diffs, .answersQuestions, .answersPlans, .rotation, .readyGroups, .gzip])
     }()
 }
 
@@ -142,6 +142,8 @@ public struct RemoteClient: Sendable {
         request.timeoutInterval = 30
         request.setValue(String(ProtocolVersion.current), forHTTPHeaderField: "X-SideA-Protocol")
         request.setValue(info.header, forHTTPHeaderField: "X-SideA-Client")
+        // A Mac that doesn't know gzip ignores this and answers plain.
+        request.setValue("gzip", forHTTPHeaderField: "Accept-Encoding")
         if let token = try await credentials.token(for: endpoint.macID) {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }

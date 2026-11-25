@@ -209,7 +209,7 @@ struct SessionRow: View {
     }
 
     @ViewBuilder private var trailingActions: some View {
-        QuitButton(session: session, title: "Quit", undoable: true)
+        QuitButton(session: session, title: "Quit", undoable: true, swipe: true)
         if phase == .working {
             if session.mail != nil {
                 Button("Take Back", systemImage: "arrow.uturn.backward") { model.takeBack(session.id) }.tint(.gray).needsMac()

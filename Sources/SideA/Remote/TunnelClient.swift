@@ -210,7 +210,7 @@ final class TunnelClient: @unchecked Sendable {
                     self.lastPong = Date()
                     switch message {
                     case .string(let text): self.control(text)
-                    case .data(let data): self.frame(data)
+                    case .data(let data): Traffic.shared.add("tunnel (relay frames)", received: data.count); self.frame(data)
                     @unknown default: break
                     }
                     self.receive(task, generation)
@@ -276,6 +276,7 @@ final class TunnelClient: @unchecked Sendable {
 
     private func send(_ message: URLSessionWebSocketTask.Message) {
         guard let task = socket else { return }
+        if case .data(let data) = message { Traffic.shared.add("tunnel (relay frames)", sent: data.count) }
         // Called in order on the queue, so frames go out in order.
         task.send(message) { [weak self] error in
             guard let error, let self else { return }

@@ -6,7 +6,7 @@ import Foundation
 public final class ResponseCache: @unchecked Sendable {
     public static let shared = ResponseCache()
 
-    static let paths: Set<String> = ["/v1/state", "/v1/sessions", "/v1/history", "/v1/projects", "/v1/options", "/v1/accounts"]
+    static let paths: Set<String> = ["/v1/state", "/v1/sessions", "/v1/history", "/v1/projects", "/v1/options", "/v1/accounts", "/v1/requests", "/v1/hosted"]
 
     struct Entry { let etag: String; let body: Data }
 

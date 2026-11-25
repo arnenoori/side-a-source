@@ -178,6 +178,19 @@ class PostAndShaTests(Fixture):
         self.assertFalse(self.marker(second).exists())
         self.assertEqual(git(self.repo, "worktree", "list", env=self.env).count("\n"), 0, "the temporary worktree is removed")
 
+    def test_sha_lints_in_a_tree_outside_private(self):
+        """swiftlint cannot match its baseline under /private/{var,tmp,etc}, where $TMPDIR is: the tree goes in the git dir."""
+        where = self.repo.parent / "lint-dir.log"
+        stub(self.tools, "swiftlint", f'pwd -P >> "{where}"')
+        self.env["SIDEA_IOS_TESTS"] = "skip"
+        first = self.commit(".swiftlint.yml")
+        self.commit("docs/b.md")
+        self.assertEqual(self.check("--sha", first, "HEAD~1").returncode, 0)
+        (tree,) = where.read_text().splitlines()
+        self.assertNotEqual(tree, str(self.repo), "it linted in a temporary tree, not this checkout")
+        self.assertTrue(tree.startswith(str((self.repo / ".git").resolve())), f"{tree} is not inside the checkout's git dir")
+        self.assertFalse(tree.startswith(str(Path(tempfile.gettempdir()).resolve()) + "/sidea-check"), tree)
+
     def test_sha_ignores_uncommitted_files_in_this_checkout(self):
         first = self.commit("docs/a.md")
         self.commit("docs/b.md")
@@ -194,6 +207,8 @@ class MergePrTests(Fixture):
         self.state = self.repo.parent / "state"
         self.sha = "abc123"
         self.verdict = "pass"
+        self.env.update(SIDEA_MERGE_ATTEMPTS="3", SIDEA_MERGE_INTERVAL="0")
+        self.reads = self.repo.parent / "reads"
 
     def install(self, status="", pr="OPEN\tfalse\tabc123"):
         self.state.write_text(status)
@@ -206,6 +221,17 @@ class MergePrTests(Fixture):
 esac'''
         )
         stub(self.tools, "git", 'if [[ "$1" == fetch ]]; then exit 0; fi\nexec /usr/bin/git "$@"')
+
+    def lag(self, script):
+        """A gh stub whose script sees `kind` (view or status) and `n`, how many times that kind was called."""
+        self.reads.write_text("0")
+        stub(self.repo / "scripts", "check.sh", f'echo "check $*" >> "{self.calls}"\necho success > "{self.state}"')
+        self.gh(f'''kind=other
+case "$*" in "pr view"*) kind=view ;; *"/status "*) kind=status ;; "pr merge"*) echo "merge $*" >> "{self.calls}"; exit 0 ;; esac
+n=$(( $(cat "{self.reads}.$kind" 2>/dev/null || echo 0) + 1 )); echo $n > "{self.reads}.$kind"
+{script}''')
+        stub(self.tools, "git", 'if [[ "$1" == fetch ]]; then exit 0; fi\nexec /usr/bin/git "$@"')
+        self.state.write_text("")
 
     def merge(self):
         return subprocess.run(["bash", "scripts/merge-pr.sh", "7"], cwd=self.repo, env=self.env, capture_output=True, text=True, check=False)
@@ -236,6 +262,28 @@ esac'''
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no local-check success", result.stderr)
         self.assertNotIn("merge", self.calls.read_text())
+
+    def test_a_status_that_shows_up_late_is_waited_for_and_check_is_not_rerun(self):
+        self.lag('''case $kind in view) printf 'OPEN\\tfalse\\tabc123\\n' ;; status) [[ $n -ge 3 ]] && echo success || echo "" ;; esac''')
+        result = self.merge()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.calls.read_text().strip(), "merge pr merge 7 --squash --match-head-commit abc123")
+
+    def test_a_head_that_changes_while_waiting_is_refused(self):
+        self.lag('''case $kind in view) [[ $n -ge 2 ]] && printf 'OPEN\\tfalse\\tdef456\\n' || printf 'OPEN\\tfalse\\tabc123\\n' ;; status) echo "" ;; esac''')
+        result = self.merge()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("changed from abc123 to def456", result.stderr)
+        self.assertEqual(self.calls.read_text(), "")
+
+    def test_a_head_that_changes_during_the_check_is_refused(self):
+        self.lag('''case $kind in view) [[ $n -ge 2 ]] && printf 'OPEN\\tfalse\\tdef456\\n' || printf 'OPEN\\tfalse\\tabc123\\n' ;; status) [[ -s "{self.state}" ]] && echo success || echo "" ;; esac'''.replace("{self.state}", str(self.state)))
+        stub(self.repo / "scripts", "check.sh", f'echo "check $*" >> "{self.calls}"\necho success > "{self.state}"')
+        self.env["SIDEA_MERGE_ATTEMPTS"] = "1"
+        result = self.merge()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("changed from abc123 to def456", result.stderr)
+        self.assertEqual(self.calls.read_text().splitlines(), ["check --sha abc123"])
 
     def test_drafts_and_closed_prs_are_refused(self):
         for pr in ("OPEN\ttrue\tabc123", "MERGED\tfalse\tabc123"):

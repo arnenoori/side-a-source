@@ -10,6 +10,7 @@ import SideAProtocol
 final class TranscriptStream {
     static let maxCatchUp = 200
     static let packBytes = 900 * 1024
+    static let catchUpBytes = 384 << 10
 
     private weak var store: AccountStore?
     private let hub: EventHub
@@ -75,7 +76,8 @@ final class TranscriptStream {
                 if let page = try? await page(store, id, ["--limit", "1"]) { hub.advance(clients, session: session, from: nil, to: page.after) }
                 continue
             }
-            guard let options = Self.catchUp(after: cursor), let page = try? await page(store, id, options) else { continue }
+            // Past the byte budget a catch-up is a reset, as past the row count: the phone's own pages are the cheaper way back.
+            guard let options = Self.catchUp(after: cursor), let page = try? await page(store, id, options + ["--max-bytes", String(Self.catchUpBytes)]) else { continue }
             if page.reset || page.hasMoreAfter || page.messages.count + page.replaced.count > Self.maxCatchUp {
                 hub.transcript([.transcriptReset(sessionID: session, generation: page.generation)], to: clients)
                 continue
@@ -93,7 +95,8 @@ final class TranscriptStream {
     }
 
     private func page(_ store: AccountStore, _ id: String, _ options: [String]) async throws -> TranscriptPage {
-        try RemoteTranscript.page(try await store.sessions.remoteReply(["show", "--format", "remote"] + options + ["--", id]))
+        let page = try RemoteTranscript.page(try await store.sessions.remoteReply(["show", "--format", "remote"] + options + ["--", id]))
+        return SentReplies.shared.annotate(page, conversation: id)
     }
 
     /// A page as events under `packBytes` each. Only the last carries the page's cursor; the others keep `from`, so a

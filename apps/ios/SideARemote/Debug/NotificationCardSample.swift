@@ -28,8 +28,7 @@ struct NotificationCardSample: View {
             VStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 8) {
-                        Image("AppIconImage").resizable().frame(width: 20, height: 20)
-                            .clipShape(.rect(cornerRadius: 5, style: .continuous))
+                        AppIconArt(side: 20)
                         Text("SIDE A").font(.footnote).foregroundStyle(.secondary)
                         Spacer()
                         Text("now").font(.footnote).foregroundStyle(.secondary)

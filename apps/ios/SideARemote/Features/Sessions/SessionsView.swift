@@ -142,8 +142,8 @@ struct SessionsView: View {
     private var layout: [String] {
         root.visible.flatMap { mac in
             [SessionPhase.needsYou, .working, .ready, .idle].flatMap { phase in
-                mac.sessions.sorted(mac.sessions.rows(phase)).map {
-                    "\(mac.macID)/\(mac.tools.snooze(of: $0) != nil ? "snoozed" : mac.tools.isPinned($0) ? "pinned" : "\(phase)")/\($0.id)"
+                mac.sessions.sorted((phase == .working ? mac.bootingRows : []) + mac.sessions.rows(phase)).map {
+                    "\(mac.macID)/\(mac.tools.snooze(of: $0) != nil ? "snoozed" : mac.tools.isPinned($0) ? "pinned" : "\(phase)")/\($0.rowID)"
                 }
             }
         }
@@ -206,18 +206,15 @@ private struct MacSessions: View {
         ConnectionBanners()
         UpdateMacBanner()
         pinnedSection
-        startingSection
         ForEach([SessionPhase.needsYou, .working, .ready], id: \.self) { phase in
-            let groups = model.sessions.groups(phase, where: shown)
+            let groups = model.sessions.groups(phase, leading: phase == .working ? model.bootingRows : [], where: shown)
             if !groups.allSatisfy(\.rows.isEmpty) {
                 Section {
                     ForEach(groups, id: \.title) { group in
                         if let title = group.title, groups.count > 1 {
                             ProjectSubheader(title: title, grouping: model.sessions.groupBy)
                         }
-                        ForEach(group.rows) { session in
-                            SessionLink(session: session)
-                        }
+                        ForEach(group.rows, id: \.rowID) { SessionLink(session: $0) }
                     }
                 } header: {
                     // Hierarchical .secondary resolves against the header's own grey and fades; name the colour.
@@ -251,24 +248,6 @@ private struct MacSessions: View {
         }
     }
 
-    @ViewBuilder private var startingSection: some View {
-        let starting = model.tools.unlisted(in: model.sessions.sessions).filter {
-            Self.matches($0, query, prompt: model.transcripts.firstPrompts[$0.name]?.text)
-        }
-        if !starting.isEmpty {
-            Section {
-                ForEach(starting, id: \.name) { hosted in
-                    SidebarLink(Route.starting(hosted.name, mac: model.macID)) {
-                        StartingRow(hosted: hosted, prompt: model.transcripts.firstPrompts[hosted.name]?.text)
-                    }
-                    .id("starting-\(hosted.name)")
-                }
-            } header: {
-                Text("Starting").foregroundStyle(Color(.secondaryLabel))
-            }
-        }
-    }
-
     @ViewBuilder private var pinnedSection: some View {
         let pinned = pinned
         if !pinned.isEmpty {
@@ -295,7 +274,7 @@ private struct MacSessions: View {
                         .foregroundStyle(.secondary)
                 }
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    if !searching { QuitIdleButton(title: "Quit Idle") }
+                    if !searching { QuitIdleButton(title: "Quit Idle", swipe: true) }
                 }
                 .contextMenu { if !searching { QuitIdleButton(title: "Quit Idle…") } }
             }
@@ -309,7 +288,7 @@ private struct StartingRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Space.s) {
-            ProgressView().controlSize(.small).padding(.top, 2)
+            StatusGlyph(phase: .working).padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(prompt ?? hosted.project).font(.body.weight(.semibold)).lineLimit(1)
@@ -336,10 +315,17 @@ private struct SessionLink: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        SidebarLink(Route.session(session.id, mac: model.macID)) {
-            SessionRow(session: session)
+        if model.sessions.session(session.id) == nil, let name = session.hosted, let hosted = model.tools.hosted[name] {
+            SidebarLink(Route.starting(name, mac: model.macID)) {
+                StartingRow(hosted: hosted, prompt: model.transcripts.firstPrompts[name]?.text)
+            }
+            .id(session.rowID)
+        } else {
+            SidebarLink(Route.session(session.id, mac: model.macID)) {
+                SessionRow(session: session)
+            }
+            .id(session.rowID)
         }
-        .id(session.id)
     }
 }
 

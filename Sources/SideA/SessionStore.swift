@@ -24,7 +24,7 @@ final class SessionStore {
     var live: [LiveSession] = [] {
         didSet {
             readIdentities()
-            store.island.liveSessions(Set(live.compactMap(\.sessionID)))
+            store.island.observeLive(live)
             store.remote.events?.liveChanged()
             liveByID = Dictionary(live.compactMap { session in
                 session.status == "idle" ? nil : session.sessionID.map { ($0, session) }

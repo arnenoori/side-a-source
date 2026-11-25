@@ -46,7 +46,7 @@ nonisolated final class FaceIDHold<Context: AnyObject>: @unchecked Sendable {
             return Grant(context: reused, reused: true)
         }
         guard let pending else { return nil }
-        if let why { log("Face ID asked: \(why)") }
+        if let why { log("Face ID asked: \(why) (for \"\(reason)\")") }
         let context = await pending.value?.context
         lock.withLock {
             if evaluating == pending { evaluating = nil }
@@ -58,12 +58,29 @@ nonisolated final class FaceIDHold<Context: AnyObject>: @unchecked Sendable {
 
     /// A signature the held context didn't satisfy: it is dropped, so the next one asks. Not invalidated, as a signature
     /// may still be using it.
-    func drop(_ context: Context, code: Int) {
+    func drop(_ context: Context, code: Int, why: String? = nil) {
         lock.withLock {
             guard shared === context else { return }
             shared = nil
-            ended = "the held Face ID was refused by the key (code \(code))"
+            ended = why ?? "the held Face ID was refused by the key (code \(code))"
         }
+    }
+
+    /// Obtains the hold at a moment the person can foresee (the app opening or coming back), so a send never has to.
+    /// A held context that `stillGood` no longer vouches for (iOS drops one when the phone locks) is dropped and asked
+    /// for again here, not at the next Send. Returns whether a prompt was raised.
+    @discardableResult
+    func prewarm(reason: String, stillGood: @Sendable (Context) -> Bool, evaluate: @escaping @Sendable (String) async -> Evaluated?) async -> Bool {
+        if let current = lock.withLock({ shared }) {
+            if stillGood(current) {
+                log("Face ID prewarm: already held, no prompt")
+                return false
+            }
+            drop(current, code: 0, why: "the held Face ID no longer signs after the app came back")
+        }
+        let grant = await context(reason: reason, evaluate: evaluate)
+        log(grant == nil ? "Face ID prewarm: declined, a send will ask" : "Face ID prewarm: \(grant?.reused == true ? "joined a prompt" : "asked at foreground")")
+        return grant?.reused == false
     }
 
     /// A context that has already authenticated for the key, such as one a signature's own prompt just passed.

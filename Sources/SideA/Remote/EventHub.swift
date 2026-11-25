@@ -29,6 +29,8 @@ final class EventHub: @unchecked Sendable {
     private final class Client {
         let peer: WebSocketPeer
         var ready = false
+        /// It named capability `gzip` in its hello: frames over `Gzip.threshold` go as gzipped binary.
+        var gzip = false
         /// Its `hello` came; the welcome follows a main-actor hop, and a second `hello` meanwhile gets none.
         var greeted = false
         var subscriptions: [SessionKey: Cursor?] = [:]
@@ -84,6 +86,7 @@ final class EventHub: @unchecked Sendable {
         case .hello(let epoch, let lastSeq, let capabilities):
             guard !client.greeted else { return }
             client.greeted = true
+            client.gzip = capabilities.contains(.gzip)
             greeted?(client.peer.device, capabilities)
             welcome(client, epoch: epoch, lastSeq: lastSeq)
         case .subscribe(let sessions):
@@ -116,7 +119,7 @@ final class EventHub: @unchecked Sendable {
                 client.ready = true
                 if let events = ring.replay(epoch: epoch, after: lastSeq, now: Date().timeIntervalSince1970) {
                     send(client, .welcome(SideAProtocol.Welcome(epoch: ring.epoch, seq: ring.seq, replay: true, hello: greeting)))
-                    for event in events { client.peer.send(.text(String(decoding: event, as: UTF8.self))) }
+                    for event in events { deliver(event, to: client) }
                     return
                 }
                 // Over 512 KiB the snapshot would fill the socket's send budget (4008, and a reconnect into the same
@@ -126,13 +129,23 @@ final class EventHub: @unchecked Sendable {
                     return send(client, .welcome(SideAProtocol.Welcome(epoch: ring.epoch, seq: ring.seq, replay: false, snapshotOverREST: true, hello: greeting)))
                 }
                 send(client, .welcome(SideAProtocol.Welcome(epoch: ring.epoch, seq: ring.seq, replay: false, hello: greeting)))
-                client.peer.send(.text(String(decoding: snapshot, as: UTF8.self)))
+                deliver(snapshot, to: client)
             }
         }
     }
 
     private func send(_ client: Client, _ event: ServerEvent, seq: Int? = nil) {
         guard let data = Self.encode(EventEnvelope(seq: seq, at: Date().timeIntervalSince1970, event: event)) else { return }
+        deliver(data, to: client)
+    }
+
+    /// One event's JSON to one socket: text, or gzipped binary for a phone that asked and a frame big enough to gain.
+    private func deliver(_ data: Data, to client: Client, packed: Data? = nil) {
+        #if canImport(Compression)
+        if client.gzip, data.count >= Gzip.threshold, let packed = packed ?? Gzip.compress(data), packed.count < data.count {
+            return client.peer.send(.binary(packed))
+        }
+        #endif
         client.peer.send(.text(String(decoding: data, as: UTF8.self)))
     }
 
@@ -149,8 +162,13 @@ final class EventHub: @unchecked Sendable {
             return data
         }
         guard let encoded else { return }
-        let text = String(decoding: encoded, as: UTF8.self)
-        for client in clients.values where client.ready { client.peer.send(.text(text)) }
+        #if canImport(Compression)
+        // Once for every phone that takes it, not once each.
+        let packed = encoded.count >= Gzip.threshold && clients.values.contains { $0.ready && $0.gzip } ? Gzip.compress(encoded) : nil
+        #else
+        let packed: Data? = nil
+        #endif
+        for client in clients.values where client.ready { deliver(encoded, to: client, packed: packed) }
     }
 
     /// Transcript events go only to the sockets named, and never into the ring.

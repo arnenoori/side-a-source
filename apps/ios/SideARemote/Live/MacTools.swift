@@ -59,6 +59,9 @@ final class MacTools {
         }
     }
 
+    /// A start that carries a prompt: the row it makes is working from the tap, not idle until the CLI takes it.
+    @ObservationIgnored var onLaunch: ((HostedSession) -> Void)?
+
     init(_ mode: Mode = .unavailable) {
         self.mode = mode
         capabilities = []
@@ -234,6 +237,7 @@ final class MacTools {
             let session = HostedSession(name: name, agent: start.agent, cwd: start.cwd, project: URL(fileURLWithPath: start.cwd).lastPathComponent,
                                         createdAt: Date.now.timeIntervalSince1970)
             hosted[name] = session
+            if start.prompt?.isEmpty == false { onLaunch?(session) }
             return session
         }
         #endif
@@ -244,6 +248,7 @@ final class MacTools {
             }
         }
         hosted[session.name] = session
+        if start.prompt?.isEmpty == false { onLaunch?(session) }
         return session
     }
 
@@ -269,9 +274,11 @@ final class MacTools {
 
     func restart(_ session: SessionKey, _ handoff: Handoff, key: String) async throws -> HostedSession {
         let restart = RestartRequest(handoff: handoff, accountID: handoff.accountID, model: handoff.model)
-        return try await guarded(subject: ConfirmMessage.subject(action: .restart, target: session, body: restart), reason: "Restart this session") { confirm in
+        let hosted = try await guarded(subject: ConfirmMessage.subject(action: .restart, target: session, body: restart), reason: "Restart this session") { confirm in
             try await client().restart(session, restart, idempotencyKey: key, confirm: confirm)
         }
+        onLaunch?(hosted)
+        return hosted
     }
 
     func otherAgent(for session: RemoteSession) -> AgentOptions? {
@@ -288,13 +295,15 @@ final class MacTools {
         let restart = RestartRequest(handoff: handoff, accountID: draft.accountID, model: draft.modelID, agent: draft.agent,
                                      effort: draft.effort?.rawValue, permissionMode: PermissionMode.handedOff(mode(of: session), to: draft.agent).mode,
                                      message: message, attachments: can(.restartAgentImages) ? photos : nil)
-        return try await guarded(subject: ConfirmMessage.subject(action: .restart, target: session.id, body: restart),
-                                 level: ConfirmPolicy.restart(restart, sessionMode: mode(of: session)), reason: "Hand off to \(draft.agent.title)") { confirm in
+        let hosted = try await guarded(subject: ConfirmMessage.subject(action: .restart, target: session.id, body: restart),
+                                       level: ConfirmPolicy.restart(restart, sessionMode: mode(of: session)), reason: "Hand off to \(draft.agent.title)") { confirm in
             let client = try await client()
             return try await client.reaching(for: Self.startWaits) {
                 try await client.restart(session.id, restart, idempotencyKey: key, confirm: confirm)
             }
         }
+        onLaunch?(hosted)
+        return hosted
     }
 
     func earlierPage(_ conversation: String, before: Cursor?) async throws -> TranscriptPage {
@@ -331,20 +340,35 @@ final class MacTools {
     func follow(_ ref: SubagentRef, into store: TranscriptStore) async {
         guard isLive else { return }
         var failures = 0
-        var last: [TranscriptMessage]?
+        var rows: [TranscriptMessage] = []
+        var generation = "", cursor: Cursor?
         var changedAt = ContinuousClock.now
         while !Task.isCancelled {
+            var more = false
             do {
-                let page = try await client().transcript(ref.parent, limit: 200, agent: ref.agentID)
+                // The newest rows once, then only what came after them: a poll that finds nothing new costs a few hundred bytes.
+                let page = try await client().transcript(ref.parent, cursor.map { .after($0) } ?? .latest, limit: 200, agent: ref.agentID)
                 failures = 0
-                if page.messages != last {
-                    last = page.messages
+                let before = rows
+                if cursor == nil || page.reset || page.generation != generation {
+                    rows = page.messages
+                    generation = page.generation
+                } else {
+                    for message in page.replaced + page.messages {
+                        if let index = rows.firstIndex(where: { $0.seq == message.seq }) { rows[index] = message } else { rows.append(message) }
+                    }
+                    rows.sort { $0.seq < $1.seq }
+                }
+                cursor = page.after
+                more = page.hasMoreAfter
+                if rows != before {
                     changedAt = .now
-                    store.set(page.messages, hasEarlier: false, for: ref.key)
+                    store.set(rows, hasEarlier: false, for: ref.key)
                 }
             } catch {
                 failures += 1
             }
+            if more { continue }
             let still = ContinuousClock.now - changedAt > .seconds(60)
             try? await Task.sleep(for: .seconds(failures > 0 ? min(60, 3 << min(failures, 5)) : still ? 15 : 3))
         }

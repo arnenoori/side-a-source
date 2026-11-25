@@ -4,9 +4,10 @@ import XCTest
 
 @MainActor
 final class AppIconTests: XCTestCase {
-    func testEveryOptionHasItsPreviewImage() {
+    func testEveryOptionHasItsArtAtASizeThatStaysSharpAt120Points() throws {
         for option in AppIconOption.allCases {
-            XCTAssertNotNil(UIImage(named: option.preview), "\(option.name) has no preview image")
+            let image = try XCTUnwrap(UIImage(named: option.art), "\(option.name) has no art")
+            XCTAssertGreaterThanOrEqual(image.size.width * image.scale, 360, "\(option.name) art is too small")
         }
     }
 

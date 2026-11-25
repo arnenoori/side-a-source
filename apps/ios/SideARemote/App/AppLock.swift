@@ -71,6 +71,9 @@ final class AppLock {
     private var away = false
     @ObservationIgnored private var leftAt: Date?
     @ObservationIgnored private var asking = false
+    /// Once per launch and per return from the background, not at every active: the Face ID sheet itself makes the app
+    /// inactive and then active, and a declined prompt must not ask again at once.
+    @ObservationIgnored private var warmDue = true
 
     init(arguments: [String] = ProcessInfo.processInfo.arguments) {
         #if DEBUG
@@ -90,6 +93,7 @@ final class AppLock {
         case .background:
             away = true
             leftAt = .now
+            warmDue = true
         case .active:
             if let leftAt, Date.now.timeIntervalSince(leftAt) >= Self.after {
                 OwnerAuth.expire()
@@ -97,7 +101,16 @@ final class AppLock {
             }
             leftAt = nil
             away = false
-            if locked { Task { await unlock() } }
+            if locked {
+                warmDue = false
+                Task { await unlock() }
+            } else if warmDue {
+                warmDue = false
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--demo") { return }
+                #endif
+                Task { await DeviceKeys.prewarm(macIDs: PairedMac.all().map(\.endpoint.macID)) }
+            }
         default:
             away = true
         }
@@ -149,7 +162,7 @@ final class LockWindow {
         guard let scene = scenes.first(where: { $0.activationState != .background }) ?? scenes.first else { return }
         let window = UIWindow(windowScene: scene)
         window.windowLevel = Self.level
-        let host = UIHostingController(rootView: LockScreen(lock: lock).tint(Accent.current.color).dynamicTypeSize(...DynamicTypeSize.xxLarge))
+        let host = UIHostingController(rootView: LockScreen(lock: lock).tint(Accent.current.color).preferredColorScheme(Theme.current.scheme).dynamicTypeSize(...DynamicTypeSize.xxLarge))
         host.view.accessibilityViewIsModal = true
         window.rootViewController = host
         window.isHidden = false
@@ -162,11 +175,7 @@ struct LockScreen: View {
 
     var body: some View {
         VStack(spacing: Space.l) {
-            Image("AppIconImage")
-                .resizable()
-                .frame(width: 88, height: 88)
-                .clipShape(.rect(cornerRadius: 20, style: .continuous))
-                .accessibilityHidden(true)
+            AppIconArt(side: 88)
             Button("Unlock") { Task { await lock.unlock() } }
                 .buttonStyle(.glassProminent)
                 .controlSize(.large)

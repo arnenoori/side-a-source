@@ -59,7 +59,10 @@ if [[ "${1:-}" == --sha ]]; then
   sha="$(git rev-parse --verify "${2:?usage: check.sh --sha SHA [rev]}^{commit}")"
   if [[ "$sha" == "$(git rev-parse HEAD)" ]]; then set -- "${3:-origin/main}"
   else
-    scratch="$(mktemp -d "${TMPDIR:-/tmp}/sidea-check.XXXXXX")"
+    # Not under $TMPDIR, which is /private/var: swiftlint cannot match its baseline there (see lint-swift.sh).
+    # The git directory sits on the checkout's own volume.
+    mkdir -p "$proof/trees"
+    scratch="$(mktemp -d "$proof/trees/check.XXXXXX")"
     # shellcheck disable=SC2329
     cleanup() { git worktree remove --force "$scratch/tree" >/dev/null 2>&1 || true; rm -rf "$scratch"; }
     trap cleanup EXIT

@@ -177,6 +177,27 @@ nonisolated enum DeviceKeys {
         return .passed
     }
 
+    /// Face ID for the confirm key at the moment the app opens or returns, so a reply, a continue or a restart finds it
+    /// held. Replies to a session whose mode is permissive or not yet known need the confirm key, and a prompt then
+    /// would land on the message just sent. Silent when the hold still signs; asks only when it doesn't.
+    static func prewarm(macIDs: [String], reason: String = "Confirm actions on your Mac") async {
+        guard let macID = macIDs.first(where: { has(.confirm, for: $0) }) else { return }
+        await hold.prewarm(reason: reason, stillGood: { stillSigns($0, macID: macID) }, evaluate: { await evaluate(macID: macID, reason: $0) })
+    }
+
+    /// A silent signature with the held context: one iOS has dropped (the phone locked) would otherwise raise its own
+    /// prompt, which `interactionNotAllowed` turns into a failure.
+    private static func stillSigns(_ context: LAContext, macID: String) -> Bool {
+        context.interactionNotAllowed = true
+        defer { context.interactionNotAllowed = false }
+        guard let key = key(.confirm, macID: macID, context: context) else { return false }
+        if case .failure(let code) = sign(key, "sidea-prewarm-probe") {
+            RemoteLog.log(.app, "Face ID prewarm probe refused the held context: \(code)")
+            return false
+        }
+        return true
+    }
+
     static func expire(_ cause: String = "the app was away") { hold.expire(cause) }
 
     static func terminal(macID: String, deviceID: String) -> @Sendable (String) async -> String? {

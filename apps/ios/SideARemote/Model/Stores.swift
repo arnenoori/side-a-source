@@ -53,6 +53,10 @@ final class SessionsStore {
 
     private var buckets: [SessionPhase: [RemoteSession]] = [:]
 
+    /// Hosted sessions this phone just started with a prompt, by hosted name: until the CLI takes its first turn the Mac
+    /// reports them idle, and `launched` shows that as starting so the row never visits Idle.
+    @ObservationIgnored var launching: [String: Date] = [:]
+
     init(_ sessions: [RemoteSession], extras: [SessionKey: SessionExtras] = [:], macID: String = "", defaults: UserDefaults = .standard) {
         self.sessions = sessions; self.extras = extras; self.macID = macID; self.defaults = defaults
         prefs = ListPrefsStore.load(mac: macID, in: defaults)
@@ -67,6 +71,7 @@ final class SessionsStore {
     }
 
     func replace(_ sessions: [RemoteSession], finished: [SessionKey: FinishedSession], now: Date = .now) {
+        let sessions = launched(sessions, now: now)
         var started = false
         for session in sessions where extras[session.id] == nil {
             extras[session.id] = SessionExtras(startedAt: session.statusAt.map { Date(timeIntervalSince1970: $0) } ?? now)
@@ -95,6 +100,11 @@ final class SessionsStore {
         if leaving { self.leaving.insert(id) } else { self.leaving.remove(id) }
     }
 
+    /// Sessions this phone quit. A page open on one pops back to the list; the row leaves the Mac's list a moment later.
+    private(set) var ended: Set<SessionKey> = []
+
+    func markEnded(_ ids: some Sequence<SessionKey>) { ended.formUnion(ids) }
+
     private func rebucket() {
         let sorted = sessions.sorted { (extras[$0.id]?.startedAt ?? .distantPast) > (extras[$1.id]?.startedAt ?? .distantPast) }
         buckets = Dictionary(grouping: sorted, by: SessionPhase.init)
@@ -115,8 +125,10 @@ final class SessionsStore {
         }.map(\.row)
     }
 
-    func groups(_ phase: SessionPhase, where include: (RemoteSession) -> Bool = { _ in true }) -> [(title: String?, rows: [RemoteSession])] {
-        let rows = sorted(rows(phase).filter(include))
+    /// `leading` rows (a booting hosted session that has no row yet) join the phase ahead of the Mac's, newest first.
+    func groups(_ phase: SessionPhase, leading: [RemoteSession] = [], where include: (RemoteSession) -> Bool = { _ in true })
+        -> [(title: String?, rows: [RemoteSession])] {
+        let rows = sorted((leading + rows(phase)).filter(include))
         guard groupBy != .none else { return [(nil, rows)] }
         var order: [String] = []
         var byKey: [String: [RemoteSession]] = [:]
@@ -253,6 +265,16 @@ final class TranscriptStore {
     enum WholeLoad: Hashable { case loading, failed }
 
     private(set) var loadFailures: Set<SessionKey> = []
+
+    /// Where the Mac's view of each open session stood at the last row held (`TranscriptWindow.after`), kept with the rows so the
+    /// next open asks for what came after them and nothing more.
+    struct ResumePoint: Codable, Equatable {
+        let generation: String
+        let before: Cursor?
+        let after: Cursor
+    }
+
+    @ObservationIgnored var resume: [SessionKey: ResumePoint] = [:]
 
     func loadFailed(_ failed: Bool, for session: SessionKey) {
         if failed { loadFailures.insert(session) } else { loadFailures.remove(session) }

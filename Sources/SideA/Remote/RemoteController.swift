@@ -644,7 +644,7 @@ final class RemoteController {
     var confirmCheck: (@Sendable (HTTPRequest, String, ConfirmPurpose, String, ConfirmProof) -> HTTPResponse?)?
     #endif
 
-    static let capabilities: Set<Capability> = [.confirmSigned, .confirmActions, .events, .answersQuestions, .answersPlans, .answersMode, .replyFollowUp, .replyNote, .interrupt, .images, .diffs,
+    static let capabilities: Set<Capability> = [.gzip, .repliesEcho, .confirmSigned, .confirmActions, .events, .answersQuestions, .answersPlans, .answersMode, .replyFollowUp, .replyNote, .interrupt, .images, .diffs,
                                                 .uploads, .setup, .options, .push, .transcriptStream, .ports, .interruptNextStep,
                                                 .quit, .mac, .history, .search, .cleanup, .incidents, .autopilot, .autopilotToggle, .autopilotAnswers, .autopilotContinues, .repliesQueue, .files, .fileRead,
                                                 .accountsUse, .worth, .rotation, .repliesDropped, .repliesReceipts, .transcribe,

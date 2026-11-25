@@ -205,7 +205,7 @@ struct MacDetailView: View {
                     }
                 }
             }
-            MacNotificationSections(macID: model.macID)
+            MacNotificationSections(macID: model.macID, host: model.mac.kind)
             Section {
                 NavigationLink("Test Connection", value: SettingsPage.test(model.macID))
             }
@@ -271,7 +271,7 @@ private struct MacNameView: View {
 }
 
 private struct MacNotificationSections: View {
-    let macID: String
+    let macID: String, host: HostOS
     @Environment(\.scenePhase) private var scenePhase
     @State private var notificationsDenied = false
     @State private var notificationsUndetermined = false
@@ -294,7 +294,7 @@ private struct MacNotificationSections: View {
             PrefToggle("Limit warnings", .limits, mac: macID)
             PrefToggle("Stuck sessions", .health, mac: macID)
             PrefToggle("Autopilot moves", .rotation, mac: macID)
-            PrefToggle("Mac goes quiet", .macQuiet, mac: macID)
+            PrefToggle("\(host.titleNoun) goes quiet", .macQuiet, mac: macID)
             PrefToggle("Time Sensitive for requests", .timeSensitive, mac: macID)
         } header: {
             Text("Notifications")

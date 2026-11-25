@@ -30,6 +30,7 @@ struct StartingSessionView: View {
         }
         .onChange(of: ended) { _, ended in
             guard ended else { return }
+            model.sessions.endLaunch(name)
             model.transcripts.dropFirstPrompt(name, giveBackTo: giveBackTo)
             if let giveBackTo, let message = model.handoffs.move(giveBackTo, .ended(name: name)) {
                 model.transcripts.restore(message, in: giveBackTo)

@@ -33,9 +33,15 @@ public struct TranscriptMessage: Codable, Hashable, Sendable, Identifiable {
     public let images: [ImageRef]
     /// How long a `.thinking` message took, for "Thought for 4s".
     public let durationMS: Int?
+    /// Capability `replies.echo`: on the user row a reply from a phone became, the reply's `Idempotency-Key` (its family, without
+    /// a retry's `:r<n>`), so the phone settles its own bubble by id however the words reached the agent (a typed line, a Stop
+    /// hook's feedback, the inbox). Absent from a Mac without the capability and on rows that were not a phone's reply.
+    public var replyID: String?
 
     public init(seq: Int, uuid: String, role: TranscriptRole, at: Timestamp? = nil, model: String? = nil, inherited: Bool = false,
-                text: String? = nil, textTruncated: Bool = false, tools: [TranscriptTool] = [], images: [ImageRef] = [], durationMS: Int? = nil) {
+                text: String? = nil, textTruncated: Bool = false, tools: [TranscriptTool] = [], images: [ImageRef] = [], durationMS: Int? = nil,
+                replyID: String? = nil) {
+        self.replyID = replyID
         self.seq = seq; self.uuid = uuid; self.role = role; self.at = at; self.model = model; self.inherited = inherited
         self.text = text; self.textTruncated = textTruncated; self.tools = tools; self.images = images; self.durationMS = durationMS
     }

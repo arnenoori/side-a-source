@@ -1940,7 +1940,24 @@ def parse_cursor(cursor):
 HANDOFF_TURNS = 2000
 
 
-def page(root, session_id, limit=None, before=None, after=None, around=None, agent_id=None, turns=False):
+def fit_bytes(rows, start, end, budget, newest):
+    """`rows` (seq, data) cut to about `budget` bytes of stored JSON, at least one row: the newest ones when the page ends
+    at its newest edge (latest, before), the oldest when it reads forward (after). Returns rows, start, end."""
+    total, keep = 0, []
+    for row in (reversed(rows) if newest else rows):
+        if keep and total + len(row[1]) > budget:
+            break
+        keep.append(row)
+        total += len(row[1])
+    if len(keep) == len(rows):
+        return rows, start, end
+    if newest:
+        keep.reverse()
+        return keep, keep[0][0], end
+    return keep, start, keep[-1][0] + 1
+
+
+def page(root, session_id, limit=None, before=None, after=None, around=None, agent_id=None, turns=False, max_bytes=None):
     """A page of one conversation as Remote's bridge DTO. Cursors are `<generation>.<seq>.<rev>`: `after`
     returns the rows past it plus, in `replaced`, every row at or before it rewritten since. A cursor from
     an older generation gets the newest page with `reset`. `turns` is for a handoff: only the user and assistant
@@ -1974,8 +1991,10 @@ def page(root, session_id, limit=None, before=None, after=None, around=None, age
             if hit:
                 start = max(hit[0] - 40, 0)
                 end = min(start + limit, count)
-        messages = [remote_row(seq, data) for seq, data in db.execute(
-            "SELECT seq, data FROM views WHERE session=? AND seq>=? AND seq<? ORDER BY seq", (key, start, end))]
+        rows = db.execute("SELECT seq, data FROM views WHERE session=? AND seq>=? AND seq<? ORDER BY seq", (key, start, end)).fetchall()
+        if max_bytes and rows:
+            rows, start, end = fit_bytes(rows, start, end, max_bytes, newest=not (after and cursor and not reset))
+        messages = [remote_row(seq, data) for seq, data in rows]
         inherited = db.execute("SELECT count(*) FROM views WHERE session=? AND inherited=1 AND seq<?", (key, start)).fetchone()[0] if start else 0
     finally:
         db.close()

@@ -86,7 +86,7 @@ struct CleanupView: View {
                     Text("None").foregroundStyle(.secondary)
                 }
                 ForEach(report.worktrees) { worktree in
-                    WorktreeRow(worktree: worktree)
+                    WorktreeRow(worktree: worktree, host: model.mac.kind)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             if worktree.keep == nil {
                                 Button("Remove…", systemImage: "trash", role: .destructive) { removing = worktree }
@@ -157,6 +157,7 @@ struct CleanupView: View {
 
 private struct WorktreeRow: View {
     let worktree: CleanupReport.LeftWorktree
+    let host: HostOS
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -170,7 +171,7 @@ private struct WorktreeRow: View {
             }
             .foregroundStyle(.secondary)
             if worktree.keep != nil {
-                Label(worktree.keepReason ?? "Kept on the Mac", systemImage: "lock")
+                Label(worktree.keepReason ?? "Kept on \(host.the())", systemImage: "lock")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

@@ -131,6 +131,7 @@ final class SessionActions {
                 throw error
             }
             self.successes += 1
+            model?.sessions.markEnded([session.id])
             if !quiet { Pill.show("Session quit") }
         }
     }
@@ -139,6 +140,7 @@ final class SessionActions {
         run(Self.quitIdleKey) { tools in
             let quit = try await tools.quitIdle(olderThanMinutes: Self.idleMinutes)
             self.successes += 1
+            self.model?.sessions.markEnded(quit)
             Pill.show(String(localized: "Quit ^[\(quit.count) idle session](inflect: true)"))
         }
     }

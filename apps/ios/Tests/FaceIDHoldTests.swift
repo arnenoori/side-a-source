@@ -177,4 +177,55 @@ final class FaceIDHoldTests: XCTestCase {
         _ = await hold.context(reason: "a", evaluate: { _ in await prompts.prompt() })
         XCTAssertTrue(lines.text.contains("Face ID asked: no Face ID yet in this launch"), lines.text)
     }
+
+    /// The Face ID the user sees: open, send three, background 10 s, foreground, send. Prompts belong to open and a
+    /// foreground that finds the hold dead, never to a send.
+    private func send(_ hold: FaceIDHold<Token>, _ prompts: Prompts) async -> Bool {
+        let granted = await hold.context(reason: "Send this reply", evaluate: { _ in await prompts.prompt() })
+        return granted != nil
+    }
+
+    func testOpenThenSendsThenForegroundPromptsOnlyAtOpen() async throws {
+        let hold = hold()
+        let prompts = Prompts()
+        let asked = await hold.prewarm(reason: "Confirm", stillGood: { _ in true }, evaluate: { _ in await prompts.prompt() })
+        XCTAssertTrue(asked)
+        for _ in 0..<3 { _ = await send(hold, prompts) }
+        XCTAssertEqual(prompts.count, 1, "sends rode the held context")
+        let again = await hold.prewarm(reason: "Confirm", stillGood: { _ in true }, evaluate: { _ in await prompts.prompt() })
+        XCTAssertFalse(again)
+        _ = await send(hold, prompts)
+        XCTAssertEqual(prompts.count, 1)
+        XCTAssertTrue(lines.text.contains("Face ID prewarm: already held, no prompt"), lines.text)
+    }
+
+    func testAContextTheKeyNoLongerHonoursIsReplacedAtForegroundNotAtSend() async throws {
+        let hold = hold()
+        let prompts = Prompts()
+        await hold.prewarm(reason: "Confirm", stillGood: { _ in true }, evaluate: { _ in await prompts.prompt() })
+        _ = await hold.prewarm(reason: "Confirm", stillGood: { _ in false }, evaluate: { _ in await prompts.prompt() })
+        XCTAssertEqual(prompts.count, 2, "the phone locked: the foreground asks")
+        for _ in 0..<3 { _ = await send(hold, prompts) }
+        XCTAssertEqual(prompts.count, 2, "and the sends after it don't")
+        XCTAssertTrue(lines.text.contains("no longer signs after the app came back"), lines.text)
+    }
+
+    func testADeclinedWarmupLeavesTheNextSendToAsk() async throws {
+        let hold = hold()
+        let prompts = Prompts()
+        let asked = await hold.prewarm(reason: "Confirm", stillGood: { _ in true }, evaluate: { _ in await prompts.prompt(accept: false) })
+        XCTAssertFalse(asked)
+        XCTAssertFalse(hold.held)
+        XCTAssertTrue(lines.text.contains("Face ID prewarm: declined"), lines.text)
+        let sent = await send(hold, prompts)
+        XCTAssertTrue(sent)
+        XCTAssertEqual(prompts.count, 2)
+    }
+
+    func testEveryPromptNamesItsReason() async throws {
+        let hold = hold()
+        let prompts = Prompts()
+        _ = await hold.prewarm(reason: "Confirm actions", stillGood: { _ in true }, evaluate: { _ in await prompts.prompt() })
+        XCTAssertTrue(lines.text.contains("(for \"Confirm actions\")"), lines.text)
+    }
 }

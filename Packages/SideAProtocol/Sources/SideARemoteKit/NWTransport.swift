@@ -73,10 +73,21 @@ public final class NWTransport: Transport, @unchecked Sendable {
         -> (Data, HTTPURLResponse) {
         let reply = try await stream.exchange(head + body, timeout: timeout)
         if reply.keepAlive { put(stream, key) } else { stream.cancel() }
-        guard let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: reply.headers) else {
+        let (body, headers) = try Self.decoded(reply)
+        guard let response = HTTPURLResponse(url: url, statusCode: reply.status, httpVersion: "HTTP/1.1", headerFields: headers) else {
             throw URLError(.badServerResponse)
         }
-        return (reply.body, response)
+        return (body, response)
+    }
+
+    /// The body as the Mac meant it: a gzipped one unpacked, with the headers that described the packing dropped.
+    static func decoded(_ reply: HTTPStream.Reply) throws -> (Data, [String: String]) {
+        guard let name = reply.headers.keys.first(where: { $0.caseInsensitiveCompare("Content-Encoding") == .orderedSame }) else { return (reply.body, reply.headers) }
+        guard reply.headers[name]?.lowercased() == "gzip", let plain = Gzip.decompress(reply.body) else { throw URLError(.cannotDecodeContentData) }
+        var headers = reply.headers
+        headers[name] = nil
+        for length in headers.keys where length.caseInsensitiveCompare("Content-Length") == .orderedSame { headers[length] = String(plain.count) }
+        return (plain, headers)
     }
 
     static func key(_ url: URL) -> String { "\(url.host ?? ""):\(url.port ?? 443)" }

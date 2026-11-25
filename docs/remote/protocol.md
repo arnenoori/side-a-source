@@ -779,6 +779,7 @@ public struct TranscriptMessage: Codable, Hashable, Sendable, Identifiable {
     public let textTruncated: Bool           // cut at 6,000 characters; GET …/messages/{seq} has it whole
     public let tools: [TranscriptTool]       // empty unless role == .tools
     public let images: [ImageRef]            // pasted images on a user message
+    public var replyID: String?              // capability replies.echo: the reply this user row came from (its Idempotency-Key family)
 }
 
 public struct TranscriptTool: Codable, Hashable, Sendable, Identifiable {
@@ -872,6 +873,22 @@ public struct TranscriptPage: Codable, Hashable, Sendable {
   everything. One event or page stays under the 1 MiB frame limit: the server packs
   `transcript.append` rows into events up to 900 KiB (a single large row travels alone) and
   shortens a page (setting `hasMoreAfter`) to stay under it.
+
+- **Byte budget (capability-free, additive).** A page also stops at about 96 KiB of stored row JSON (`--max-bytes` to the
+  bridge; always at least one row). `before` then points at the first row left out, exactly as when the row limit cuts a page,
+  so a client that pages by `before` needs no change; one that assumed fifty rows gets fewer on a heavy session. A page for
+  `after=` is cut the same way and says `hasMoreAfter`. The stream's catch-up allows 384 KiB, past which it sends
+  `transcript.reset`.
+- **One message, one row (`replies.echo`).** The Mac keeps what phones sent (reply key, words, time; 100 a session, 24 hours, in
+  memory) and names, once and for good, the user row each became with `replyID` (the key without a retry's `:r<n>`), however the
+  words reached the agent: typed, a Stop hook's feedback, the inbox. A phone settles its own bubble by that id in any stage, an
+  offline one and one a refetch crossed included, and never lets a row named for another reply settle it by words. Rows with no
+  `replyID` (an older Mac, a restart) are settled by words and time as before.
+- **Open once, then resume.** A phone fetches the newest page once per session, pages earlier ones on scroll, and keeps what it
+  has with the `generation` and the two cursors (`before` of its first row, `after` of its last). Reopening, a reset or a
+  reconnect asks `after=<cursor>`: an empty page (about 200 bytes) when nothing changed, the new rows and `replaced` otherwise,
+  `reset: true` with the newest page when the generation changed. Rows already held are kept as they are (same `seq`, same
+  order); only a generation change replaces them.
 
 ### RemoteAccount
 
@@ -1290,6 +1307,21 @@ failures) and nothing else.
 - **Rate limit.** Per device 20 requests a second, burst 60, and 30 answers and replies a minute;
   unauthenticated traffic (hello, pair, failed auth) 10 a minute, burst 5, for the whole Mac;
   pairing 5 attempts per code. Mac-server lists the buckets.
+
+### Compression
+
+Capability `gzip`. A request that says `Accept-Encoding: gzip` gets a `200 application/json` body of 1 KiB or more as gzip
+(RFC 1952), with `Content-Encoding: gzip` and `Vary: Accept-Encoding`; the `ETag` stays that of the plain body. A Mac without
+the capability ignores the header and answers plain, so a phone always sends it. On `/v1/ws/events` a phone that lists `gzip`
+in its `hello` gets every event frame of 1 KiB or more as one binary frame holding the gzipped JSON of the same envelope;
+smaller frames, and every frame for a phone that didn't list it, stay text. Terminal and screen frames are never compressed.
+
+### Traffic in the log
+
+`remote.log` ends each connection's line with `<n> out, <n> in`, each request line with its response size, and each WebSocket's
+close line with its totals and duration. Once a minute, when anything moved, one line says what, heaviest first:
+`traffic 60 s: 3.1 MB out, 12.0 KB in; GET /v1/sessions/*/transcript 3 req 3.0 MB out, 1.1 KB in; WS /v1/ws/events …`, plus
+`tunnel (relay frames)` for what crossed the relay. Counts only: ids are replaced by `*`, no bodies, no tokens.
 
 ### Endpoints
 

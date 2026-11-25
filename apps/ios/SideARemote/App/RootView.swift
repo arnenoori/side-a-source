@@ -176,6 +176,9 @@ struct MainTabs: View {
         // An iPad window widened past compact keeps the tab bar it had: in the navigation row, over the session's
         // title. Leaving the tab and coming straight back lays the bar out in its own row, as at launch, and unlike
         // building the tab view again it keeps every tab's pages, sheets, terminal and drafts.
+        .onChange(of: endedIndex) { _, index in
+            if let index { sessionsPath = Array(sessionsPath[..<index]) }
+        }
         .onChange(of: width) {
             guard UIDevice.current.userInterfaceIdiom == .pad else { return }
             let current = tab
@@ -259,6 +262,11 @@ struct MainTabs: View {
             if LaunchLinks.newSession { keys.newSession += 1 }
         }
         #endif
+    }
+
+    /// The first page of a session this phone just quit: that page and whatever is pushed over it go, back to the list.
+    private var endedIndex: Int? {
+        GoneSessions.firstEnded(in: sessionsPath) { id, mac in (root.model(for: mac) ?? model).sessions.ended.contains(id) }
     }
 
     private var commands: RemoteCommandActions {

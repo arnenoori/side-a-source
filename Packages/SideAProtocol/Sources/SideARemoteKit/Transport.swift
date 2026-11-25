@@ -122,6 +122,8 @@ public struct URLSessionTransport: Transport {
         }
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         KitLog.log(.transport, "\(line) → \(http.statusCode) in \(KitLog.ms(since: start)) ms")
+        // URLSession unpacks a gzipped body itself and says so by dropping the header; one still named is ours to unpack.
+        if http.value(forHTTPHeaderField: "Content-Encoding")?.lowercased() == "gzip", let plain = Gzip.decompress(data) { return (plain, http) }
         return (data, http)
     }
 

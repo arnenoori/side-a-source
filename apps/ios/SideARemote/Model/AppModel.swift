@@ -37,6 +37,7 @@ final class AppModel {
         images = ImageStore(isDemo: isDemo)
         tools = MacTools(isDemo ? .demo(.sample(sessions.sessions)) : live.map(MacTools.Mode.live) ?? .unavailable)
         sessions.title = { [weak tools] in tools?.title(for: $0) ?? $0.title }
+        tools.onLaunch = { [weak sessions] in sessions?.launch($0.name) }
     }
 
     static func demo(now: Date = .now) -> AppModel {

@@ -78,10 +78,7 @@ private struct SampleNotification: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             HStack(alignment: .top, spacing: Space.s) {
-                Image("AppIconImage")
-                    .resizable()
-                    .frame(width: 32, height: 32)
-                    .clipShape(.rect(cornerRadius: 7.5, style: .continuous))
+                AppIconArt(side: 32)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack {
                         Text("Fix the flaky sync test").font(.subheadline.weight(.semibold))

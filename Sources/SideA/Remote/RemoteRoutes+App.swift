@@ -201,7 +201,7 @@ extension RemoteRoutes {
         } else {
             refused = await refusal(context, .reply, target: id, body: reply, needs: needs)
         }
-        if let refused { return refused }
+        if let refused { return noted(refused, key: context.request.headers["Idempotency-Key"], session: id) }
         await MainActor.run { if let row = context.controller.events?.session(id) { context.controller.snoozes.wake(row.id) } }
         var message = SessionCommands.Message(text: reply.text, images: images, mode: reply.mode, keys: reply.keys, turnID: reply.turnID, submit: reply.submit,
                                               origin: Island.QueuedFollowUp.Origin(device: context.device, proven: needs))
@@ -217,7 +217,27 @@ extension RemoteRoutes {
             }
             return commands.prepare(id, message)
         }
-        return await command(context) { commands throws(SessionCommands.Failure) in try await commands.send(plan, message) }
+        if let conversation = await conversation(context) {
+            SentReplies.shared.record(conversation: conversation, key: message.idempotencyKey, text: reply.text)
+        }
+        let key = message.idempotencyKey
+        let sent = await command(context) { commands throws(SessionCommands.Failure) in try await commands.send(plan, message) }
+        return noted(sent, key: key, session: id)
+    }
+
+    private static func noted(_ response: HTTPResponse, key: String?, session: String) -> HTTPResponse {
+        RemoteLog.shared("reply \(key?.prefix(8) ?? "-") for session \(session.prefix(8)) \(replyOutcome(response))")
+        return response
+    }
+
+    /// What the log says became of a reply: how it was delivered or why it wasn't, never its words.
+    static func replyOutcome(_ response: HTTPResponse) -> String {
+        guard response.status == 200 else {
+            let error = (try? JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["error"] as? [String: Any]
+            return "refused \(response.status) \(error?["code"] as? String ?? "")"
+        }
+        let delivery = (try? JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["delivery"] as? String
+        return "accepted as \(delivery ?? "typed")"
     }
 
     @Sendable static func upload(_ context: Context) async -> HTTPResponse {

@@ -11,14 +11,10 @@ struct WelcomeView: View {
     var body: some View {
         VStack(spacing: Space.l) {
             Spacer()
-            Image("AppIconImage")
-                .resizable()
-                .frame(width: 120, height: 120)
-                .clipShape(.rect(cornerRadius: 27, style: .continuous))
+            AppIconArt(side: 120)
                 .shadow(color: .black.opacity(0.18), radius: 18, y: 8)
                 .scaleEffect(shown || reduceMotion ? 1 : 0.82)
                 .opacity(shown ? 1 : 0)
-                .accessibilityHidden(true)
             Text("Side A Remote")
                 .font(.largeTitle.bold())
                 .multilineTextAlignment(.center)
