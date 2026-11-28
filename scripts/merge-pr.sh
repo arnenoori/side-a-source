@@ -21,7 +21,6 @@ sha="$head"
 if [[ "$state" != OPEN ]]; then echo "merge-pr.sh: #$number is $state, not open." >&2; exit 1; fi
 if [[ "$draft" == true ]]; then echo "merge-pr.sh: #$number is a draft." >&2; exit 1; fi
 
-# Refuses when the PR's head is no longer the commit read first.
 require_same_head() {
   read_pr
   if [[ "$head" != "$sha" ]]; then
@@ -30,12 +29,11 @@ require_same_head() {
   fi
 }
 
-# Whether local-check is currently success on the sha. The combined status keeps only the newest state per context.
+# The combined status keeps only the newest state per context.
 local_check_passed() {
   [[ "$(gh api "repos/{owner}/{repo}/commits/$sha/status" --jq '[.statuses[] | select(.context == "local-check") | .state] | first // ""')" == success ]]
 }
 
-# local_check_passed, retried a bounded number of times while the PR head stays the same.
 local_check_settled() {
   local try=1
   while :; do

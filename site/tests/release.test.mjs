@@ -51,20 +51,39 @@ test('a Mac release and a sidead release do not stand in for each other', () => 
 import { readFileSync } from 'node:fs';
 const read = path => readFileSync(new URL(path, import.meta.url), 'utf8');
 test('the Linux and Windows pages offer the one-liner the site really serves, and Windows says it is a preview', () => {
-  const page = read('../linux/index.html');
-  assert.match(page, /<code id="install-command">curl -fsSL https:\/\/getsidea\.com\/install\.sh \| sh<\/code>/);
-  assert.match(page, /id="linux-install" hidden/, 'the install block waits for a release');
-  assert.match(page, /id="linux-status" role="status">Coming soon</);
+  for (const name of ['linux', 'windows']) {
+    const page = read(`../${name}/index.html`);
+    assert.match(page, /<code id="install-command">curl -fsSL https:\/\/getsidea\.com\/install\.sh \| sh<\/code>/);
+    assert.match(page, /id="packages" hidden/, 'the package links wait for a release');
+    assert.match(page, /id="release-status" role="status">Coming soon</);
+    assert.match(page, /connect-src 'self' https:\/\/api\.github\.com;/);
+    assert.match(page, new RegExp(`og:image" content="https://getsidea\\.com/social-${name}\\.jpg"`));
+    assert.ok(readFileSync(new URL(`../public/social-${name}.jpg`, import.meta.url)).length > 20000, 'the share image exists');
+  }
   const windows = read('../windows/index.html');
-  assert.match(windows, /<code id="install-command">curl -fsSL https:\/\/getsidea\.com\/install\.sh \| sh<\/code>/);
-  assert.match(windows, /id="linux-install" hidden/);
-  assert.match(windows, /Side A for Windows <span class="tag">Preview<\/span>/);
   assert.match(windows, /Not yet tried on a Windows PC/);
-  assert.match(windows, /connect-src 'self' https:\/\/api\.github\.com;/);
   assert.match(read('../public/install.sh'), /^#!\/bin\/sh\n/);
-  const entry = read('../src/linux.ts');
-  assert.doesNotMatch(entry, /analytics|cookie|localStorage/);
-  assert.match(page, /connect-src 'self' https:\/\/api\.github\.com;/);
+  assert.doesNotMatch(read('../src/landing.ts'), /analytics|cookie|localStorage/);
   const vercel = JSON.parse(read('../../vercel.json'));
   assert.equal(vercel.headers.find(rule => rule.source === '/install.sh').headers.find(h => h.key === 'Content-Type').value, 'text/plain; charset=utf-8');
 });
+
+import { platformDownloads, visitorPlatform } from '../src/platform.mjs';
+test('the home page offers a visitor the Side A their computer runs', () => {
+  const chrome = (platform, mobile = false) => ({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140', userAgentData: { platform, mobile } });
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0' }), 'windows');
+  assert.equal(visitorPlatform(chrome('Windows')), 'windows');
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0' }), 'linux');
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) Chrome/140' }), 'linux');
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/26.0 Safari/605.1.15' }), 'mac');
+  // Phones and tablets run no daemon: Android says Linux, and gets the Mac page as before.
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (Linux; Android 16; Pixel 10) Chrome/140 Mobile Safari/537.36' }), 'mac');
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (Linux; Android 16; Tablet) Chrome/140', userAgentData: { platform: 'Android', mobile: false } }), 'mac');
+  assert.equal(visitorPlatform({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) Mobile/15E148' }), 'mac');
+  assert.equal(visitorPlatform({}), 'mac');
+  assert.equal(platformDownloads.windows.href, './windows/');
+  assert.equal(platformDownloads.linux.other.href, './windows/');
+  const home = read('../index.html');
+  assert.match(home, /<p class="also" id="also" hidden>/, 'the Mac page is unchanged until a script says otherwise');
+});
+

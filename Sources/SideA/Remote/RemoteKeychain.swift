@@ -89,6 +89,10 @@ struct RemoteKeychain: @unchecked Sendable {
     func writeDevices(_ data: Data) throws { try write(data, "devices", label: "Side A Remote devices", what: "Paired devices") }
     func deleteDevices() { delete("devices") }
 
+    /// The computers this one is linked to, each with the token that lets it send them sessions.
+    func readComputers() throws -> Data? { try read("computers", what: "Linked computers") }
+    func writeComputers(_ data: Data) throws { try write(data, "computers", label: "Side A linked computers", what: "Linked computers") }
+
     /// The Ed25519 key that signs every request to the push relay; its hash is the install id. Made on first use.
     func installKey(create: Bool = true) throws -> Curve25519.Signing.PrivateKey? {
         if let data = try read("install", what: "The relay key") {

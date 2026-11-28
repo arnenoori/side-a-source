@@ -14,7 +14,6 @@ import Testing
     #expect(Gzip.decompress(Data(packed.prefix(packed.count - 3))) == nil)
     #expect(Gzip.decompress(body) == nil)
     #expect(Gzip.decompress(packed, limit: 100) == nil)
-    // What the standard tool writes, with its own header bytes.
     let process = Process()
     let input = Pipe(), output = Pipe()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/gzip")

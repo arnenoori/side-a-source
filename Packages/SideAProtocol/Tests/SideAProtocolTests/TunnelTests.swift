@@ -13,6 +13,7 @@ final class Rig: @unchecked Sendable {
     var next: UInt32 = 1
     var frames = 0
     var macEnded: [UInt32] = []
+    private let listening = AsyncStream<Void>.makeStream()
 
     init(tuning: TunnelMux.Tuning = TunnelMux.Tuning(), echo: Bool = true) throws {
         front = try NWListener(using: .tcp, on: .any)
@@ -41,7 +42,16 @@ final class Rig: @unchecked Sendable {
             connection.start(queue: .global())
             if echo { Self.echo(connection) }
         }
-        for listener in [front, target] { listener.start(queue: queue) }
+        for listener in [front, target] {
+            listener.stateUpdateHandler = { [listening] state in
+                switch state {
+                case .ready: listening.continuation.yield()
+                case .failed, .cancelled: listening.continuation.finish()
+                default: break
+                }
+            }
+            listener.start(queue: queue)
+        }
     }
 
     func toMac(_ frame: TunnelFrame) {
@@ -63,11 +73,13 @@ final class Rig: @unchecked Sendable {
 
     func ready() async throws -> NWEndpoint.Port {
         // A listener names port 0 until it is ready.
-        for _ in 0..<200 {
-            if let port = front.port, port.rawValue != 0, (target.port?.rawValue ?? 0) != 0 { return port }
-            try await Task.sleep(for: .milliseconds(5))
+        var up = 0
+        for await _ in listening.stream {
+            up += 1
+            if up == 2 { break }
         }
-        throw CancellationError()
+        guard up == 2, let port = front.port else { throw CancellationError() }
+        return port
     }
 
     func roundTrip(_ bytes: Data) async throws -> Data {

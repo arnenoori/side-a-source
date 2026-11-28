@@ -59,7 +59,9 @@ enum RemoteRoutes {
     }
 
     static func handler(_ controller: RemoteController) -> RemoteServer.Handler {
-        { [weak controller] request, caller in
+        // The server coming up is the app's Remote starting: moves left open by a quit are settled from here on.
+        Task { @MainActor [weak controller] in controller?.moves.begin() }
+        return { [weak controller] request, caller in
             guard let controller else { return RemoteServer.error(503, .remoteOff, "Remote is off.", retryAfter: 5) }
             return await route(request, caller, controller)
         }

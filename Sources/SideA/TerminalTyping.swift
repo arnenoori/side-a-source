@@ -51,7 +51,6 @@ enum TerminalTyping {
         }
     }
 
-    /// The session's process group is the one its terminal reads keys for.
     static func inFront(_ pid: Int) -> Bool { TerminalFocus.inFront(pid) }
 
 
@@ -85,38 +84,82 @@ enum TerminalTyping {
         let screen = { await run(["capture-pane", "-p", "-e", "-J", "-t", pane.pane], nil).output }
         let before = await screen()
         if Hosting.dialog(agent, screen: before) { throw Failure(message: "The session is asking something; answer it first.") }
+        var aside: String?
+        var typed = false
+        // The placeholder reads as text here, so text that isn't the message is no sign it stayed unsent.
+        var undimmed = false
         switch Hosting.composer(agent, screen: before) {
         case .none: throw Failure(message: "That session isn't ready for a message yet.")
-        case .text: throw Failure(message: "The session's message field already holds a draft.")
         case .empty: break
+        case .text(let draft):
+            // A send that pasted and never got its Enter in: the same message again only needs the Enter.
+            if Hosting.owned(sent: text, agent: agent, screen: before) != nil { typed = true; break }
+            guard agent == .claude else { throw Failure(message: "The session's message field already holds a draft.") }
+            if try await setAside(draft, press: { await run(["send-keys", "-t", pane.pane, $0], nil).status == 0 }, screen: screen) { aside = draft } else { undimmed = true }
         }
-        let buffer = "sidea-type-\(getpid())-\(pid)"
-        let pasted = await run(HostedSessions.paste(buffer: buffer, into: pane.pane), Data(text.utf8))
-        guard pasted.status == 0 else {
-            _ = await run(["delete-buffer", "-b", buffer], nil)
-            throw Failure(message: "The text could not be typed into that session.")
+        if !typed {
+            let buffer = "sidea-type-\(getpid())-\(pid)"
+            let pasted = await run(HostedSessions.paste(buffer: buffer, into: pane.pane), Data(text.utf8))
+            guard pasted.status == 0 else {
+                _ = await run(["delete-buffer", "-b", buffer], nil)
+                throw Failure(message: "The text could not be typed into that session.")
+            }
         }
         var owned: String?
-        for _ in 0..<8 where owned == nil {
-            try? await Task.sleep(for: .milliseconds(60))
+        for attempt in 0..<25 where owned == nil {
+            if attempt > 0 || !typed { try? await Task.sleep(for: .milliseconds(60)) }
             owned = Hosting.owned(sent: text, agent: agent, screen: await screen())
         }
         // Not its own text in the composer: Enter could send someone else's words or answer a dialog that just opened.
         guard let expected = owned else { throw Failure(message: "It's typed in but wasn't sent.") }
         // Claude Code can swallow an Enter that comes right after a paste: pressed again only while the composer
         // still shows exactly what was pasted, and never over a dialog.
+        let verdict = { () async -> Hosting.Verdict in
+            let now = await screen()
+            let verdict = Hosting.verdict(agent, expected: expected, aside: aside, screen: now)
+            return verdict == .unsent && undimmed && !Hosting.dialog(agent, screen: now) ? .taken : verdict
+        }
         var waited = 0.0
         for at in [0.0, 0.7, 2, 5] {
             try? await Task.sleep(for: .seconds(at - waited))
             waited = at
-            switch at == 0 ? .pressEnter : Hosting.verdict(agent, expected: expected, screen: await screen()) {
+            switch at == 0 ? .pressEnter : await verdict() {
             case .taken, .stop: return
             case .unsent: throw Failure(message: "It may not have been sent.")
             case .pressEnter:
                 guard await run(["send-keys", "-t", pane.pane, "Enter"], nil).status == 0 else { throw Failure(message: "It's typed in but wasn't sent.") }
             }
         }
-        if Hosting.verdict(agent, expected: expected, screen: await screen()) == .pressEnter { throw Failure(message: "It's typed in but wasn't sent.") }
+        if await verdict() == .pressEnter { throw Failure(message: "It's typed in but wasn't sent.") }
+    }
+
+    /// Clears the way past what the composer shows, with Claude Code's own stash (Ctrl+S, checked on 2.1.332): a draft
+    /// goes aside and Claude puts it back once the message is in. True when a draft was stashed. False when the key
+    /// changed nothing, so what shows is a placeholder drawn like text, as with colours off.
+    @MainActor private static func setAside(_ draft: String, press: (String) async -> Bool, screen: () async -> String) async throws(Failure) -> Bool {
+        let held = Failure(message: "The session's message field already holds a draft.")
+        func settled() async -> Hosting.Composer {
+            var shown = Hosting.Composer.text(draft)
+            for _ in 0..<10 where shown == .text(draft) {
+                try? await Task.sleep(for: .milliseconds(60))
+                shown = Hosting.composer(.claude, screen: await screen())
+            }
+            return shown
+        }
+        guard await press("C-s") else { throw held }
+        switch await settled() {
+        case .empty: return true
+        case .text(draft): return false
+        case .none: throw held
+        case .text:
+            // Nothing was typed and the key brought back a draft stashed earlier: it goes back where it was.
+            guard await press("C-s") else { throw held }
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .milliseconds(60))
+                if Hosting.composer(.claude, screen: await screen()) == .text(draft) { return false }
+            }
+            throw held
+        }
     }
 
 

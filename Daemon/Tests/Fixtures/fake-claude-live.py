@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """A stand-in for Claude Code that a headless host can run under tmux: it draws the prompt the way `Hosting` reads it,
-registers itself in ~/.claude/sessions/<pid>.json and writes its conversation to ~/.claude/projects/<slug>/<id>.jsonl, so
+registers itself in ~/.claude/sessions/<pid>.json and writes its conversation to ~/.claude/projects/<slug>/<id>.jsonl (appending to
+the one that is there when it resumes, or copying it under a new id with --fork-session), so
 `sidead` sees a live session, a transcript that grows and a status that goes busy and idle. It never talks to a model: a
 turn takes FAKE_CLAUDE_WORK seconds (default 1) and answers `Echo: <what was typed>`.
 
-    fake-claude-live.py [--resume ID] [other flags] [-- PROMPT]
+    fake-claude-live.py [--resume ID [--fork-session]] [other flags] [-- PROMPT]
 """
 import json
 import os
+import re
 import select
 import sys
 import time
@@ -18,13 +20,30 @@ from pathlib import Path
 WORK = float(os.environ.get("FAKE_CLAUDE_WORK", "1"))
 args = sys.argv[1:]
 first = args[args.index("--") + 1] if "--" in args and args.index("--") + 1 < len(args) else None
-session = args[args.index("--resume") + 1] if "--resume" in args and args.index("--resume") + 1 < len(args) else str(uuid.uuid4())
+resumed = args[args.index("--resume") + 1] if "--resume" in args and args.index("--resume") + 1 < len(args) else None
+forked = resumed is not None and "--fork-session" in args
+session = resumed if resumed and not forked else str(uuid.uuid4())
 cwd = os.getcwd()
 home = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 registry = home / "sessions" / f"{os.getpid()}.json"
-transcript = home / "projects" / cwd.replace("/", "-") / f"{session}.jsonl"
+# Claude Code names a project folder for its path with every character that is not a letter or digit made "-".
+transcript = home / "projects" / re.sub(r"[^a-zA-Z0-9]", "-", cwd) / f"{session}.jsonl"
 registry.parent.mkdir(parents=True, exist_ok=True)
 transcript.parent.mkdir(parents=True, exist_ok=True)
+original = transcript.parent / f"{resumed}.jsonl"
+if forked and original.exists():
+    # A fork starts with the conversation so far, as its own.
+    with open(original) as source, open(transcript, "w") as copy:
+        for line in source:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            copy.write(json.dumps({**entry, "sessionId": session}) + "\n")
+if os.environ.get("FAKE_CLAUDE_STARTS"):
+    # One line per start, so a test can tell what it was started with and how many times.
+    with open(os.environ["FAKE_CLAUDE_STARTS"], "a") as starts:
+        starts.write(json.dumps({"args": args, "cwd": cwd, "home": str(home)}) + "\n")
 
 echoed, buffer, busy_until, pending = [], "", 0.0, None
 

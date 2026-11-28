@@ -38,7 +38,6 @@ final class AppIconChoice {
     }
 }
 
-/// The chosen app icon drawn inside the app.
 struct AppIconArt: View {
     let side: CGFloat
 

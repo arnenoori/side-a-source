@@ -1,0 +1,11 @@
+{
+  "agent": "codex",
+  "commits": [],
+  "conversationID": "01a215c0-4e5f-7413-956c-ec930a79fa5a",
+  "from": {
+    "id": "5b3d4f687c2e91a0",
+    "name": "MacBook"
+  },
+  "id": "mv-000000000001",
+  "project": "session"
+}

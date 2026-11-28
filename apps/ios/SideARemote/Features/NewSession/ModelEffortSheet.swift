@@ -116,7 +116,6 @@ struct ModelEffortSheet: View {
         .focusRow(selected: selected, in: focus, reduceMotion: reduceMotion)
     }
 
-    /// The other agent under its own heading.
     private func otherSection(_ other: OtherAgent) -> some View {
         VStack(alignment: .leading, spacing: Space.xxs) {
             Text("Hand Off to \(other.agent.title)").font(.headline)

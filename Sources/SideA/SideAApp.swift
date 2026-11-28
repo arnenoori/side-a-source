@@ -20,6 +20,7 @@ struct SideAApp: App {
             store.startNotifications()
             store.island.start()
             store.remote.start()
+            ShellControl.begin(store)
             store.keepAwake.start()
             StallWatchdog.shared.start()
             AppCopies.offerMove()
@@ -40,14 +41,8 @@ struct SideAApp: App {
                 Button("Sessions") { store.openSessions() }.keyboardShortcut("s", modifiers: [.command, .shift])
                 Divider()
             }
-            CommandMenu("Player") {
-                Button("Use Selected Account on This Mac") { store.play() }.keyboardShortcut(.return, modifiers: .command)
-                Button("Previous Account") { store.step(-1) }.keyboardShortcut(.leftArrow, modifiers: .command)
-                Button("Next Account") { store.step(1) }.keyboardShortcut(.rightArrow, modifiers: .command)
-                Divider()
-                Button("Accounts…") { store.openLibrary() }.keyboardShortcut("l", modifiers: .command)
-                Button("Hold Controls") { store.held.toggle() }.keyboardShortcut("h", modifiers: [.command, .shift])
-            }
+            CommandMenu("Player") { PlayerMenu(store: store) }
+            CommandMenu("Session") { SessionMenu(store: store) }
         }
         Window("Sessions", id: "sessions") {
             SessionsWindow(store: store)

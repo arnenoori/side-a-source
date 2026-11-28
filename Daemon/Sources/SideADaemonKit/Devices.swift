@@ -21,6 +21,11 @@ public struct PairedDevice: Codable, Sendable, Equatable, Identifiable {
     public var capabilities: Set<Capability>?
     public let created: Double
     public var lastSeen: Double?
+    /// The host id of the linked computer that comes in as this device (`POST /v1/computers`); nil for a phone.
+    public var computer: String?
+
+    /// Paired as another computer running Side A, not as a phone (`Capability.computer` in its `DeviceInfo`).
+    public var isComputer: Bool { capabilities?.contains(.computer) == true || computer != nil }
 }
 
 /// The paired devices, kept in one 0600 file. A file that exists but can't be read leaves the list unavailable: nothing

@@ -100,6 +100,8 @@ final class AppRoot {
             #if DEBUG
             if let index = arguments.firstIndex(of: "--demo-macs"), index + 1 < arguments.count, arguments[index + 1] == "2" {
                 macs.append(.demoSecond())
+                DemoMoves.link(self)
+                DemoStandby.link(self)
             }
             if arguments.contains("--demo-stream") { DemoStream.start(model) }
             if arguments.contains("--demo-activity") { DemoActivity.start() }
@@ -196,6 +198,8 @@ final class AppRoot {
         } else {
             if macs.isEmpty { epoch += 1 }
             macs.append(.live(mac))
+            // A list still filtered to another computer would hide the one just paired.
+            shown = nil
         }
         macs.last?.link?.setForeground(true)
         for stale in macs where stale.macID != id && stale.tools.answersAs == id { forget(stale.macID) }

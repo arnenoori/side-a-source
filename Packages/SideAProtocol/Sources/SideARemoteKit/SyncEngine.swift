@@ -166,8 +166,7 @@ public actor SyncEngine {
     private var feeds: [SessionKey: TranscriptFeed] = [:]
     private var foreground = true
     private var viewing: SessionKey?
-    /// How many screens `watch` each session.
-    private var watchers: [SessionKey: Int] = [:]
+    private var watcherCount: [SessionKey: Int] = [:]
     private var run: Task<Void, Never>?
     var socket: (any SocketConnection)?
     private var waiting: Task<Void, Never>?
@@ -277,7 +276,7 @@ public actor SyncEngine {
 
     /// A transcript on screen: its feed, and presence saying it's the one being read. Each call needs its own `unwatch`.
     public func watch(_ session: SessionKey) async -> TranscriptFeed {
-        watchers[session, default: 0] += 1
+        watcherCount[session, default: 0] += 1
         let feed = transcript(session)
         await setViewing(session)
         return feed
@@ -286,11 +285,11 @@ public actor SyncEngine {
     /// The screen that called `watch` went away. The feed closes with the last screen on its session, and presence
     /// clears only if no other session took over in the meantime.
     public func unwatch(_ session: SessionKey) async {
-        let left = (watchers[session] ?? 1) - 1
-        watchers[session] = left > 0 ? left : nil
+        let left = (watcherCount[session] ?? 1) - 1
+        watcherCount[session] = left > 0 ? left : nil
         guard left <= 0 else { return }
         await feeds.removeValue(forKey: session)?.close()
-        if viewing == session, watchers[session] == nil { await setViewing(nil) }
+        if viewing == session, watcherCount[session] == nil { await setViewing(nil) }
     }
 
     public func transcript(_ session: SessionKey) -> TranscriptFeed {
@@ -324,7 +323,7 @@ public actor SyncEngine {
 
     private func unsubscribe(_ session: SessionKey) async {
         // Watched again while the last feed closed: the new one keeps the subscription.
-        guard watchers[session] == nil else { return }
+        guard watcherCount[session] == nil else { return }
         feeds[session] = nil
         if stored.connection.isLive { await send(.unsubscribe(sessions: [session])) }
     }
@@ -885,7 +884,6 @@ public actor SyncEngine {
         publish()
     }
 
-    /// Sends the state at most every `coalesce` seconds.
     private func publish() {
         recon.project()
         guard !flushing else { return }

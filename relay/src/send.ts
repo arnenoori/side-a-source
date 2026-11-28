@@ -73,15 +73,14 @@ export interface ContentState {
   tightestPercent?: number | null;
 }
 
-export interface LiveActivity extends Common {
+// The phone reports an activity's id after its start, so only an update or an end names one.
+export type LiveActivity = Common & {
   kind: 'liveactivity';
-  event: 'start' | 'update' | 'end';
-  activityId?: string;
   contentState: ContentState;
   staleDate?: number;
   dismissalDate?: number;
   relevance?: number;
-}
+} & ({ event: 'start'; activityId?: undefined } | { event: 'update' | 'end'; activityId: string });
 
 export type Send = Alert | Dismiss | LiveActivity;
 
@@ -90,7 +89,7 @@ export class Invalid extends Error {}
 function fail(message: string): never {
   throw new Invalid(message);
 }
-const isObject = (value: unknown): value is Record<string, unknown> =>
+export const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const isCount = (value: unknown, max = 10_000) => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= max;
 const isTime = (value: unknown) => isCount(value, 2 ** 32);
@@ -116,6 +115,23 @@ function contentState(value: unknown): ContentState {
   if (soonestReset != null && (typeof soonestReset !== 'number' || !Number.isFinite(soonestReset))) fail('contentState: soonestReset is a number');
   if (tightestPercent != null && !isCount(tightestPercent, 100)) fail('contentState: tightestPercent is 0-100');
   return value as unknown as ContentState;
+}
+
+function liveActivity(value: Record<string, unknown>, common: Common): LiveActivity {
+  only(value, ['devices', 'kind', 'event', 'activityId', 'contentState', 'staleDate', 'dismissalDate', 'relevance', 'priority', 'expiresIn'], 'liveactivity');
+  const { event, activityId, staleDate, dismissalDate, relevance } = value;
+  if (event !== 'start' && event !== 'update' && event !== 'end') return fail('event: start, update or end');
+  if (event === 'start' && activityId !== undefined) fail('activityId: the phone reports it after a start');
+  if (staleDate !== undefined && !isTime(staleDate)) fail('staleDate: unix seconds');
+  if (dismissalDate !== undefined && !isTime(dismissalDate)) fail('dismissalDate: unix seconds');
+  if (relevance !== undefined && !isCount(relevance, 100)) fail('relevance: 0-100');
+  const activity = {
+    ...common, kind: 'liveactivity' as const, contentState: contentState(value.contentState), staleDate: staleDate as number | undefined,
+    dismissalDate: dismissalDate as number | undefined, relevance: relevance as number | undefined,
+  };
+  if (event === 'start') return { ...activity, event };
+  if (typeof activityId !== 'string' || !OPAQUE.test(activityId)) return fail('activityId: required for update and end');
+  return { ...activity, event, activityId };
 }
 
 export function parseSend(value: unknown): Send {
@@ -148,21 +164,7 @@ export function parseSend(value: unknown): Send {
     if (typeof value.collapseId !== 'string' || !OPAQUE.test(value.collapseId)) fail('collapseId: an opaque id up to 64 characters');
     return { ...common, kind, collapseId: value.collapseId as string };
   }
-  if (kind === 'liveactivity') {
-    only(value, ['devices', 'kind', 'event', 'activityId', 'contentState', 'staleDate', 'dismissalDate', 'relevance', 'priority', 'expiresIn'], 'liveactivity');
-    const { event, activityId, staleDate, dismissalDate, relevance } = value;
-    if (event !== 'start' && event !== 'update' && event !== 'end') fail('event: start, update or end');
-    if (event !== 'start' && (typeof activityId !== 'string' || !OPAQUE.test(activityId))) fail('activityId: required for update and end');
-    if (event === 'start' && activityId !== undefined) fail('activityId: the phone reports it after a start');
-    if (staleDate !== undefined && !isTime(staleDate)) fail('staleDate: unix seconds');
-    if (dismissalDate !== undefined && !isTime(dismissalDate)) fail('dismissalDate: unix seconds');
-    if (relevance !== undefined && !isCount(relevance, 100)) fail('relevance: 0-100');
-    return {
-      ...common, kind, event: event as LiveActivity['event'], activityId: activityId as string | undefined,
-      contentState: contentState(value.contentState), staleDate: staleDate as number | undefined,
-      dismissalDate: dismissalDate as number | undefined, relevance: relevance as number | undefined,
-    };
-  }
+  if (kind === 'liveactivity') return liveActivity(value, common);
   return fail('kind: alert, dismiss or liveactivity');
 }
 

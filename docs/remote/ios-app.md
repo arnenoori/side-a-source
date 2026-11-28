@@ -1268,6 +1268,56 @@ that stays on the phone (`HandoffDrafts`, per session) until Send. Nothing reach
 - The session's row says "Handed off from Claude", and History nests the new conversation under
   the old one as it does a fork.
 
+**Move to another computer.** With `moves` on the host and `move` in the session's abilities
+([protocol](protocol.md#moving-a-session-from-the-phone), design in
+[moving-sessions-prd.md](../moving-sessions-prd.md)). **Move to…** sits in the row's context menu
+and the session's `⋯` Session section.
+- A sheet (`[.medium, .large]`) lists the host's computers (`GET /v1/computers`) as an inline
+  picker when there is more than one, then the preview's facts as plain rows: Folder (the other
+  computer's home as `~`), Mode when it changes, and "Signs Mac mini in to Work" (`sent`) or "Runs
+  on Mac mini's own account" (`other`). A `move_refused` preview shows its sentence and Move stays
+  off. **Move** (`.confirmationAction`, `.glassProminent`) signs `moveSession` with the Face ID key
+  only; the sheet then shows "Moving to Mac mini…" while `GET /v1/moves` is read every 2 seconds
+  (at most 3 minutes).
+- A working session (`moves.when`, whose host gives it `move` while its turn runs): the sheet adds a
+  segmented **After This Turn** | **Now**, After This Turn first, and under Now the one sentence
+  "Now interrupts its turn, so the tool call in progress is cut off." One waiting on an answer can
+  only go after its turn, so the sheet shows "When: After This Turn" instead. The preview is asked
+  for the chosen `when` and the signed move carries it (the signature covers it); an idle session
+  sends no `when`. A host without `moves.when` is asked exactly as before, and Move is not offered
+  there for a working session. Now is `moving` from the start and goes on as above.
+- After This Turn answers `waiting`. Left open, the sheet says "Moves to Mac mini after this turn"
+  with **Cancel Move**, then follows the move to the other computer. The session stays where it is
+  and usable: not a Moved row, its row's third line says "Moves to Mac mini after this turn" (tint,
+  `desktopcomputer.and.arrow.down`), its context menu and `⋯` offer **Cancel Move to Mac mini** in
+  place of Move to… (also a VoiceOver action), and its conversation shows the same line under the
+  field with **Cancel**. Cancel is `DELETE /v1/moves/{id}`: 204 drops it, 409 (it started) and 404
+  (it is over) read `GET /v1/moves` again instead of showing an error. Once the session stops
+  working the list is read every 2 seconds until the host sends it; from `moving` on it is the move
+  above, and a conversation that showed it waiting opens on the other computer when it lands there.
+- Once the record is `away`: on a computer this phone is paired with, the sheet closes and the
+  session opens there as soon as that host lists it (by the record's hosted name, else the
+  conversation), carrying the unsent text into its field. Otherwise it says "On Mac mini" and
+  offers nothing more. `unknown`, or `outcome_unknown` on the move itself, reads "It may be
+  running on Mac mini" with **Check Again** (`POST /v1/moves/{id}/check`, or the list again).
+- On the computer it left: a **Moved** section under the list, dimmed rows "Moving to Mac mini…",
+  "On Mac mini" with **Open** (paired) or "May be running on Mac mini" with **Check Again**. While
+  it moves its own row gives way to that one; once the host lists the conversation again the row
+  goes. Its conversation page replaces the field with the same line and button. The list reads
+  `GET /v1/moves` when its sessions change, when the app comes to the front, and on pull to refresh.
+- Bringing it back is the same Move from the other computer. `--demo --demo-macs 2` links the two
+  demo Macs this way; a working demo session goes After This Turn when its demo turn ends, 8
+  seconds later, or Now at once.
+- On a standby (`standby`; [protocol](protocol.md#standby-checkpoints-kept-on-another-computer),
+  design in the PRD's 4.8 "Pick up"): a **Checkpoints** section under the list, read from
+  `GET /v1/standby` on the same occasions as the moves. Each row has the title, "From MacBook", the
+  checkpoint's age and **Continue as a Copy…**, which asks first with the one sentence that matters
+  ("If MacBook is still running this session, both will work, and anything they do outside the
+  repository happens twice."), then signs `copyStandby` with the Face ID key only. While the host
+  starts it the row shows progress; the copy, a fork with its own conversation, then opens as a
+  started session does, once this host lists its hosted name. A `move_refused` shows its sentence.
+  The demo's Mac mini keeps one checkpoint of the MacBook Pro's LAN mode session.
+
 **Steer without typing.** Send a Message…, Stop Before Next Step, Take Back; every session, hosted
 or not, gated by `abilities`. The phone never shows the mail metaphor: a note on the wire is a
 message waiting for the next step on screen.
@@ -1340,8 +1390,8 @@ message waiting for the next step on screen.
 |---|---|---|---|
 | Needs you | Allow (non-destructive only, full swipe off) | Open Terminal (hosted) | Open, Answer…, Open Terminal |
 | Working | Message | Stop (Take Back while a message waits) | Send a Message…, Stop Before Next Step, Interrupt Now, Take Back · Preview :port, Stop Server…, Quit Session… · Restart Fresh… · Open Terminal, Copy Session ID |
-| Ready | Reply | Quit | Reply, Fork · Restart Fresh… · Quit Session… |
-| Idle | Continue on iPhone | Quit | Continue on iPhone, Restart Fresh…, Quit Session…, Pin, Rename… |
+| Ready | Reply | Quit | Reply, Fork · Move to…, Restart Fresh… · Quit Session… |
+| Idle | Continue on iPhone | Quit | Continue on iPhone, Move to…, Restart Fresh…, Quit Session…, Pin, Rename… |
 | Idle fold row | none | Quit Idle | Quit Idle… |
 
 Every context menu has the last assistant message as its preview.

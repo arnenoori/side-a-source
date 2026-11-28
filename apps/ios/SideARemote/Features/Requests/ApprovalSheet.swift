@@ -13,6 +13,8 @@ struct ApprovalSheet: View {
     @State private var denies = 0
     @State private var failures = 0
     @State private var settled = 0
+    /// The last request was answered here and the sheet is closing: nothing was answered elsewhere.
+    @State private var leaving = false
     @State private var forward = true
     static var felt: Set<RequestID> = []
     @State private var feedback: String?
@@ -61,7 +63,7 @@ struct ApprovalSheet: View {
                 content(whole[shown.id] ?? shown)
                     .id(shown.id)
                     .transition(reduceMotion ? .opacity : .push(from: forward ? .trailing : .leading))
-            } else {
+            } else if !leaving {
                 answeredElsewhere
             }
         }
@@ -325,6 +327,7 @@ struct ApprovalSheet: View {
         if case .deny = answer { denies += 1 } else { allows += 1 }
         Self.felt.insert(request.id)
         current = Self.next(after: request.id, in: open)
+        leaving = open.allSatisfy { $0.id == request.id }
         model.requests.answer(request.id, answer, mode: mode, confirm: confirm)
         if open.isEmpty { dismiss() }
     }

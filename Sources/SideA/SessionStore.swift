@@ -216,7 +216,7 @@ final class SessionStore {
     }
     private(set) var mailAt: [Int: Double] = [:]
     var noting: LiveSession?
-    var drafts: [String: String] = [:]
+    var drafts: [String: String] = [:] { didSet { desk.saved?.changed(drafts) } }
     var outcomes: [String: ComposerOutcome] = [:]
     var attachments: [String: [Upload]] = [:]
     /// Each agent's commands and skills, for the composer's suggestions; read again at most every half minute.
@@ -234,7 +234,7 @@ final class SessionStore {
     var showsSections: Bool { !filtered && !searching }
     var searching: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
     var finding = false
-    var focusSearch = 0
+    var focusSearch = 0; let desk = SessionDesk()
     var showArchived = false
     var renaming: SessionInfo?
     /// Names and archiving are Side A's own; Claude Code's and Codex's files are never written.
@@ -308,7 +308,7 @@ final class SessionStore {
         shutdown?.cancel()
         warm()
         let home = FileManager.default.homeDirectoryForCurrentUser
-        watcher = FolderWatcher(folders: [".claude/projects", ".claude/sessions", ".codex/sessions"].map { home.appendingPathComponent($0) }) { [weak self] paths in
+        watcher = FolderWatcher(folders: [".claude/projects", ".claude/sessions", ".codex/sessions"].map { home.appendingPathComponent($0) } + [store.root.appendingPathComponent("codex-conversations")]) { [weak self] paths in
             self?.filesChanged(paths)
         }
         loop = Task { [weak self] in
@@ -385,7 +385,7 @@ final class SessionStore {
         // A transcript feeds the live row of the session writing it; Codex has no registry, so its rollouts are how
         // a new one shows up.
         let ids = Set(live.compactMap(\.sessionID))
-        if !registry, batch.contains(where: { path in path.contains("/.codex/sessions/") || ids.contains { path.contains($0) } }) {
+        if !registry, batch.contains(where: { path in Self.rollout(path) || ids.contains { path.contains($0) } }) {
             await refreshLive()
         }
         if await index(paths: Array(batch)) == -1 {
@@ -638,10 +638,10 @@ final class SessionStore {
                     ports: [.init(port: 3000, pid: 90011, command: "node"), .init(port: 5173, pid: 90012, command: "node"), .init(port: 9229, pid: 90011, command: "node")]),
         LiveSession(pid: 90002, sessionID: "demo-2", name: nil, title: "Fix the flaky upload test", cost: 0.9, cwd: "/Users/demo/api",
                     status: "busy", waitingFor: nil, since: Date().timeIntervalSince1970, activity: "Running pytest -k upload", context: 41_000,
-                    flag: .init(kind: "loop", text: "Repeated the same step 3 times")),
+                    flag: .init(kind: .loop, text: "Repeated the same step 3 times")),
         LiveSession(pid: 90003, sessionID: "demo-3", name: nil, title: "Migrate the billing tables", cost: 7.1, cwd: "/Users/demo/billing",
                     status: "idle", waitingFor: nil, since: Date().timeIntervalSince1970, context: 182_000,
-                    flag: .init(kind: "bloated", text: "Context is 182k tokens")),
+                    flag: .init(kind: .bloated, text: "Context is 182k tokens")),
         LiveSession(pid: 90004, sessionID: "demo-4", name: nil, title: "Add the export endpoint", cost: nil, cwd: "/Users/demo/api",
                     status: "busy", waitingFor: nil, since: Date().timeIntervalSince1970, activity: "Running npm test", agent: "codex"),
         LiveSession(pid: 90005, sessionID: "demo-5", name: nil, title: "Review the onboarding copy", cost: nil, cwd: "/Users/demo/web",
@@ -961,12 +961,12 @@ final class SessionStore {
         let ids = searching ? results.map(\.id) : sections + groups.flatMap { $0.rows.map(\.session.id).filter { !done.contains($0) } }
         guard !ids.isEmpty else { return }
         let next = selectedID.flatMap { ids.firstIndex(of: $0) }.map { min(max($0 + delta, 0), ids.count - 1) } ?? 0
-        open(ids[next], at: searching ? results[next].snippets?.first?.uuid : nil)
+        desk.steppedTo = ids[next]; open(ids[next], at: searching ? results[next].snippets?.first?.uuid : nil)
         if ids.indices.contains(next + delta) { prefetch(ids[next + delta], at: searching ? results[next + delta].snippets?.first?.uuid : nil) }
     }
 
     static func command(_ session: SessionInfo, fork: Bool) -> String {
-        let resume = session.isCodex ? "codex resume \(session.id)" : "claude --resume \(session.id)" + (fork ? " --fork-session" : "")
+        let resume = session.isCodex ? "codex \(fork ? "fork" : "resume") \(session.id)" : "claude --resume \(session.id)" + (fork ? " --fork-session" : "")
         return session.cwd.map { "cd \(Shell.quote($0)) && \(resume)" } ?? resume
     }
 
@@ -1072,12 +1072,12 @@ final class SessionStore {
 
     private func legacyResume(_ session: SessionInfo, fork: Bool, in app: TerminalApp) {
         Sounds.play(.spinUp)
-        let resume = session.isCodex ? "codex resume \(session.id)" : "claude --resume \(session.id)" + (fork ? " --fork-session" : "")
+        let resume = session.isCodex ? "codex \(fork ? "fork" : "resume") \(session.id)" : "claude --resume \(session.id)" + (fork ? " --fork-session" : "")
         open(Self.command(session, fork: fork), bare: resume, cwd: session.cwd, in: app, file: "resume-\(session.id.prefix(8))")
     }
 
     /// A new tab running `command`. Warp starts in `cwd` and runs `bare`; Terminal runs a .command file.
-    private func open(_ command: String, bare: String, cwd: String?, in app: TerminalApp, file: String) {
+    func open(_ command: String, bare: String, cwd: String?, in app: TerminalApp, file: String) {
         switch app {
         case .ghostty:
             osascript("""

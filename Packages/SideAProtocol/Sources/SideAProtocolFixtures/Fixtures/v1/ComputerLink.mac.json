@@ -1,0 +1,19 @@
+{
+  "deviceID": "AAECAwQFBgcICQoLDA0ODw",
+  "deviceSecret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "endpoints": {
+    "name": "macbook.example.ts.net:47800",
+    "tailnet": "100.101.12.4:47800"
+  },
+  "mac": {
+    "id": "5b3d4f687c2e91a0",
+    "name": "MacBook"
+  },
+  "relay": {
+    "installID": "Zm9vYmFyYmF6cXV4MTIzNA",
+    "keyID": "AQIDBA",
+    "url": "https://push.example.com"
+  },
+  "serverKeyHash": "q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA",
+  "token": "sa1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+}

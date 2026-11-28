@@ -40,6 +40,20 @@ def has_launcher():
     return DARWIN
 
 
+def exited(pid):
+    """Whether `pid` has ended but its parent has yet to reap it, which `kill(pid, 0)` cannot tell from running. tmux 3.4,
+    the oldest Linux hosting supports, can leave a remain-on-exit pane's process so until another of its children ends,
+    and an agent that quit there would read as running. A Mac's tmux reaps it, and has no /proc to read."""
+    if not LINUX:
+        return False
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            # The name in parentheses may itself hold spaces and parentheses; the state follows the last one.
+            return stat.read().rsplit(")", 1)[1].split()[0] in ("Z", "X")
+    except (OSError, IndexError):
+        return False
+
+
 def system_terminfo():
     return ["/usr/share/terminfo"] if DARWIN else ["/usr/share/terminfo", "/lib/terminfo", "/etc/terminfo"]
 

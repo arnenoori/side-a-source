@@ -2,9 +2,11 @@ import importlib.util
 import os
 from pathlib import Path
 import pty
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -129,6 +131,15 @@ class LauncherTests(unittest.TestCase):
             time.sleep(0.1)
         self.fail(f'{path.name} never appeared')
 
+    def test_warm_starts_the_server_with_no_session_and_is_safe_to_repeat(self):
+        self.assertNotEqual(subprocess.run([TMUX, '-S', self.socket, 'show', '-s', 'exit-empty'], capture_output=True, check=False).returncode, 0)
+        for _ in range(2):
+            warmed = self.run_launcher('warm')
+            self.assertEqual((warmed.returncode, warmed.stdout), (0, ''), warmed.stderr)
+        # Up, configured (a server without the config would exit when empty), and holding nothing.
+        self.assertIn('exit-empty off', self.tmux('show', '-s', 'exit-empty'))
+        self.assertEqual(self.tmux('list-sessions'), '')
+
     def test_host_passes_arguments_and_prompt_exactly_and_records_metadata(self):
         prompt = self.root / 'runtime/p.txt'
         prompt.write_text('Fix it; then "explain" $HOME\nsecond line')
@@ -245,6 +256,64 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(self.tmux('list-clients', '-F', '#{session_name}').strip(), name)
         finally:
             os.kill(pid, 9); os.waitpid(pid, 0); os.close(fd)
+
+    def fake_app(self, replies):
+        """The app's socket (Sources/SideA/ShellControl.swift): each request answered from `replies`, then closed."""
+        folder = self.root / 'runtime/cli'
+        folder.mkdir(mode=0o700)
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(folder / 'app.sock'))
+        listener.listen(4)
+        listener.settimeout(0.2)
+        done = threading.Event()
+        asked = []
+
+        def serve():
+            while not done.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except socket.timeout:
+                    continue
+                with connection:
+                    connection.settimeout(10)
+                    line = connection.makefile('rb').readline().decode().rstrip('\n')
+                    asked.append(line)
+                    connection.sendall((replies.get(line, 'no Side A doesn\'t take that request.') + '\n').encode())
+        serving = threading.Thread(target=serve)
+        serving.start()
+        self.addCleanup(listener.close)
+        self.addCleanup(serving.join)
+        self.addCleanup(done.set)
+        return asked
+
+    def test_sidea_reaches_a_linked_computers_session_through_the_app(self):
+        remote = self.root / 'runtime/sidea-remote'
+        remote.write_text('#!/bin/zsh -f\nprint -r -- "joined $1"\n')
+        remote.chmod(0o700)
+        target = 'sa-web-0001@Mac mini'
+        closed = self.run_launcher('attach', target)
+        self.assertEqual((closed.returncode, closed.stdout, closed.stderr), (69, '', "Side A isn't running. Open it, then try again.\n"))
+        name = self.run_launcher('host', 'claude', '--detach').stdout.strip()
+        alone = self.run_launcher('ls', '--all')
+        self.assertEqual((alone.returncode, alone.stdout.split()[0], alone.stderr.strip()), (69, name, "Side A isn't running. Open it, then try again."))
+
+        asked = self.fake_app({f'attach {target}': 'ok /x/linked/1a2b',
+                               'attach sa-gone-0000@Mac mini': 'no No session called sa-gone-0000 is running on Mac mini.',
+                               'list': "ok\nsa-web-0001@Mac mini  claude  /code/web\n! MacBook can't be reached."})
+        joined = self.run_launcher('attach', target)
+        self.assertEqual((joined.returncode, joined.stdout, joined.stderr), (0, 'joined /x/linked/1a2b\n', ''))
+        gone = self.run_launcher('attach', 'sa-gone-0000@Mac mini')
+        self.assertEqual((gone.returncode, gone.stdout, gone.stderr), (1, '', 'No session called sa-gone-0000 is running on Mac mini.\n'))
+        listed = self.run_launcher('ls', '--all')
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual(listed.stdout.splitlines()[1:], ['sa-web-0001@Mac mini  claude  /code/web'])
+        self.assertTrue(listed.stdout.startswith(f'{name}  claude  '), listed.stdout)
+        self.assertEqual(listed.stderr, "MacBook can't be reached.\n")
+        # Plain ls, and attach without a computer, stay on this Mac.
+        self.assertEqual(self.run_launcher('ls').stdout.split()[0], name)
+        broken = self.run_launcher('attach', 'sa-web-0001\n@Mac mini')
+        self.assertEqual((broken.returncode, broken.stderr), (64, "A name can't have a line break in it.\n"))
+        self.assertEqual(asked, [f'attach {target}', 'attach sa-gone-0000@Mac mini', 'list'])
 
 
 class HostTerminalTests(unittest.TestCase):

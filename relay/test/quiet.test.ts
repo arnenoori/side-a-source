@@ -11,7 +11,6 @@ const MINUTE = 60_000;
 const upgrade = { upgrade: 'websocket' };
 const object = (mac: Mac) => env.INSTALLS.get(env.INSTALLS.idFromName(mac.installId));
 
-// A thing a test expects to be there, or a failed test when it isn't.
 function need<T>(value: T | null | undefined, what: string): T {
   if (value === null || value === undefined) throw new Error(`expected ${what}`);
   return value;
@@ -21,7 +20,6 @@ type Goodbye = { type: 'goodbye'; reason: string };
 type Say = { type: 'watch' } | Goodbye;
 type TunnelRow = { up: number; since: number; watch: number; goodbye: string | null; goodbye_at: number | null; alerted: number };
 
-// The Mac's end of its tunnel socket.
 async function connect(mac: Mac, say: Say[] = [{ type: 'watch' }]) {
   const response = await call(await signed(mac, 'GET', '/v1/tunnel/mac', undefined, { headers: upgrade }));
   const ws = need(response.webSocket, 'a websocket upgrade');

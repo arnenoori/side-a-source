@@ -262,7 +262,7 @@ struct AccountUsageRow: View {
     }
 
     private var caption: String? {
-        guard account.ready else { return store.signingIn.contains(account.id) ? nil : "Not signed in" }
+        guard account.ready else { return store.signingIn.contains(account.id) ? nil : (store.remote.moves.away(account.id) ?? "Not signed in") }
         if let issue = store.issueText(account.id) { return issue }
         guard let usage = store.usage[account.id] else { return "Reading…" }
         if usage.stale { return "Sign in again" }

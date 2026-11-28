@@ -90,7 +90,7 @@ public actor SessionBridge {
 
     private func start() throws -> Process {
         if let process { return process }
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let process = Process()
         process.executableURL = URL(fileURLWithPath: location.python)
         process.arguments = [location.script, "--root", root.path, "sessions", "serve"]

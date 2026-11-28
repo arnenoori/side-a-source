@@ -1,4 +1,5 @@
 import SideAProtocol
+import SideASessionKit
 import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
@@ -78,7 +79,7 @@ struct SessionsView: View {
                     if let searchHistory { Button("Search History") { searchHistory(query) }.buttonStyle(.glassProminent) }
                 }
             } else if everyMac {
-                if root.macs.allSatisfy({ $0.sessions.sessions.isEmpty && $0.tools.unlisted(in: []).isEmpty && $0.mac.shown == .live }) {
+                if root.macs.allSatisfy({ $0.sessions.sessions.isEmpty && $0.tools.unlisted(in: []).isEmpty && $0.movedRows.isEmpty && $0.standbyRows.isEmpty && $0.mac.shown == .live }) {
                     ContentUnavailableView {
                         Label { Text("No sessions running") } icon: { DiscGlyph(size: 44) }
                     } actions: {
@@ -97,7 +98,7 @@ struct SessionsView: View {
             } else if case .offline(let reason) = model.mac.shown, reason.needsPairing, model.sessions.sessions.isEmpty {
                 PairAgainView(reason: reason, mac: model.mac.name)
                     .background(Color(.systemGroupedBackground))
-            } else if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.mac.shown == .live {
+            } else if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.movedRows.isEmpty, model.standbyRows.isEmpty, model.mac.shown == .live {
                 ContentUnavailableView {
                     Label { Text("No sessions running") } icon: { DiscGlyph(size: 44) }
                 } actions: {
@@ -129,6 +130,7 @@ struct SessionsView: View {
                     }
                 }
             }
+            for mac in root.visible { await mac.tools.loadMoves() }
         }
         .sheet(item: $showsMac) { pick in
             if let mac = root.model(for: pick.id) { MacSheet().environment(mac) }
@@ -154,6 +156,7 @@ struct SessionsView: View {
         return root.visible.allSatisfy { mac in
             !mac.sessions.sessions.contains { mac.sessions.matches($0, query) }
                 && !mac.tools.unlisted(in: mac.sessions.sessions).contains { MacSessions.matches($0, query, prompt: mac.transcripts.firstPrompts[$0.name]?.text) }
+                && !mac.movedRows.contains { MovedSection.matches($0, query) } && !mac.standbyRows.contains { StandbySection.matches($0, query) }
         }
     }
 }
@@ -178,13 +181,13 @@ private struct MacSessions: View {
     }
 
     private func shown(_ session: RemoteSession) -> Bool {
-        !model.tools.isPinned(session) && model.tools.snooze(of: session) == nil && model.sessions.matches(session, query)
+        !model.tools.isPinned(session) && model.tools.snooze(of: session) == nil && model.sessions.matches(session, query) && !model.tools.moves.isLeaving(session)
     }
 
     var body: some View {
         if header {
             Section {
-                if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.mac.shown == .live {
+                if model.sessions.sessions.isEmpty, model.tools.unlisted(in: []).isEmpty, model.movedRows.isEmpty, model.standbyRows.isEmpty, model.mac.shown == .live {
                     Text("No sessions running").foregroundStyle(.secondary)
                 }
             } header: {
@@ -225,16 +228,18 @@ private struct MacSessions: View {
         }
         idleSection
         snoozedSection
+        MovedSection(query: query)
+        StandbySection(query: query)
     }
 
     private var pinned: [RemoteSession] {
         [SessionPhase.needsYou, .working, .ready, .idle].flatMap { model.sessions.sorted(model.sessions.rows($0)) }
-            .filter { model.tools.isPinned($0) && model.tools.snooze(of: $0) == nil && model.sessions.matches($0, query) }
+            .filter { model.tools.isPinned($0) && model.tools.snooze(of: $0) == nil && model.sessions.matches($0, query) && !model.tools.moves.isLeaving($0) }
     }
 
     @ViewBuilder private var snoozedSection: some View {
         let snoozed = [SessionPhase.working, .ready, .idle].flatMap { model.sessions.sorted(model.sessions.rows($0)) }
-            .filter { model.tools.snooze(of: $0) != nil && model.sessions.matches($0, query) }
+            .filter { model.tools.snooze(of: $0) != nil && model.sessions.matches($0, query) && !model.tools.moves.isLeaving($0) }
         if !snoozed.isEmpty {
             Section {
                 DisclosureGroup(isExpanded: searching ? .constant(true) : $snoozedExpanded) {
@@ -454,7 +459,6 @@ struct MacChip: View {
             // an overflow menu; the name gives way instead.
             .frame(maxWidth: sidebarSelection == nil ? nil : 150, alignment: .leading)
         }
-        // As the bar's own buttons do, past the largest standard size the chip stays put.
         .chipTypeSize()
         .task(id: mac.state == .connecting) {
             slow = false

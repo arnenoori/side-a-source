@@ -8,8 +8,10 @@ import Testing
 @testable import SideADaemonKit
 
 /// A relay in a few lines: the REST calls answer 200 and are recorded, `/v1/tunnel/mac` upgrades to a WebSocket the test
-/// drives, and a second port plays the phone side, splicing each TCP connection to a tunnel stream. It checks nothing about
-/// signatures (relay/test does that); it proves what the daemon does with what a relay sends.
+/// drives, and a second port plays the phone side, splicing each TCP connection to a tunnel stream. `/v1/tunnel/phone`
+/// takes a device's `d1` credential, checked against the last device list the Mac side sent, and carries its frames as
+/// the relay does, each socket in its own slot. It checks nothing about signatures (relay/test does that); it proves what
+/// the daemon does with what a relay sends.
 final class StubRelay: @unchecked Sendable {
     struct Call { let method: String; let path: String; let body: Data; let authorization: String? }
 
@@ -25,7 +27,16 @@ final class StubRelay: @unchecked Sendable {
     private var phone: Channel?
     private(set) var connections = 0
     var refuseWith: Int?
+    /// WebSocket phones, by slot; numbered from 100 so they never meet the TCP phone side's streams, which are slot 1.
+    private var phoneSockets: [UInt32: Channel] = [:]
+    private var nextSlot: UInt32 = 100
+    private var fromPhones_: [TunnelFrame] = []
+    private var phoneUpgrades_ = 0
+    var phoneUpgrades: Int { lock.withLock { phoneUpgrades_ } }
+    /// Frames phones sent through `/v1/tunnel/phone`, as the Mac side got them.
+    var fromPhones: [TunnelFrame] { lock.withLock { fromPhones_ } }
 
+    // swiftlint:disable:next force_unwrapping -- a loopback URL built from a port always parses.
     var url: URL { URL(string: "http://127.0.0.1:\(httpPort)")! }
     private(set) var httpPort = 0
     private(set) var phonePort = 0
@@ -44,8 +55,11 @@ final class StubRelay: @unchecked Sendable {
     }
 
     func shutdown() {
+        // swiftlint:disable:next swallowed_try -- shutting a test relay down.
         try? http?.close().wait()
+        // swiftlint:disable:next swallowed_try -- shutting a test relay down.
         try? phone?.close().wait()
+        // swiftlint:disable:next swallowed_try -- shutting a test relay down.
         try? group.syncShutdownGracefully()
     }
 
@@ -61,12 +75,18 @@ final class StubRelay: @unchecked Sendable {
 
     func dropSocket() { lock.withLock { sockets.last }?.close(promise: nil) }
 
-    // Called by the handlers.
     fileprivate func record(_ call: Call) { lock.withLock { calls_.append(call) } }
     fileprivate func attach(_ socket: Channel) { lock.withLock { sockets.append(socket); connections += 1 } }
     fileprivate func text(_ text: String) { lock.withLock { texts_.append(text) } }
     fileprivate func binary(_ data: Data) {
         guard let frame = TunnelFrame(data) else { return }
+        if frame.stream >> 16 >= 100 {
+            // To a phone's socket, in its own numbering.
+            let socket = lock.withLock { frames_[frame.stream, default: []].append(frame); return phoneSockets[frame.stream >> 16] }
+            let out = TunnelFrame(frame.kind, frame.stream & 0xffff, frame.payload)
+            socket?.writeAndFlush(ByteBuffer(bytes: WebSocketFrames.frame(.binary, out.encoded, from: .server)), promise: nil)
+            return
+        }
         let channel: Channel? = lock.withLock { frames_[frame.stream, default: []].append(frame); return phones[frame.stream] }
         switch frame.kind {
         case .data: channel?.writeAndFlush(ByteBuffer(bytes: frame.payload), promise: nil)
@@ -83,13 +103,52 @@ final class StubRelay: @unchecked Sendable {
 
     func framesReceived(_ kind: TunnelFrame.Kind) -> [TunnelFrame] { lock.withLock { frames_.values.flatMap { $0 }.filter { $0.kind == kind } } }
 
+    /// A phone socket's slot, or nil to refuse it: the credential names the install connected here and a device, with
+    /// its secret, that the Mac side's last device list holds.
+    fileprivate func phoneSocket(_ channel: Channel, authorization: String?) -> UInt32? {
+        lock.withLock {
+            guard let authorization, authorization.hasPrefix("Bearer d1.") else { return nil }
+            let parts = authorization.dropFirst("Bearer d1.".count).split(separator: ".").map(String.init)
+            guard parts.count == 3, parts[0].count == 22, parts[1].count == 22, let secret = Data(base64URL: parts[2]), secret.count == 32,
+                  let install = calls_.last(where: { $0.path == "/v1/tunnel/mac" })?.authorization, install.contains("install=\(parts[0]),"),
+                  let devices = texts_.last(where: { $0.contains("\"devices\"") }), devices.contains(parts[1]),
+                  devices.contains(Data(SHA256.hash(data: secret)).base64URL) else { return nil }
+            nextSlot += 1
+            phoneSockets[nextSlot] = channel
+            phoneUpgrades_ += 1
+            return nextSlot
+        }
+    }
+
+    fileprivate func macOnline() -> Bool { lock.withLock { sockets.last?.isActive == true } }
+
+    fileprivate func fromPhone(_ slot: UInt32, _ data: Data) {
+        guard let frame = TunnelFrame(data), (1...0xffff).contains(frame.stream) else { return }
+        let id = slot << 16 | frame.stream
+        let out = frame.kind == .open ? TunnelFrame(.open, id, Data(#"{"device":"phone"}"#.utf8)) : TunnelFrame(frame.kind, id, frame.payload)
+        lock.withLock { fromPhones_.append(out) }
+        send(out)
+    }
+
+    fileprivate func phoneGone(_ slot: UInt32) {
+        guard lock.withLock({ phoneSockets.removeValue(forKey: slot) }) != nil else { return }
+        sendText(#"{"type":"gone","slot":\#(slot)}"#)
+    }
+
     private final class HTTPSide: ChannelInboundHandler, @unchecked Sendable {
         typealias InboundIn = ByteBuffer
         let owner: StubRelay
         var buffer = Data()
         var upgraded = false
+        /// Set when this connection is a phone's tunnel socket.
+        var slot: UInt32?
         var parser = WebSocketFrames(role: .server, maxMessage: 1 << 20, strict: false)
         init(owner: StubRelay) { self.owner = owner }
+
+        func channelInactive(context: ChannelHandlerContext) {
+            if let slot { owner.phoneGone(slot) }
+            context.fireChannelInactive()
+        }
 
         func channelRead(context: ChannelHandlerContext, data: NIOAny) {
             let bytes = Data(unwrapInboundIn(data).readableBytesView)
@@ -119,6 +178,18 @@ final class StubRelay: @unchecked Sendable {
                     if !rest.isEmpty { frames(rest, context) }
                     return
                 }
+                if path == "/v1/tunnel/phone", let key = fields["sec-websocket-key"] {
+                    guard let slot = owner.phoneSocket(context.channel, authorization: fields["authorization"]) else {
+                        context.writeAndFlush(wrap("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"), promise: nil)
+                        return context.close(promise: nil)
+                    }
+                    upgraded = true
+                    self.slot = slot
+                    context.writeAndFlush(wrap("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(WebSocketFrames.acceptKey(key))\r\n\r\n"), promise: nil)
+                    context.writeAndFlush(wrap(frameBytes(.text, Data(#"{"type":"mac","online":\#(owner.macOnline())}"#.utf8))), promise: nil)
+                    if !rest.isEmpty { frames(rest, context) }
+                    return
+                }
                 let answer: String
                 if path == "/v1/send", let sent = try? JSONSerialization.jsonObject(with: body) as? [String: Any], let devices = sent["devices"] as? [String] {
                     let results = devices.map { "{\"device\":\"\($0)\",\"result\":\"ok\"}" }.joined(separator: ",")
@@ -137,9 +208,10 @@ final class StubRelay: @unchecked Sendable {
                 switch frame.opcode {
                 case .text:
                     let text = String(decoding: frame.payload, as: UTF8.self)
-                    owner.text(text)
+                    if slot == nil { owner.text(text) }
                     if text == "ping" { context.writeAndFlush(wrap(frameBytes(.text, Data("pong".utf8))), promise: nil) }
-                case .binary: owner.binary(frame.payload)
+                case .binary:
+                    if let slot { owner.fromPhone(slot, frame.payload) } else { owner.binary(frame.payload) }
                 case .ping: context.writeAndFlush(wrap(frameBytes(.pong, frame.payload)), promise: nil)
                 default: break
                 }
@@ -182,6 +254,7 @@ private func withRelay<T>(_ stub: StubRelay, _ body: (SideADaemon, URL) async th
         try await daemon.stop()
         return result
     } catch {
+        // swiftlint:disable:next swallowed_try -- the test's own error is the one to report.
         try? await daemon.stop()
         throw error
     }
@@ -284,7 +357,6 @@ private func withRelay<T>(_ stub: StubRelay, _ body: (SideADaemon, URL) async th
         #expect(payload.t == PushKind.finished.rawValue && payload.title == "Refactor" && payload.turnID == "turn-1")
         #expect(!String(decoding: sent.body, as: UTF8.self).contains("Refactor"))
 
-        // The phone's test button.
         let test = try await connection.request("POST", "/v1/diagnostics/push", headers: headers.merging(["Idempotency-Key": "p-2"]) { $1 }, body: Data("{}".utf8))
         #expect(test.status == 200)
         let diagnostic = try test.json(DiagnosticPush.self)

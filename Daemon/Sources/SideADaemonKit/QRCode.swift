@@ -179,7 +179,7 @@ public struct QRCode: Sendable {
         mutating func set(_ x: Int, _ y: Int, _ dark: Bool) { modules[y][x] = dark; isFunction[y][x] = true }
 
         mutating func drawFunctionPatterns(level: Level, mask: Int) {
-            for index in 0..<size { set(6, index, index % 2 == 0); set(index, 6, index % 2 == 0) }
+            for index in 0..<size { set(6, index, index.isMultiple(of: 2)); set(index, 6, index.isMultiple(of: 2)) }
             drawFinder(3, 3); drawFinder(size - 4, 3); drawFinder(3, size - 4)
             let positions = alignmentPositions()
             for (row, y) in positions.enumerated() {
@@ -269,14 +269,14 @@ public struct QRCode: Sendable {
                 for x in 0..<size where !isFunction[y][x] {
                     let invert: Bool
                     switch mask {
-                    case 0: invert = (x + y) % 2 == 0
-                    case 1: invert = y % 2 == 0
-                    case 2: invert = x % 3 == 0
-                    case 3: invert = (x + y) % 3 == 0
-                    case 4: invert = (x / 3 + y / 2) % 2 == 0
+                    case 0: invert = (x + y).isMultiple(of: 2)
+                    case 1: invert = y.isMultiple(of: 2)
+                    case 2: invert = x.isMultiple(of: 3)
+                    case 3: invert = (x + y).isMultiple(of: 3)
+                    case 4: invert = (x / 3 + y / 2).isMultiple(of: 2)
                     case 5: invert = x * y % 2 + x * y % 3 == 0
-                    case 6: invert = (x * y % 2 + x * y % 3) % 2 == 0
-                    default: invert = ((x + y) % 2 + x * y % 3) % 2 == 0
+                    case 6: invert = (x * y % 2 + x * y % 3).isMultiple(of: 2)
+                    default: invert = ((x + y) % 2 + x * y % 3).isMultiple(of: 2)
                     }
                     if invert { modules[y][x].toggle() }
                 }

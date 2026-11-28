@@ -1,5 +1,6 @@
 import Observation
 import SideAProtocol
+import SideASessionKit
 import SideARemoteShared
 import SwiftUI
 
@@ -21,6 +22,7 @@ final class SessionActions {
     var terminal: Terminal?
     var restarting: RemoteSession?
     var continuing: RemoteSession?
+    var moving: RemoteSession?
     var quitting: RemoteSession?
     var quittingIdle: Int?
     var replying: RemoteSession?
@@ -285,6 +287,10 @@ private struct SessionActionsHost: ViewModifier {
             .onAppear { actions.host = hostModel }
             .sheet(item: $actions.restarting) { session in
                 RestartSheet(session: session) { actions.started = $0 }
+                    .environment(model)
+            }
+            .sheet(item: $actions.moving) { session in
+                MoveSheet(session: session)
                     .environment(model)
             }
             .confirmationDialog("Continue on \(ThisDevice.kind)?", isPresented: Binding { actions.continuing != nil } set: { if !$0 { actions.continuing = nil } },

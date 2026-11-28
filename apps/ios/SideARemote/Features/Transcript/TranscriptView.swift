@@ -1,4 +1,5 @@
 import SideAProtocol
+import SideASessionKit
 import SideARemoteShared
 import SwiftUI
 
@@ -231,7 +232,14 @@ struct TranscriptView: View {
                         .id(approval.id)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                 }
-                composer(count: count)
+                if let moved = MoveStatusLine.record(for: (session ?? lastSession)?.conversationID, in: model) {
+                    MoveStatusLine(record: moved, sessionID: sessionID).transition(.opacity)
+                } else {
+                    composer(count: count)
+                }
+                if let session, let waiting = model.tools.moves.waiting(for: session) {
+                    MoveWaitingLine(record: waiting).transition(.opacity)
+                }
                 if let session, let draft = model.handoffs[session.id] {
                     HandoffPendingLine(session: session, draft: draft) { reviewingHandoff = true }
                         .transition(.opacity)
@@ -241,6 +249,9 @@ struct TranscriptView: View {
             .animation(Motion.smooth(reduceMotion), value: session.flatMap(model.tools.attention(for:)))
             .animation(Motion.smooth(reduceMotion), value: session?.plan == nil)
             .animation(Motion.smooth(reduceMotion), value: approval?.id)
+            .animation(Motion.smooth(reduceMotion), value: MoveStatusLine.record(for: (session ?? lastSession)?.conversationID, in: model)?.state)
+            .animation(Motion.smooth(reduceMotion), value: session.flatMap(model.tools.moves.waiting(for:))?.id)
+            .followsWaitingMove((session ?? lastSession)?.conversationID, from: sessionID)
         }
     }
 
@@ -346,7 +357,7 @@ struct TranscriptView: View {
             }
         case .assistant(let message):
             if message.seq == streamingSeq {
-                StreamingMarkdown(message.text ?? "", sourceID: "m\(message.seq)",
+                StreamingMarkdown(model.transcripts.text(message, in: sessionID) ?? "", sourceID: "m\(message.seq)",
                                   startEmpty: (message.at ?? 0) > openedAt.timeIntervalSince1970)
             } else {
                 VStack(alignment: .leading, spacing: Space.xs) {
@@ -397,8 +408,12 @@ struct TranscriptView: View {
     }
 
     private var streamingSeq: Int? {
-        guard let session, SessionPhase(session) == .working else { return nil }
-        return model.transcripts.messages[sessionID]?.last(where: { $0.role == .assistant })?.seq
+        guard let session, SessionPhase(session) == .working, let messages = model.transcripts.messages[sessionID],
+              let reply = messages.last(where: { $0.role == .assistant }) else { return nil }
+        // A reply from before the message that started this turn is finished: streamed again, it would replay.
+        if let asked = messages.last(where: { $0.role == .user }), asked.seq > reply.seq { return nil }
+        if let sent = model.transcripts.outgoing[sessionID]?.last(where: { !$0.waits }), (reply.at ?? 0) < sent.at.timeIntervalSince1970 { return nil }
+        return reply.seq
     }
 
     private func spacing(before item: TranscriptItem) -> CGFloat {
@@ -479,6 +494,7 @@ struct TranscriptView: View {
                     ForkButton(session: session)
                     RestartButton(session: session)
                     ContinueButton(session: session)
+                    MoveButton(session: session)
                     QuitButton(session: session)
                 }
                 if session?.ports?.isEmpty == false, model.tools.can(.ports) {

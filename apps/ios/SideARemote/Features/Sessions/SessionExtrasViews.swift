@@ -1,4 +1,5 @@
 import SideAProtocol
+import SideASessionKit
 import SwiftUI
 
 extension PullRequest {
@@ -142,37 +143,6 @@ struct FailureSection: View {
             }
             FailureFixButton(session: session, failure: failure)
         }
-    }
-}
-
-extension SessionSnooze.Choice {
-    static let offered: [Self] = [.hour, .threeHours, .morning, .needsMe]
-
-    var title: String {
-        switch self {
-        case .hour: "1 Hour"
-        case .threeHours: "3 Hours"
-        case .morning: "Tomorrow Morning"
-        case .needsMe: "Until It Needs Me"
-        default: rawValue
-        }
-    }
-
-    func until(from now: Date = .now, calendar: Calendar = .current) -> Date? {
-        switch self {
-        case .hour: now.addingTimeInterval(3600)
-        case .threeHours: now.addingTimeInterval(3 * 3600)
-        case .morning: calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)).flatMap { calendar.date(bySettingHour: 9, minute: 0, second: 0, of: $0) }
-        default: nil
-        }
-    }
-}
-
-extension SessionSnooze {
-    var untilText: String {
-        guard let until else { return "Until it needs you" }
-        return "Until " + Date(timeIntervalSince1970: until).formatted(date: Calendar.current.isDateInToday(Date(timeIntervalSince1970: until)) ? .omitted : .abbreviated,
-                                                                         time: .shortened)
     }
 }
 

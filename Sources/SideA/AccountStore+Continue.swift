@@ -29,6 +29,7 @@ extension AccountStore {
             guard let value = usage[id], !value.stale, !hit.limit.hasPrefix("model:") || value.windows.contains(where: { $0.id == hit.limit }) else { continue }
             for session in hit.sessions where limited[session] == nil { lifted[session] = hit.at }
         }
+        for (session, at) in codexStops(known: true) where limited[session] == nil { lifted[session] = at }
         for (session, stall) in stalls {
             switch stall.error {
             case "server_error": if Online.shared.value, now - stall.at >= StoppedSessions.retry, now - stall.at < StoppedSessions.interrupted { lifted[session] = stall.at }
@@ -48,6 +49,11 @@ extension AccountStore {
 
     func continueStopped(now: Double) async {
         guard config.continueStopped != false else { return }
+        // Before the sessions are listed, nothing is known to have gone.
+        if !sessions.live.isEmpty {
+            let commands = SessionCommands(store: self)
+            stopped { $0.keepHolds(among: Set(sessions.live.filter { commands.status($0) != .working }.compactMap(\.sessionID))) }
+        }
         let left = HelperRefusals(root: root).take()
         if !left.isEmpty { stopped { for (session, refusal) in left { $0.refuse(session, refusal.provider, at: refusal.at) } } }
         let lifted = liftedSessions(now: now)

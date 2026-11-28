@@ -124,6 +124,7 @@ final class LiveLink {
             PushRegistrar.shared.reportOwed()
             // A notification's reply may have been held or queued while this process slept.
             Task { await flights.restoreFlights() }
+            Task { [weak model] in await model?.tools.loadMoves() }
         }
         Task { [engine, mac] in
             if foreground { await Paths.shared(for: mac.endpoint, credentials: KeychainCredentials()).foreground() }
@@ -403,6 +404,8 @@ final class LiveLink {
             for session in due {
                 guard let page = try? await engine.client.transcript(session, .latest), !following.contains(session) else { continue }
                 model.transcripts.set(page.messages, hasEarlier: page.before != nil, for: session)
+                // The point it was following from describes the rows this page just replaced.
+                model.transcripts.resume[session] = nil
             }
             RemoteLog.log(.sync, "prefetched \(due.count) transcripts in \(Launch.ms(since: start)) ms")
             saveSoon()

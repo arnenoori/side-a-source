@@ -44,7 +44,7 @@ struct SessionComposer: View {
                  focused: $focused, onSend: { send(as: model.delivery(sessionID)) }, onInterrupt: { model.interrupt(sessionID) },
                  onFollow: onFollow, session: session, steers: Steer.available(for: session).filter { onNote != nil || $0 != .note },
                  onSteer: { model.steer($0, sessionID) { onNote?() } }, disabledReason: disabledReason,
-                 unsent: model.transcripts.unsent[sessionID], onRetry: { model.retryUnsent(sessionID) },
+                 unsent: model.transcripts.unsent[sessionID], onRetry: retry,
                  notice: model.transcripts.notices[sessionID] ?? standingNotice,
                  deliveries: handsOff ? [] : offered, delivery: handsOff ? nil : model.delivery(sessionID),
                  onDeliver: { send(as: $0) },
@@ -124,6 +124,17 @@ struct SessionComposer: View {
             if delivery != .interrupt { _ = model.tools.attachments.take(sessionID, for: model.transcripts.outgoing[sessionID]?.last?.id) }
         }
         onSent()
+    }
+
+    /// Retry goes the way Send would now: a session that has since ended or gone idle out of reach is resumed or moved
+    /// into Side A, where sending the same reply again could only fail again.
+    private func retry() {
+        guard let unsent = model.transcripts.unsent[sessionID] else { return }
+        let moves = model.needsContinue(sessionID)
+        guard !bringingBack, moves || session == nil && resumable, let last = moves ? session : lastSession else { return model.retryUnsent(sessionID) }
+        model.transcripts.clearUnsent(sessionID)
+        if model.transcripts.drafts[sessionID] == unsent.text { model.transcripts.drafts[sessionID] = "" }
+        if moves { continueThenSend(unsent.text) } else { resume(last, with: unsent.text) }
     }
 
     private func continueThenSend(_ text: String) {

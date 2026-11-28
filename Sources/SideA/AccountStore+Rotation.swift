@@ -92,23 +92,31 @@ extension AccountStore {
                 found[session] = SessionLimit(window: hit.limit, accountID: id, until: reset, worstCase: reset == worst)
             }
         }
-        return found
+        return found.merging(codexLimits(now: now)) { claude, _ in claude }
     }
 
     /// The first account sessions stopped on a limit can use again: one Autopilot may move them to, or their own.
     func waitingSummary(limits: [String: SessionLimit], now: Double) -> WaitingSummary? {
         let running = Set(sessions.live.compactMap(\.sessionID))
-        let stopped = limits.filter { running.contains($0.key) }
-        guard !stopped.isEmpty else { return nil }
+        // Only Claude's logins are traded, so a Codex stop waits for its own account and nothing else.
+        let claude = Set(config.accounts.filter { $0.provider == .claude }.map(\.id))
+        let all = limits.filter { running.contains($0.key) }
+        let stopped = all.filter { claude.contains($0.value.accountID) }
+        guard !stopped.isEmpty else { return Self.earliest(all.values, accounts: config.accounts) }
         let theirs = Set(stopped.values.map(\.accountID))
         let usable = config.accounts.filter { $0.provider == .claude && (theirs.contains($0.id) || (config.smartMode && $0.allowAuto)) }
         guard let (account, at) = Planner.nextAvailable(usable, usage: plannable, full: config.moveAt, now: now) else {
-            guard let first = stopped.values.filter({ $0.until != nil }).min(by: { $0.until! < $1.until! }), let at = first.until,
-                  let name = config.accounts.first(where: { $0.id == first.accountID })?.name else { return nil }
-            return WaitingSummary(account: name, at: at, worstCase: first.worstCase)
+            return Self.earliest(stopped.values, accounts: config.accounts)
         }
         let worst = stopped.values.contains { $0.accountID == account.id && $0.until == at && $0.worstCase }
         return WaitingSummary(account: account.name, at: at, worstCase: worst)
+    }
+
+    /// The stop that ends first, when no other account can take the sessions over.
+    static func earliest(_ limits: some Collection<SessionLimit>, accounts: [Account]) -> WaitingSummary? {
+        guard let first = limits.filter({ $0.until != nil }).min(by: { ($0.until ?? 0) < ($1.until ?? 0) }), let at = first.until,
+              let name = accounts.first(where: { $0.id == first.accountID })?.name else { return nil }
+        return WaitingSummary(account: name, at: at, worstCase: first.worstCase)
     }
 
     func accountIssue(_ account: Account, now: Double) -> AccountIssue? {

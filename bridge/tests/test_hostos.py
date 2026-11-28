@@ -51,6 +51,25 @@ class ClaudeFoldersTests(unittest.TestCase):
         self.assertIn(self.account / 'projects' / '-code-app' / 'abc-123.jsonl', list(sessions.claude_files()))
         self.assertTrue(sessions.is_claude_path(self.account / 'projects' / '-code-app' / 'abc-123.jsonl'))
 
+    @unittest.skipUnless(hostos.LINUX, 'read from /proc; a Mac reaps the agent')
+    def test_a_session_whose_process_ended_and_was_never_reaped_is_not_live(self):
+        sessions = load('sessions')
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        self.addCleanup(os.waitpid, pid, 0)
+        # Ended and left for its parent to reap, as tmux 3.4 can leave a pane's agent: kill(pid, 0) still reaches it.
+        os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+        os.kill(pid, 0)
+        self.assertTrue(hostos.exited(pid))
+        self.assertFalse(hostos.exited(os.getpid()))
+        (self.account / 'sessions' / f'{pid}.json').write_text(json.dumps({'pid': pid, 'sessionId': 'ended-1', 'cwd': '/code/app'}))
+        (self.account / 'sessions' / f'{os.getpid()}.json').write_text(json.dumps({'pid': os.getpid(), 'sessionId': 'abc-123', 'cwd': '/code/app'}))
+        self.assertEqual([data['sessionId'] for data, _ in sessions.running_claude()], ['abc-123'])
+
+    def test_a_running_process_has_not_exited(self):
+        self.assertFalse(hostos.exited(os.getpid()))
+
 
 if __name__ == '__main__':
     unittest.main()

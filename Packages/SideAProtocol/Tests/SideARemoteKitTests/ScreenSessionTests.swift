@@ -24,8 +24,6 @@ private func session(_ mac: FakeMac, confirm: @escaping @Sendable (ScreenMode) a
     #expect(mac.sockets.isEmpty)
 }
 
-/// Face ID takes seconds, and the phone can ask again meanwhile (Try Again, Control): only the newest open may keep a
-/// socket, since the Mac replaces the older viewer and the phone would be left reading a socket that is already closed.
 @Test func anOpenThatWakesAfterANewerOneDropsOut() async throws {
     let mac = FakeMac()
     let first = Gate(), second = Gate()
@@ -92,8 +90,6 @@ private final class Counter: @unchecked Sendable {
     func next() -> Int { lock.withLock { count += 1; return count } }
 }
 
-/// Screen off or no permission: the Mac sends why and closes before the phone's hello can go out. That is a refusal to show,
-/// not a Mac that can't be reached.
 @Test func aMacThatRefusesBeforeTheHelloStillGivesItsReason() async throws {
     let mac = FakeMac()
     mac.onSocket = { socket in

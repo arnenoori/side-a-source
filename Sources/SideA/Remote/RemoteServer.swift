@@ -15,7 +15,17 @@ final class RemoteServer: @unchecked Sendable {
 
     typealias Handler = @Sendable (HTTPRequest, Caller) async -> HTTPResponse
 
-    enum ListenerState: Sendable, Equatable { case starting, ready, failed(String) }
+    enum ListenerState: Sendable, Equatable {
+        case starting, ready, portInUse, failed(String)
+
+        var failure: String? {
+            switch self {
+            case .starting, .ready: nil
+            case .portInUse: "Port in use"
+            case .failed(let why): why
+            }
+        }
+    }
 
     static let maxConnections = 64
     static let requestsPerConnection = 1_000
@@ -150,7 +160,7 @@ final class RemoteServer: @unchecked Sendable {
         do {
             listeners[address] = try SocketFront(address: address, port: port, queue: queue) { [weak self] in self?.innerPort }
         } catch {
-            return fail(address, Self.describe(error))
+            return fail(address, Self.failure(error))
         }
         RemoteLog.shared("listening on \(address):\(port) (\(RemoteLog.network(address)))")
         states[address] = innerPort == nil ? .starting : .ready
@@ -158,7 +168,7 @@ final class RemoteServer: @unchecked Sendable {
 
     private func startInner() {
         let tls = NWProtocolTLS.Options()
-        guard let secIdentity = sec_identity_create(identity.identity) else { return failAll("Side A's security key can't be used for TLS.") }
+        guard let secIdentity = sec_identity_create(identity.identity) else { return failAll(.failed("Side A's security key can't be used for TLS.")) }
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, secIdentity)
         sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv13)
         sec_protocol_options_add_tls_application_protocol(tls.securityProtocolOptions, "http/1.1")
@@ -167,7 +177,7 @@ final class RemoteServer: @unchecked Sendable {
         let parameters = NWParameters(tls: tls, tcp: tcp)
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
         let listener: NWListener
-        do { listener = try NWListener(using: parameters) } catch { return failAll(error.localizedDescription) }
+        do { listener = try NWListener(using: parameters) } catch { return failAll(.failed(error.localizedDescription)) }
         inner = listener
         listener.stateUpdateHandler = { [weak self, weak listener] state in
             guard let self, let listener, self.inner === listener else { return }
@@ -179,7 +189,7 @@ final class RemoteServer: @unchecked Sendable {
                 self.answerPortWaiters()
             case .failed(let error), .waiting(let error):
                 RemoteLog.shared("TLS listener failed: \(error)")
-                self.failAll(Self.describe(error))
+                self.failAll(Self.failure(error))
             default: return
             }
             self.report()
@@ -194,10 +204,10 @@ final class RemoteServer: @unchecked Sendable {
     }
 
     /// The tunnel's flag stays set, so its next stream starts the listener again.
-    private func failAll(_ message: String) {
+    private func failAll(_ failure: ListenerState) {
         stopInner()
         answerPortWaiters()
-        for address in Array(listeners.keys) { fail(address, message) }
+        for address in Array(listeners.keys) { fail(address, failure) }
     }
 
     private func stopListener(_ address: String) {
@@ -207,10 +217,11 @@ final class RemoteServer: @unchecked Sendable {
         if listeners.isEmpty && !tunnel { stopInner() }
     }
 
-    private func fail(_ address: String, _ message: String) {
+    private func fail(_ address: String, _ failure: ListenerState) {
         listeners.removeValue(forKey: address)?.cancel()
         if listeners.isEmpty && !tunnel { stopInner() }
-        states[address] = .failed(message)
+        states[address] = failure
+        let message = failure.failure ?? ""
         note("Listening on \(address):\(port) failed: \(message)")
         RemoteLog.shared("listening on \(address):\(port) failed: \(message)")
         report()
@@ -218,21 +229,14 @@ final class RemoteServer: @unchecked Sendable {
 
     private func report() { stateChanged?(states) }
 
-    /// What a listener on a taken port fails with; the controller moves up a port on it.
-    static let portInUse = "Port in use"
-
-    static func describe(_ error: Error) -> String {
-        switch (error as? POSIXError)?.code {
-        case .EADDRINUSE?: portInUse
-        case .EADDRNOTAVAIL?: "The address isn't on this Mac any more"
-        default: (error as? NWError).map(describe) ?? error.localizedDescription
+    /// A taken port is its own state: the controller moves up a port on it.
+    static func failure(_ error: Error) -> ListenerState {
+        let code = (error as? POSIXError)?.code ?? (error as? NWError).flatMap { if case .posix(let code) = $0 { code } else { nil } }
+        switch code {
+        case .EADDRINUSE?: return .portInUse
+        case .EADDRNOTAVAIL?: return .failed("The address isn't on this Mac any more")
+        default: return .failed(error.localizedDescription)
         }
-    }
-
-    static func describe(_ error: NWError) -> String {
-        if case .posix(let code) = error, code == .EADDRINUSE { return portInUse }
-        if case .posix(let code) = error, code == .EADDRNOTAVAIL { return "The address isn't on this Mac any more" }
-        return error.localizedDescription
     }
 
     func setDevices(_ devices: [(id: String, hash: Data)]?, keys: [String: ConfirmGate.Keys] = [:]) {

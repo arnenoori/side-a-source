@@ -1,0 +1,19 @@
+{
+  "agent": "claude",
+  "commits": [
+    "3e55371af3a9ad032ca0e33b1118c617063684f3",
+    "13fc439f78f94546af6295b335918fd1357db10a"
+  ],
+  "conversationID": "a06442e2-3f6b-4a35-931a-a4599bfa8acd",
+  "effort": "high",
+  "from": {
+    "id": "5b3d4f687c2e91a0",
+    "name": "MacBook"
+  },
+  "id": "mv-4f2a9c1e7b3d",
+  "model": "opus",
+  "origin": "https://example.com/you/app.git",
+  "permissionMode": "acceptEdits",
+  "project": "app",
+  "title": "Fix the login redirect"
+}

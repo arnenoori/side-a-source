@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+## 0.5.62 — 2026-11-27
+
+A reply from your iPhone to a Claude session in your own tmux no longer stops at a draft in its prompt: the draft is set aside with Claude's own stash and comes back once the reply is in. A reply left typed but unsent goes in when you retry it.
+A session you moved to another computer can now be brought back or moved on even after its agent quit there, with its later work and its login.
+From your iPhone, a session that is working can move to another computer after this turn or right away, and a move waiting for its turn shows on the session with Cancel.
+A Linux computer running `sidead` can keep standby checkpoints of your Mac's sessions and continue one as a copy, and can send its own to a standby. Sessions move to and from a `sidead` computer through the relay when no direct address answers. `sidead config` turns Accept Sessions, ignored `.env` files and Standby on or off, and `sidead move --all` and `sidead move --run-here` do what Move All and Run Here do on the Mac.
+`sidead` starts again on the same port while its sessions keep running, and its pairing link names the address it was told to listen on.
+`sidea attach <session>@<computer>` opens a session running on one of your linked Macs in the terminal you typed it in, and `sidea ls --all` lists those sessions.
+A standby copy no longer leaves the original conversation resumable on the standby Mac.
+A move that is undone, even after Side A restarts, starts the session again with the same account, model, effort and permission mode.
+A Claude login that arrives with a move is kept only once Side A confirms it belongs to that account; otherwise the session runs on another account there or stays on this Mac.
+A session that is working can move too: Move to offers After This Turn, which moves it by itself once its turn ends, or Now, which stops its turn first and cuts off the tool call in progress. A move waiting for a turn to end shows on the session's row with Cancel, outlasts quitting Side A, and lapses after two hours; if the other Mac says no when the turn ends, the session keeps running here and Side A says why.
+Move to > All Sessions to Mac mini and Sleep sends every hosted session to that Mac, the working ones after their turn or now as you choose, and puts this Mac to sleep once they have all gone. If a session that couldn't move is still working, Side A asks before sleeping.
+A session that moves to a computer a second time lands as a new worktree beside the copy it left there, not as another clone.
+A move whose outcome is uncertain shows one button, Check Again; Run Here is in its menu.
+Changes, beside a running conversation, now shows more than the current turn: Uncommitted is the working tree against the last commit, Branch is everything since the branch left the main one, and Commits shows each commit since. It is there for any session in a Git repository.
+Click a line in Changes to comment on it. Add to Message (⌘↩) puts every comment, each with its file and line, into the message field as one message to send.
+⌘S in a message field stashes what you have typed and clears the field. A tray appears beside the field while anything is stashed; click a message there, or press ⌘S in an empty field, to bring it back into any conversation. The stash survives a quit.
+A project can list the commands it is run with in a `side-a.json` file at the top of the repository: `{"actions": [{"name": "Test", "command": "swift test"}]}`. They appear under Run beside a conversation, in Session > Run with ⌃⌥1 to ⌃⌥9, and in ⌘K after `>`, and each runs in a new terminal tab. The first time a command is run in a folder, Side A shows it and asks. Without that file, a folder's `package.json` scripts are offered.
+Edit from Here, on any message you sent in a Claude conversation (right-click it, or the arrow beside it), starts a copy of the conversation that ends just before that message, with its words in the composer to change and send. The conversation itself is untouched, and the copy is listed as a branch of it.
+A session stopped by a usage limit says so in the session list, with when it goes on: "Limited · continues 3:40 PM". Don't Continue at Reset, in its menu and above its composer, leaves that one session for you to send on.
+Codex sessions stopped by a usage limit are now sent on when their account has room again, as Claude sessions already were, and the iPhone shows what they wait for.
+A Codex conversation that isn't running can be branched into a new session from the Sessions window, and the detailed transcript shows where a conversation was branched.
+A hosted session can move to another of your Macs: right-click an idle session in Sessions and choose Move to. A sheet shows where it will land and what happens to its account before anything stops. Side A then stops it, sends the conversation and the folder's work (staged, unstaged and untracked changes included) to the other Mac, and the same conversation carries on there in a new worktree, or in a new clone under `~/Side A` when that Mac doesn't have the repository. If the other Mac can't take it, the session starts again where it was. If the other Mac never answers the request to start it, Side A says it may be running there and settles it once the two can talk, instead of guessing.
+You don't sign in on the other Mac for a move. If it isn't signed in to the account the session runs on, the login goes with the session and this Mac stops using that account until the session comes back; the sheet says so first ("Signs Mac mini in to Work"). The Mac's own login, the one your terminals use, never leaves: a session on it runs on an account the other Mac already has.
+Link two Macs in Settings > Remote > Computers: on the other Mac click Pair, then Copy Link, and paste the link on this one. One link works both ways, and unlinking on either Mac ends it on both. A linked computer can start sessions on the other, so link only your own.
+Sessions that are on another computer stay at the foot of the session list with Bring Back, and Move to > All Idle Sessions sends everything that can go at once.
+Standby, in Settings > Remote > Computers, keeps a checkpoint of each hosted session on a linked computer whenever its turn ends. Nothing runs there. If this Mac disappears, the other one can continue a checkpoint as a copy, which is a fork with its own conversation: the original may still be running, and Side A never pretends otherwise.
+Accept Sessions turns receiving off for a Mac that should only send, and Include Ignored .env Files sends a project's ignored `.env` files with a move.
+On the iPhone, Move to… in a session's menu moves it to a linked computer behind Face ID and opens it there when it has arrived; sessions that moved stay listed under Moved with Open or Check Again. A computer on standby lists its checkpoints with Continue as a Copy….
+When a move's outcome can't be learned because the other computer is gone, Run Here starts the session on this Mac again and puts its login back.
+New Session on Mac mini…, at the foot of the session list, starts a session on a linked computer.
+Sessions running on your linked Macs are listed below your sessions. Open shows one in a terminal tab here, and closing the tab leaves it running there.
+On Linux (and Windows through WSL 2), `sidead` can take a session moved from a Mac and send one back: link it from the Mac with Link a Computer, then use Move to on the Mac or the iPhone, or `sidead move` on Linux; `sidead computers` and `sidead unlink` list and remove links. Moves go over the tailnet or LAN only, not through the relay yet.
+A session that arrives from another computer asks before it acts unless it was already in Plan or Accept Edits; a mode that runs without asking does not travel.
+Moving is refused, before anything is stopped, for a folder git can't restore exactly: a merge or rebase in progress, submodules, Git LFS and other filters, a sparse checkout, or a changed file a line-ending rule would rewrite.
+
+New Session leads with the prompt. Under it, a row of choices: folder, agent, model and effort, worktree, account and permission mode, each with a key that works while you type (⌘O any folder, ⇧⌘A agent, ⇧⌘M model, ⇧⌘E effort, ⇧⌘B worktree, ⇧⌘U account, ⇧⌘Y mode). ↩ starts, ⌘↩ starts in the background, ⇧↩ is a new line.
+New Session can start in any folder (Choose…, or drop a folder on the Sessions window), cut a worktree from a branch you pick, start in Plan, Accept edits, Auto or Bypass permissions (the last two ask first), and take pasted photos.
+New Session can start Claude and Codex together on the one prompt, each in its own worktree.
+Restart Fresh can hand the work to the other agent and pick the model.
+Type @ in the Sessions message field to mention a file in the session's folder. Dropping a file that isn't a photo puts its path in the message.
+↑ in an empty message field brings back the last thing you said to that session, and again the one before.
+Replies waiting for a turn to end are listed above the message field: click one to reword it, send it now, or remove it.
+⌘↩ in the message field sends the other way (after this turn, or as a note) when there is one.
+A message you send shows at the end of the conversation at once, dimmed until the conversation shows it itself.
+⌘K in the Sessions window goes to a session by typing part of its title, project, branch, account or model. Empty, it lists what needs you first, so ⌘K ↩ takes you to the next thing. Type ">" to act on the open session (stop, snooze, pin, rename and more).
+Sessions can be snoozed from the Mac: an hour, three hours, tomorrow morning, or until it needs you (⌥⌘S snoozes the open one for an hour). Snoozed sessions fold away under Working and come back the moment they need you. It works with Remote off, and the phone shows the same snoozes.
+Archive, unpin and snooze show an Undo for five seconds. Quitting an idle session no longer asks: it quits after five seconds unless you undo, and not at all if it started working meanwhile. A session that is working, asking or serving a port still asks first.
+⌘-click and ⇧-click select several rows to pin, archive, snooze or quit together.
+Conversations nothing has been added to for a week move under Earlier at the foot of the list, so History shows what is current. Search and ⌘K still find them.
+Right-click a past conversation to resume it; a session that needs you has a menu too.
+A conversation that has ended has a message field in the Sessions window: type to it and it resumes with your message, showing as starting until it is up, instead of sending you to a terminal first.
+What you were typing to a session is still there after you quit and reopen Side A.
+New Session has Start in Background (⌘↩): the session starts, the sheet stays open and empty for the next one, and "Started · Open" takes you to the one you just began.
+The Sessions window shows what the agent did, the way Side A Remote does. Each step is a line that says what it was ("Ran swift test", "Edited SessionStore.swift"), whether it worked and how long it took, and opens to show what it printed. Edits show as the lines taken out and put in. Thinking is shown. A finished turn's work folds behind "Worked for 4m", and a long run of steps folds into one line. "Show Steps in Detail" in the conversation's ••• menu turns this off. Find, and a conversation opened at a search result, still use the earlier view.
+Starting a session from the Mac no longer leaves you looking at a "Starting…" button. New Session closes the moment you press Start, the session is at the top of Working with a spinner, and the window shows your prompt while it boots, then becomes its conversation. If Claude Code asks to trust the folder, the question appears there with Trust and Start; if the start fails, the row says why and offers Try Again and Edit; and what you type while it starts is waiting in its message field.
+New Session has an "Open in" switch for the terminal tab, and remembers it. The prompt you had typed is kept if you close the sheet without starting.
+A Codex session on an account other than your default one now shows up in the Sessions list as soon as it starts, instead of up to 20 seconds later.
+With terminal hosting or Remote on, Side A starts its tmux server when it launches, so the first session of the day starts sooner.
+The Sessions window has a Session menu, so everything in it can be done from the keyboard: ⌘1 to ⌘9 open the sessions at the top of the list (hold ⌘ a moment and each row shows its number), ⌥⌘↓ and ⌥⌘↑ move to the next and previous session, ⌥⌘A goes to the next one that needs you, ⌃⇥ returns to the one you were last in, ⌘[ and ⌘] go back and forward, ⌘J puts the cursor in the message field and ⇧⌘J in the list, ⌘. stops the open session, and ⌥⌘P, ⌥⌘R and ⇧⌘A pin, rename and archive it. Show in Terminal and Resume are now ⌘T instead of ⌘↩.
+The Sessions sidebar can be resized by dragging its edge and hidden with ⌘0, and keeps its width.
+New Session remembers the folder, agent, model, effort, account and worktree choice you used last, each agent keeps its own model, and a session started while another is open begins in that one's folder. The folder list no longer waits for the model list before it can be used.
+The message field in the Sessions window no longer pulls the cursor out of the search and find fields, and the arrow keys keep moving through the list after a session with a message field is selected. In the message field, ⌘← and ⌘→ now move the cursor instead of switching the selected account.
+An error at the bottom of the Sessions window now goes away after a few seconds instead of waiting to be clicked.
+On Linux (and Windows through WSL 2), Claude Code's permission requests can now reach your iPhone: run `sidead hooks on` and Side A Remote shows each request with Allow and Deny, with the same Face ID and unlock rules as on the Mac and a notification when you are away; `sidead hooks off` takes the hook out again, and with `sidead` stopped Claude Code asks in its own terminal as before. Questions and plans, and Codex, are not offered yet.
+
 ## 0.5.61 — 2026-11-25
 
 Pool mode notices a limit reset early, such as a weekly reset you redeemed: the account takes requests again as soon as a reading shows the limit emptied, instead of resting until the old reset time, and when every account is resting the pool tries one again every so often in case its limit was reset.

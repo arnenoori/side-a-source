@@ -23,8 +23,6 @@ final class RelayTunnel: @unchecked Sendable {
     static let pingEvery: TimeAmount = .seconds(25)
     static let pongWithin: TimeAmount = .seconds(10)
     static let backoffCap = 60.0
-    static let window = 256 << 10
-    static let creditBatch = 32 << 10
     static let clockWindow = 120.0
     static let trace = ProcessInfo.processInfo.environment["SIDEAD_TUNNEL_TRACE"] != nil
 
@@ -50,7 +48,7 @@ final class RelayTunnel: @unchecked Sendable {
     private var retry: Scheduled<Void>?
     private var pinger: RepeatedTask?
     private var lastPong = Date.distantPast
-    private var streams: [UInt32: Stream] = [:]
+    private lazy var splice = TunnelSplice { [weak self] in self?.sendFrame($0) }
     private var opening: [UInt32: [TunnelFrame]] = [:]
     private(set) var status: Status = .off
 
@@ -105,7 +103,7 @@ final class RelayTunnel: @unchecked Sendable {
         }
     }
 
-    func streamCount() async -> Int { (try? await loop.submit { self.streams.count }.get()) ?? 0 }
+    func streamCount() async -> Int { (try? await loop.submit { self.splice.count }.get()) ?? 0 }
 
     private var pairing: TunnelControl {
         guard let ticket else { return TunnelControl(type: "pairing") }
@@ -239,8 +237,7 @@ final class RelayTunnel: @unchecked Sendable {
         channel = nil
         session = nil
         opening = [:]
-        for (_, stream) in streams { stream.channel?.close(promise: nil) }
-        streams = [:]
+        splice.drop()
     }
 
     private func writeFrame(_ opcode: WebSocketFrames.Opcode, _ payload: Data) {
@@ -271,31 +268,18 @@ final class RelayTunnel: @unchecked Sendable {
         guard text != "pong", let control = TunnelControl(text: text) else { return }
         if control.type == "gone", let value = control.slot, let slot = UInt32(exactly: value), slot <= 0xffff {
             for id in opening.keys.filter({ $0 >> 16 == slot }) { opening[id] = nil }
-            for id in streams.keys.filter({ $0 >> 16 == slot }) { end(id) }
+            for id in splice.ids where id >> 16 == slot { splice.end(id) }
         }
     }
 
     // MARK: Streams
-
-    final class Stream {
-        let id: UInt32
-        var channel: (any Channel)?
-        var credit = RelayTunnel.window
-        var pending = ByteBuffer()
-        var owed = 0
-        var unreturned = 0
-        var writes = 0
-        var localEnded = false
-        var finishing = false
-        init(id: UInt32) { self.id = id }
-    }
 
     private func frame(_ data: Data) {
         guard let frame = TunnelFrame(data) else { return }
         if Self.trace { FileHandle.standardError.write(Data("sidead: tunnel in \(frame.kind) stream \(frame.stream) \(frame.payload.count) bytes\n".utf8)) }
         if frame.kind == .open { return open(frame) }
         if var waiting = opening[frame.stream] {
-            guard waiting.reduce(frame.payload.count, { $0 + $1.payload.count }) <= Self.window, waiting.count < 64 else {
+            guard waiting.reduce(frame.payload.count, { $0 + $1.payload.count }) <= TunnelSplice.window, waiting.count < 64 else {
                 opening[frame.stream] = nil
                 return sendFrame(.reset(frame.stream, "over credit"))
             }
@@ -303,39 +287,13 @@ final class RelayTunnel: @unchecked Sendable {
             opening[frame.stream] = waiting
             return
         }
-        received(frame)
-    }
-
-    private func received(_ frame: TunnelFrame) {
-        guard let stream = streams[frame.stream] else {
-            if ![.reset, .open, .fin].contains(frame.kind) { sendFrame(.reset(frame.stream, "unknown")) }
-            return
-        }
-        switch frame.kind {
-        case .open: return
-        case .data:
-            stream.owed += frame.payload.count
-            guard stream.owed <= Self.window else { return reset(stream.id, "over credit") }
-            write(stream, frame.payload)
-        case .credit:
-            stream.credit = min(Self.window, stream.credit + (frame.granted ?? 0))
-            drain(stream)
-        case .fin:
-            // Neither end half-closes: a FIN is a close. What was written goes out, then the connection; the FIN is
-            // answered so the relay sees both sides end the stream.
-            sendFrame(TunnelFrame(.fin, stream.id))
-            stream.finishing = true
-            streams[stream.id] = nil
-            if stream.writes == 0 { stream.channel?.close(promise: nil) }
-        case .reset:
-            end(stream.id)
-        }
+        splice.received(frame)
     }
 
     private func open(_ frame: TunnelFrame) {
         let slot = frame.stream >> 16
-        let fromSlot = streams.keys.filter { $0 >> 16 == slot }.count + opening.keys.filter { $0 >> 16 == slot }.count
-        guard streams.count + opening.count < Self.total, fromSlot < Self.perSlot else {
+        let fromSlot = splice.ids.filter { $0 >> 16 == slot }.count + opening.keys.filter { $0 >> 16 == slot }.count
+        guard splice.count + opening.count < Self.total, fromSlot < Self.perSlot else {
             return sendFrame(.reset(frame.stream, "too_many_streams"))
         }
         guard let port = target() else { return sendFrame(.reset(frame.stream, "mac_not_listening")) }
@@ -344,7 +302,9 @@ final class RelayTunnel: @unchecked Sendable {
         ClientBootstrap(group: loop)
             .channelOption(ChannelOptions.autoRead, value: false)
             .channelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
-            .channelInitializer { [self] channel in channel.pipeline.addHandler(LocalSide(owner: self, id: id, generation: generation)) }
+            .channelInitializer { [weak self] channel in
+                channel.pipeline.addHandler(TunnelLocalSide(read: { self?.localRead(id, generation, $0) }, ended: { self?.localEnded(id, generation, failed: $0) }))
+            }
             .connect(host: "127.0.0.1", port: Int(port))
             .whenComplete { [self] result in
                 guard generation == self.generation, let waiting = opening.removeValue(forKey: id) else {
@@ -356,98 +316,21 @@ final class RelayTunnel: @unchecked Sendable {
                     FileHandle.standardError.write(Data("sidead: relay stream \(id) couldn't reach the local listener: \(error)\n".utf8))
                     sendFrame(.reset(id, "mac_not_listening"))
                 case .success(let channel):
-                    let stream = Stream(id: id)
-                    stream.channel = channel
-                    streams[id] = stream
-                    for queued in waiting { received(queued) }
-                    if streams[id] === stream { channel.read() }
+                    let stream = splice.attach(id, channel)
+                    for queued in waiting { splice.received(queued) }
+                    if splice.has(stream) { channel.read() }
                 }
             }
     }
 
-    fileprivate func localRead(_ id: UInt32, _ generation: Int, _ bytes: ByteBuffer) {
-        guard generation == self.generation, let stream = streams[id] else { return }
-        var bytes = bytes
-        stream.pending.writeBuffer(&bytes)
-        drain(stream)
+    private func localRead(_ id: UInt32, _ generation: Int, _ bytes: ByteBuffer) {
+        guard generation == self.generation else { return }
+        splice.read(id, bytes)
     }
 
-    fileprivate func localEnded(_ id: UInt32, _ generation: Int, failed: Bool) {
-        guard generation == self.generation, let stream = streams[id] else { return }
-        if failed { return reset(id, "local error") }
-        stream.localEnded = true
-        drain(stream)
-    }
-
-    /// What the local side read goes out as DATA while the phone's credit lasts; reading resumes as credit returns.
-    private func drain(_ stream: Stream) {
-        guard streams[stream.id] === stream else { return }
-        while stream.pending.readableBytes > 0, stream.credit > 0 {
-            let count = min(TunnelFrame.maxPayload, stream.credit, stream.pending.readableBytes)
-            guard let bytes = stream.pending.readBytes(length: count) else { break }
-            stream.credit -= count
-            sendFrame(TunnelFrame(.data, stream.id, Data(bytes)))
-        }
-        stream.pending.discardReadBytes()
-        if stream.pending.readableBytes == 0 {
-            if stream.localEnded {
-                sendFrame(TunnelFrame(.fin, stream.id))
-                streams[stream.id] = nil
-                stream.finishing = true
-                if stream.writes == 0 { stream.channel?.close(promise: nil) }
-            } else if stream.credit > 0 {
-                stream.channel?.read()
-            }
-        }
-    }
-
-    private func write(_ stream: Stream, _ payload: Data) {
-        guard let channel = stream.channel else { return }
-        stream.writes += 1
-        channel.writeAndFlush(ByteBuffer(bytes: payload)).whenComplete { [self] result in
-            stream.writes -= 1
-            if stream.finishing {
-                if stream.writes == 0 { channel.close(promise: nil) }
-                return
-            }
-            guard streams[stream.id] === stream else { return }
-            if case .failure = result { return reset(stream.id, "local error") }
-            stream.unreturned += payload.count
-            if stream.unreturned >= Self.creditBatch {
-                sendFrame(.credit(stream.id, stream.unreturned))
-                stream.owed -= stream.unreturned
-                stream.unreturned = 0
-            }
-        }
-    }
-
-    /// Ends a stream from this side: RESET to the phone's end, the local connection closed.
-    private func reset(_ id: UInt32, _ reason: String) {
-        guard streams[id] != nil else { return }
-        sendFrame(.reset(id, reason))
-        end(id)
-    }
-
-    private func end(_ id: UInt32) {
-        guard let stream = streams.removeValue(forKey: id) else { return }
-        stream.channel?.close(promise: nil)
-    }
-}
-
-/// The loopback connection of one stream.
-private final class LocalSide: ChannelInboundHandler, @unchecked Sendable {
-    typealias InboundIn = ByteBuffer
-    private let owner: RelayTunnel
-    private let id: UInt32
-    private let generation: Int
-
-    init(owner: RelayTunnel, id: UInt32, generation: Int) { self.owner = owner; self.id = id; self.generation = generation }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) { owner.localRead(id, generation, unwrapInboundIn(data)) }
-    func channelInactive(context: ChannelHandlerContext) { owner.localEnded(id, generation, failed: false) }
-    func errorCaught(context: ChannelHandlerContext, error: any Error) {
-        owner.localEnded(id, generation, failed: true)
-        context.close(promise: nil)
+    private func localEnded(_ id: UInt32, _ generation: Int, failed: Bool) {
+        guard generation == self.generation else { return }
+        splice.localEnded(id, failed: failed)
     }
 }
 

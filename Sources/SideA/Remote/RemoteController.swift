@@ -70,6 +70,8 @@ final class RemoteController {
     @ObservationIgnored lazy var snoozes = Snoozes(url: (store?.root ?? URL(fileURLWithPath: NSTemporaryDirectory())).appendingPathComponent("remote/snoozes.json")) { [weak self] in self?.events?.liveChanged() }
     @ObservationIgnored lazy var pulls = PullRequests { [weak self] in self?.events?.liveChanged() }
     @ObservationIgnored var checkForUpdates: (@MainActor () -> Bool)?
+    @ObservationIgnored lazy var moves = Moves.forApp(self)
+    @ObservationIgnored private(set) lazy var computers = LinkedComputers(keychain: keychain)
 
     init(store: AccountStore, keychain: RemoteKeychain, addresses: [String]? = nil, port fixedPort: UInt16? = nil) {
         self.store = store; self.keychain = keychain; fixed = addresses
@@ -422,12 +424,12 @@ final class RemoteController {
     private func listenersChanged(_ states: [String: RemoteServer.ListenerState]) {
         listening = states
         // The previous copy may still be exiting; after ten seconds busy, move up a port (at most nine).
-        if states.values.contains(.failed(RemoteServer.portInUse)) {
+        if states.values.contains(.portInUse) {
             if busySince == nil {
                 busySince = Date()
                 Task {
                     try? await Task.sleep(for: .seconds(10))
-                    guard busySince != nil, listening.values.contains(.failed(RemoteServer.portInUse)) else { return }
+                    guard busySince != nil, listening.values.contains(.portInUse) else { return }
                     busySince = nil
                     guard let next = Self.nextPort(after: port, base: Self.basePort) else { portsRanOut = true; return }
                     port = next
@@ -488,7 +490,7 @@ final class RemoteController {
         case .unchecked, .checking, .signed: break
         }
         if portsRanOut { return .cantListen(Self.portBusy(port)) }
-        if let failure = listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first, failure != RemoteServer.portInUse {
+        if let failure = listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first {
             return .cantListen("Side A couldn't listen: \(failure)")
         }
         if endpoints == nil, !(anywhereOn && relayURL != nil) { return .noNetwork }
@@ -539,7 +541,7 @@ final class RemoteController {
                                   build: request.device.build, hash: DeviceToken.hash(token), secretHash: request.deviceSecretHash,
                                   pushKey: key?.data, pushKeyID: key?.keyID,
                                   confirmKey: Self.p256(request.confirmKey), unlockKey: Self.p256(request.unlockKey),
-                                  created: Date().timeIntervalSince1970, lastSeen: nil)
+                                  created: Date().timeIntervalSince1970, lastSeen: nil, computer: request.device.capabilities.contains(.computer) ? "" : nil)
         let replacedSameID = devices.devices.contains { $0.id == device.id }
         do { try devices.add(device, replacing: request.replaces) } catch {
             RemoteLog.shared("pairing: \(device.name) approved, but saving it failed: \(error.localizedDescription)")
@@ -619,7 +621,7 @@ final class RemoteController {
         if on { bringUp(); refresh() }
     }
 
-    private func devicesChanged() {
+    func devicesChanged() {
         let had = hasDevices
         hasDevices = !devices.devices.isEmpty
         server?.setDevices(devices.hashes, keys: devices.confirmKeys)
@@ -663,7 +665,7 @@ final class RemoteController {
     }
 
     var capabilities: Set<Capability> {
-        var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .restartAgent, .restartAgentImages, .sessionSettings, .hostedTrust, .hostedShow])
+        var capabilities = store?.hosted.available == true ? Self.capabilities.union([.hosted, .replySteer, .terminal, .continueOnPhone, .restart, .restartAgent, .restartAgentImages, .sessionSettings, .hostedTrust, .hostedShow, .moves, .movesWhen, .standby])
             : Self.capabilities
         if checkForUpdates != nil { capabilities.insert(.updateCheck) }
         if codex.offered { capabilities.formUnion([.replyTerminal, .sessionSettings]) }

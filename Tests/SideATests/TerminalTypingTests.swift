@@ -50,15 +50,25 @@ private final class OwnTmux {
 
         await pane.keys("half a thought")
         await eventually { Hosting.composer(.claude, screen: await pane.screen()) == .text("half a thought") }
-        await #expect(throws: TerminalTyping.Failure(message: "The session's message field already holds a draft.")) {
-            try await TerminalTyping.type("Please continue", into: pid, agent: .claude)
-        }
-        #expect(pane.lines() == ["'Please continue'"])
+        try await TerminalTyping.type("And then stop", into: pid, agent: .claude)
+        #expect(pane.lines() == ["'Please continue'", "'And then stop'"])
+        #expect(Hosting.composer(.claude, screen: await pane.screen()) == .text("half a thought"))
     } catch {
         await pane.stop()
         throw error
     }
     await pane.stop()
+
+    let plain = OwnTmux()
+    do {
+        let pid = try await plain.start("plain")
+        try await TerminalTyping.type("Please continue", into: pid, agent: .claude)
+        #expect(plain.lines() == ["'Please continue'"])
+    } catch {
+        await plain.stop()
+        throw error
+    }
+    await plain.stop()
 
     let asking = OwnTmux()
     do {
@@ -72,6 +82,22 @@ private final class OwnTmux {
         throw error
     }
     await asking.stop()
+}
+
+@Test func aMessageLeftTypedInASessionsPaneIsSentByTheSameMessageAgain() async throws {
+    let pane = OwnTmux()
+    guard !pane.tmux.isEmpty else { return }
+    do {
+        let pid = try await pane.start()
+        await pane.keys("Please continue")
+        await eventually { Hosting.composer(.claude, screen: await pane.screen()) == .text("Please continue") }
+        try await TerminalTyping.type("Please continue", into: pid, agent: .claude)
+        #expect(pane.lines() == ["'Please continue'"])
+    } catch {
+        await pane.stop()
+        throw error
+    }
+    await pane.stop()
 }
 
 @MainActor @Test func settingsChangeInASessionsOwnTmuxPaneThroughClaudesPickers() async throws {

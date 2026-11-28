@@ -10,7 +10,9 @@ import Testing
 /// Like 2.1.303 it lists the slash command being typed, opens `/model`'s picker and `/effort`'s slider (`s` applies a
 /// pick to this session, Enter saves it as the default, noted as DEFAULT), asks before switching a conversation it has
 /// answered in (as a PreModelSwitch hook when started with `hooked`), and cycles its mode with Shift+Tab. Started with
-/// `untrusted` it first asks to trust its folder, "No, exit" selected (with `elsewhere`, for another folder).
+/// `untrusted` it first asks to trust its folder, "No, exit" selected (with `elsewhere`, for another folder). Ctrl+S
+/// stashes a draft and gives it back after the next message, as 2.1.332; `plain` draws the placeholder undimmed, as
+/// with colours off.
 let fakeClaude = #"""
 #!/usr/bin/env python3
 import os, signal, sys, time, tty
@@ -26,7 +28,7 @@ MODELS = [("Default (recommended)", ["low", "medium", "high", "xhigh", "max"]), 
           ("Sonnet 5.5", ["low", "medium", "high", "max"]), ("Haiku 5.5", []), ("Opus 5", ["low", "medium", "high", "max"])]
 MODES = ["⏸ manual mode on", "⏵⏵ accept edits on", "⏸ plan mode on", "⏵⏵ auto mode on"]
 model, effort, mode, screen, selected, pending = 1, "medium", 3, None, 1, "medium"
-trusting = False
+trusting, stash = False, None
 if "untrusted" in sys.argv or "elsewhere" in sys.argv: screen = "trust"
 def note(line):
     with open(out, "a") as f: f.write(line + "\n")
@@ -64,7 +66,7 @@ def draw():
     if buffer.startswith("/") and " " not in buffer:
         w("  ❯ " + buffer + "      Run " + buffer[1:] + "\r\n")
     w("─" * 40 + "\r\n")
-    w("❯\u00a0" + (shown or buffer) if (shown or buffer) else "❯\u00a0\x1b[2mTry \"refactor <filepath>\"\x1b[0m")
+    w("❯\u00a0" + (shown or buffer) if (shown or buffer) else ("❯\u00a0Try \"refactor <filepath>\"" if "plain" in sys.argv else "❯\u00a0\x1b[2mTry \"refactor <filepath>\"\x1b[0m"))
     w("\r\n" + "─" * 40 + "\r\n  \x1b[2m" + MODES[mode] + ("" if mode == 0 else " (shift+tab to cycle)") + "\x1b[0m")
 def apply_model():
     global model, effort, screen
@@ -136,6 +138,11 @@ while True:
             if buffer == "/exit": sys.exit(0)
             with open(out, "a") as f: f.write(repr(buffer) + "\n")
             echoed.append(buffer.split("\n")[0]); buffer, shown = "", None
+            if stash: (buffer, shown), stash = stash, None
+        elif data[:1] == b"\x13":
+            data = data[1:]
+            if buffer: stash, buffer, shown = (buffer, shown), "", None
+            elif stash: (buffer, shown), stash = stash, None
         elif data[:1] == b"\x15":
             data = data[1:]; buffer, shown = "", None
         elif data[:1] == b"\x1b":

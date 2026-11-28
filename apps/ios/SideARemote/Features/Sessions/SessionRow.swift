@@ -1,4 +1,5 @@
 import SideAProtocol
+import SideASessionKit
 import SideARemoteKit
 import SideARemoteShared
 import SwiftUI
@@ -40,7 +41,10 @@ struct SessionRow: View {
         .frame(minHeight: 52)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
-        .accessibilityActions { if let request, !request.isQuestion, model.mac.shown == .live { answerButtons(request) } }
+        .accessibilityActions {
+            if let request, !request.isQuestion, model.mac.shown == .live { answerButtons(request) }
+            if let waiting = model.tools.moves.waiting(for: session) { CancelMoveButton(record: waiting) }
+        }
         .swipeActions(edge: .leading, allowsFullSwipe: phase != .needsYou) { leadingActions }
         .swipeActions(edge: .trailing, allowsFullSwipe: phase == .ready || phase == .idle) { trailingActions }
         .contextMenu {
@@ -147,6 +151,8 @@ struct SessionRow: View {
         } else if let attention = model.tools.attention(for: session) {
             InlineFact(symbol: attention.symbol, text: attention.title)
                 .foregroundStyle(.secondary)
+        } else if let waiting = model.tools.moves.waiting(for: session) {
+            MoveWaitingFact(record: waiting)
         } else if let failure = session.failure {
             InlineFact(symbol: failure.symbol, text: failure.message)
                 .foregroundStyle(failure.retryable ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.destructive))
@@ -170,7 +176,8 @@ struct SessionRow: View {
     }
 
     private var factKey: String {
-        request.map { "r:\($0.id)" } ?? model.tools.attention(for: session).map { "a:\($0.kind.rawValue)" } ?? session.failure.map { "x:\($0.kind.rawValue)" }
+        request.map { "r:\($0.id)" } ?? model.tools.attention(for: session).map { "a:\($0.kind.rawValue)" } ?? model.tools.moves.waiting(for: session).map { "w:\($0.id)" }
+            ?? session.failure.map { "x:\($0.kind.rawValue)" }
             ?? session.flag.map { "f:\($0.text)" } ?? session.mail.map { "m:\($0.kind)" } ?? snooze.map { "z:\($0.at)" } ?? "s:\(session.step ?? "")"
     }
 
@@ -184,6 +191,7 @@ struct SessionRow: View {
         if let request { parts.append(request.accessoryTitle) } else if let failure = session.failure { parts.append(failure.message) }
         else if let flag = session.flag { parts.append(flag.text) } else if let step = session.step { parts.append(step) }
         if let snooze { parts.append("Snoozed, \(snooze.untilText)") }
+        if let waiting = model.tools.moves.waiting(for: session) { parts.append(MoveText.status(waiting)) }
         if let pull = session.pullRequest { parts.append("Pull request \(pull.summary)") }
         parts += [session.project == parts[0] ? nil : session.project, session.accountName, session.agent.title, session.hosted.map { _ in "in a terminal" }].compactMap { $0 }
         if let statusAt = session.statusAt { parts.append(Formatting.elapsed(since: Date(timeIntervalSince1970: statusAt))) }
@@ -226,6 +234,7 @@ struct SessionRow: View {
                 Button("Answer…", systemImage: "hand.raised") { approvals.request = request }
             }
             TerminalButton(session: session, title: "Open Terminal")
+            MoveButton(session: session)
         case .working:
             Section {
                 if steers.contains(.note) {
@@ -244,6 +253,7 @@ struct SessionRow: View {
             }
             Section {
                 ForkButton(session: session)
+                MoveButton(session: session)
                 RestartButton(session: session)
                 QuitButton(session: session)
             }
@@ -251,11 +261,13 @@ struct SessionRow: View {
             ReplyButton(session: session)
             ForkButton(session: session)
             Section {
+                MoveButton(session: session)
                 RestartButton(session: session)
                 QuitButton(session: session)
             }
         case .idle:
             ContinueButton(session: session)
+            MoveButton(session: session)
             ForkButton(session: session)
             RestartButton(session: session)
             RenameButton(session: session)

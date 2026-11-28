@@ -1,0 +1,7 @@
+{
+  "login": {
+    "email": "you@example.com",
+    "login": "{\"tokens\":{\"account_id\":\"acct\"}}",
+    "name": "Work"
+  }
+}

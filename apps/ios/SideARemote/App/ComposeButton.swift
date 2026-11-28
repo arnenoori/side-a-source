@@ -1,7 +1,6 @@
 import SideAProtocol
 import SwiftUI
 
-/// The round New Session button: a tap opens the sheet, a hold opens `items`.
 struct NewSessionMenuButton<Items: View>: View {
     var diameter: CGFloat = 48
     let hint: String
@@ -30,11 +29,11 @@ struct NewSessionMenuButton<Items: View>: View {
     }
 }
 
-/// New Session beside the phone's tab bar; its hold offers the folders used last.
 struct ComposeButton: View {
     @Environment(AppRoot.self) private var root
-    @Environment(AppModel.self) private var model
     @Environment(KeyRequests.self) private var keys
+    /// The computer the list is showing: its folders, and where a folder picked here starts.
+    private var model: AppModel { root.current }
 
     static let inset: CGFloat = 21
     static let lift: CGFloat = -13
@@ -47,11 +46,12 @@ struct ComposeButton: View {
                        primary: { keys.newSession += 1 },
                        pick: { id in
                            guard let folder = recent.first(where: { $0.id == id }) else { return }
+                           root.newSession.macID = model.macID
                            root.newSession.project = folder
                            keys.newSession += 1
                        })
             .frame(width: 56, height: 56)
-            .task(id: model.mac.shown == .live) {
+            .task(id: [model.macID, String(model.mac.shown == .live)]) {
                 guard model.mac.shown == .live, model.tools.projects.isEmpty else { return }
                 do { try await model.tools.loadProjects() } catch { return }
             }

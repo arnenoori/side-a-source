@@ -2,6 +2,7 @@ import './style.css';
 import { analytics } from './analytics';
 import { initLoveEggs } from './love-egg';
 import { latestDownloadableRelease, releaseAPI, releasesURL } from './release.mjs';
+import { platformDownloads, visitorPlatform } from './platform.mjs';
 
 analytics.capture('$pageview');
 // oxlint-disable-next-line no-console -- the console greeting is the point.
@@ -20,12 +21,25 @@ document.querySelectorAll<HTMLDialogElement>('dialog').forEach(dialog => {
 });
 
 const download = document.querySelector<HTMLAnchorElement>('#download')!;
+const visitor = visitorPlatform(navigator);
+const theirs = visitor === 'mac' ? null : platformDownloads[visitor];
+if (theirs) {
+  for (const link of document.querySelectorAll<HTMLAnchorElement>('#download, [data-download=cta]')) {
+    link.removeAttribute('data-download');
+    link.href = theirs.href;
+  }
+  const heading = document.querySelector('#download-label');
+  if (heading) heading.textContent = theirs.label;
+  const other = document.querySelector<HTMLAnchorElement>('#also-other');
+  if (other) { other.textContent = theirs.other.label; other.href = theirs.other.href; }
+  document.querySelector('#also')?.removeAttribute('hidden');
+}
 const downloads = [...document.querySelectorAll<HTMLAnchorElement>('[data-download]')];
 const setDownload = (href: string, disabled = false) => downloads.forEach(link => {
   link.href = href;
   if (disabled) link.setAttribute('aria-disabled', 'true'); else link.removeAttribute('aria-disabled');
 });
-const label = document.querySelector('#download-label')!;
+const label = theirs ? document.createElement('span') : document.querySelector('#download-label')!;
 const status = document.querySelector('#release-status')!;
 let downloadVersion: string | undefined;
 downloads.forEach(link => link.addEventListener('click', event => {

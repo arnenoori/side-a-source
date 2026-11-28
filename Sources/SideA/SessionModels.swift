@@ -166,8 +166,7 @@ struct LiveSession: Decodable, Identifiable, Hashable, Sendable {
     }
 
     struct Flag: Decodable, Hashable, Sendable {
-        /// stuck, loop, failing or bloated
-        let kind: String
+        let kind: SessionFlag.Kind
         let text: String
     }
 }

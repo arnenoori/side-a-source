@@ -31,7 +31,7 @@ struct AccountsView: View {
         }
         .refreshable {
             let failed = await withTaskGroup(of: Bool.self) { group in
-                for mac in macs {
+                for mac in macs where !mac.mac.isOffline {
                     group.addTask {
                         do { try await mac.link?.engine.refreshAccounts() } catch { return true }
                         return false
@@ -345,7 +345,7 @@ struct AccountDetailView: View {
                     }
                     useSection(account)
                     RotationControls(account: account)
-                    let sessions = model.sessions.sessions.filter { $0.accountName == account.name }
+                    let sessions = model.sessions.sessions.filter { $0.accountID.map { $0 == account.id } ?? ($0.accountName == account.name) }
                     if !sessions.isEmpty {
                         Section("Sessions") {
                             ForEach(sessions) { session in

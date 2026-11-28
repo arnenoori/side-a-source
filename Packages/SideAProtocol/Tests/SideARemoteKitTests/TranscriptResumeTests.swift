@@ -38,8 +38,6 @@ private func feed(_ pages: Pages) -> TranscriptFeed {
 
 private func seqs(_ feed: TranscriptFeed) async -> [Int] { await feed.window.messages.map(\.seq) }
 
-/// The blank screenful: a reset while the reader was scrolled up replaced the window with the newest page, so the rows on
-/// screen vanished. Now the rows held stay, in order and with their ids, and only what came after them joins their end.
 @Test func aResetWhileScrolledUpKeepsEveryRowOnScreen() async throws {
     let pages = Pages([page(50...59), page(40...49)])
     let feed = feed(pages)

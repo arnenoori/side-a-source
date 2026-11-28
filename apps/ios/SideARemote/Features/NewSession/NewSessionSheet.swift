@@ -44,16 +44,20 @@ struct NewSessionSheet: View {
     private var hosts: [AppModel] { root.macs.filter { $0.tools.can(.hosted) } }
     private var asksMac: Bool { hosts.count > 1 }
     private var model: AppModel {
-        macID.flatMap(root.model(for:)) ?? (asksMac && root.shown == nil ? hosts.first : nil) ?? shown
+        Self.target(picked: macID, shown: root.shown, last: ListPrefsStore.lastHost(), hosts: hosts.map(\.macID)).flatMap(root.model(for:)) ?? shown
+    }
+    /// Where a new session starts: the computer picked in the sheet, else the one the list is showing, else the one the
+    /// last session was started on, else the first that can host. Never one that can't host while another can.
+    static func target(picked: String?, shown: String?, last: String?, hosts: [String]) -> String? {
+        if let picked { return picked }
+        return [shown, last].compactMap(\.self).first(where: hosts.contains) ?? hosts.first
     }
     private var tools: MacTools { model.tools }
-    private var macPicked: Bool { macID != nil || !asksMac || root.shown != nil }
     private var canStart: Bool {
-        project != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !starting && macPicked && !uploading && !dictation.isBusy
+        project != nil && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !starting && !uploading && !dictation.isBusy
     }
     private var attachments: ComposerAttachments { tools.attachments }
-    private var canAttach: Bool { Self.offersPhotos(canUpload: tools.can(.uploads), macPicked: macPicked) }
-    static func offersPhotos(canUpload: Bool, macPicked: Bool) -> Bool { canUpload && macPicked }
+    private var canAttach: Bool { tools.can(.uploads) }
     private var uploading: Bool { attachments.isUploading(draft) }
     private var hasDraft: Bool {
         !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.items(draft).isEmpty || dictation.holdsRecording
@@ -61,14 +65,17 @@ struct NewSessionSheet: View {
     private var room: Int { attach.room(draft, tools: tools) }
     private var models: [ModelOption] { tools.models(for: agent) }
     private var chosenModel: ModelOption? { models.first { $0.id == modelID } }
-    private var accounts: [RemoteAccount] { model.accounts.accounts.filter { $0.provider == agent } }
+    private var accounts: [RemoteAccount] { model.accounts.accounts.filter { $0.provider == agent && $0.ready } }
+    private var pinned: RemoteAccount? { accounts.first { $0.id == accountID } }
+    /// The login a session with no account picked runs on: the one in use on that computer.
+    private var inUse: RemoteAccount? { accounts.first(where: \.active) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Space.m) {
                     heading
-                    if macPicked, !folders.isEmpty { folderChips }
+                    if !folders.isEmpty { folderChips }
                     agentChips
                     ComposerField(text: Bindable(form).prompt, selection: $promptSelection, isFocused: $focused, placeholder: "What should it do?",
                                   label: "Prompt", minLines: 4, maxLines: nil, insets: .zero, drawer: attach.drawer, paste: attach.target)
@@ -84,9 +91,7 @@ struct NewSessionSheet: View {
             .safeAreaBar(edge: .bottom) { chipBar }
             .scrollEdgeEffectStyle(.hard, for: .bottom)
             .overlay {
-                if !macPicked {
-                    EmptyView()
-                } else if loading && tools.projects.isEmpty {
+                if loading && tools.projects.isEmpty {
                     ProgressView()
                 } else if tools.projects.isEmpty, let loadError {
                     ContentUnavailableView {
@@ -138,7 +143,7 @@ struct NewSessionSheet: View {
         .sensoryFeedback(.success, trigger: started)
         .sensoryFeedback(.error, trigger: error) { _, new in new != nil }
         .task(id: model.macID) { await load() }
-        .onChange(of: macID) { project = nil; loading = true }
+        .onChange(of: model.macID) { project = nil; loading = true }
         .onChange(of: agent) { keepOffered() }
         .onChange(of: modelID) { keepOffered() }
         .onChange(of: prompt) { newDraftStarted() }
@@ -330,15 +335,15 @@ struct NewSessionSheet: View {
 
     private var macChip: some View {
         Menu {
-            Picker(hosts.map(\.mac.kind).shared.titleNoun, selection: Binding { macID ?? (root.shown != nil ? model.macID : nil) } set: { macID = $0 }) {
+            Picker(hosts.map(\.mac.kind).shared.titleNoun, selection: Binding { Optional(model.macID) } set: { macID = $0 }) {
                 ForEach(hosts, id: \.macID) { mac in
                     Label(mac.mac.name, systemImage: mac.mac.symbol).tag(Optional(mac.macID))
                 }
             }
         } label: {
-            ChipLabel(symbol: macPicked ? model.mac.symbol : "desktopcomputer", text: macPicked ? model.mac.name : hosts.map(\.mac.kind).shared.titleNoun, prominent: !macPicked)
+            ChipLabel(symbol: model.mac.symbol, text: model.mac.name)
         }
-        .accessibilityLabel(macPicked ? "\(model.mac.kind.titleNoun), \(model.mac.name)" : "Choose a \(hosts.map(\.mac.kind).shared.titleNoun)")
+        .accessibilityLabel("\(model.mac.kind.titleNoun), \(model.mac.name)")
     }
 
     private var modelChip: some View {
@@ -378,16 +383,16 @@ struct NewSessionSheet: View {
     private var accountChip: some View {
         Menu {
             Picker("Account", selection: Bindable(form).accountID) {
-                Text("Auto").tag(String?.none)
+                Text(inUse.map { "Auto · \($0.name)" } ?? "Auto").tag(String?.none)
                 ForEach(accounts) { account in
                     let tightest = model.accounts.tightest(account).map { " · " + $0.text(at: Date.now.timeIntervalSince1970) } ?? ""
                     Text(account.name + tightest).tag(Optional(account.id))
                 }
             }
         } label: {
-            ChipLabel(symbol: "person.crop.circle", text: accounts.first { $0.id == accountID }?.name ?? "Auto")
+            ChipLabel(symbol: "person.crop.circle", text: (pinned ?? inUse)?.name ?? "Auto")
         }
-        .accessibilityLabel("Account, \(accounts.first { $0.id == accountID }?.name ?? "automatic")")
+        .accessibilityLabel("Account, \(pinned?.name ?? inUse.map { "automatic, \($0.name)" } ?? "automatic")")
     }
 
     private func load() async {
@@ -415,7 +420,6 @@ struct NewSessionSheet: View {
             modelID = id
             if let remembered = last.effort, option.efforts.contains(remembered) { effort = remembered }
         }
-        if let id = last.accountID, accounts.count > 1, accounts.contains(where: { $0.id == id }) { accountID = id }
         worktree = last.worktree
     }
 
@@ -466,7 +470,8 @@ struct NewSessionSheet: View {
                                   accountID: accountID, prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
                                   attachments: photos, openOnMac: tools.can(.hostedShow) && openOnMac ? true : nil)
         let choices = NewSessionPrefs(agent: agent, modelID: modelID, effort: effort, accountID: accountID, worktree: worktree)
-        let startedOn = model.macID
+        // The computer as chosen now: picking another while this waits must not move where it lands.
+        let model = model, tools = tools, attachments = attachments
         starting = true
         error = nil
         let tapped = Date.now
@@ -478,7 +483,8 @@ struct NewSessionSheet: View {
                 _ = attachments.take(draft, for: model.transcripts.firstPrompts[hosted.name]?.id)
                 started += 1
                 dictation.cancel(refocus: false)
-                ListPrefsStore.setNewSession(choices, mac: startedOn)
+                ListPrefsStore.setNewSession(choices, mac: model.macID)
+                ListPrefsStore.setLastHost(model.macID)
                 root.newSession = NewSessionForm()
                 dismiss()
                 onStarted(hosted, model)

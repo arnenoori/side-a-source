@@ -1,0 +1,17 @@
+{
+  "agent": "claude",
+  "at": 1800000000,
+  "commits": [
+    "3e55371af3a9ad032ca0e33b1118c617063684f3"
+  ],
+  "conversationID": "a06442e2-3f6b-4a35-931a-a4599bfa8acd",
+  "from": {
+    "id": "5b3d4f687c2e91a0",
+    "name": "MacBook"
+  },
+  "id": "sb-4f2a9c1e7b3d",
+  "model": "opus",
+  "permissionMode": "acceptEdits",
+  "project": "app",
+  "title": "Fix the login redirect"
+}

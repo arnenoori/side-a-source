@@ -225,7 +225,7 @@ struct MainTabs: View {
         .environment(approvals)
         .sheet(item: Bindable(approvals).request) { request in
             ApprovalSheet(request: request)
-                .environment(root.model(answering: request.id) ?? model)
+                .environment(root.model(answering: request.id) ?? request.sessionID.flatMap(root.model(owning:)) ?? model)
                 .environment(\.zoomNamespace, sessionsZoom)
         }
         .sheet(item: Bindable(approvals).note) { target in

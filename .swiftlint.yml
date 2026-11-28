@@ -1,4 +1,4 @@
-# One config for every Swift file: the Mac app, its tests, the shared package and the iOS app.
+# One config for every Swift file: the Mac app, its tests, the shared package, the iOS app and the Linux daemon.
 # Run `scripts/lint-swift.sh`; scripts/check.sh runs it when Swift changes. See docs/validation.md.
 #
 # Aimed at bad practice, not formatting: the codebase uses long lines and dense code on purpose,
@@ -10,6 +10,9 @@ included:
   - Packages/SideAProtocol/Sources
   - Packages/SideAProtocol/Tests
   - apps/ios
+  - Daemon/Sources
+  - Daemon/Tests
+  - Daemon/Probe
 
 excluded:
   - "**/.build"

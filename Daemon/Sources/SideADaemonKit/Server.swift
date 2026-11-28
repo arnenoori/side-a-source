@@ -226,7 +226,7 @@ public final class SocketPeer: @unchecked Sendable {
             case .failure(let failure): closeNow(failure.code, failure.reason); return
             case .success(.ping(let payload)): writeNow(WebSocketCodec.frame(.pong(payload)))
             case .success(.pong): break
-            case .success(.close(let code, _)): closeNow(code == nil || code == 1005 ? 1000 : code!, "")
+            case .success(.close(let code, _)): closeNow(code.flatMap { $0 == 1005 ? nil : $0 } ?? 1000, "")
             case .success(let other): onMessage?(other)
             }
             if closed { return }

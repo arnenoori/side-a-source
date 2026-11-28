@@ -236,8 +236,9 @@ extension AppModel {
     }
 
     func needsContinue(_ id: SessionKey) -> Bool {
-        guard let session = sessions.session(id), session.hosted == nil, session.status == .idle, !session.headless else { return false }
-        if !session.abilities.isDisjoint(with: [.replyTerminal, .replyInbox, .replyTyped]) { return false }
+        // Finished with no Stop hook left waiting reads as finished for about an hour, and takes a reply no more than idle does.
+        guard let session = sessions.session(id), session.hosted == nil, [.idle, .finished].contains(session.status), !session.headless else { return false }
+        if !session.abilities.isDisjoint(with: [.replyTerminal, .replyInbox, .replyTyped, .followUp]) { return false }
         return session.abilities.contains(.continueOnPhone) && tools.can(.continueOnPhone)
     }
 

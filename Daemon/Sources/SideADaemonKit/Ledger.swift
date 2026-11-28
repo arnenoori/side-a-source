@@ -32,6 +32,7 @@ public actor IdempotencyLedger {
 
     private var entries: [String: Entry] = [:]
     private var running: Set<String> = []
+    private var waiting: [String: [UUID: CheckedContinuation<Bool, Never>]] = [:]
     private let record: JSONRecord<[String: Entry]>?
 
     public init(store: (any SecretStore)?) {
@@ -60,6 +61,7 @@ public actor IdempotencyLedger {
     public func finish(device: String, key: String, status: Int, contentType: String?, body: Data) {
         let slot = Self.slot(device, key)
         running.remove(slot)
+        for waiter in (waiting.removeValue(forKey: slot) ?? [:]).values { waiter.resume(returning: true) }
         if status == 401 || status == 429 || status >= 500 || Self.wantsProof(status: status, body: body) {
             entries[slot] = nil
         } else if var entry = entries[slot] {
@@ -68,6 +70,22 @@ public actor IdempotencyLedger {
         }
         _ = persist()
     }
+
+    /// Whether the call running under this key finished within `limit`; true at once when none is running.
+    public func settled(device: String, key: String, within limit: Duration) async -> Bool {
+        let slot = Self.slot(device, key)
+        guard running.contains(slot) else { return true }
+        let id = UUID()
+        let timeout = Task { [weak self] in
+            do { try await Task.sleep(for: limit) } catch { return }
+            await self?.giveUp(slot, id)
+        }
+        let finished = await withCheckedContinuation { waiting[slot, default: [:]][id] = $0 }
+        timeout.cancel()
+        return finished
+    }
+
+    private func giveUp(_ slot: String, _ id: UUID) { waiting[slot]?.removeValue(forKey: id)?.resume(returning: false) }
 
     /// A refusal that a fresh signature can fix is not recorded, so re-signing and resending runs the call.
     static func wantsProof(status: Int, body: Data) -> Bool {

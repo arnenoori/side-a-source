@@ -4,7 +4,7 @@ import SwiftUI
 /// The composer's text: a text view that grows to six lines, where ↩ sends, ⇧↩ breaks the line, ⌥↩ queues, ⎋ is
 /// offered to the composer first, and the arrows, ⇥ and ↩ go to an open suggestion list before the text.
 struct ComposerField: NSViewRepresentable {
-    enum Key { case send, queue, escape, up, down, tab }
+    enum Key { case send, queue, other, stash, escape, up, down, tab }
 
     @Binding var text: String
     @Binding var height: CGFloat
@@ -14,6 +14,10 @@ struct ComposerField: NSViewRepresentable {
     /// Images pasted or dropped onto the text; true when they were taken.
     var onImages: ([Data]) -> Bool = { _ in false }
     var onCaret: (Int) -> Void = { _ in }
+    /// The composer has been asked to take the keyboard and hasn't yet. It never takes it otherwise: a field that
+    /// took it on every update pulled it out of the search and find fields.
+    var wantsFocus = false
+    var onFocus: () -> Void = {}
 
     static let font = NSFont.systemFont(ofSize: 13)
     static let lineHeight: CGFloat = 17
@@ -58,8 +62,13 @@ struct ComposerField: NSViewRepresentable {
         view.placeholder = placeholder
         view.setAccessibilityPlaceholderValue(placeholder)
         view.needsDisplay = true
-        if view.window != nil, view.window?.firstResponder !== view {
+        if wantsFocus, view.window != nil, !context.coordinator.focusing {
+            context.coordinator.focusing = true
             DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+            Task { @MainActor [coordinator = context.coordinator] in
+                coordinator.focusing = false
+                coordinator.parent.onFocus()
+            }
         }
         context.coordinator.measure(view)
     }
@@ -68,6 +77,8 @@ struct ComposerField: NSViewRepresentable {
 
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerField
+        /// A focus request is on its way to the window, so the updates before it lands don't ask again.
+        var focusing = false
         init(_ parent: ComposerField) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
@@ -118,6 +129,18 @@ struct ComposerField: NSViewRepresentable {
             guard string.isEmpty else { return }
             (placeholder as NSString).draw(at: NSPoint(x: 0, y: 0),
                                            withAttributes: [.font: ComposerField.font, .foregroundColor: NSColor.placeholderTextColor])
+        }
+
+        /// ⌘↩ never reaches a text view as a command, so it is taken here, before the menu bar is asked.
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+            if event.type == .keyDown, [36, 76].contains(event.keyCode), flags == .command, window?.firstResponder === self, let coordinator {
+                return coordinator.parent.onKey(.other)
+            }
+            if event.type == .keyDown, event.charactersIgnoringModifiers == "s", flags == .command, window?.firstResponder === self, let coordinator {
+                return coordinator.parent.onKey(.stash)
+            }
+            return super.performKeyEquivalent(with: event)
         }
 
         override func paste(_ sender: Any?) {

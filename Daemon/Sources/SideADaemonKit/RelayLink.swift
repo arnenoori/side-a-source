@@ -15,7 +15,7 @@ final class RelayLink: @unchecked Sendable {
     private let key: Curve25519.Signing.PrivateKey
     private let wantsTunnel: Bool
     private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-    private let lock = NSLock()
+    let lock = NSLock()
     private var tunnel: RelayTunnel?
     private var ticketValue: Data?
     private var unacknowledged: Set<String> = []
@@ -23,6 +23,8 @@ final class RelayLink: @unchecked Sendable {
     private var attempts = 0
     private var diagnostics: [String: (device: String, at: Date, result: String?)] = [:]
     private var tunnelStatus: RelayTunnel.Status = .off
+    /// What a waiting request has sent a phone, and what is still open to answer.
+    let requests = RequestPushes()
     /// How long to wait before registering a phone again after the relay refused; tests shorten it.
     var retryAfter: Duration = .seconds(15)
 
@@ -72,9 +74,10 @@ final class RelayLink: @unchecked Sendable {
 
     func stop() async {
         retrying?.cancel()
+        requests.stop()
         let tunnel = lock.withLock { self.tunnel }
         await tunnel?.stop(goodbye: TunnelControl.Goodbye.quit)
-        try? await group.shutdownGracefully()
+        do { try await group.shutdownGracefully() } catch { DaemonLog.line("the relay link's threads didn't shut down cleanly: \(error.localizedDescription)") }
     }
 
     static func tunnelDevices(_ devices: [PairedDevice]) -> [TunnelControl.Device] {
@@ -163,32 +166,49 @@ final class RelayLink: @unchecked Sendable {
 
     /// A session finished a turn: every phone that asked for those, and isn't looking at the app, gets it.
     func finished(_ turn: FinishedSession, daemon: SideADaemon) async {
-        let payload = RemotePushPayload.finished(turn, mac: HostInfo.machineID(), now: Date().timeIntervalSince1970)
+        let payload = RemotePushPayload.finished(turn, mac: daemon.config.hostID, now: Date().timeIntervalSince1970)
         let collapse = RelayHTTP.collapse(turn.turnID)
         await send(RemotePushPayload.encoded(payload), category: .finished, collapse: collapse, daemon: daemon, expiresIn: 3600, sound: true,
                    wanted: \.finished)
     }
 
-    private func send(_ plaintext: Data, category: PushCategory, collapse: String, daemon: SideADaemon, expiresIn: Int, sound: Bool,
-                      wanted: KeyPath<NotificationPrefs, Bool>) async {
+    /// Which phones a push reached (the relay said "ok"), and which were held back because the phone is in front.
+    struct Delivery: Sendable, Equatable {
+        var reached: [String] = []
+        var watching: [String] = []
+    }
+
+    /// `replaces` takes the place of a notification already sent: it goes whatever the phone is doing and whatever its settings say.
+    /// `timeSensitive` is a request's: each phone's own switch for those lowers it to a plain alert.
+    @discardableResult
+    func send(_ plaintext: Data, category: PushCategory, collapse: String, daemon: SideADaemon, expiresIn: Int, sound: Bool,
+              wanted: KeyPath<NotificationPrefs, Bool>, only: Set<String>? = nil, timeSensitive: Bool = false, replaces: Bool = false) async -> Delivery {
         var sealed: [String: String] = [:]
+        var delivery = Delivery()
+        var levels: [String: String] = [:]
         for device in await daemon.devices.devices {
-            guard let registration = device.push, registration.prefs[keyPath: wanted], let raw = device.pushKey, let keyID = device.pushKeyID else { continue }
-            if Self.skips(await daemon.hub.presence(device.id), now: Date()) { continue }
+            guard only?.contains(device.id) ?? true, let registration = device.push, replaces || registration.prefs[keyPath: wanted],
+                  let raw = device.pushKey, let keyID = device.pushKeyID else { continue }
+            if !replaces, Self.skips(await daemon.hub.presence(device.id), now: Date()) { delivery.watching.append(device.id); continue }
             let pushKey = PushKey(key: SymmetricKey(data: raw), keyID: keyID)
             if let envelope = try? PushEnvelope.seal(plaintext, with: pushKey, category: category, collapseID: collapse, deviceID: device.id) {
                 sealed[device.id] = envelope
+                levels[device.id] = replaces ? "passive" : timeSensitive && registration.prefs.timeSensitiveRequests ? "time-sensitive" : "active"
             }
         }
-        let ids = sealed.keys.sorted()
-        var at = 0
-        while at < ids.count {
-            let batch = Array(ids[at..<min(at + RelayHTTP.maxDevices, ids.count)])
-            at += RelayHTTP.maxDevices
-            let body = RelayHTTP.Send(devices: batch, kind: "alert", category: category.rawValue, collapseId: collapse, priority: 10, expiresIn: expiresIn,
-                                      sound: sound, level: "active", sealed: sealed.filter { batch.contains($0.key) })
-            _ = try? await http.send(body)
+        for level in Set(levels.values).sorted() {
+            let ids = sealed.keys.filter { levels[$0] == level }.sorted()
+            var at = 0
+            while at < ids.count {
+                let batch = Array(ids[at..<min(at + RelayHTTP.maxDevices, ids.count)])
+                at += RelayHTTP.maxDevices
+                let body = RelayHTTP.Send(devices: batch, kind: "alert", category: category.rawValue, collapseId: collapse, priority: 10, expiresIn: expiresIn,
+                                          sound: sound && !replaces, level: level, sealed: sealed.filter { batch.contains($0.key) })
+                let results = (try? await http.send(body)) ?? []
+                delivery.reached += results.filter { $0.result == "ok" }.map(\.device)
+            }
         }
+        return delivery
     }
 
     // MARK: Diagnostics
@@ -199,7 +219,7 @@ final class RelayLink: @unchecked Sendable {
         guard let device = await daemon.devices.device(id: deviceID), device.push != nil, let raw = device.pushKey, let keyID = device.pushKeyID else {
             return DiagnosticPush(id: id, relay: .unreachable)
         }
-        let payload = RemotePushPayload.test(mac: HostInfo.machineID(), name: daemon.config.name, now: Date().timeIntervalSince1970)
+        let payload = RemotePushPayload.test(mac: daemon.config.hostID, name: daemon.config.name, now: Date().timeIntervalSince1970)
         guard let sealed = try? PushEnvelope.seal(RemotePushPayload.encoded(payload), with: PushKey(key: SymmetricKey(data: raw), keyID: keyID),
                                                   category: .test, collapseID: id, deviceID: deviceID) else {
             return DiagnosticPush(id: id, relay: .rejected)

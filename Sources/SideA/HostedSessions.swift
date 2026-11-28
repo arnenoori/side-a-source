@@ -104,7 +104,7 @@ final class HostedSessions {
     private let changed: @MainActor () async -> Void
     /// A fresh `sessions.py live`: every live process, idle ones included.
     let live: @MainActor () async -> [LiveSession]?
-    @ObservationIgnored var onAttention: (@MainActor (String, Attention) -> Void)?
+    @ObservationIgnored var attentionListeners: [String: @MainActor (String, Attention) -> Void] = [:]
     @ObservationIgnored var onRefresh: (@MainActor () -> Void)?
     /// A session's agent exited, before the session goes: its exit status (nil when a signal ended it), and killed
     /// when `end` asked for it.
@@ -182,7 +182,7 @@ final class HostedSessions {
         pruneFolders()
         await refresh()
         guard current == installs else { return }
-        if tmux != nil, watcher == nil { watch() }
+        if tmux != nil, watcher == nil { watch(); warm() }
     }
 
     /// Nothing watches or starts in tmux until `install` runs again.

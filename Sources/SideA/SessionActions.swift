@@ -17,6 +17,7 @@ struct SessionActions: View {
                 PlanCard(plan: plan).padding(.horizontal, 14).padding(.bottom, 8)
                     .transition(.opacity)
             }
+            if let live = target.live { LimitBanner(model: model, session: live) }
             if let request {
                 Rectangle().fill(Ink.line).frame(height: 1)
                 RequestPanel(island: island, item: request).id(request.id)
@@ -24,6 +25,10 @@ struct SessionActions: View {
             } else if target.canReply {
                 Rectangle().fill(Ink.line).frame(height: 1)
                 SessionComposer(model: model, target: target).id(sessionID)
+                    .transition(Ink.rise(8))
+            } else if let session = model.openSession, session.id == sessionID, model.canContinue(session) {
+                Rectangle().fill(Ink.line).frame(height: 1)
+                ContinueComposer(model: model, session: session).id(sessionID)
                     .transition(Ink.rise(8))
             }
         }

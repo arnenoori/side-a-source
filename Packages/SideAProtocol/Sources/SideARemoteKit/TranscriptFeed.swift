@@ -264,7 +264,6 @@ public actor TranscriptFeed {
         publish()
     }
 
-    /// Adds messages that continue the window and replaces the ones it already holds.
     private func merge(_ messages: [TranscriptMessage]) {
         for message in messages.sorted(by: { $0.seq < $1.seq }) {
             if message.seq == last + 1 || window.messages.isEmpty {

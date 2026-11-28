@@ -60,18 +60,19 @@ extension SessionCommands {
 
 
     /// A new, resumed or forked session in Side A's tmux. `origin` names who asked, for the session's record.
-    func start(_ start: StartHosted, images: [String] = [], key: String? = nil, origin: String) async throws(Failure) -> String {
+    func start(_ start: StartHosted, images: [String] = [], key: String? = nil, origin: String, base: String? = nil) async throws(Failure) -> String {
         let agent: Hosting.Agent = start.agent == .codex ? .codex : .claude
         let mode: Hosting.Mode = start.resume.map { start.fork ? .fork($0) : .resume($0, model: start.model) } ?? .new(model: start.model)
         let account = start.accountID.flatMap { id in store.config.accounts.first { $0.id == id && $0.provider == start.agent } }
         if start.accountID != nil, account == nil { throw Failure(status: 404, code: .notFound, message: "That account isn't on the Mac.") }
+        guard Self.safeBranch(base) else { throw .invalid("That branch isn't one Side A can start a worktree from.", "invalid_option") }
         guard Hosting.safeOption(start.model), Hosting.safeOption(start.effort) else { throw .invalid("That model or effort isn't one Side A can start.", "invalid_option") }
         var request = HostedSessions.Start(agent: agent, cwd: start.cwd, mode: mode)
         request.origin = origin
         request.prompt = start.prompt
         request.images = images
         request.key = key
-        request.worktree = start.worktree ? "HEAD" : nil
+        request.worktree = start.worktree ? base ?? "HEAD" : nil
         request.effort = start.effort == Effort.auto.rawValue ? nil : start.effort
         request.permissionMode = start.permissionMode?.rawValue
         if let account {
@@ -131,7 +132,7 @@ extension SessionCommands {
             let (name, link) = try await handOff(id, body, to: agent, images: images, key: key, origin: origin)
             return (name, link)
         }
-        let prompt = Self.prompt(body.handoff)
+        let prompt = Self.restartPrompt(body)
         guard prompt.count <= Self.maxReply else { throw .invalid("That handoff is too long.", "too_long") }
         guard store.hosted.available else { throw .hosted(.unavailable) }
         guard let live = Target(id, store: store)?.live, let cwd = live.cwd else { throw .noSession }
@@ -139,9 +140,9 @@ extension SessionCommands {
             throw Failure(status: 409, code: .cannotDeliver, message: "That's an automated run, so it can't be restarted.")
         }
         guard body.handoff.cwd == cwd else { throw Failure(status: 409, code: .cannotDeliver, message: "That handoff is for another folder.") }
-        let name = try await start(StartHosted(cwd: cwd, agent: live.provider, model: body.model ?? body.handoff.model,
-                                               accountID: body.accountID ?? body.handoff.accountID, prompt: prompt), images: images, key: key,
-                               origin: origin)
+        let name = try await start(StartHosted(cwd: cwd, agent: live.provider, model: body.model ?? body.handoff.model, effort: body.effort,
+                                               accountID: body.accountID ?? body.handoff.accountID, prompt: prompt,
+                                               permissionMode: body.permissionMode), images: images, key: key, origin: origin)
         if let old = live.hosted, store.hosted.sessions.contains(where: { $0.name == old }) {
             do { try await store.hosted.end(old) } catch {
                 RemoteLog.shared("couldn't end \(old) after handing it off: \(error.localizedDescription)")
@@ -152,16 +153,30 @@ extension SessionCommands {
         return (name, nil)
     }
 
-    /// The last six turns with text, as markdown, each cut to 1,500 characters.
+    private nonisolated static let handoffTurns = 6
+    private nonisolated static let handoffTurnCharacters = 1500
+
     nonisolated static func lastMessages(_ messages: [TranscriptMessage], agent: AgentProvider) -> String {
         let name = agent.title
-        return messages.filter { ($0.role == .user || $0.role == .assistant) && !($0.text ?? "").isEmpty }.suffix(6).map { message in
+        return messages.filter { ($0.role == .user || $0.role == .assistant) && !($0.text ?? "").isEmpty }.suffix(handoffTurns).map { message in
             let text = (message.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return "**\(message.role == .user ? "You" : name):** " + (text.count > 1500 ? text.prefix(1500) + "…" : text)
+            return "**\(message.role == .user ? "You" : name):** " + (text.count > handoffTurnCharacters ? text.prefix(handoffTurnCharacters) + "…" : text)
         }.joined(separator: "\n\n")
     }
 
-    /// The first prompt the new session gets; empty parts are left out.
+    /// A branch name git could hold that can't be read as an option or split into words.
+    nonisolated static func safeBranch(_ name: String?) -> Bool {
+        guard let name else { return true }
+        return !name.isEmpty && name.count <= 250 && !name.hasPrefix("-")
+            && !name.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) }
+    }
+
+    /// The handoff, then what the person typed, last and whole.
+    nonisolated static func restartPrompt(_ body: RestartRequest) -> String {
+        guard let message = body.message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return prompt(body.handoff) }
+        return prompt(body.handoff) + "\n\n" + message
+    }
+
     nonisolated static func prompt(_ handoff: Handoff) -> String {
         let parts = [("Goal", handoff.goal), ("Branch", handoff.branch.map { "`\($0)`" } ?? ""), ("What failed", handoff.failed),
                      ("Next steps", handoff.next), ("Last messages", handoff.lastMessages)]

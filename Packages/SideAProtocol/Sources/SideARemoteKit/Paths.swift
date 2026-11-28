@@ -70,7 +70,6 @@ public actor Paths {
     private var listeners: [UUID: @Sendable (Path?) -> Void] = [:]
     /// Forgotten: a client made before the unpair finds no path, and nothing races or warms the relay again.
     private var stopped = false
-    /// Why each path didn't answer in the last race that found none.
     private var failures: [Path: Error] = [:]
     /// Races in a row that found nothing, and until when a request fails at once instead of racing again.
     private var misses = 0

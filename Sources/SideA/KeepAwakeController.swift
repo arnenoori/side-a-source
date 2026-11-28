@@ -184,6 +184,20 @@ final class KeepAwakeController {
 
     func openLoginItems() { system?.openLoginItems() }
 
+    /// Move and Sleep: lets go of the idle-sleep assertion, gives sleep back if the helper held it off, then sleeps the
+    /// Mac. Once it wakes, the next check holds sleep off again for whatever is still working.
+    func sleepNow() {
+        guard let system else { return }
+        cancelLidCheck()
+        if holding { system.release(); holding = false }
+        guard asked else { return system.sleepNow() }
+        asked = false
+        system.requestLidSleep(false) { [weak self] disabled in
+            self?.sleepDisabled = disabled == true
+            system.sleepNow()
+        }
+    }
+
     func uninstall() async {
         stop()
         guard let system, system.helper != .off else { return }

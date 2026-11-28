@@ -47,6 +47,7 @@ header { view-transition-name: header; }
 @media (hover: hover) and (pointer: fine) { .download:hover { background: #3b4540; } }
 .download[aria-disabled=true] { background: #e6e9e6; color: #747c77; cursor: default; }
 .requirements { font-size: 11px; color: var(--muted); margin: 14px 0 0; }
+.also { font-size: 12px; color: var(--muted); margin: 14px 0 0; }
 footer { display: flex; flex-direction: column; align-items: center; color: var(--muted); }
 footer .fine { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 11px; }
 footer .fine a, footer .fine .text-button { min-width: 0; min-height: 0; padding: 4px 0; font-size: 11px; color: inherit; cursor: pointer; text-decoration: none; }

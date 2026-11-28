@@ -21,6 +21,7 @@ extension TranscriptStore {
         var state: State { bubble.stage }
         var unchecked: Bool { bubble.unchecked }
         var isPendingNote: Bool { state == .note || state == .takingBack }
+        var waits: Bool { [.queued, .held, .note, .takingBack].contains(state) }
     }
 
     struct Unsent: Hashable {

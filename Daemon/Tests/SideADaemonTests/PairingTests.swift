@@ -142,7 +142,6 @@ import Testing
         let shown = try #require(client.receive())
         #expect(shown["event"] as? String == "code")
         let link = try #require(shown["link"] as? String)
-        // What a phone reads from the QR code: the pin, the address and the code.
         let fragment = try #require(URLComponents(string: link)?.fragment)
         let fields = Dictionary(uniqueKeysWithValues: fragment.split(separator: "&").map { part -> (String, String) in
             let pair = part.split(separator: "=", maxSplits: 1).map(String.init)

@@ -41,12 +41,12 @@ enum ProcessRunner {
                 process.terminationHandler = nil
                 return continuation.resume(returning: Result(launchError: error))
             }
-            DispatchQueue.global().async { let data = output.fileHandleForReading.readDataToEndOfFile(); run.finish { $0.result.output = data } }
-            DispatchQueue.global().async { let data = errors.fileHandleForReading.readDataToEndOfFile(); run.finish { $0.result.errors = data } }
+            onItsOwnThread { let data = output.fileHandleForReading.readDataToEndOfFile(); run.finish { $0.result.output = data } }
+            onItsOwnThread { let data = errors.fileHandleForReading.readDataToEndOfFile(); run.finish { $0.result.errors = data } }
             if let input {
                 // A child that exits without reading must not take this app down with SIGPIPE.
                 signal(SIGPIPE, SIG_IGN)
-                DispatchQueue.global().async {
+                onItsOwnThread {
                     try? stdin.fileHandleForWriting.write(contentsOf: input)
                     try? stdin.fileHandleForWriting.close()
                 }
@@ -66,6 +66,11 @@ enum ProcessRunner {
             }
         }
     }
+
+    /// A pipe blocks its thread for as long as the child keeps it open, which for a `tmux wait-for` is seconds. On the
+    /// global queue each one holds a thread of a pool of a few dozen, and with enough at once none is left for the
+    /// timeouts that would end them: every run waits for ever.
+    private static func onItsOwnThread(_ work: @escaping @Sendable () -> Void) { Thread.detachNewThread(work) }
 
     /// Only while the process is unreaped, so its pid, and the group it leads, are still this run's.
     private static func stop(_ process: Process, group: Bool, signal: Int32) {

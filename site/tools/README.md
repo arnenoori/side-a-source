@@ -14,3 +14,7 @@ The tool binds to loopback only, checks the request origin and exact payload sha
 # Heart lab
 
 `tools/heart-lab.html` renders the love egg's heart ([data-love-egg], on the home and How it works pages) as a still for look development. With `npx vite` running from `site/`, open `/tools/heart-lab.html?yaw=0.3&pitch=0.1` (also `roll` and `px`, the heart's width in CSS pixels).
+
+# Share images
+
+`public/social-linux.jpg` and `public/social-windows.jpg` are 1200 x 630 screenshots of `tools/social-linux.html` and `tools/social-windows.html`, which reuse the landing pages' terminal and phone (`src/landing.css`). After changing either, render each with headless Chrome (`--headless=new --hide-scrollbars --force-device-scale-factor=1 --window-size=1200,630 --screenshot=out.png file://.../tools/social-linux.html`) and convert to JPEG (`sips -s format jpeg -s formatOptions 88 out.png --out public/social-linux.jpg`).

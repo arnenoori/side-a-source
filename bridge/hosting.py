@@ -194,7 +194,30 @@ host() {
   finish $name
 }
 
+# One request to the running app on its socket (Sources/SideA/ShellControl.swift): "attach NAME@COMPUTER" or "list".
+# The reply's lines land in the caller's $answer: "ok" first, with a terminal's folder after it for an attach, or
+# "no" and the sentence to show. Only the app's own user can reach the socket; it never answers with a secret.
+ask_app() {
+  local sock=$root/runtime/cli/app.sock fd line
+  answer=()
+  [[ $* != *$'\n'* ]] || { print -u2 "A name can't have a line break in it."; return 64; }
+  zmodload zsh/net/socket 2>/dev/null && [[ -S $sock ]] && zsocket $sock 2>/dev/null || { print -u2 "Side A isn't running. Open it, then try again."; return 69; }
+  fd=$REPLY
+  print -r -u $fd -- "$*"
+  while IFS= read -r -t 30 -u $fd line; do answer+=("$line"); done
+  exec {fd}>&-
+  (( $#answer )) || { print -u2 "Side A didn't answer."; return 69; }
+  [[ $answer[1] == ok || $answer[1] == "ok "* ]] && return 0
+  print -u2 -r -- "${answer[1]#no }"; return 1
+}
+
 attach() {
+  local -a answer
+  # A session on a linked computer: the app opens the way there, and this terminal joins it as the app's own tabs do.
+  if [[ ${1:-} == *@* ]]; then
+    ask_app attach "$1" || return
+    exec $root/runtime/sidea-remote "${answer[1]#ok }"
+  fi
   ensure_server || return 69
   if [[ -n ${1:-} ]]; then exec $T attach-session -t "=$1"; fi
   local -a here=(${(f)"$($T list-sessions -F '#{@sidea_cwd}	#{session_name}' 2>/dev/null | awk -F '\t' -v d="$PWD" '$1 == d { print $2 }')"})
@@ -204,15 +227,26 @@ attach() {
   return 0
 }
 
+# ls [--all]: the sessions hosted here, and with --all the linked computers' too, as NAME@COMPUTER.
 list() {
-  local out=$($T list-sessions -F '#{session_name}  #{@sidea_agent}  #{@sidea_cwd}' 2>/dev/null)
-  print -r -- ${out:-No hosted sessions.}
+  local out=$($T list-sessions -F '#{session_name}  #{@sidea_agent}  #{@sidea_cwd}' 2>/dev/null) line failed=0
+  local -a answer lines=(${(f)out})
+  if [[ ${1:-} == --all ]]; then
+    ask_app list || failed=$?
+    for line in ${answer[2,-1]}; do
+      if [[ $line == '! '* ]]; then print -u2 -r -- ${line#! }; else lines+=("$line"); fi
+    done
+  fi
+  if (( $#lines )); then print -r -l -- $lines; else print "No hosted sessions."; fi
+  return $failed
 }
 
 cmd=${1:-}; shift 2>/dev/null
 case $cmd in
-  (host) host "$@";; (attach) attach "$@";; (ls) list;;
-  (*) print -u2 "usage: sidea-tmux host|attach|ls"; exit 64;;
+  (host) host "$@";; (attach) attach "$@";; (ls) list "$@";;
+  # The server up and nothing else, so the first session of the day doesn't wait for it.
+  (warm) ensure_server;;
+  (*) print -u2 "usage: sidea-tmux host|attach|ls|warm"; exit 64;;
 esac
 """
 

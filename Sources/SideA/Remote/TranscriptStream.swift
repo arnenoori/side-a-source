@@ -28,7 +28,9 @@ final class TranscriptStream {
         // The demo watches only the harness's transcripts, never the real ones.
         let home = store.sessions.transcriptSource?.home ?? (store.isDemo ? nil : FileManager.default.homeDirectoryForCurrentUser)
         if let home {
-            watcher = FolderWatcher(folders: [".claude/projects", ".codex/sessions"].map { home.appendingPathComponent($0) }) { [weak self] paths in
+            // Side A's own folder holds the conversations of a Codex account that isn't the default one.
+            let profiles = store.sessions.transcriptSource == nil ? [store.root.appendingPathComponent("codex-conversations")] : []
+            watcher = FolderWatcher(folders: [".claude/projects", ".codex/sessions"].map { home.appendingPathComponent($0) } + profiles) { [weak self] paths in
                 self?.changed(paths.filter { $0.hasSuffix(".jsonl") })
             }
         }

@@ -24,7 +24,6 @@ enum HarnessScreen {
         return stand
     }
 
-    /// Runs the commands waiting in the command file, and says when the Mac's watcher changes.
     @MainActor static func poll(_ file: String?, _ stand: ScreenStandIn, _ remote: RemoteController, watching: inout ScreenShare.Watcher?,
                                 say: (String) -> Void) {
         if let file, let text = try? String(contentsOfFile: file, encoding: .utf8), !text.isEmpty {
@@ -70,19 +69,8 @@ enum HarnessScreen {
                                       space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
         let w = CGFloat(width), h = CGFloat(height)
-        context.setFillColor(CGColor(red: 0.07, green: 0.09, blue: 0.16, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: w, height: h))
-        // A grid, so zooming in has something to show.
-        context.setStrokeColor(CGColor(red: 0.2, green: 0.3, blue: 0.5, alpha: 1))
-        context.setLineWidth(max(1, w / 800))
-        let step = w / 14
-        for x in stride(from: 0, through: w, by: step) { context.move(to: CGPoint(x: x, y: 0)); context.addLine(to: CGPoint(x: x, y: h)) }
-        for y in stride(from: 0, through: h, by: step) { context.move(to: CGPoint(x: 0, y: y)); context.addLine(to: CGPoint(x: w, y: y)) }
-        context.strokePath()
-        // A square that keeps moving, so a stalled stream is plain to see.
-        let phase = Double(tick % 120) / 120
-        context.setFillColor(CGColor(red: 0.2, green: 0.8, blue: 0.5, alpha: 1))
-        context.fill(CGRect(x: (w - h / 6) * phase, y: h * 0.1, width: h / 6, height: h / 6))
+        zoomGrid(context, w, h)
+        frameMarker(context, w, h, tick)
         let size = h / 20
         let title = shown.width == 900 ? "TERMINAL WINDOW" : "WHOLE DISPLAY"
         text("\(title)  \(width)x\(height)  frame \(tick)", at: CGPoint(x: w * 0.04, y: h * 0.5), size: size, color: CGColor(gray: 1, alpha: 1), in: context)
@@ -90,7 +78,28 @@ enum HarnessScreen {
         for (index, line) in log.enumerated() {
             text(line, at: CGPoint(x: w * 0.04, y: h * (0.38 - 0.08 * Double(index))), size: size * 0.7, color: CGColor(red: 1, green: 1, blue: 0, alpha: 1), in: context)
         }
-        // Where clicks landed, in the picture's own fractions.
+        clickMarks(context, w, h, posted, shown)
+    }
+
+    private nonisolated static func zoomGrid(_ context: CGContext, _ w: CGFloat, _ h: CGFloat) {
+        context.setFillColor(CGColor(red: 0.07, green: 0.09, blue: 0.16, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        context.setStrokeColor(CGColor(red: 0.2, green: 0.3, blue: 0.5, alpha: 1))
+        context.setLineWidth(max(1, w / 800))
+        let step = w / 14
+        for x in stride(from: 0, through: w, by: step) { context.move(to: CGPoint(x: x, y: 0)); context.addLine(to: CGPoint(x: x, y: h)) }
+        for y in stride(from: 0, through: h, by: step) { context.move(to: CGPoint(x: 0, y: y)); context.addLine(to: CGPoint(x: w, y: y)) }
+        context.strokePath()
+    }
+
+    /// A square that crosses the frame every 120 ticks, so a stalled stream shows as a square that stops.
+    private nonisolated static func frameMarker(_ context: CGContext, _ w: CGFloat, _ h: CGFloat, _ tick: Int) {
+        let phase = Double(tick % 120) / 120
+        context.setFillColor(CGColor(red: 0.2, green: 0.8, blue: 0.5, alpha: 1))
+        context.fill(CGRect(x: (w - h / 6) * phase, y: h * 0.1, width: h / 6, height: h / 6))
+    }
+
+    private nonisolated static func clickMarks(_ context: CGContext, _ w: CGFloat, _ h: CGFloat, _ posted: [String], _ shown: CGRect) {
         guard shown.width > 0 else { return }
         for line in posted where line.hasPrefix("click") || line.hasPrefix("rightClick") || line.hasPrefix("doubleClick") {
             let numbers = line.split(separator: " ")[1].split(separator: ",").compactMap { Double($0) }

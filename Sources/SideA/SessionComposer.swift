@@ -1,5 +1,6 @@
 import AppKit
 import SideAProtocol
+import SideASessionKit
 import SwiftUI
 
 struct SessionComposer: View {
@@ -10,6 +11,11 @@ struct SessionComposer: View {
     @State private var highlighted = 0
     /// esc closed the list for this word; typing another opens it again.
     @State private var dismissed: String?
+    /// Files matching the `@word` at the caret.
+    @State private var files: [String] = []
+    /// Which earlier prompt ↑ last brought back.
+    @State private var recalled: Int?
+    @State private var stashing = false
 
     private var id: String { target.id }
     private var text: Binding<String> { Binding(get: { model.drafts[id] ?? "" }, set: { model.drafts[id] = $0 }) }
@@ -17,7 +23,9 @@ struct SessionComposer: View {
     private var photos: [Upload] { model.attachments[id] ?? [] }
 
     var body: some View {
+        let queued = model.queued(id)
         VStack(alignment: .leading, spacing: 6) {
+            if !queued.isEmpty { QueuedList(model: model, id: id, replies: queued).padding(.leading, 30).padding(.trailing, 32) }
             if !photos.isEmpty { chips.padding(.leading, 30) }
             HStack(alignment: .bottom, spacing: 8) {
                 Button(action: choosePhotos) {
@@ -26,18 +34,33 @@ struct SessionComposer: View {
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help("Attach photos")
                 .accessibilityLabel("Attach photos")
+                if !model.desk.stash.isEmpty {
+                    Button { stashing = true } label: {
+                        Image(systemName: "tray.full").font(.system(size: 13)).frame(width: 22, height: 33)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .help("Stashed messages (⌘S)")
+                    .accessibilityLabel("Stashed messages, \(model.desk.stash.count)")
+                    .popover(isPresented: $stashing, arrowEdge: .top) { StashList(model: model, id: id) { stashing = false } }
+                }
                 ComposerField(text: text, height: $height, placeholder: target.placeholder, onKey: key,
                               onImages: { images in
                                   model.attach(images, to: id)
                                   return true
                               },
-                              onCaret: { caret = $0 })
+                              onCaret: { caret = $0 },
+                              wantsFocus: model.desk.composerFocus != model.desk.composerTaken,
+                              onFocus: { model.desk.composerTaken = model.desk.composerFocus })
                     .frame(height: height)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Ink.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .overlay(alignment: .bottomLeading) {
                         if let open = suggestions {
                             SuggestionList(options: open.options, highlighted: min(highlighted, open.options.count - 1)) { choose($0, in: open.range) }
+                                .offset(y: -(height + 16 + 6))
+                                .transition(Ink.rise(4))
+                        } else if let mention, !files.isEmpty {
+                            MentionList(paths: files, highlighted: min(highlighted, files.count - 1)) { choose(file: $0, in: mention.range) }
                                 .offset(y: -(height + 16 + 6))
                                 .transition(Ink.rise(4))
                         }
@@ -48,31 +71,59 @@ struct SessionComposer: View {
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            let (folder, agent) = (target.live?.cwd, target.claude ? AgentProvider.claude : .codex)
             for provider in providers {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true,
-                          let data = try? Data(contentsOf: url) else { return }
-                    Task { @MainActor in model.attach([data], to: id) }
+                    guard let url else { return }
+                    // A photo is attached; any other file goes in by its path, which is how the agents read files.
+                    if (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true, let data = try? Data(contentsOf: url) {
+                        Task { @MainActor in model.attach([data], to: id) }
+                    } else {
+                        let word = SideASessionKit.FileMentions.dropped(url.path, folder: folder, agent: agent)
+                        Task { @MainActor in
+                            let draft = model.drafts[id] ?? ""
+                            model.drafts[id] = draft + (draft.isEmpty || draft.hasSuffix(" ") || draft.hasSuffix("\n") ? "" : " ") + word + " "
+                        }
+                    }
                 }
             }
             return true
         }
+        .task(id: mention?.query) {
+            guard let query = mention?.query, let folder = target.live?.cwd else { return files = [] }
+            try? await Task.sleep(for: .milliseconds(90))
+            guard !Task.isCancelled else { return }
+            files = Array(await SideA.FileMentions.shared.matches(query, in: folder).prefix(8))
+        }
+        .animation(Ink.glide, value: files)
         .animation(Ink.ease, value: model.outcomes[id])
         .animation(Ink.ease, value: photos.map(\.id))
         .animation(Ink.glide, value: suggestions?.options.map(\.id))
-        .task { await model.loadCommands() }
+        .task { model.loadStash(); await model.loadCommands() }
     }
 
 
-    private var suggestions: (range: NSRange, options: [ComposerSuggestions.Option])? {
-        guard let found = ComposerSuggestions.word(in: model.drafts[id] ?? "", caret: caret, codex: !target.claude), found.word != dismissed else { return nil }
-        let options = ComposerSuggestions.matches(found.word, in: target.claude ? model.commands.claude : model.commands.codex)
+    private var suggestions: (range: NSRange, options: [CommandSuggestions.Option])? {
+        guard let found = CommandSuggestions.word(in: model.drafts[id] ?? "", caret: caret, agent: target.claude ? .claude : .codex), found.word != dismissed else { return nil }
+        let options = CommandSuggestions.matches(found.word, in: target.claude ? model.commands.claude : model.commands.codex)
         guard !options.isEmpty, !(options.count == 1 && options[0].id == found.word) else { return nil }
         return (found.range, options)
     }
 
-    private func choose(_ option: ComposerSuggestions.Option, in range: NSRange) {
-        model.drafts[id] = ComposerSuggestions.apply(option, to: model.drafts[id] ?? "", at: range)
+    private var mention: (range: NSRange, query: String)? {
+        guard suggestions == nil, target.live?.cwd != nil,
+              let found = SideASessionKit.FileMentions.word(in: model.drafts[id] ?? "", caret: caret), "@" + found.query != dismissed else { return nil }
+        return found
+    }
+
+    private func choose(file path: String, in range: NSRange) {
+        model.drafts[id] = SideASessionKit.FileMentions.apply(path, agent: target.claude ? .claude : .codex, to: model.drafts[id] ?? "", at: range).text
+        highlighted = 0
+        files = []
+    }
+
+    private func choose(_ option: CommandSuggestions.Option, in range: NSRange) {
+        model.drafts[id] = CommandSuggestions.apply(option, to: model.drafts[id] ?? "", at: range).text
         highlighted = 0
     }
 
@@ -161,12 +212,31 @@ struct SessionComposer: View {
             case .down: highlighted = (min(highlighted, open.options.count - 1) + 1) % open.options.count; return true
             case .send, .tab: choose(open.options[min(highlighted, open.options.count - 1)], in: open.range); return true
             case .escape:
-                dismissed = ComposerSuggestions.word(in: model.drafts[id] ?? "", caret: caret, codex: !target.claude)?.word
+                dismissed = CommandSuggestions.word(in: model.drafts[id] ?? "", caret: caret, agent: target.claude ? .claude : .codex)?.word
                 return true
-            case .queue: break
+            case .queue, .other, .stash: break
+            }
+        } else if let mention, !files.isEmpty {
+            switch key {
+            case .up: highlighted = (min(highlighted, files.count - 1) - 1 + files.count) % files.count; return true
+            case .down: highlighted = (min(highlighted, files.count - 1) + 1) % files.count; return true
+            case .send, .tab: choose(file: files[min(highlighted, files.count - 1)], in: mention.range); return true
+            case .escape:
+                dismissed = "@" + mention.query
+                return true
+            case .queue, .other, .stash: break
             }
         }
         switch key {
+        case .other:
+            // The other way to send, where there is one: after this turn, or as a note.
+            model.compose(id, how: target.queues ? .afterTurn : offersNote ? .note : .now)
+            return true
+        case .up, .down:
+            guard let step = PromptRecall.step(key == .up ? 1 : -1, draft: model.drafts[id] ?? "", at: recalled, prompts: model.desk.prompts(id)) else { return false }
+            model.drafts[id] = step.draft
+            recalled = step.index
+            return true
         case .send:
             model.compose(id, how: .now)
             return true
@@ -177,7 +247,11 @@ struct SessionComposer: View {
             guard target.interrupt != nil else { return false }
             model.interrupt(id)
             return true
-        case .up, .down, .tab: return false
+        case .stash:
+            // With something typed it is set aside; with nothing, the stash opens to take one back.
+            if empty { stashing = !model.desk.stash.isEmpty } else { model.stash(id) }
+            return true
+        case .tab: return false
         }
     }
 
@@ -257,9 +331,9 @@ struct SessionComposer: View {
 }
 
 struct SuggestionList: View {
-    let options: [ComposerSuggestions.Option]
+    let options: [CommandSuggestions.Option]
     let highlighted: Int
-    let choose: (ComposerSuggestions.Option) -> Void
+    let choose: (CommandSuggestions.Option) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {

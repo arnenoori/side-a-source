@@ -97,6 +97,8 @@ extension SessionStore {
         guard !text.isEmpty || !images.isEmpty else { return }
         drafts[id] = ""
         attachments[id] = nil
+        // A reworded waiting reply takes the place of the one it came from, in one step.
+        if let replaces = desk.rewording.removeValue(forKey: id), queued(id).contains(where: { $0.id == replaces }) { return reply(text, images: images, to: id, how: .afterTurn, replaces: replaces) }
         reply(text, images: images, to: id, how: how)
     }
 
@@ -117,7 +119,7 @@ extension SessionStore {
         attachments[id]?.removeAll { $0.id == upload.id }
     }
 
-    func reply(_ text: String, images: [String] = [], to id: String, how: ComposerSend) {
+    func reply(_ text: String, images: [String] = [], to id: String, how: ComposerSend, replaces: String? = nil, promotes: String? = nil) {
         let target = ComposerTarget(id, store: store)
         // No live process and no waiting Stop hook: the island's own fallback copies it and brings the terminal forward.
         if let ready = target.ready, !target.waiter, target.live == nil || !target.canReply {
@@ -132,15 +134,21 @@ extension SessionStore {
         case .afterTurn:
             if target.hosted || target.terminal { message.submit = .queue } else { message.mode = .followUp }
         }
+        message.replaces = replaces
+        message.promotes = promotes
         let key = target.live.map(WireBuilders.key) ?? id
         let commands = SessionCommands(store: store)
         outcomes[id] = nil
+        let sent = replaces == nil && promotes == nil && how == .now ? desk.sending(text, to: id) : nil
         Task {
+            defer { desk.queueTick += 1 }
             do throws(SessionCommands.Failure) {
                 let result = try await commands.reply(key, message)
+                desk.sent(sent, in: id, shows: [.typed, .followUp].contains(result.delivery))
                 Sounds.play(.tick)
                 self.outcomes[id] = ComposerOutcome(result: .sent(result.delivery), text: text, images: images, how: how)
             } catch {
+                desk.sent(sent, in: id, shows: false)
                 self.outcomes[id] = ComposerOutcome(result: .failed(error.macMessage), text: text, images: images, how: how)
             }
         }

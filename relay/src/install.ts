@@ -77,15 +77,19 @@ export type PhoneOp =
 
 export type TokenKind = 'device' | 'start' | 'activity' | 'challenge';
 
-export interface Target {
+export type Target = {
   deviceId: string;
-  kind: TokenKind;
-  activityId?: string;
-  ending?: boolean;
   // A Live Activity token can't be challenged, so it's tied to the proven APNs token that first uses it (src/ledger.ts).
   owner?: string;
   delivery: Delivery;
-}
+} & ({ kind: Exclude<TokenKind, 'activity'> } | { kind: 'activity'; activityId: string; ending: boolean });
+
+// The awaited parts of an op, made before the state is read so the read, change and save never yield.
+type ReadyMacOp = Exclude<MacOp, { op: 'putDevice' }> | (Extract<MacOp, { op: 'putDevice' }> & { fresh: Fresh });
+type ReadyPhoneOp =
+  | Exclude<PhoneOp, { op: 'tokens' | 'verify' }>
+  | (Extract<PhoneOp, { op: 'tokens' }> & { fresh: Fresh })
+  | (Extract<PhoneOp, { op: 'verify' }> & { proof: Uint8Array });
 
 export type DeviceResult =
   | { device: string; result: 'ok'; apnsId?: string }
@@ -257,7 +261,7 @@ export class Install extends DurableObject<Env> {
       publicKey = new Uint8Array(this.install().public_key);
     }
     if (!await verifyEd25519(publicKey, signed.sig, signed.message)) return answer(error(401, 'unauthorized', 'Bad signature'));
-    const fresh = op.op === 'putDevice' ? await freshChallenge() : undefined;
+    const ready: ReadyMacOp = op.op === 'putDevice' ? { ...op, fresh: await freshChallenge() } : op;
     const macID = op.op === 'send' ? await macIDFor(installId) : '';
 
     const known = this.exists();
@@ -276,7 +280,7 @@ export class Install extends DurableObject<Env> {
     if (state.nonces[signed.nonce] !== undefined) return answer(error(401, 'replay', 'Nonce already used'));
     if (Object.keys(state.nonces).length >= LIMITS.nonces) return answer(error(429, 'rate_limited', 'Too many requests', 60));
     state.nonces[signed.nonce] = now;
-    const result = this.macOp(state, installId, op, known, now, fresh, macID);
+    const result = this.macOp(state, installId, ready, known, now, macID);
     this.save(state, now);
 
     if (!known) await this.ctx.storage.setAlarm(now + DAY);
@@ -284,7 +288,7 @@ export class Install extends DurableObject<Env> {
     return result;
   }
 
-  private macOp(state: State, installId: string, op: MacOp, known: boolean, now: number, fresh: Fresh | undefined, macID: string): Answer | Plan {
+  private macOp(state: State, installId: string, op: ReadyMacOp, known: boolean, now: number, macID: string): Answer | Plan {
     switch (op.op) {
       case 'register':
         return answer({ status: known ? 200 : 201, body: { installId } });
@@ -303,8 +307,7 @@ export class Install extends DurableObject<Env> {
       case 'delete':
         return answer({ status: 204 });
       case 'putDevice':
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- `fresh` is made for every putDevice.
-        return this.putDevice(state, installId, op.deviceId, op.device, now, fresh!);
+        return this.putDevice(state, installId, op.deviceId, op.device, now, op.fresh);
       case 'deleteDevice':
         this.sql.exec('DELETE FROM activities WHERE device_id = ?', op.deviceId);
         this.sql.exec('DELETE FROM devices WHERE id = ?', op.deviceId);
@@ -409,8 +412,7 @@ export class Install extends DurableObject<Env> {
       } else {
         const activity = this.sql.exec<{ update_token: string; bundle: string; environment: Environment }>(
           'SELECT update_token, bundle, environment FROM activities WHERE id = ? AND device_id = ? AND created > ?',
-          // oxlint-disable-next-line typescript/no-non-null-assertion -- an activity send that isn't a start names its activity (parseSend).
-          send.activityId!, deviceId, activitiesFrom).toArray()[0];
+          send.activityId, deviceId, activitiesFrom).toArray()[0];
         if (!activity) plan.results.push({ device: deviceId, result: 'gone' });
         else plan.targets.push({
           deviceId, kind: 'activity', activityId: send.activityId, ending: send.event === 'end', owner: device.apns_token,
@@ -436,16 +438,14 @@ export class Install extends DurableObject<Env> {
       if (outcome.result === 'ok' && outcome.environment) {
         this.sql.exec('UPDATE devices SET environment = ? WHERE id = ? AND apns_token = ?', outcome.environment, deviceId, delivery.token);
       }
-      if (outcome.result === 'ok' && target.ending) {
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- an activity target carries its activity id.
-        this.sql.exec('DELETE FROM activities WHERE id = ? AND update_token = ?', target.activityId!, delivery.token);
+      if (outcome.result === 'ok' && target.kind === 'activity' && target.ending) {
+        this.sql.exec('DELETE FROM activities WHERE id = ? AND update_token = ?', target.activityId, delivery.token);
       }
       if (outcome.result !== 'gone') continue;
       // A phone that registered again after APNs's 410 keeps its new token.
       const before = outcome.timestamp ?? now + 1;
-      if (kind === 'activity') {
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- an activity target carries its activity id.
-        this.sql.exec('DELETE FROM activities WHERE id = ? AND update_token = ? AND created < ?', target.activityId!, delivery.token, before);
+      if (target.kind === 'activity') {
+        this.sql.exec('DELETE FROM activities WHERE id = ? AND update_token = ? AND created < ?', target.activityId, delivery.token, before);
       } else if (kind === 'start') {
         this.sql.exec('UPDATE devices SET push_to_start = NULL WHERE id = ? AND push_to_start = ? AND token_updated < ?', deviceId, delivery.token, before);
       } else {
@@ -457,18 +457,18 @@ export class Install extends DurableObject<Env> {
 
   // As in `mac`: the awaits first, then read, change and save the state without yielding.
   async phone(deviceId: string, secretHash: Uint8Array, op: PhoneOp, now = Date.now()): Promise<Answer> {
-    const fresh = op.op === 'tokens' ? await freshChallenge() : undefined;
-    const proof = op.op === 'verify' ? await sha256(op.challenge) : undefined;
+    const ready: ReadyPhoneOp = op.op === 'tokens' ? { ...op, fresh: await freshChallenge() }
+      : op.op === 'verify' ? { ...op, proof: await sha256(op.challenge) } : op;
     const device = this.exists() ? this.device(deviceId) : undefined;
     if (!device || !equalBytes(new Uint8Array(device.secret_hash), secretHash)) return answer(error(401, 'unauthorized', 'Unknown device'));
     const state = this.load(now);
     const wait = this.take(state, `phone:${deviceId}`, MINUTE, LIMITS.phonePerMinute, now);
-    const result = wait ? answer(error(429, 'rate_limited', 'Too many requests this minute', wait)) : this.phoneOp(state, device, op, now, fresh, proof);
+    const result = wait ? answer(error(429, 'rate_limited', 'Too many requests this minute', wait)) : this.phoneOp(state, device, ready, now);
     this.save(state, now);
     return result;
   }
 
-  private phoneOp(state: State, device: DeviceRow, op: PhoneOp, now: number, fresh?: Fresh, proof?: Uint8Array): Answer {
+  private phoneOp(state: State, device: DeviceRow, op: ReadyPhoneOp, now: number): Answer {
     const deviceId = device.id;
     switch (op.op) {
       case 'tokens': {
@@ -487,16 +487,14 @@ export class Install extends DurableObject<Env> {
            WHERE id = ?7`,
           op.apnsToken ?? null, op.pushToStartToken ?? null, bundle, environment, now, newToken ? 1 : 0, deviceId);
         if (newToken) this.sql.exec('DELETE FROM activities WHERE device_id = ?', deviceId);
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- `fresh` is made for every tokens op.
-        const challenge = newToken ? this.challenge(state, this.install().install_id, deviceId, now, fresh!) : undefined;
+        const challenge = newToken ? this.challenge(state, this.install().install_id, deviceId, now, op.fresh) : undefined;
         return answer({ status: 200, body: { verified: !newToken && device.verified === 1 } }, challenge);
       }
       case 'verify': {
         const expected = device.challenge_hash && new Uint8Array(device.challenge_hash);
         const current = device.challenge_sent !== null && now - device.challenge_sent < LIMITS.challengeLifetime
           && device.challenge_route === routeOf(device);
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- `proof` is made for every verify op.
-        if (!expected || !current || !equalBytes(expected, proof!)) {
+        if (!expected || !current || !equalBytes(expected, op.proof)) {
           return answer(error(403, 'bad_challenge', 'Challenge is wrong or expired'));
         }
         this.sql.exec('UPDATE devices SET verified = 1, challenge_hash = NULL, challenge_sent = NULL, challenge_route = NULL WHERE id = ?', deviceId);

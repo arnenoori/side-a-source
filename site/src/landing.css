@@ -1,0 +1,91 @@
+/* The Linux and Windows pages: a hero with the install command, a terminal beside the phone, then steps and facts. */
+main.landing { display: block; width: min(1080px, 100%); margin: 0 auto; padding: 56px 0 96px; }
+.landing section { margin: 0 0 120px; }
+.landing section:last-child { margin-bottom: 0; }
+.landing h1 { max-width: 16em; margin: 0 auto 32px; font-size: clamp(36px, 5.4vw, 60px); line-height: 1.04; letter-spacing: -.04em; font-weight: 650; text-wrap: balance; }
+.landing h2 { margin: 0 0 16px; font-size: clamp(28px, 3.4vw, 40px); line-height: 1.08; letter-spacing: -.03em; font-weight: 600; text-wrap: balance; }
+.landing p, .landing li { font-size: 16px; line-height: 1.55; color: #4c5550; }
+.landing code { font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace; background: #eceeec; padding: 1px 6px; border-radius: 5px; color: var(--ink); }
+.landing .tag { margin-left: 10px; padding: 3px 10px; border-radius: 11px; background: #eceeec; font-size: 12px; font-weight: 500; letter-spacing: 0; color: #4c5550; vertical-align: .5em; }
+
+.landing-hero { text-align: center; }
+.landing section.landing-hero { margin-bottom: 72px; }
+.install { display: inline-flex; align-items: center; gap: 14px; max-width: 100%; padding: 6px 6px 6px 22px; border-radius: 30px; background: var(--ink); text-align: left; }
+.install pre { min-width: 0; margin: 0; overflow-x: auto; scrollbar-width: none; }
+.landing .install code { padding: 0; background: none; font-size: 14px; color: #fff; white-space: pre; }
+.install code::before { content: "$ "; color: #8f9a94; }
+.install button { flex: none; min-width: 72px; min-height: 44px; padding: 0 16px; border: 0; border-radius: 22px; background: #fff; font-size: 13px; font-weight: 500; color: var(--ink); }
+.landing .release { margin: 16px 0 0; font-size: 12px; color: var(--muted); }
+.landing .release a { color: inherit; }
+
+.demo { position: relative; width: min(920px, 100%); padding: 5% 0 40px; }
+.landing section.demo { margin-left: auto; margin-right: auto; }
+.terminal { width: 80%; border-radius: 14px; background: #161817; box-shadow: 0 1px 0 var(--line), 0 24px 60px #2028201f; text-align: left; overflow: hidden; }
+.terminal-bar { display: flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; font-size: 11.5px; color: #8f9a94; }
+.terminal-bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a3f3c; }
+.terminal-bar span { margin-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.terminal-body { padding: 6px 22px 30px; font: 13px/1.85 ui-monospace, "SF Mono", Menlo, monospace; color: #e4e8e4; }
+.landing .terminal-body p { margin: 0; font: inherit; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.landing .terminal-body .dim { color: #8f9a94; }
+.landing .terminal-body .ok { color: #7fcf9f; }
+.landing .terminal-body .wait { color: #f0a15c; }
+.landing .terminal-body .gap { margin-top: 12px; }
+
+/* The phone is drawn, not a screenshot, so the request it shows is the one waiting in the terminal beside it. */
+.handset { position: absolute; right: 2%; bottom: 0; width: 25.5%; padding: 1.1%; border-radius: 16% / 7.6%; background: #0c0d0d; box-shadow: inset 0 0 0 1.5px #3a3d3c, 0 0 0 1px #9aa09d, 0 2px 3px #20282026, 0 30px 70px #20282033; container-type: inline-size; }
+.handset-screen { position: relative; aspect-ratio: 1206 / 2500; border-radius: 13.6% / 6.5%; overflow: hidden; background: #f2f2f7; padding: 17cqw 5cqw 0; text-align: left; }
+.handset-screen::before { content: ""; position: absolute; top: 3.2cqw; left: 50%; width: 30%; aspect-ratio: 126 / 37; border-radius: 99px; background: #000; transform: translateX(-50%); }
+.landing .handset p { margin: 0; color: #1c1c1e; }
+.landing .handset .title { font-size: 6.4cqw; font-weight: 600; text-align: center; line-height: 1.2; }
+.landing .handset .where { margin-bottom: 6cqw; font-size: 4.8cqw; text-align: center; color: #8a8a8e; }
+.landing .handset .said { margin-bottom: 4cqw; padding: 4cqw 4.6cqw; border-radius: 6cqw; background: #fff; font-size: 5.2cqw; line-height: 1.4; }
+.ask { padding: 5cqw; border: 1px solid #f3dfb8; border-radius: 6cqw; background: #fdf3e3; }
+.landing .ask .what { font-size: 6cqw; font-weight: 600; }
+.landing .ask .command { margin: 1.5cqw 0 5cqw; font: 5.4cqw/1.4 ui-monospace, "SF Mono", Menlo, monospace; }
+.ask-buttons { display: flex; justify-content: flex-end; gap: 3cqw; }
+.ask-buttons span { min-width: 26cqw; padding: 3.4cqw 0; border-radius: 99px; font-size: 5.6cqw; font-weight: 500; text-align: center; }
+.ask-buttons .deny { background: #fff; box-shadow: inset 0 0 0 1px #e6dccb; color: #1c1c1e; }
+.ask-buttons .allow { background: #ee9a13; color: #fff; }
+.landing .handset .reply { position: absolute; left: 5cqw; right: 5cqw; bottom: 7cqw; padding: 3.6cqw 5cqw; border-radius: 99px; background: #fff; box-shadow: 0 0 0 1px #0000000f; font-size: 5.2cqw; color: #a3a3a8; }
+
+.landing-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.landing-steps li { padding: 26px 26px 28px; border-radius: 20px; background: #eef0ee; counter-increment: step; }
+.landing-steps li::before { content: counter(step); display: block; margin-bottom: 26px; font-size: 13px; font-weight: 600; color: var(--orange); font-variant-numeric: tabular-nums; }
+.landing-steps b { display: block; margin-bottom: 6px; font-size: 18px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+.landing-steps code { background: #fff; overflow-wrap: anywhere; }
+.landing-steps .remote-beta, .landing-steps .remote-soon, .landing-steps .remote-store { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; margin: 16px 0 0; }
+.landing-steps .remote-beta, .landing-steps .remote-soon { gap: 7px; padding: 0 18px; border-radius: 20px; font-size: 13px; font-weight: 500; line-height: 1; text-decoration: none; }
+.landing-steps .remote-beta { background: var(--ink); color: #fff; }
+.landing-steps .remote-soon { background: #fff; color: #4c5550; }
+@media (hover: hover) and (pointer: fine) { .landing-steps .remote-beta:hover { background: #3b4540; } }
+.landing-steps .remote-beta svg, .landing-steps .remote-soon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.landing-steps .remote-store img { display: block; height: 40px; width: auto; }
+
+.landing-head { margin: 0 0 44px; text-align: center; }
+.points { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px 48px; margin: 0; padding: 0; }
+.points li { font-size: 15px; }
+.points b { display: block; margin-bottom: 4px; font-size: 16px; font-weight: 600; color: var(--ink); }
+
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px 48px; padding-top: 40px; border-top: 1px solid var(--line); }
+.facts h3 { margin: 0 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .06em; color: var(--muted); }
+.facts ul { list-style: none; margin: 0; padding: 0; }
+.landing .facts li, .landing .facts p { margin: 0 0 8px; font-size: 14px; line-height: 1.5; }
+
+@media (max-width: 820px) {
+  .landing section { margin-bottom: 88px; }
+  .landing-steps, .points, .facts { grid-template-columns: minmax(0, 1fr); }
+  .landing-steps li::before { margin-bottom: 14px; }
+  .points { gap: 24px; }
+}
+@media (max-width: 600px) {
+  main.landing { padding: 36px 0 72px; }
+  .install { padding-left: 16px; gap: 8px; }
+  .landing .install code { font-size: 12px; }
+  .demo { padding-top: 0; }
+  .landing section.landing-hero { margin-bottom: 48px; }
+  .terminal { width: 94%; }
+  .terminal-body { padding: 4px 14px 22px; font-size: 9.5px; }
+  .handset { width: 40%; right: 0; }
+}
+header nav [aria-current=page] { color: var(--ink); }
+@media (max-width: 600px) { header nav { gap: 14px; } header nav .wide-only { display: none; } }

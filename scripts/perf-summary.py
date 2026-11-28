@@ -21,6 +21,8 @@ import sys
 SUBSYSTEM = "com.arnenoori.sidea"
 WAITS = ("v1/pair/{attempt}/wait",)
 SLOW = re.compile(r"^slow: (bridge|route) (.+) (\d+) ms$")
+# Steps of starting a session, logged every time (not only when slow): the launcher, and the wait until the Mac lists it.
+TOOK = re.compile(r"^took: (start) (.+) (\d+) ms$")
 STALL = re.compile(r"^stall: main thread blocked (\d+) ms, during (.*)$")
 
 
@@ -67,6 +69,8 @@ def gather(entries):
                 times[(kind, start[0])].append((end - start[1]).total_seconds() * 1000)
         elif match := SLOW.match(message):
             slow_lines[(match.group(1), match.group(2))].append(float(match.group(3)))
+        elif match := TOOK.match(message):
+            times[(match.group(1), match.group(2))].append(float(match.group(3)))
         elif match := STALL.match(message):
             stalls.append((stamp[:19], int(match.group(1)), match.group(2)))
     # Signposts the log already dropped leave only the slow lines; where both exist the signposts are the whole set.
@@ -102,6 +106,7 @@ def main():
     print(f"Side A performance, last {args.hours} h\n")
     print(table(times, "bridge", args.top))
     print(table(times, "route", args.top))
+    print(table(times, "start", args.top))
     if stalls:
         print(f"{len(stalls)} main-thread stall(s) of 2 s or more:")
         for stamp, ms, during in sorted(stalls, key=lambda stall: -stall[1])[:args.top]:

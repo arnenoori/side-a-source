@@ -6,6 +6,7 @@ import Foundation
 @testable import SideA
 import SideACore
 import SideAProtocol
+import SideASessionKit
 import Testing
 
 @MainActor private func store(_ sessions: [[String: Any]]) throws -> AccountStore {
@@ -41,18 +42,18 @@ import Testing
     #expect(sessions.attachments["s-work"] == nil && sessions.drafts["s-work"] == "")
 }
 
-@Test func suggestionsFollowTheWordAtTheCaret() {
+@Test func suggestionsFollowTheWordAtTheCaret() throws {
     let options = [("/review", "Review"), ("/clear", "Clear"), ("/prompts:release", "Release"), ("$ship", "Ship"), ("$imagegen", "Images")]
-        .map { ComposerSuggestions.Option(id: $0.0, label: $0.1) }
-    #expect(ComposerSuggestions.word(in: "please /re", caret: 10, codex: false)?.word == "/re")
-    #expect(ComposerSuggestions.word(in: "please /re", caret: 6, codex: false) == nil)
-    #expect(ComposerSuggestions.word(in: "$sh", caret: 3, codex: false) == nil)
-    #expect(ComposerSuggestions.word(in: "$sh", caret: 3, codex: true)?.word == "$sh")
-    #expect(ComposerSuggestions.matches("/re", in: options).map(\.id) == ["/review", "/prompts:release"])
-    #expect(ComposerSuggestions.matches("$", in: options).map(\.id) == ["$ship", "$imagegen"])
-    let found = ComposerSuggestions.word(in: "/re then", caret: 3, codex: false)!
-    #expect(ComposerSuggestions.apply(options[0], to: "/re then", at: found.range) == "/review then")
-    #expect(ComposerSuggestions.apply(options[0], to: "/re", at: NSRange(location: 0, length: 3)) == "/review ")
+        .map { CommandSuggestions.Option(id: $0.0, label: $0.1) }
+    #expect(CommandSuggestions.word(in: "please /re", caret: 10, agent: .claude)?.word == "/re")
+    #expect(CommandSuggestions.word(in: "please /re", caret: 6, agent: .claude) == nil)
+    #expect(CommandSuggestions.word(in: "$sh", caret: 3, agent: .claude) == nil)
+    #expect(CommandSuggestions.word(in: "$sh", caret: 3, agent: .codex)?.word == "$sh")
+    #expect(CommandSuggestions.matches("/re", in: options).map(\.id) == ["/review", "/prompts:release"])
+    #expect(CommandSuggestions.matches("$", in: options).map(\.id) == ["$ship", "$imagegen"])
+    let found = try #require(CommandSuggestions.word(in: "/re then", caret: 3, agent: .claude))
+    #expect(CommandSuggestions.apply(options[0], to: "/re then", at: found.range).text == "/review then")
+    #expect(CommandSuggestions.apply(options[0], to: "/re", at: NSRange(location: 0, length: 3)).text == "/review ")
 }
 
 @MainActor @Test func theIslandTakesAModeOnlyWhereTheRequestOffersOne() throws {
@@ -159,9 +160,9 @@ import Testing
 @MainActor @Test func theChangesSheetCountsEveryFileAndSaysWhileItRuns() {
     let files = [FileDiff(path: "a.swift", oldPath: nil, change: .modified, additions: 3, deletions: 1, hunks: [], truncated: false),
                  FileDiff(path: "b.swift", oldPath: nil, change: .added, additions: 2, deletions: 0, hunks: [], truncated: true)]
-    #expect(TurnDiffSheet.summary(TurnDiff(sessionID: "s", turnID: "t", files: files, running: true, note: nil)) == "2 files · +5 −1 · still working")
-    #expect(TurnDiffSheet.summary(TurnDiff(sessionID: "s", turnID: "t", files: [files[0]], running: false, note: nil)) == "1 file · +3 −1")
-    #expect(TurnDiffSheet.summary(TurnDiff(sessionID: "s", turnID: "t", files: [], running: true, note: nil)) == nil)
+    #expect(ChangesSheet.summary(files, running: true) == "2 files · +5 −1 · still working")
+    #expect(ChangesSheet.summary([files[0]], running: false) == "1 file · +3 −1")
+    #expect(ChangesSheet.summary([], running: true) == nil)
 }
 
 @Test func aPhonesUploadsStopAtItsCap() throws {

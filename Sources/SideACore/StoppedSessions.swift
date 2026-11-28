@@ -36,8 +36,26 @@ public struct StoppedSessions: Codable, Equatable, Sendable {
     /// Stopped on a limit when Autopilot traded their login: waits for the trade to reach them.
     private var moved: [String: Double] = [:]
     private var asked: [String: Ask] = [:]
+    /// Sessions the user said not to send on; nil in a file from before there was the choice.
+    private var held: Set<String>?
 
     public init() {}
+
+    public func holds(_ session: String) -> Bool { held?.contains(session) == true }
+
+    /// The user's choice for one session: left stopped until they send it on, or continued like the rest.
+    public mutating func hold(_ session: String, _ on: Bool) {
+        var next = held ?? []
+        if on { next.insert(session) } else { next.remove(session) }
+        held = next.isEmpty ? nil : next
+    }
+
+    /// A hold is about one stop: it ends when its session has gone on or is gone. `stopped` are the running
+    /// sessions with no turn under way.
+    public mutating func keepHolds(among stopped: Set<String>) {
+        guard let kept = held?.intersection(stopped), kept != held else { return }
+        held = kept.isEmpty ? nil : kept
+    }
 
     public var isEmpty: Bool { refused.isEmpty && moved.isEmpty }
     /// Asks are still counted for some session, so `due` has to run to see it past its stop.
@@ -80,6 +98,7 @@ public struct StoppedSessions: Codable, Equatable, Sendable {
         due.formUnion(moved.filter { now - $0.value >= Self.settle }.keys)
         due.formUnion(lifted.keys)
         due.formIntersection(idle)
+        due.subtract(held ?? [])
         due = due.filter { session in
             guard let last = asked[session] else { return true }
             let times = now - last.at < Self.rest ? last.times : 0

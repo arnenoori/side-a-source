@@ -3,14 +3,16 @@ import Foundation
 import SideAProtocol
 import SideARemoteKit
 
-// sidea-probe --link URL [--connect HOST:PORT | --relay-only [--relay-url URL]] --cwd DIR
+// sidea-probe --link URL [--connect HOST:PORT | --relay-only [--relay-url URL]] [--agent PREFIX] --cwd DIR
 //
 // Pairs with a sidead (the link is what `sidead pair` prints; --connect replaces its address, for a daemon behind a port
 // forward), then walks the phone's path: hello, projects, start a hosted session, wait for it to register, read its
-// transcript, reply, and watch the new messages arrive on the events socket. Exits 0 only when every step held.
+// transcript, reply, and watch the new messages arrive on the events socket. With --agent, it then has a stand-in agent
+// ask for permission twice and answers Allow and Deny (Permissions.swift). Exits 0 only when every step held.
 
 struct Failure: Error, CustomStringConvertible { let description: String }
 
+// swiftlint:disable:next print_in_app -- the probe's output is what scripts/linux-e2e.sh reads.
 func say(_ text: String) { print("PROBE \(text)"); fflush(stdout) }
 
 func require(_ condition: Bool, _ message: String) throws {
@@ -179,6 +181,7 @@ func run() async throws {
     let end = try keys.sign(macID: macID, deviceID: deviceID, purpose: .action, subject: ConfirmMessage.subject(action: .endHosted, target: hosted.name), faceID: false)
     try await client.endHosted(hosted.name, confirm: end)
     try require(try await client.hosted().hosted.isEmpty, "the hosted session ended")
+    if let agent = option("--agent") { try await permissions(client: client, keys: keys, macID: macID, deviceID: deviceID, agent: agent) }
     say("DONE")
 }
 

@@ -48,7 +48,10 @@ public enum Run {
         posix_spawn_file_actions_adddup2(&actions, input == nil ? nullFD : pipeFDs[0], 0)
         posix_spawn_file_actions_adddup2(&actions, outFD, 1)
         posix_spawn_file_actions_adddup2(&actions, errFD, 2)
-        // A server the program starts must not keep the daemon's sockets and pipes open.
+        // A server the program starts must not keep the daemon's sockets and pipes open: `tmux new-session` forks a server
+        // that outlives the daemon, and one holding the listener keeps the port bound after it stops. NIO sets no
+        // close-on-exec, so every descriptor but the three above is closed here. Darwin has no `addclosefrom`: its
+        // `POSIX_SPAWN_CLOEXEC_DEFAULT`, set below, does the same.
         #if os(Linux)
         posix_spawn_file_actions_addclosefrom_np(&actions, 3)
         #endif
@@ -67,7 +70,11 @@ public enum Run {
         sigemptyset(&nothing)
         posix_spawnattr_setsigdefault(&attributes, &everything)
         posix_spawnattr_setsigmask(&attributes, &nothing)
+        #if canImport(Darwin)
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_CLOEXEC_DEFAULT))
+        #else
         posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK))
+        #endif
 
         let settings = environment ?? ProcessInfo.processInfo.environment
         let argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) } + [nil]
@@ -83,9 +90,10 @@ public enum Run {
         if let input {
             // SIGPIPE is ignored by the daemon, so a program that exits first fails the write instead of killing us.
             input.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
                 var offset = 0
                 while offset < raw.count {
-                    let written = write(pipeFDs[1], raw.baseAddress! + offset, raw.count - offset)
+                    let written = write(pipeFDs[1], base + offset, raw.count - offset)
                     if written <= 0 { break }
                     offset += written
                 }
@@ -142,6 +150,23 @@ public enum Run {
         if name.contains("/") { return FileManager.default.isExecutableFile(atPath: name) ? name : nil }
         let folders = (environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":").map(String.init) + extra
         return folders.map { $0 + "/" + name }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+}
+
+extension Run {
+    /// A process that runs: one a signal reaches, and not one that ended and waits to be reaped, which `kill(pid, 0)`
+    /// cannot tell apart. tmux 3.4, the oldest Linux hosting supports, can leave a remain-on-exit pane's agent so until
+    /// another of its children ends; the bridge reads it the same way (`hostos.exited`).
+    public static func running(_ pid: Int) -> Bool { pid > 1 && (kill(pid_t(pid), 0) == 0 || errno == EPERM) && !exited(pid) }
+
+    static func exited(_ pid: Int) -> Bool {
+        #if os(Linux)
+        // The name in parentheses may itself hold spaces and parentheses; the state follows the last one.
+        guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8), let name = stat.lastIndex(of: ")") else { return false }
+        return stat[stat.index(after: name)...].split(separator: " ").first.map { $0 == "Z" || $0 == "X" } ?? false
+        #else
+        return false
+        #endif
     }
 }
 

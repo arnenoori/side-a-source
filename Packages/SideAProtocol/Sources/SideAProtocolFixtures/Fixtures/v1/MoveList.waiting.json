@@ -1,0 +1,15 @@
+{
+  "moves": [
+    {
+      "agent": "claude",
+      "at": 1800000200,
+      "computer": "9c1e7b3d4f2a5b6c",
+      "computerName": "Mac mini",
+      "conversationID": "a06442e2-3f6b-4a35-931a-a4599bfa8acd",
+      "id": "mv-9b2e4c1a7f3d",
+      "project": "app",
+      "state": "waiting",
+      "title": "Fix the login redirect"
+    }
+  ]
+}

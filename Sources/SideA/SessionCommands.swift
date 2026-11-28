@@ -155,6 +155,7 @@ import SideAProtocol
             abilities.insert(.replyTyped)
         }
         if store.hosted.available, HostedSessions.continueRefusal(live) == nil { abilities.insert(.continueOnPhone) }
+        if Moves.refusal(live, when: .afterTurn) == nil, !store.remote.computers.all.isEmpty { abilities.insert(.move) }
         abilities.formUnion(codex.row(live)?.abilities ?? [])
         // The bridge reads a Claude turn's diff from its transcript, so every Claude session with a turn has one.
         if live.provider == .claude, live.turnID != nil { abilities.insert(.turnDiff) }
@@ -193,7 +194,7 @@ import SideAProtocol
     func flag(_ live: LiveSession) -> SessionFlag? {
         if let text = store.remote.codex.unsent(live) { return SessionFlag(kind: .unsent, text: "Didn't reach Codex: \u{201C}\(String(text.prefix(80)))\u{201D}") }
         if let text = store.remote.inbox.unsent(live) { return SessionFlag(kind: .unsent, text: "Didn't reach Claude: \u{201C}\(String(text.prefix(80)))\u{201D}") }
-        return live.flag.map { SessionFlag(kind: SessionFlag.Kind(rawValue: $0.kind), text: $0.text) }
+        return live.flag.map { SessionFlag(kind: $0.kind, text: $0.text) }
     }
 
     /// The reply a dropped one carried, in full: the quote in the flag is cut at 80 characters.

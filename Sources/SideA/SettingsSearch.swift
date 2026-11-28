@@ -48,7 +48,6 @@ struct SettingsEntry: Hashable {
             .map(\.entry)
     }
 
-    /// Lowercased, accents dropped, split on anything that isn't a letter or digit: "5-hour" is "5" and "hour".
     static func words(_ text: String) -> [String] {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
             .split { !$0.isLetter && !$0.isNumber }.map(String.init)
@@ -64,7 +63,6 @@ struct SettingsEntry: Hashable {
         return best
     }
 
-    /// Exact, then the start of the word, then inside it, then a typo.
     static func quality(_ term: String, _ word: String) -> Int? {
         if word == term { return 100 }
         if word.hasPrefix(term) { return 80 }

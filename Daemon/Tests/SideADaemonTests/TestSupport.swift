@@ -98,6 +98,7 @@ final class TestConnection: @unchecked Sendable {
     var isClosed: Bool { lock.lock(); defer { lock.unlock() }; return closed }
 
     func close() async {
+        // swiftlint:disable:next swallowed_try -- shutting a test client down.
         try? await channel.close()
         // swiftlint:disable:next swallowed_try -- shutting a test client down.
         try? await group.shutdownGracefully()
@@ -190,6 +191,7 @@ final class TestConnection: @unchecked Sendable {
 
     /// The next text frame, ignoring pings.
     func event() async throws -> [String: Any] {
+        // swiftlint:disable:next unbounded_poll_in_tests -- not a poll: `frame()` blocks and throws when the socket closes.
         while true {
             let next = try await frame()
             if next.opcode == .text, let object = (try JSONSerialization.jsonObject(with: next.payload)) as? [String: Any] { return object }
@@ -244,17 +246,20 @@ struct FakePhone {
     /// And as the Face ID key does.
     let biometric = P256.Signing.PrivateKey()
     var confirmKey: String { biometric.publicKey.x963Representation.base64URL }
-    let name = "Test iPhone"
+    var name = "Test iPhone"
+    /// What it pairs as: a phone, or with `.computer` another computer linking to this one.
+    var capabilities: Set<Capability> = [.events]
 
     func request(code: String, spki: String) -> PairRequest {
-        PairRequest(code: code, device: DeviceInfo(name: name, model: "iPhone18,1", system: "iOS 27.0", app: "1.0", build: 40, capabilities: [.events]),
+        PairRequest(code: code, device: DeviceInfo(name: name, model: "iPhone18,1", system: "iOS 27.0", app: "1.0", build: 40, capabilities: capabilities),
                     deviceID: deviceID, devicePublicKey: key.publicKey.rawRepresentation.base64URL,
                     deviceSecretHash: Data(SHA256.hash(data: secret)).base64URL, serverKeyHash: spki, confirmKey: confirmKey, unlockKey: unlockKey)
     }
 
     /// The header for a call that needs the unlock key, or with `biometric` the Face ID key.
-    func confirm(purpose: ConfirmPurpose, subject: String, biometric face: Bool = false, at: Int = Int(Date().timeIntervalSince1970)) throws -> String {
-        let text = try ConfirmMessage.text(macID: HostInfo.machineID(), deviceID: deviceID, purpose: purpose, subject: subject, at: at)
+    func confirm(purpose: ConfirmPurpose, subject: String, biometric face: Bool = false, at: Int = Int(Date().timeIntervalSince1970),
+                 macID: String = HostInfo.machineID()) throws -> String {
+        let text = try ConfirmMessage.text(macID: macID, deviceID: deviceID, purpose: purpose, subject: subject, at: at)
         let signature = try (face ? biometric : unlock).signature(for: Data(text.utf8))
         return ConfirmSignature(at: at, signer: face ? .confirm : .unlock, signature: signature.derRepresentation).headerValue
     }

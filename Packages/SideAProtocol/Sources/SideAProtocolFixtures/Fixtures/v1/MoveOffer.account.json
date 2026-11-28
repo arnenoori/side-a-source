@@ -1,0 +1,17 @@
+{
+  "account": {
+    "email": "you@example.com",
+    "name": "Work"
+  },
+  "agent": "codex",
+  "commits": [
+    "3e55371af3a9ad032ca0e33b1118c617063684f3"
+  ],
+  "conversationID": "019a2f6e-5b1c-7d42-9c3e-8f0a1b2c3d4e",
+  "from": {
+    "id": "5b3d4f687c2e91a0",
+    "name": "MacBook"
+  },
+  "id": "mv-7c1e9a4f2b3d",
+  "project": "app"
+}

@@ -1,0 +1,13 @@
+{
+  "computers": [
+    {
+      "id": "9c1e7b3d4f2a5b6c",
+      "name": "Mac mini"
+    },
+    {
+      "id": "1a2b3c4d5e6f7081",
+      "name": "build-box",
+      "os": "linux"
+    }
+  ]
+}

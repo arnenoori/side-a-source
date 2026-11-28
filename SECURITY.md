@@ -1,6 +1,6 @@
 # Security and privacy
 
-Side A never copies a login. It writes logins in two cases: a renewal, when a Claude login's
+A login lives on one computer at a time, and Side A never copies one to a service. It writes logins in three cases: a move to another of your computers that takes the session's login with it (below), a renewal, when a Claude login's
 short-lived access token has expired, and a trade, when Autopilot moves running sessions off an
 account near its limit. A trade the account doesn't need yet waits until its sessions have been
 quiet for five minutes, because the move costs them their prompt cache.
@@ -57,7 +57,7 @@ quiet for five minutes, because the move costs them their prompt cache.
   refused. That check runs when a connection opens, before anything is read, and its answer is kept
   for a minute at most. A caller without the key can send 64 KiB; every request has two minutes to
   arrive. A Mac signed in with a tag has no user to compare (every tagged node shares one identity),
-  so sharing is refused there. Tailscale encrypts the traffic. Logins never leave this Mac; another Mac that ran
+  so sharing is refused there. Tailscale encrypts the traffic. The pool never sends a login; another Mac that ran
   `sidea pool join` keeps only the URL and key, in a file readable only by you. Anthropic does not support routing a subscription
   through a proxy, and the setting says so.
 
@@ -78,7 +78,8 @@ quiet for five minutes, because the move costs them their prompt cache.
   readable only by you, then runs your own command with the same input. No login passes through it.
 
 - **Logins stay in their CLI's Keychain items.** Claude logins live in Claude Code's default
-  item and Side A's profile items; a trade can move one to another of these items. Codex logins stay in
+  item and Side A's profile items; a trade can move one to another of these items. A login that is going to
+  another of your computers with a session waits in an item of Side A's own until that computer has it. Codex logins stay in
   `~/.codex` or the account's profile.
 - **What it reads:** each account's access token, to call the usage and profile endpoints
   the CLIs use, and the Codex id_token, to name the account. Every read checks that the
@@ -107,7 +108,21 @@ quiet for five minutes, because the move costs them their prompt cache.
   `~/.tmux.conf` are untouched) and the terminal tab attaches to them. The tmux is the build
   signed with the app at `Contents/Helpers/tmux`; development builds fall back to Homebrew's
   tmux 3.4 or later. The server starts with a fixed environment, so variables of the tab that
-  started it never reach other sessions. Each session's launch file and first prompt live in
+  started it never reach other sessions. While terminal hosting or Remote is on, Side A starts
+  that server (holding no sessions) when it launches, so the first session doesn't wait for it.
+  What you have typed to a session in the Sessions window and not sent is kept in
+  `runtime/session-drafts.json` (readable only by you) so it survives a quit; a draft goes from
+  the file when it is sent or cleared, and one older than 30 days is not brought back. A message set aside with ⌘S is kept in
+  `runtime/prompt-stash.json` (readable only by you) until it is taken back or removed. Side A reads
+  `side-a.json` and `package.json` in a session's folder for the commands under Run, and runs one
+  only when you choose it, in a terminal tab, after showing you a command it hasn't run in that
+  folder before. Changes runs the system `git` in the session's folder to read diffs and the
+  commit list; it changes nothing there, and it runs with the repository's external diff tools,
+  text converters and file-system monitor turned off. A clean filter the repository configures
+  can still run, as it does for any `git diff` there. Edit from
+  Here writes one new file beside a Claude conversation in `~/.claude/projects`: a copy of it that
+  ends before the chosen message, under a new id and readable only by you. The conversation it
+  copies is not changed. Each session's launch file and first prompt live in
   `runtime/hosted/<name>/` (0700; the prompt is deleted as the session reads it, the last screen
   is kept as `last.txt` for 7 days). Text typed into a session goes through tmux's stdin, never
   its command line, with control characters removed. Side A presses Enter again only while the
@@ -444,6 +459,76 @@ text, and nothing of a session's content goes into the logs.
   phone, where its unlock key can't sign. So a stolen token can silence that phone's notifications or
   change what it wants to hear about, until you revoke it. It runs nothing and reads nothing.
 
+## Moving a session to another computer
+
+Design: `docs/moving-sessions-prd.md`. Two linked computers each hold a token for the other's Remote server, a
+relay device secret and two signing keys for calls to it, kept in a Keychain item of their own ("Side A linked
+computers") beside the paired devices. Each lists the other with its phones and can revoke it; unlinking on one
+tells the other. **A linked computer can start sessions on the other, which is the ability to run commands
+there**; the link sheet and the Pair prompt say so. The move and standby routes answer only a device that paired
+as a computer, never a phone's token, and a Mac with Accept Sessions off refuses them all.
+
+- **What is sent**, over the same pinned TLS a phone uses, straight to the other computer (or through the relay
+  tunnel, which carries that TLS and sees neither tokens nor content): the conversation's transcript (with its
+  subagent and tool-result files and Claude Code's memory folder for that project), and the folder's git state as
+  a bundle: the commits the other computer lacks, the index, and the working tree with untracked files. Ignored
+  files are not sent, except a project's ignored `.env` files when Include Ignored .env Files is on. A transcript
+  holds whatever the agent read or printed, and a repository's history holds whatever was committed to it,
+  secrets included.
+- **A login can go with the session.** When the other computer is not signed in to the account the session runs
+  on, the account's stored login (Claude Code's credential item, or Codex's `auth.json`) is sent with the request
+  to start the session, and the sheet says so before anything stops. A login lives on one computer at a time:
+  the sender first moves it out of its slot into an item of its own ("Side A login held …"), so no session and
+  no renewal reads it; deletes that copy only when the receiver says it stored the login; and puts it back when
+  the move does not happen. While the outcome is unknown the copy stays held and unused. The receiver stores the
+  login as an ordinary account, and deletes it again if the session then fails to start. The computer's own
+  login, the one its terminals use, is never sent, and neither is a login another session on the sender is using.
+  A login goes only to a computer you linked, and to no service.
+- **What is written on the receiving computer**: a new worktree at `<repository>/.sidea-worktrees/<name>` on a
+  new `sidea/<name>` branch, or a new clone under `~/Side A`; the transcript under `~/.claude/projects` or the
+  Codex `sessions` folder; a login when one came; and a journal and the files in transit under `runtime/moves` in
+  Side A's folder. An existing checkout's files are never changed, and a transcript already there is replaced
+  only by one that continues it.
+- **What is changed on the sending computer**: a private ref under `refs/sidea/moves/` while the move runs
+  (removed after; the branch, index and stash are not touched), and the transcript is moved into
+  `runtime/moves/away` while the session is on the other computer, so the CLI cannot resume it in two places.
+- **Not sent**: MCP sign-ins held outside the login item, SSH keys, git configuration and hooks, and ignored
+  files other than the `.env` files above.
+- A session arrives asking before it acts: modes that run without asking do not travel.
+- **From the phone**, a move needs Face ID: the request is signed with the key behind it, over the session and
+  the computer it names.
+- **Standby.** With a standby chosen, a checkpoint of each hosted session (the same files a move sends, never a
+  login) goes to that computer when the session's turn ends, at most once a minute. It is kept under
+  `runtime/moves/standby` there, readable only by you, and nothing of it is placed where a CLI or a checkout
+  would find it until you continue it as a copy, which needs Face ID from the phone. Only the newest checkpoint
+  of a conversation is kept, a checkpoint is deleted after 30 days, and turning Standby off deletes what was
+  sent. A checkpoint is source code and conversation at rest on a second computer.
+
+From this Mac, a linked computer's hosted sessions can be listed, started, ended and typed into. Each start, end
+and terminal is signed with this Mac's key for that computer, over the same pinned TLS, and while the session
+list is open Side A asks each linked Mac for its sessions every 20 seconds. Opening one in a terminal writes
+`runtime/sidea-remote`, the script the tab runs, and a folder `runtime/rt/<id>/` (0700) with two Unix sockets
+(0600) and a SQLite file of keys typed but not yet acknowledged. The folder is deleted when the tab closes, and
+leftovers are removed the next time a tab opens.
+
+**After This Turn and Now.** A move asked for while a session works is kept in `runtime/moves/waiting.json` (0600)
+until it starts, is cancelled, or lapses after two hours, and both computers are asked again before anything stops.
+Now presses Esc in the hosted session's pane, as Stop Now does, which cuts off the tool call in progress; if the
+session isn't idle within 30 seconds, nothing moves. From the phone, the Face ID signature also covers when the
+session goes, and cancelling a waiting move (`DELETE /v1/moves/{id}`) needs only the device's token: it only keeps a
+session where it is. **Move and Sleep** releases Side A's power assertion, asks the keep-awake helper to give sleep
+back if it was holding it off, and runs `/usr/bin/pmset sleepnow` (no privileges needed) once every session has moved
+or failed.
+
+The `sidea` command reaches the running app over a Unix socket, `~/Library/Application Support/SideA/runtime/cli/app.sock`.
+The socket is mode 0600 in a folder only you can open (0700), and Side A drops any connection from another user. It
+accepts one line, `attach <session>@<computer>` or `list`. It answers with the names, agents and folders of sessions
+on your linked computers, or the path of the socket folder for one terminal, and never with tokens, keys or logins.
+
+Before storing a Claude login that arrives with a moved session, Side A checks whose it is with the same profile
+request sign-in uses. A login it can't check is not stored. A standby copy removes the transcript it unpacked under
+the original conversation's id, in `~/.claude/projects` or the Codex sessions folder, once the copy runs under its own id.
+
 ## Linux and Windows (`sidead`)
 
 `sidead`, the headless daemon for Linux and for Windows through WSL 2 ([docs/ports/linux.md](docs/ports/linux.md)), speaks the
@@ -453,20 +538,60 @@ same wire as the Mac and holds the same line: every call in the table above need
 the paired phones' hashed tokens), accounts you add under `~/.local/share/side-a/accounts`, the bridge's runtime under the state
 folder (a `tmux.conf` and per-session launch scripts), and the service's `~/.config/side-a/sidead.env` and
 `~/.config/systemd/user/sidead.service`. The installer puts the binary, the bridge and `uninstall.sh` under `~/.local`
-(`/usr/bin` and `/usr/share/side-a` for the `.deb`). It never edits `~/.bashrc`, `~/.zshrc`, `~/.claude` or `~/.codex`, and
-never copies, moves or refreshes a login: a Claude account is a folder started with `CLAUDE_CONFIG_DIR`, and its token is read
-only to ask for its limits. `uninstall.sh` removes everything above except the state folder, which `--purge` also removes.
+(`/usr/bin` and `/usr/share/side-a` for the `.deb`). It never edits `~/.bashrc`, `~/.zshrc`, or the settings in `~/.claude` and
+`~/.codex` by itself, and never refreshes a login: a Claude account is a folder started with `CLAUDE_CONFIG_DIR`, and its token is
+read only to ask for its limits. A login and a transcript are written or moved only with a moved session (**Moving sessions**
+below). `uninstall.sh` removes everything above except the state folder, which `--purge` also removes.
+The one file outside the state folder it will change is Claude Code's `settings.json`, and only when you run `sidead hooks on`:
+see **Permission requests** below.
 
 **Network.** The TLS 1.3 listener (port 47800; the tailnet and loopback unless `--lan`), pinned by the phone to the daemon's key.
 By default it also keeps one outbound connection to the relay at `push.getsidea.com`, as the Mac does, which is what lets the
 phone reach it from anywhere and carries push; `--no-relay` (or `SIDEAD_RELAY_URL=off`) turns that off, and `--relay URL` names
 another. A relay install is an Ed25519 key the daemon made, registered with no name or machine details; the relay moves bytes
 it cannot read. One request per Claude account to `api.anthropic.com`, at most a minute apart, with that account's own token,
-for its limits. `install.sh` from getsidea.com downloads one tarball and its SHA-256 sums from the public releases repository
+for its limits. For a move or an unlink, pinned TLS to a linked computer's own listener on the addresses its link names (never
+through the relay). `install.sh` from getsidea.com downloads one tarball and its SHA-256 sums from the public releases repository
 on GitHub (and asks `api.github.com` for the latest version), and installs nothing when the sum does not match.
 
-**Not on Linux yet.** Permission requests are not answered from the phone: the daemon does not run Claude Code's hook, so
-nothing waits on the phone for an approval.
+**Permission requests (Claude Code), opt in.** `sidead hooks on` adds one `PermissionRequest` hook, marked `side-a-island`, to
+`settings.json` in Claude Code's folder (`$CLAUDE_CONFIG_DIR`, else `~/.claude`) and in the folder of each account added with
+`sidead accounts`, beside your own hooks and with your formatting kept; it adds no other hook, and the Stop, tool-call and
+model-switch hooks the Mac's island adds are not added. `sidead hooks off` removes every hook with that mark, in those folders and in
+the ones it remembers from `hooks on` (`hooks.json` in the state folder), and leaves the rest as it was; `uninstall.sh` runs it
+first, and a `.deb` removal does not, so run `sidead hooks off` before `apt remove`. The hook is the Mac's `island_hook.py`, run by
+a launcher in the state folder with Python in isolated mode (`-I -S`). It talks to the daemon over a Unix socket,
+`<state folder>/root/runtime/island.sock` (the folder mode 0700, the socket 0600), and the daemon accepts a connection only from a
+process of the daemon's own user (peer uid check through `SO_PEERCRED`). The hook sends the request (tool, command or diff, folder,
+session id) and gets back allow, deny, an "always" rule, or "ask in the terminal"; the daemon takes those from a paired phone's
+answer, which needs the same signatures as on the Mac. With the daemon stopped, the socket missing or anything failing, the hook
+exits at once printing nothing, and Claude Code asks in its own terminal. A request is also handed back to the terminal after two
+minutes for a headless run (`claude -p`), when the session leaves "waiting" or its process ends, and when the daemon stops. Questions
+and plans are always handed back; the phone does not answer them on Linux yet. Codex is not hooked.
+
+**Moving sessions.** As in [Moving a session to another computer](#moving-a-session-to-another-computer), with these
+differences. **A device that paired as a computer can start sessions on this one, which is running commands as you**;
+`sidead computers` lists them and `sidead unlink` removes one on both sides. `sidead config accept-sessions off` refuses sessions and standby checkpoints from linked computers; the switches are
+kept in `moves-settings.json` (0600), and a file that can't be read counts as off. A link is kept in `computers.json` in the state folder (0600): the other computer's host id, name,
+addresses and key pin, the token its server gave this one, its relay device id and secret, and the two P-256 keys this
+computer signs its calls there with, which are software keys in that file rather than Keychain items. The move journal and the
+moves being received are `moves.json` and `moves-incoming.json` beside it; the files in transit, a login held aside and the
+transcripts put aside while a session is away are under `<state folder>/root/runtime/moves` (0700, files 0600).
+- **What is written here when a session arrives**: a worktree of a repository this computer has, or a new clone under
+  `~/Side A` (`--landing`); its transcript in the account's `projects` folder (`$CLAUDE_CONFIG_DIR/projects`, else
+  `~/.claude/projects`) or in `~/.codex/sessions`; and, when one came, its login. A Claude login is written as
+  `.credentials.json` (0600) in a new account folder under `~/.local/share/side-a/accounts`, added to `accounts.json`, or in an
+  account with that email that holds no login file; never in `~/.claude`. A Codex login is written as `~/.codex/auth.json`
+  (0600) only when there is none and its email is the offer's. Either is deleted again, and a new account removed, when the
+  session then does not start. The project's ignored `.env` files are written only when the sender sent them (a Mac with
+  Include Ignored .env Files on), and never over one that is there.
+- **What leaves**: a login only from an account folder added with `sidead accounts`, never `~/.claude`, `$CLAUDE_CONFIG_DIR`
+  or `~/.codex/auth.json`, and only when no other running session uses that folder. It waits in `runtime/moves/logins` until
+  the other computer says it stored it, and goes back otherwise. A project's ignored `.env` files are sent only with `sidead config include-env on`. With `sidead config standby COMPUTER`, checkpoints of this computer's hosted sessions (workspace bundle and transcript) go to that linked computer, and where they went is kept in `standby-sent.json`; another computer's checkpoints are kept under `<state folder>/root/runtime/moves/standby` (0700, files 0600), listed in `standby-kept.json`, and deleted after 30 days. Only the sending device may change them, and a phone may continue one only with Face ID. When a linked computer's addresses don't answer, a move goes through its relay (`/v1/tunnel/phone`) with this computer's device id and secret there; the relay carries TLS pinned to the other computer's key and cannot read it. Programs the daemon starts inherit none of its descriptors.
+- Ids from the other computer are checked (`mv-` and lowercase hex) before they name a file, an offer must name the computer
+  its token is linked as, and a device can link only as the computer it first named, never as this one.
+- No login, token or transcript is logged or put in a program's arguments: the bridge gets each request on standard input,
+  and a session is told only its account's folder.
 
 Report a vulnerability privately through GitHub's security advisories on
 [arnenoori/side-a-source](https://github.com/arnenoori/side-a-source/security/advisories/new).

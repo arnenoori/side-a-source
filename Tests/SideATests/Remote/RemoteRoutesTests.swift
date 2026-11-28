@@ -889,7 +889,7 @@ func restartFreshDraftsAHandoffAndRunsIt() async throws {
     TranscriptFixture.index(home: home, root: index)
     scene.store.sessions.transcriptSource = (home: home, bridge: TranscriptFixture.bridge, python: "/usr/bin/python3", root: index)
     var old = try await idleSession("r1", since: Date().timeIntervalSince1970, cwd: fixture.project.path)
-    old.flag = .init(kind: "loop", text: "Repeated the same step 3 times")
+    old.flag = .init(kind: .loop, text: "Repeated the same step 3 times")
     scene.store.sessions.live = [old]
     defer { kill(pid_t(old.pid), SIGKILL) }
     do {

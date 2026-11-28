@@ -52,6 +52,7 @@ private struct Rig {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: Run.which("tmux") ?? "/usr/bin/tmux")
         process.arguments = ["-S", socket, "kill-server"]
+        // swiftlint:disable:next swallowed_try -- cleanup: with no tmux there is no server to stop.
         try? process.run()
         process.waitUntilExit()
         try? FileManager.default.removeItem(at: home)
@@ -78,7 +79,6 @@ private func call(_ connection: TestConnection, _ method: String, _ path: String
         let hello = try await connection.request("GET", "/v1/hello", headers: ["Authorization": "Bearer \(token)"]).json(Hello.self)
         #expect(hello.capabilities.contains(.hosted) && hello.capabilities.contains(.transcriptStream))
 
-        // A start without its signature is refused.
         let start = StartHosted(cwd: rig.work.path, agent: .claude, prompt: "hello fake")
         let body = try JSONEncoder().encode(start)
         let unsigned = try await call(connection, "POST", "/v1/hosted", token: token, body: body, key: "start-1")
@@ -89,7 +89,6 @@ private func call(_ connection: TestConnection, _ method: String, _ path: String
         let hosted = try started.json(HostedSession.self)
         #expect(hosted.name.hasPrefix("sa-") && hosted.alive)
 
-        // The fake registers itself and answers; the list shows it hosted and idle.
         var session: RemoteSession?
         #expect(await eventually(30) {
             guard let list = try? await call(connection, "GET", "/v1/sessions", token: token).json(SessionList.self) else { return false }
@@ -107,7 +106,6 @@ private func call(_ connection: TestConnection, _ method: String, _ path: String
         #expect(await eventually(20) { ((try? await transcript())?.messages.count ?? 0) >= 2 })
         #expect(try await transcript().messages.last?.text == "Echo: hello fake")
 
-        // Watch the transcript from a socket, then reply.
         let socket = try await TestConnection.open(port: daemon.port, pin: pin)
         #expect(try await socket.upgrade("/v1/ws/events", token: token).status == 101)
         try await socket.send(text: String(decoding: try JSONEncoder().encode(ClientMessage.hello(epoch: nil, lastSeq: nil, capabilities: [.events])), as: UTF8.self))
@@ -123,6 +121,7 @@ private func call(_ connection: TestConnection, _ method: String, _ path: String
         #expect(try typed.json(ReplyResult.self).delivery == .typed)
 
         var appended = false
+        // swiftlint:disable:next unbounded_poll_in_tests -- not a poll: `event()` blocks and the loop ends when the socket closes.
         while !appended, let event = try? await socket.event() {
             if event["type"] as? String == "transcript.append",
                let messages = (event["data"] as? [String: Any])?["messages"] as? [[String: Any]],
@@ -131,7 +130,6 @@ private func call(_ connection: TestConnection, _ method: String, _ path: String
         #expect(appended)
         #expect(await eventually(10) { ((try? await transcript())?.messages.count ?? 0) == 4 })
 
-        // The hosted list and the session's end.
         let list = try await call(connection, "GET", "/v1/hosted", token: token).json(HostedList.self)
         #expect(list.hosted.map(\.name) == [hosted.name])
         let end = try phone.confirm(purpose: .action, subject: ConfirmMessage.subject(action: .endHosted, target: hosted.name))

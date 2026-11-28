@@ -30,6 +30,9 @@ public struct StoredAccount: Codable, Sendable, Equatable, Identifiable {
     public var name: String
     public var configDir: String
     public var provider: AgentProvider = .claude
+    /// Who the login belongs to, for an account whose login arrived with a moved session: Claude Code writes its own
+    /// record of that (`.claude.json`) only once it has run there.
+    public var email: String?
 }
 
 /// `accounts.json` in the state folder, written 0600. The folders it names hold the logins; this holds only where they are.
@@ -52,7 +55,7 @@ public struct AccountBook: Sendable {
         return (try? JSONDecoder().decode([StoredAccount].self, from: data)) ?? []
     }
 
-    private func save(_ accounts: [StoredAccount]) throws {
+    func save(_ accounts: [StoredAccount]) throws {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -148,6 +151,7 @@ struct LoginFile: Sendable, Equatable {
                 break
             }
         }
+        if login.email == nil, let email = account.email, !email.isEmpty { login.email = email.lowercased() }
         return login
     }
 
@@ -347,4 +351,8 @@ public struct CombinedServices: DaemonServices {
     }
     public func start(_ daemon: SideADaemon) async { for service in parts { await service.start(daemon) } }
     public func stop() async { for service in parts { await service.stop() } }
+    public func control(_ command: String, _ arguments: [String: String]) async -> Data? {
+        for service in parts { if let answer = await service.control(command, arguments) { return answer } }
+        return nil
+    }
 }

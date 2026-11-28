@@ -1925,7 +1925,7 @@ def sync_machines(root, folder, merged, hours, since, days):
     for path in sorted(folder.glob("*.json")):
         if path.stem == own:
             continue
-        # ponytail: an iCloud file evicted to a placeholder is skipped until macOS downloads it again.
+        # An iCloud file evicted to a placeholder is skipped until macOS downloads it again.
         # Shared files are untrusted: a malformed one is skipped and every count is bounded.
         try:
             data = read_json(path, None)
@@ -2041,8 +2041,14 @@ def _set_limit_hook(root, enabled):
     write_settings(settings)
 
 
+# `island --claude-dir` sets this: a headless host runs each Claude account from a folder of its own (CLAUDE_CONFIG_DIR), and Claude
+# Code reads its hooks from that folder, so the hook goes there. The Mac never sets it.
+CLAUDE_DIR_VARIABLE = "SIDE_A_CLAUDE_DIR"
+
+
 def claude_settings_path():
-    return Path.home() / ".claude" / "settings.json"
+    folder = os.environ.get(CLAUDE_DIR_VARIABLE)
+    return (Path(folder) if folder else Path.home() / ".claude") / "settings.json"
 
 
 def load_settings(path):
@@ -2223,7 +2229,7 @@ def live_limits(root, config):
             windows = [{"id": key, "label": label, "percent": percent(float(limits[key]["used_percentage"])),
                         "resetsAt": epoch(limits[key].get("resets_at"))}
                        for key, label in WINDOW_LABELS.items() if isinstance(limits.get(key), dict)]
-            # ponytail: a fixed 2-minute quiet period after a trade covers replies in flight and Claude
+            # A fixed 2-minute quiet period after a trade covers replies in flight and Claude
             # Code's 30 s login cache; a reply streaming longer than that can still report the old account.
             if account and windows and at > swapped.get(name, 0) + 120 and at > found.get(account["id"], {}).get("at", 0):
                 found[account["id"]] = {"at": at, "windows": windows}
@@ -2297,7 +2303,7 @@ def codex_hooks_path():
 
 
 def island_settings(agent):
-    return Path.home() / ".claude" / "settings.json" if agent == "claude" else codex_hooks_path()
+    return claude_settings_path() if agent == "claude" else codex_hooks_path()
 
 
 def write_island_launcher(root):
@@ -2338,8 +2344,10 @@ def model_switch_hook():
     return bool(versions) and all(version is not None and version >= MODEL_SWITCH_SINCE for version in versions)
 
 
-def set_island(root, agent, enabled):
-    """Opt-in PermissionRequest hook for Claude Code (~/.claude/settings.json) or Codex (~/.codex/hooks.json)."""
+def set_island(root, agent, enabled, permission_only=False):
+    """Opt-in PermissionRequest hook for Claude Code (~/.claude/settings.json) or Codex (~/.codex/hooks.json).
+    `permission_only` (a headless host, which has no island to stop, reply or write notes from) adds that hook alone;
+    turning it off always removes every hook Side A added."""
     with selection_lock(root, "settings.lock"):
         if enabled:
             write_island_launcher(root)
@@ -2349,13 +2357,14 @@ def set_island(root, agent, enabled):
         # Codex has no background hooks, so its Stop hook only says the session is done.
         stop = {"asyncRewake": True, "timeout": ISLAND_FOLLOW_UP} if agent == "claude" else {"timeout": 5}
         command = island_command(root, agent)
-        events = [("PermissionRequest", command, {"timeout": ISLAND_TIMEOUT, "statusMessage": "Waiting for your answer in Side A"}),
-                  ("Stop", command, stop)]
-        # Notes and stops sent to a working session from Side A. Codex runs a new handler only once the user trusts it.
-        mail = island_command(root, agent, island_mail_launcher(root, agent))
-        events += [(event, mail, {"timeout": 5}) for event in mail_events(agent)]
-        if agent == "claude":
-            events.append(("PostModelSwitch", command, {"timeout": 30}) if enabled and model_switch_hook() else ("PostModelSwitch", None, {}))
+        events = [("PermissionRequest", command, {"timeout": ISLAND_TIMEOUT, "statusMessage": "Waiting for your answer in Side A"})]
+        if not (enabled and permission_only):
+            events.append(("Stop", command, stop))
+            # Notes and stops sent to a working session from Side A. Codex runs a new handler only once the user trusts it.
+            mail = island_command(root, agent, island_mail_launcher(root, agent))
+            events += [(event, mail, {"timeout": 5}) for event in mail_events(agent)]
+            if agent == "claude":
+                events.append(("PostModelSwitch", command, {"timeout": 30}) if enabled and model_switch_hook() else ("PostModelSwitch", None, {}))
         for event, command, handler in events:
             group = None
             if enabled and command:
@@ -2427,7 +2436,7 @@ def inbox_installed():
     return has_hook(peek_settings(island_settings("claude")), "SessionStart", INBOX_MARK)
 
 
-def island_state(root, agents, state):
+def island_state(root, agents, state, permission_only=False):
     """Turns the hook on or off, or with "sync" rewrites the launcher so it follows Python and app updates."""
     for agent in agents:
         if state == "sync":
@@ -2436,7 +2445,7 @@ def island_state(root, agents, state):
                 if not island_current(agent):
                     set_island(root, agent, True)
         elif state != "status":
-            set_island(root, agent, state == "on")
+            set_island(root, agent, state == "on", permission_only)
             # The inbox runs through the island's launcher, so it goes with it.
             if agent == "claude" and state == "off" and inbox_installed():
                 set_inbox(root, False)
@@ -2472,6 +2481,8 @@ def run_sessions(root, args):
         result = sessions.record_handoff(root, json.loads(args.text))
     elif args.action == "handoffs":
         result = sessions.handoffs(root, min(args.limit or 500, 2000))
+    elif args.action == "cut":
+        result = sessions.cut(root, args.text, args.before)
     else:
         result = sessions.live(root)
     return result
@@ -2532,10 +2543,12 @@ def build_parser():
     island_command_parser = commands.add_parser("island")
     island_command_parser.add_argument("state", choices=["on", "off", "status", "sync", "trust"])
     island_command_parser.add_argument("--agent", choices=ISLAND_AGENTS, action="append")
+    island_command_parser.add_argument("--permission-only", action="store_true")
+    island_command_parser.add_argument("--claude-dir", type=Path)
     inbox_parser = commands.add_parser("inbox")
     inbox_parser.add_argument("state", choices=["on", "off", "status"])
     sessions_command = commands.add_parser("sessions")
-    sessions_command.add_argument("action", choices=["index", "recent", "search", "show", "live", "serve", "message", "image", "images", "turn-diff", "rename", "handoff-link", "handoffs"])
+    sessions_command.add_argument("action", choices=["index", "recent", "search", "show", "live", "serve", "message", "image", "images", "turn-diff", "rename", "handoff-link", "handoffs", "cut"])
     sessions_command.add_argument("text", nargs="?", default="")
     sessions_command.add_argument("--agent", choices=["claude", "codex"])
     sessions_command.add_argument("--project")
@@ -2565,6 +2578,7 @@ def build_parser():
     cleanup_command.add_argument("path", nargs="?")
     cleanup_command.add_argument("--days", type=float, default=90)
     cleanup_command.add_argument("--keep", action="append", default=[])
+    commands.add_parser("move")
     parser.sessions = sessions_command
     return parser
 
@@ -2600,7 +2614,9 @@ def main():
             trust = codex_bridge.mail_hooks_trust(root, codex_hooks_path().parent) if island_installed("codex") else "off"
             print(json.dumps({"codexMail": trust}))
             return
-        print(json.dumps(island_state(root, args.agent or ISLAND_AGENTS, args.state)))
+        if args.claude_dir:
+            os.environ[CLAUDE_DIR_VARIABLE] = str(args.claude_dir.expanduser())
+        print(json.dumps(island_state(root, args.agent or ISLAND_AGENTS, args.state, args.permission_only)))
         return
     if args.command == "inbox":
         if args.state != "status":
@@ -2639,6 +2655,16 @@ def main():
         else:
             raise ValueError("Name the worktree to remove.")
         print(json.dumps(result))
+        return
+    if args.command == "move":
+        # One JSON request on stdin: paths and manifests are too long and too awkward for arguments.
+        import move
+        request = json.loads(sys.stdin.read())
+        if str(request.get("action", "")).startswith("login-"):
+            import move_login
+            print(json.dumps(move_login.run({**request, "root": str(root)})))
+            return
+        print(json.dumps(move.run(request)))
         return
     if args.command == "sessions" and args.action == "serve":
         serve_sessions(root, parser.sessions)

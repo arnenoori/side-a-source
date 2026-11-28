@@ -275,7 +275,7 @@ struct AccountSettingsRow: View {
     }
 
     private var subtitle: String {
-        guard account.ready else { return store.signingIn.contains(account.id) ? account.email : "Not signed in" }
+        guard account.ready else { return store.signingIn.contains(account.id) ? account.email : (store.remote.moves.away(account.id) ?? "Not signed in") }
         let identity = account.email.isEmpty ? "Connected" : account.email
         if let issue = store.issueText(account.id) { return "\(identity) · \(issue)" }
         guard account.allowAuto else { return "\(identity) · Autopilot skips it" }

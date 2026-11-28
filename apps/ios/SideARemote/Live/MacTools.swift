@@ -2,6 +2,7 @@ import SideARemoteShared
 import Foundation
 import Observation
 import SideAProtocol
+import SideASessionKit
 import SideARemoteKit
 
 @Observable
@@ -28,6 +29,8 @@ final class MacTools {
     private(set) var sessionModels: [SessionKey: [ModelOption]] = [:]
 
     let attachments = ComposerAttachments()
+    let moves = SessionMoves()
+    let standby = StandbyCopies()
 
     @ObservationIgnored private let mode: Mode
     private var keyless = false
@@ -86,7 +89,7 @@ final class MacTools {
     private var live: Live? { if case .live(let live) = mode { live } else { nil } }
     private var paired: PairedMac? { live?.paired }
 
-    private func connection() throws -> Live {
+    func connection() throws -> Live {
         switch mode {
         case .live(let live): live
         case .demo: throw ToolError.demo
@@ -98,7 +101,7 @@ final class MacTools {
                                               .quit, .mac, .cleanup, .autopilot, .incidents, .interrupt, .interruptNextStep, .replyNote,
                                               .replyTerminal, .replyInbox, .hostedTrust, .hostedShow, .accountsUse,
                                               .autopilotToggle, .autopilotAnswers, .autopilotContinues, .rotation, .repliesQueue, .files, .fileRead,
-                                              .snooze, .pullRequests, .failures, .repliesPromote, .restartAgent]
+                                              .snooze, .pullRequests, .failures, .repliesPromote, .restartAgent, .moves, .movesWhen, .standby]
 
     func can(_ capability: Capability) -> Bool { capabilities.contains(capability) }
 
@@ -115,7 +118,7 @@ final class MacTools {
 
     func noteRefusal(_ error: APIError) { if error.pairAgain { keyless = true } }
 
-    private func signed<T>(_ call: () async throws -> T) async throws -> T {
+    func signed<T>(_ call: () async throws -> T) async throws -> T {
         do { return try await call() } catch let failure as RemoteFailure {
             noteRefusal(failure.error)
             throw failure
@@ -168,6 +171,7 @@ final class MacTools {
             let left = settings.pending(over: row.settings)
             if left != settings { changed[id] = left }
         }
+        noteMoves(state)
     }
 
     func unlisted(in sessions: [RemoteSession]) -> [HostedSession] {
@@ -200,7 +204,7 @@ final class MacTools {
         session.hosted.flatMap { hosted[$0] } ?? hosted.values.first { $0.sessionID == session.id }
     }
 
-    private func client() async throws -> RemoteClient {
+    func client() async throws -> RemoteClient {
         await (try connection()).engine.client
     }
 
@@ -621,7 +625,7 @@ final class MacTools {
         try await signed { try await engine.useAccount(account.id, confirm: confirm) }
     }
 
-    private func faceID(_ purpose: ConfirmPurpose, subject: String, reason: String) async throws -> String {
+    func faceID(_ purpose: ConfirmPurpose, subject: String, reason: String) async throws -> String {
         let live = try connection()
         guard !needsKeys else { throw ToolError.pairAgain }
         guard let confirm = await live.sign(.confirm, purpose, subject, reason) else { throw ToolError.cancelled }

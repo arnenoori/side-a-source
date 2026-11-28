@@ -1,0 +1,25 @@
+{
+  "moves": [
+    {
+      "agent": "claude",
+      "at": 1800000000,
+      "computer": "9c1e7b3d4f2a5b6c",
+      "computerName": "Mac mini",
+      "conversationID": "a06442e2-3f6b-4a35-931a-a4599bfa8acd",
+      "id": "mv-4f2a9c1e7b3d",
+      "project": "app",
+      "session": "sa-app-1a2b",
+      "state": "away",
+      "title": "Fix the login redirect"
+    },
+    {
+      "agent": "codex",
+      "at": 1800000100,
+      "computer": "9c1e7b3d4f2a5b6c",
+      "computerName": "Mac mini",
+      "conversationID": "019a2f6e-5b1c-7d42-9c3e-8f0a1b2c3d4e",
+      "id": "mv-7c1e9a4f2b3d",
+      "state": "unknown"
+    }
+  ]
+}

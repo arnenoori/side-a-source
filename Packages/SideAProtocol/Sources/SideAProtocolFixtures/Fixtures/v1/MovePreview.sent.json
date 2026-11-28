@@ -1,0 +1,10 @@
+{
+  "account": "Work",
+  "computer": {
+    "id": "9c1e7b3d4f2a5b6c",
+    "name": "Mac mini"
+  },
+  "landing": "/Users/you/code/app",
+  "login": "sent",
+  "permissionMode": "default"
+}

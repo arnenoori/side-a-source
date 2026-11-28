@@ -214,7 +214,6 @@ final class HTTPStream: @unchecked Sendable {
         let headers: [String: String]
         let body: Data
         let keepAlive: Bool
-        /// Bytes after the head, for a socket.
         let rest: Data
     }
 
@@ -421,7 +420,6 @@ final class HTTPStream: @unchecked Sendable {
 
 final class Flag: @unchecked Sendable { var value = false }
 
-/// The key one connection's handshake offered.
 final class SeenKey: @unchecked Sendable {
     private let lock = NSLock()
     private var _hash: String?
@@ -445,7 +443,6 @@ final class OnceBox<T: Sendable>: @unchecked Sendable {
     func set(_ once: Once<T>) { lock.withLock { _once = once } }
 }
 
-/// Resumes a continuation once, whichever callback gets there first.
 final class Once<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Error>?

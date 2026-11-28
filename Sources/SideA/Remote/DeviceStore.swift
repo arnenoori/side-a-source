@@ -27,6 +27,8 @@ struct RemoteDevice: Codable, Identifiable, Equatable, Sendable {
     var pushResult: String?
     let created: Double
     var lastSeen: Double?
+    /// Set for another computer running Side A, which may send sessions here: its host id, or empty until it has said.
+    var computer: String?
 }
 
 /// The paired devices, kept in one Keychain item. If that item exists but can't be read, nothing is accepted and the

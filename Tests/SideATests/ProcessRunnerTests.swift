@@ -35,6 +35,18 @@ import Testing
     #expect(run.launchError != nil && run.status == -1 && run.output.isEmpty)
 }
 
+/// More long waits at once than the global queue has threads for (each hosted session's `tmux wait-for` is one): every
+/// one still ends at its timeout, not when its child happens to exit.
+@Test func manyRunsWaitingAtOnceEachEndAtTheirTimeout() async {
+    let runs = 100, started = ContinuousClock.now
+    let stopped = await withTaskGroup(of: Bool.self) { group in
+        for _ in 0..<runs { group.addTask { await ProcessRunner.run("/bin/sleep", ["30"], timeout: 0.5).timedOut } }
+        return await group.reduce(into: 0) { $0 += $1 ? 1 : 0 }
+    }
+    #expect(stopped == runs)
+    #expect(ContinuousClock.now - started < .seconds(15))
+}
+
 @Test func aChildHoldingThePipeOpenDoesNotOutlastTheTimeout() async {
     let run = await ProcessRunner.run("/bin/sh", ["-c", "echo early; sleep 6 & exit 0"], timeout: 0.5)
     #expect(run.timedOut)

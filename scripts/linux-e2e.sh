@@ -2,7 +2,10 @@
 # The end-to-end check for sidead, from a Mac: a real sidead runs in a Linux container (swift:6.2-noble with tmux and
 # python3), and Daemon/Probe, a client built on SideARemoteKit (the library the iPhone app uses), pairs with it over the
 # forwarded port, lists sessions, starts a hosted session whose agent is a stand-in for Claude Code
-# (Daemon/Tests/Fixtures/fake-claude-live.py, never the real CLI), replies to it, and watches the transcript grow.
+# (Daemon/Tests/Fixtures/fake-claude-live.py, never the real CLI), replies to it, and watches the transcript grow. It also checks the
+# permission path: `sidead hooks on` in a throwaway home, a stand-in agent (Daemon/Tests/Fixtures/fake-claude-permission.py) that runs the
+# installed hook the way Claude Code does, the probe seeing each request and answering Allow, then Deny, the hook returning each decision,
+# the hook failing open once sidead is stopped, and `sidead hooks off` leaving the user's own settings as they were.
 #   scripts/linux-e2e.sh            this machine's architecture
 #   scripts/linux-e2e.sh --amd64    under linux/amd64 emulation, where this machine is not one (--arm64 likewise)
 #   SIDEA_E2E_RELAY=http://127.0.0.1:8799 scripts/linux-e2e.sh
@@ -73,10 +76,28 @@ else
   fixture=/src/Daemon/Tests/Fixtures/fake-claude-live.py
 fi
 
+permission="${fixture%/*}/fake-claude-permission.py"
+home=/root/userhome
 relay_args="--no-relay"
 if [[ -n "${SIDEA_E2E_RELAY:-}" ]]; then
   relay_args="--relay http://host.docker.internal:${SIDEA_E2E_RELAY##*:}"
 fi
+
+step "sidead hooks on: the permission hook goes into a throwaway home, beside a hook of the user's own"
+seed='{"model":"opus","hooks":{"PermissionRequest":[{"matcher":"Bash","hooks":[{"type":"command","command":"true"}]}]}}'
+docker exec -e SEED="$seed" "$name" bash -c "mkdir -p $home/.claude && printf '%s' \"\$SEED\" > $home/.claude/settings.json"
+docker exec -e HOME=$home "$name" "$bin" hooks status --state-dir /root/state
+docker exec -e HOME=$home "$name" "$bin" hooks on --state-dir /root/state
+docker exec -e HOME=$home "$name" "$bin" hooks status --state-dir /root/state
+docker exec "$name" python3 -c '
+import json, sys
+settings = json.load(open(sys.argv[1]))
+groups = settings["hooks"]["PermissionRequest"]
+assert sorted(settings["hooks"]) == ["PermissionRequest"], list(settings["hooks"])
+assert settings["model"] == "opus" and groups[0]["hooks"][0]["command"] == "true", settings
+assert groups[1]["hooks"][0]["command"].endswith("# side-a-island"), groups[1]
+print("ok   the same settings.json holds the user hook and model untouched, and one hook marked side-a-island")
+' "$home/.claude/settings.json"
 
 step "running sidead in the container"
 docker exec -d -e HOME=/root/userhome -e SIDEAD_CLAUDE="python3 $fixture" -e FAKE_CLAUDE_WORK=1 -e TERM=xterm-256color -e SIDEAD_TUNNEL_TRACE=1 "$name" \
@@ -106,7 +127,7 @@ pair_and_probe() {
   probe_pid=""
 }
 
-pair_and_probe "direct" --connect "127.0.0.1:$port"
+pair_and_probe "direct" --connect "127.0.0.1:$port" --agent "docker exec -e HOME=$home $name python3 $permission"
 if [[ -n "${SIDEA_E2E_RELAY:-}" ]]; then
   docker exec "$name" "$bin" status --state-dir /root/state
   pair_and_probe "through the relay tunnel only" --relay-only --relay-url "$SIDEA_E2E_RELAY"
@@ -114,4 +135,26 @@ fi
 
 step "the container's sessions after the probe ended its own"
 docker exec "$name" "$bin" devices --state-dir /root/state
+
+step "sidead stopped: the hook fails open, so Claude Code would ask in its own terminal"
+docker exec "$name" sh -c 'kill $(pidof sidead)'
+for _ in $(seq 1 50); do docker exec "$name" pidof sidead >/dev/null 2>&1 || break; sleep 0.2; done
+if docker exec "$name" pidof sidead >/dev/null 2>&1; then echo "linux-e2e.sh: sidead did not stop" >&2; exit 1; fi
+started=$SECONDS
+open_result="$(docker exec -e HOME=$home "$name" python3 "$permission" --command "npm test" --timeout 30)"
+echo "$open_result"
+[[ "$open_result" == *'"outcome": "ask"'* && "$open_result" == *'"hooks": 2'* ]] || { echo "linux-e2e.sh: the hook did not fail open" >&2; exit 1; }
+(( SECONDS - started < 10 )) || { echo "linux-e2e.sh: the hook took $((SECONDS - started)) s to fail open" >&2; exit 1; }
+echo "ok   with no daemon the hook said nothing, within $((SECONDS - started)) s, and both hooks ran"
+
+step "sidead hooks off: the user's settings are as they were"
+docker exec -e HOME=$home "$name" "$bin" hooks off --state-dir /root/state
+docker exec -e HOME=$home "$name" "$bin" hooks status --state-dir /root/state
+docker exec "$name" python3 -c '
+import json, sys
+settings = json.load(open(sys.argv[1]))
+expected = {"model": "opus", "hooks": {"PermissionRequest": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "true"}]}]}}
+assert settings == expected, settings
+print("ok   settings.json is exactly the user'"'"'s again")
+' "$home/.claude/settings.json"
 printf '\nlinux-e2e: every step held (%s)\n' "$arch"

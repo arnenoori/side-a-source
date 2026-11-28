@@ -14,7 +14,6 @@ enum Sounds {
     static var enabled: Bool { PreferencesMirror.value(enabledKey) }
     static var volume: Float { Float(PreferencesMirror.value(volumeKey) as Double) }
 
-    /// The system alert sound, for a refused click; silent when sound effects are off.
     static func beep() { if enabled { NSSound.beep() } }
 
     static func play(_ effect: Effect) {

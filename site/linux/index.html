@@ -6,61 +6,107 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" />
   <meta name="theme-color" content="#f7f8f7" />
   <meta name="description" content="Install the Side A daemon on Linux and answer Claude Code and Codex sessions from your iPhone." />
+  <meta property="og:title" content="Side A for Linux: answer Claude Code and Codex from your iPhone" />
+  <meta property="og:description" content="Install the Side A daemon on Linux and answer Claude Code and Codex sessions from your iPhone." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="https://getsidea.com/social-linux.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Answer your Linux agents from your iPhone: a terminal waiting for permission and an iPhone with Allow and Deny" />
+  <meta property="og:url" content="https://getsidea.com/linux/" />
+  <meta property="og:site_name" content="Side A" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="author" content="Arne Noori" />
   <link rel="canonical" href="https://getsidea.com/linux/" />
   <link rel="icon" type="image/svg+xml" href="../favicon.svg" />
   <title>Side A for Linux</title>
-  <script type="module" src="/src/linux.ts"></script>
+  <script type="module" src="/src/landing.ts"></script>
 </head>
 <body>
   <div class="page">
     <header>
       <a class="wordmark" href="../" aria-label="Side A home"><span class="disc-mark" aria-hidden="true"></span>Side A</a>
+      <nav><a class="quiet-button wide-only" href="../">Mac</a><a class="quiet-button" href="../#remote">iPhone</a><a class="quiet-button" href="../linux/" aria-current="page">Linux</a><a class="quiet-button" href="../windows/">Windows</a><a class="icon-link" href="https://github.com/arnenoori/side-a-source" aria-label="Side A on GitHub" title="GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a></nav>
     </header>
-    <main class="doc">
-      <h1>Side A for Linux</h1>
-      <p class="lead">Answer your Linux computer’s Claude Code and Codex sessions from your iPhone.</p>
-      <p class="requirements">x86-64 or arm64. glibc 2.39 or newer: Ubuntu 24.04, Debian 13, Fedora 40. tmux 3.4 or newer, Python 3.9 or newer.</p>
-
-      <div class="actions">
-        <p class="remote-soon" id="linux-status" role="status">Coming soon</p>
-      </div>
-      <noscript><p><a href="https://github.com/arnenoori/side-a-releases/releases">View available downloads</a></p></noscript>
-
-      <section id="linux-install" hidden>
-        <h2>Install</h2>
-        <div class="command">
+    <main class="landing">
+      <section class="landing-hero">
+        <h1>Answer your Linux agents from your iPhone</h1>
+        <div class="install">
           <pre><code id="install-command">curl -fsSL https://getsidea.com/install.sh | sh</code></pre>
           <button type="button" id="copy-command">Copy</button>
         </div>
-        <p>Then run <code>sidead pair</code> and scan the code in Side A Remote. Check that both show the same six digits.</p>
-        <h3>Packages</h3>
-        <ul class="packages">
-          <li>x86-64: <a data-package="amd64-tarball" href="https://github.com/arnenoori/side-a-releases/releases">.tar.gz</a> · <a data-package="amd64-deb" href="https://github.com/arnenoori/side-a-releases/releases">.deb</a></li>
-          <li>arm64: <a data-package="arm64-tarball" href="https://github.com/arnenoori/side-a-releases/releases">.tar.gz</a> · <a data-package="arm64-deb" href="https://github.com/arnenoori/side-a-releases/releases">.deb</a></li>
-          <li><a data-package="checksums" href="https://github.com/arnenoori/side-a-releases/releases">SHA-256 sums</a></li>
+        <p class="release"><span id="release-status" role="status">Coming soon</span> · x86-64 and arm64 · Ubuntu 24.04, Debian 13, Fedora 40 · Free</p>
+        <noscript><p><a href="https://github.com/arnenoori/side-a-releases/releases">View available downloads</a></p></noscript>
+      </section>
+
+      <section class="demo" aria-hidden="true">
+        <div class="terminal">
+          <div class="terminal-bar"><i></i><i></i><i></i><span>alex@devbox: ~/api</span></div>
+          <div class="terminal-body">
+            <p><span class="dim">$</span> curl -fsSL https://getsidea.com/install.sh | sh</p>
+            <p class="ok">sidead is installed and running.</p>
+            <p class="gap"><span class="dim">$</span> sidead pair</p>
+            <p class="dim">Scan the code in Side A Remote. Both show 481 205.</p>
+            <p class="ok">Paired with iPhone.</p>
+            <p class="gap"><span class="dim">$</span> claude</p>
+            <p><span class="dim">&gt;</span> fix the retry and run the tests</p>
+            <p><span class="ok">&#9210;</span> Update(routes.py)</p>
+            <p class="dim">&nbsp; &#9151; Added 12 lines, removed 3 lines</p>
+            <p><span class="ok">&#9210;</span> Bash(pytest -k retry)</p>
+            <p class="wait">&nbsp; Waiting for your answer in Side A&hellip;</p>
+          </div>
+        </div>
+        <div class="handset">
+          <div class="handset-screen">
+            <p class="title">Fix the retry</p>
+            <p class="where">api</p>
+            <p class="said">The retry now backs off and stops after three tries.</p>
+            <div class="ask">
+              <p class="what">Allow Bash?</p>
+              <p class="command">pytest -k retry</p>
+              <div class="ask-buttons"><span class="deny">Deny</span><span class="allow">Allow</span></div>
+            </div>
+            <p class="reply">Reply…</p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="steps-title">
+        <h2 class="landing-head" id="steps-title">Set up in three commands</h2>
+        <ol class="landing-steps">
+          <li><b>Install</b>Run the line above. It needs tmux 3.4 and Python 3.9 or newer.</li>
+          <li><b>Pair</b>Run <code>sidead pair</code> and scan the code in Side A Remote.<br /><!-- remote-availability --></li>
+          <li><b>Approve</b>Run <code>sidead hooks on</code> to send Claude Code’s permission requests to your phone.</li>
+        </ol>
+      </section>
+
+      <section aria-labelledby="points-title">
+        <h2 class="landing-head" id="points-title">Your agents keep working. You keep moving.</h2>
+        <ul class="points">
+          <li><b>Every session</b>Claude Code and Codex, with their transcripts</li>
+          <li><b>Allow and Deny</b>Claude Code’s requests, with Face ID for the risky ones</li>
+          <li><b>Reply from anywhere</b>Typed into the session for you</li>
+          <li><b>Start from your phone</b>New sessions run in tmux and outlive your SSH connection</li>
+          <li><b>Every account’s limits</b>5-hour and weekly, for each Claude account</li>
+          <li><b>Private</b>No account, encrypted end to end</li>
         </ul>
       </section>
 
-      <h2>What works</h2>
-      <ul>
-        <li>Your running Claude Code and Codex sessions, their transcripts and replies.</li>
-        <li>Starting sessions from the phone, kept in tmux.</li>
-        <li>Each Claude account’s 5-hour and weekly limits.</li>
-        <li>Reaching the computer away from home, and a push when a session finishes.</li>
-      </ul>
-
-      <h2>Not yet</h2>
-      <ul>
-        <li>Allow and Deny for permission requests, questions and plans.</li>
-        <li>Autopilot and moving logins between sessions.</li>
-        <li>Photos, the terminal view, worktrees and pull requests.</li>
-        <li>A tray icon or settings window. The iPhone is the only interface.</li>
-      </ul>
-
-      <p><a href="../windows/">Side A for Windows</a> · <a href="https://github.com/arnenoori/side-a-source/blob/main/docs/ports/linux.md">Linux details</a></p>
-
-      <h2>Remove</h2>
-      <p>Run <code>~/.local/share/side-a/uninstall.sh</code>, or <code>sudo apt remove side-a-daemon</code> for the .deb. <code>sidead</code> adds nothing to your shell, <code>~/.claude</code> or <code>~/.codex</code>.</p>
+      <section class="facts">
+        <div id="packages" hidden>
+          <h3>Packages</h3>
+          <ul>
+            <li>x86-64: <a data-package="amd64-tarball" href="https://github.com/arnenoori/side-a-releases/releases">.tar.gz</a> · <a data-package="amd64-deb" href="https://github.com/arnenoori/side-a-releases/releases">.deb</a></li>
+            <li>arm64: <a data-package="arm64-tarball" href="https://github.com/arnenoori/side-a-releases/releases">.tar.gz</a> · <a data-package="arm64-deb" href="https://github.com/arnenoori/side-a-releases/releases">.deb</a></li>
+            <li><a data-package="checksums" href="https://github.com/arnenoori/side-a-releases/releases">SHA-256 sums</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3>Remove</h3>
+          <p>Run <code>~/.local/share/side-a/uninstall.sh</code>. For the .deb, run <code>sidead hooks off</code>, then <code>sudo apt remove side-a-daemon</code>.</p>
+          <p><a href="https://github.com/arnenoori/side-a-source/blob/main/docs/ports/linux.md">Linux details</a></p>
+        </div>
+      </section>
     </main>
     <footer><a href="https://arne.ai">Made with love by Arne Noori</a><p class="fine"><a href="https://github.com/arnenoori/side-a-source/blob/main/SECURITY.md">Security details</a> · <a href="../privacy/">Privacy</a></p></footer>
   </div>

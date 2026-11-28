@@ -1,5 +1,6 @@
 import Foundation
 import SideAProtocol
+import SideASessionKit
 
 struct DemoData {
     let now: Date

@@ -234,11 +234,9 @@ private func answerItem(for request: String) -> Outbox.Item {
     #expect(value.state.requests[rid] == nil)
     #expect(value.state.sessions[session.id]?.openRequests.isEmpty == true && value.state.sessions[session.id]?.status == .working)
 
-    // A newer row from the Mac while the answer is still out stays answered too.
     _ = value.apply(.sessionUpsert(session))
     #expect(value.state.sessions[session.id]?.openRequests.isEmpty == true && value.state.sessions[session.id]?.status == .working)
 
-    // The answer never went: the request and the row's wait come back.
     value.state.pending = []
     value.project()
     #expect(value.state.requests[rid] != nil)

@@ -23,6 +23,7 @@ struct RemoteSettings: View {
             }
             if remote.on {
                 phones
+                ComputersSection(remote: remote)
                 onPhone
                 ScreenShareSection(share: remote.screen)
                 TranscriptionSection(transcription: remote.transcription)
@@ -107,7 +108,7 @@ struct RemoteSettings: View {
     }
 
     @ViewBuilder private var phones: some View {
-        Section("iPhones") {
+        Section("iPhones and Computers") {
             if remote.devices.unreadable != nil {
                 LabeledContent {
                     Button("Pair Again…") { remote.resetDevices(); remote.beginPairing() }
@@ -124,7 +125,7 @@ struct RemoteSettings: View {
                         Text(device.name)
                         Text(seen(device))
                     } icon: {
-                        Image(systemName: "iphone.gen3")
+                        Image(systemName: device.model == "Mac" ? "desktopcomputer" : "iphone.gen3")
                             .foregroundStyle(remote.connected[device.id, default: 0] > 0 ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
                     }
                 }
@@ -246,8 +247,8 @@ struct RemoteSettings: View {
 
     @ViewBuilder private var listenerRow: some View {
         if remote.pairReadiness == .ready,
-           let failure = remote.listening.values.compactMap({ if case .failed(let why) = $0 { why } else { nil } }).first {
-            statusLabel(Text(failure == RemoteServer.portInUse ? "Port \(String(remote.port)) is in use by another app" : "Side A couldn't listen: \(failure)"),
+           let failure = remote.listening.values.first(where: { $0.failure != nil }) {
+            statusLabel(Text(failure == .portInUse ? "Port \(String(remote.port)) is in use by another app" : "Side A couldn't listen: \(failure.failure ?? "")"),
                    "exclamationmark.triangle.fill", .yellow)
         }
     }
@@ -325,7 +326,7 @@ struct PairingSheet: View {
         switch phase {
         case .code, .pairing: nil
         case .confirm(let attempt) where attempt.keyMatches:
-            "Pair \(attempt.request.device.name)? Check that your iPhone shows \(attempt.comparison.filter(\.isNumber).map(String.init).joined(separator: " "))."
+            "Pair \(attempt.request.device.name)? Check that \(attempt.request.device.capabilities.contains(.computer) ? "it" : "your iPhone") shows \(attempt.comparison.filter(\.isNumber).map(String.init).joined(separator: " "))."
         case .confirm: "Different security key."
         case .paired(let name): "Paired with \(name)."
         case .stopped(let reason): reason.rawValue
@@ -377,6 +378,7 @@ struct PairingSheet: View {
             heading("Scan with your iPhone", "Use the Camera or Side A Remote.")
             QRCard(link: remote.qrLink, icon: NSApp?.applicationIconImage)
         } buttons: {
+            Button("Copy Link") { remote.qrLink.map(SessionStore.copy) }.controlSize(.large)
             Spacer()
             Button("Cancel") { remote.endPairing() }.keyboardShortcut(.cancelAction).controlSize(.large)
         }
@@ -385,8 +387,10 @@ struct PairingSheet: View {
     @ViewBuilder private func confirm(_ session: PairingSession, _ attempt: PairingSession.Attempt) -> some View {
         if attempt.keyMatches {
             frame {
-                Hero(symbol: "iphone.gen3", color: .accentColor)
-                heading("Pair “\(attempt.request.device.name)”?", "Check that your iPhone shows the same code.")
+                let computer = attempt.request.device.capabilities.contains(.computer)
+                Hero(symbol: computer ? "desktopcomputer" : "iphone.gen3", color: .accentColor)
+                heading(computer ? "Link “\(attempt.request.device.name)”?" : "Pair “\(attempt.request.device.name)”?",
+                        computer ? "Check that it shows the same code. It will be able to start sessions on this Mac." : "Check that your iPhone shows the same code.")
                 Digits(code: attempt.comparison)
             } buttons: {
                 Button("Don’t Match") { session.decide(.mismatch) }.controlSize(.large)

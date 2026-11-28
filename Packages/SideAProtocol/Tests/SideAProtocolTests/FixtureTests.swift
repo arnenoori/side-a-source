@@ -53,6 +53,11 @@ private let wireTypes: [String: @Sendable (Data) throws -> Data] = {
         "SessionSettings": entry(SessionSettings.self), "SettingsChange": entry(SettingsChange.self), "SettingsResult": entry(SettingsResult.self),
         "ModelList": entry(ModelList.self), "TurnPlan": entry(TurnPlan.self), "TurnDiff": entry(TurnDiff.self), "ReviewRequest": entry(ReviewRequest.self),
         "PullRequest": entry(PullRequest.self), "SnoozeRequest": entry(SnoozeRequest.self), "SessionFailure": entry(SessionFailure.self),
+        "MoveOffer": entry(MoveOffer.self), "MoveAnswer": entry(MoveAnswer.self), "MoveStage": entry(MoveStage.self), "MoveState": entry(MoveState.self),
+        "MoveCommit": entry(MoveCommit.self), "ComputerLink": entry(ComputerLink.self), "ComputerLinked": entry(ComputerLinked.self),
+        "ComputerList": entry(ComputerList.self), "MoveRequest": entry(MoveRequest.self), "MovePreview": entry(MovePreview.self),
+        "MoveList": entry(MoveList.self),
+        "StandbyOffer": entry(StandbyOffer.self), "StandbyList": entry(StandbyList.self),
     ]
 }()
 

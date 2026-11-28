@@ -73,6 +73,34 @@ class SessionTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 sessions.record_handoff(self.root, bad)
 
+    def test_a_cut_copy_ends_before_the_message_and_points_at_its_parent(self):
+        self.write('parent', [{'type': 'mode', 'mode': 'default', 'sessionId': 'parent'},
+                              {'type': 'cost-state', 'totalCostUSD': 1.25, 'sessionId': 'parent'},
+                              user('u1', 'Make the gauge \ud83d show Fable limits', '2026-10-01T10:00:00Z', sessionId='parent'),
+                              reply('a1', 'Reading the trade code first.', '2026-10-01T10:01:00Z', sessionId='parent', session_id='parent'),
+                              user('u2', 'Now add search', '2026-10-01T10:05:00Z', sessionId='parent'),
+                              reply('a2', 'Added an index.', '2026-10-01T10:06:00Z', sessionId='parent')])
+        sessions.index(self.root)
+        new = sessions.cut(self.root, 'parent', 'u2')['id']
+        path = self.project / f'{new}.jsonl'
+        copied = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual([entry.get('uuid') for entry in copied], [None, 'u1', 'a1'])
+        self.assertTrue(all(entry['sessionId'] == new for entry in copied))
+        self.assertEqual(copied[2]['session_id'], new)
+        self.assertEqual(copied[2]['forkedFrom'], {'sessionId': 'parent', 'messageUuid': 'a1'})
+        self.assertNotIn('forkedFrom', copied[0])
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.write(new, [user('c1', 'Add search another way', '2026-10-02T09:00:00Z', sessionId=new)], 'a')
+        sessions.index(self.root)
+        listed = {s['id']: s for s in sessions.recent(self.root)['sessions']}
+        self.assertEqual((listed[new]['forked_from'], listed[new]['fork_point']), ('parent', 'a1'))
+        self.assertEqual(len((self.project / 'parent.jsonl').read_text().splitlines()), 6)
+        before = sorted(item.name for item in self.project.iterdir())
+        for missing in ('gone', '../x'):
+            with self.assertRaises(ValueError):
+                sessions.cut(self.root, 'parent', missing)
+        self.assertEqual(sorted(item.name for item in self.project.iterdir()), before)
+
     def test_indexes_once_titles_by_priority_and_forks_point_at_their_parent(self):
         parent = [user('u1', 'Make the menu bar gauge show Fable limits', '2026-10-01T10:00:00Z'),
                   reply('a1', 'Reading the Keychain trade code first.', '2026-10-01T10:01:00Z', [('Bash', {'command': 'git log --oneline'})]),

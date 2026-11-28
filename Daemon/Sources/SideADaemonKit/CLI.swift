@@ -48,9 +48,15 @@ public final class ControlClient {
 /// `sidead run | pair | accounts | status | devices | revoke | version`.
 public enum DaemonCLI {
     static let usage = """
-        usage: sidead [run] [--state-dir DIR] [--port N] [--listen ADDRESS]... [--lan] [--allow-host NAME]... [--no-discover] [--name NAME] [--project DIR]... [--relay URL | --no-relay] [--no-tunnel]
-               sidead pair [--state-dir DIR]       show a code and QR for the iPhone, then confirm the comparison digits
+        usage: sidead [run] [--state-dir DIR] [--port N] [--listen ADDRESS]... [--lan] [--allow-host NAME]... [--no-discover] [--name NAME] [--project DIR]... [--landing DIR] [--relay URL | --no-relay] [--no-tunnel]
+               sidead pair [--state-dir DIR]       show a code and QR for the iPhone (or for a Mac linking to this computer), then confirm the comparison digits
                sidead accounts [add NAME | adopt NAME [--dir DIR] | remove NAME]   Claude accounts and their limits
+               sidead hooks [on | off | status]   send Claude Code's permission requests to the phone (edits Claude Code's settings.json)
+               sidead computers | unlink COMPUTER   the computers linked to this one, which sessions can move to and from
+               sidead move SESSION COMPUTER       send a hosted, idle session to a linked computer
+               sidead move --all COMPUTER         send every hosted, idle session there, one at a time
+               sidead moves | move --run-here MOVE [--yes]   the moves this computer sent; start one whose outcome is unknown here again
+               sidead config [accept-sessions on|off | include-env on|off | standby COMPUTER|off]   moves and standby
                sidead status | devices | revoke ID | version
         """
 
@@ -71,6 +77,10 @@ public enum DaemonCLI {
         var noTunnel = false
         var noRelay = false
         var dir: String?
+        var landing: String?
+        var all = false
+        var runHere = false
+        var yes = false
     }
 
     static func parse(_ arguments: [String]) -> Options? {
@@ -88,12 +98,16 @@ public enum DaemonCLI {
             case "--name": options.name = queue.popFirst()
             case "--project": if let value = queue.popFirst() { options.projects.append(value) }
             case "--dir": options.dir = queue.popFirst()
+            case "--landing": options.landing = queue.popFirst()
             case "--relay": options.relay = queue.popFirst()
             case "--no-tunnel": options.noTunnel = true
             case "--no-relay": options.noRelay = true
             case "--account-selector":
                 guard let value = queue.popFirst(), let selector = AccountSelector(option: value) else { return nil }
                 options.selector = selector
+            case "--all": options.all = true
+            case "--run-here": options.runHere = true
+            case "--yes", "-y": options.yes = true
             case "--version": options.command = "version"
             case "--help", "-h": options.command = "help"
             default:
@@ -116,6 +130,12 @@ public enum DaemonCLI {
         case "status": return status(paths)
         case "devices": return devices(paths)
         case "revoke": return revoke(paths, options.rest.first)
+        case "hooks": return await hooks(options, paths)
+        case "computers": return computers(paths)
+        case "unlink": return unlink(paths, options.rest.first)
+        case "move": return move(paths, options)
+        case "moves": return moves(paths)
+        case "config": return await config(paths, options.rest)
         default: return fail(usage, 2)
         }
     }
@@ -176,11 +196,34 @@ public enum DaemonCLI {
         if let codex = environment["SIDEAD_CODEX"] { settings.agents[.codex] = codex }
         settings.accountEnvironment = { await accounts.environment(for: $0) }
         settings.environment["SIDEAD_CLAUDE_DIRS_FILE"] = AccountBook(state: paths.state).foldersFile.path
-        guard let sessions = SessionServices(settings: settings) else {
+        let hooks = MoveHooks()
+        settings.moves = hooks
+        let book = AccountBook(state: paths.state)
+        let approvals = Approvals(settings: Approvals.Settings(socket: Hooks.socket(root: settings.root), accountName: { slot in
+            slot.flatMap { slot in book.load().first { URL(fileURLWithPath: $0.configDir).lastPathComponent == slot }?.name }
+        }))
+        let location = BridgeLocation.find()
+        guard let location, let sessions = SessionServices(settings: settings, location: location, approvals: approvals) else {
             _ = fail("sidead: python3 or the bridge scripts weren't found, so sessions are off. Set SIDEAD_PYTHON and SIDEAD_BRIDGE.", 0)
             return AccountServices(accounts: accounts)
         }
-        return CombinedServices([sessions, AccountServices(accounts: accounts)])
+        let landing = (options.landing ?? environment["SIDEAD_LANDING"]).flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Side A")
+        let moves = MoveServices(state: paths.state, sessions: sessions, book: book, selector: selector, landing: landing, repositories: projects,
+                                 location: location, hooks: hooks)
+        return CombinedServices([sessions, moves, ApprovalServices(approvals: approvals), AccountServices(accounts: accounts)])
+    }
+
+    // MARK: hooks
+
+    static func hooks(_ options: Options, _ paths: DaemonPaths) async -> Int32 {
+        let state = options.rest.first ?? "status"
+        guard ["on", "off", "status"].contains(state) else { return fail("usage: sidead hooks [on | off | status]", 2) }
+        let result = await Hooks(paths: paths).command(state, location: BridgeLocation.find())
+        for line in result.lines {
+            if line.hasPrefix("sidead:") { _ = fail(line) } else { out(line) }
+        }
+        return result.code
     }
 
     // MARK: accounts

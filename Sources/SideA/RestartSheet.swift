@@ -10,6 +10,13 @@ struct RestartSheet: View {
     @State private var handoff: Handoff?
     @State private var failure: String?
     @State private var starting = false
+    @State private var options: [AgentOptions] = []
+    @State private var agent: AgentProvider?
+    @State private var modelID = ""
+
+    private var chosen: AgentProvider { agent ?? session.provider }
+    /// The other agent can take over when it is installed and signed in on this Mac.
+    private var others: [AgentProvider] { options.filter { $0.agent != session.provider && $0.installed && $0.signedIn != false }.map(\.agent) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -39,9 +46,23 @@ struct RestartSheet: View {
                 Label(failure, systemImage: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(.red)
             }
             HStack {
+                if handoff != nil, !options.isEmpty {
+                    if !others.isEmpty {
+                        Picker("Continue with", selection: Binding(get: { chosen }, set: { agent = $0 == session.provider ? nil : $0; modelID = "" })) {
+                            ForEach([session.provider] + others, id: \.self) { Text(NewSessionSheet.name($0)).tag($0) }
+                        }
+                        .labelsHidden().fixedSize()
+                        .help("Hand the work to the other agent")
+                    }
+                    Picker("Model", selection: $modelID) {
+                        Text("Same model").tag("")
+                        ForEach(options.first { $0.agent == chosen }?.models ?? [], id: \.id) { Text($0.title).tag($0.id) }
+                    }
+                    .labelsHidden().fixedSize()
+                }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(starting ? "Starting…" : "Restart") { restart() }
+                Button(starting ? "Starting…" : chosen == session.provider ? "Restart" : "Hand Off to \(NewSessionSheet.name(chosen))") { restart() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(handoff == nil || starting)
             }
@@ -62,6 +83,7 @@ struct RestartSheet: View {
         do throws(SessionCommands.Failure) {
             handoff = try await SessionCommands(store: model.store).handoff(WireBuilders.key(session))
         } catch { failure = error.macMessage }
+        options = await RemoteOptions.agents(model.store.remote) ?? []
     }
 
     private func restart() {
@@ -71,7 +93,7 @@ struct RestartSheet: View {
         let app = model.resumeTerminal
         Task {
             do throws(SessionCommands.Failure) {
-                let name = try await SessionCommands(store: model.store).restart(WireBuilders.key(session), RestartRequest(handoff: handoff), origin: "mac")
+                let name = try await SessionCommands(store: model.store).restart(WireBuilders.key(session), RestartRequest(handoff: handoff, model: modelID.isEmpty ? nil : modelID, agent: agent), origin: "mac")
                 model.attach(name, cwd: handoff.cwd, in: app)
                 dismiss()
             } catch {

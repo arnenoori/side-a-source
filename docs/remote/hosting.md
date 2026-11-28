@@ -43,7 +43,9 @@ The server keeps the environment of the process that starts it (experiment 13), 
 environment ends up in every pane. A server started from a Warp tab would carry
 `WARP_FOCUS_URL`, `TERM_PROGRAM`, `SIDE_A_PIN` and whatever that tab exported. So the server is
 only ever started with `start-server` under a fixed environment, by whoever needs it first (the
-app, `sidea attach`, a wrapper):
+app, `sidea attach`, a wrapper). The app is usually first: with hosting wanted it runs
+`sidea-tmux warm` at launch, which is `ensure_server` and nothing else, so the first session of
+the day does not pay for the server:
 
 ```sh
 env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL=/bin/zsh \

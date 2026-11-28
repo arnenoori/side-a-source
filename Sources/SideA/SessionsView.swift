@@ -6,7 +6,7 @@ struct SessionsWindow: View {
     let store: AccountStore
     @Environment(\.dismissWindow) private var dismissWindow
     var body: some View {
-        SessionsBrowser(model: store.sessions)
+        SessionsShell(model: store.sessions)
             .frame(minWidth: 860, minHeight: 560)
             .onAppear {
                 store.sessions.appear()
@@ -15,30 +15,6 @@ struct SessionsWindow: View {
             }
             .onDisappear { store.sessions.disappear(); store.sessionsOpen = false; store.sessionsRequested = false }
     }
-}
-
-/// Design tokens from beautifului.dev (the inkfold package).
-enum Ink {
-    static let hover = Color.primary.opacity(0.045)
-    static let hover2 = Color.primary.opacity(0.075)
-    static let field = Color.primary.opacity(0.05)
-    static let line = Color.primary.opacity(0.08)
-    static let surface = Color(nsColor: .controlBackgroundColor)
-    static let selected = Color.accentColor.opacity(0.13)
-    static let branch = Color.purple
-    static let amber = Color(nsColor: NSColor(name: "SideA.amber") { appearance in
-        switch appearance.bestMatch(from: [.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua]) {
-        case .darkAqua: NSColor(srgbRed: 1, green: 0.698, blue: 0.243, alpha: 1)
-        case .accessibilityHighContrastAqua: NSColor(srgbRed: 0.761, green: 0.478, blue: 0, alpha: 1)
-        case .accessibilityHighContrastDarkAqua: NSColor(srgbRed: 1, green: 0.761, blue: 0.4, alpha: 1)
-        default: NSColor(srgbRed: 0.949, green: 0.616, blue: 0.043, alpha: 1)
-        }
-    })
-    /// Read at each use, for animations started outside a view; views read the environment's.
-    static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
-    static var ease: Animation { reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.3) }
-    static var glide: Animation { reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.23, 1, 0.32, 1, duration: 0.22) }
-    static func rise(_ y: CGFloat) -> AnyTransition { reduceMotion ? .opacity : .opacity.combined(with: .offset(y: y)) }
 }
 
 struct ProjectGroup {
@@ -71,11 +47,19 @@ struct SessionsBrowser: View {
                         .transition(Ink.rise(-4))
                 }
                 SessionList(model: model)
+                    .overlay(alignment: .bottom) {
+                        if let undo = model.desk.undo { UndoToast(desk: model.desk, item: undo).padding(.bottom, 10).transition(Ink.rise(8)) }
+                    }
+                if model.desk.picked.count > 1 { PickedBar(model: model).transition(Ink.rise(8)) }; AwaySessions(store: model.store); ElsewhereSessions(model: model)
             }
-            .frame(width: 320)
+            .animation(Ink.ease, value: model.desk.undo?.id)
+            .animation(Ink.ease, value: model.desk.picked.count > 1)
+            .frame(width: model.desk.sidebarWidth)
             .animation(Ink.glide, value: model.filtered)
             .background(.background.secondary)
-            Rectangle().fill(Ink.line).frame(width: 1)
+            .frame(width: model.desk.sidebarHidden ? 0 : nil, alignment: .trailing).clipped()
+            .accessibilityHidden(model.desk.sidebarHidden)
+            if !model.desk.sidebarHidden { SidebarDivider(desk: model.desk) }
             SessionViewer(model: model)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.background)
@@ -88,7 +72,7 @@ struct SessionsBrowser: View {
             .opacity(0)
             Button("New Session") { model.creating = true }.keyboardShortcut("n").opacity(0)
         }
-        .sheet(isPresented: Binding(get: { model.creating }, set: { model.creating = $0 })) { NewSessionSheet(model: model) }
+        .sheet(isPresented: Binding(get: { model.creating }, set: { model.creating = $0 })) { NewSessionSheet(model: model) }.modifier(MoveSheetHost(store: model.store))
         .alert("Rename conversation", isPresented: Binding(get: { model.renaming != nil }, set: { if !$0 { model.renaming = nil } })) {
             TextField("Name", text: $draft)
             Button("Rename") { if let session = model.renaming { model.rename(session, to: draft) } }
@@ -125,195 +109,17 @@ private struct Restarting: Identifiable {
     var id: Int { session.pid }
 }
 
-struct SearchField: View {
-    @Bindable var model: SessionStore
-    @FocusState private var focused: Bool
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").font(.callout.weight(.medium)).foregroundStyle(.tertiary)
-            TextField(placeholder, text: $model.query)
-                .textFieldStyle(.plain)
-                .font(.body)
-                .focused($focused)
-                .onChange(of: model.query) { model.queryChanged() }
-                .onExitCommand { model.query = "" }
-                .onKeyPress(.downArrow) { model.step(1); return .handled }
-                .onKeyPress(.upArrow) { model.step(-1); return .handled }
-            if !model.query.isEmpty {
-                Button { model.query = "" } label: { Image(systemName: "xmark.circle.fill").font(.callout) }
-                    .buttonStyle(.plain).foregroundStyle(.tertiary).help("Clear")
-                    .transition(Ink.reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.8)))
-            }
-            FilterMenu(model: model)
-        }
-        .padding(.leading, 10).padding(.trailing, 4).frame(height: 32)
-        .background(.background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(focused ? Color.accentColor.opacity(0.55) : Ink.line, lineWidth: 1)
-        }
-        .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.accentColor.opacity(focused ? 0.12 : 0)).padding(-3)
-        }
-        .animation(Ink.glide, value: focused)
-        .animation(Ink.glide, value: model.query.isEmpty)
-        .onAppear { focused = true }
-        .onChange(of: model.focusSearch) { focused = true }
-    }
-
-    private var placeholder: String {
-        model.remaining > 0 ? "Reading \(model.remaining.formatted()) more conversations…"
-            : model.total > 0 ? "Search \(model.total.formatted()) conversations" : "Search conversations"
-    }
-}
-
-struct FilterMenu: View {
-    @Bindable var model: SessionStore
-    var body: some View {
-        Menu {
-            Picker("Agent", selection: $model.agent) {
-                Text("Any").tag(String?.none)
-                Text("Claude").tag(String?.some("claude"))
-                Text("Codex").tag(String?.some("codex"))
-            }
-            .pickerStyle(.menu)
-            Picker("Date", selection: $model.days) {
-                Text("Any time").tag(Double?.none)
-                Text("Today").tag(Double?.some(1))
-                Text("Past week").tag(Double?.some(7))
-                Text("Past month").tag(Double?.some(30))
-            }
-            .pickerStyle(.menu)
-            Picker("Project", selection: $model.project) {
-                Text("Any").tag(String?.none)
-                // A choice missing from the options would be reset to nil by the picker.
-                ForEach(model.projects + (model.project.map { model.projects.contains($0) ? [] : [$0] } ?? []), id: \.self) {
-                    Text(URL(fileURLWithPath: $0).lastPathComponent).tag(String?.some($0))
-                }
-            }
-            .pickerStyle(.menu)
-            Divider()
-            Toggle("Archived", isOn: $model.showArchived)
-            Toggle("Automated runs", isOn: $model.includeAutomated)
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.callout.weight(.medium))
-                .foregroundStyle(model.filtered ? Color.accentColor : .secondary)
-        }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .modifier(HoverPlate(size: 24, radius: 6))
-        .help("Filter")
-        .onChange(of: model.agent) { Task { await model.refresh() } }
-        .onChange(of: model.project) { Task { await model.refresh() } }
-        .onChange(of: model.days) { Task { await model.refresh() } }
-        .onChange(of: model.includeAutomated) { Task { await model.refresh() } }
-        .onChange(of: model.showArchived) { Task { await model.refresh() } }
-    }
-}
-
-struct ActiveFilters: View {
-    @Bindable var model: SessionStore
-    var body: some View {
-        HStack(spacing: 5) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    if let agent = model.agent { FilterToken(text: agent == "codex" ? "Codex" : "Claude") { model.agent = nil } }
-                    if let days = model.days { FilterToken(text: days == 1 ? "Today" : days == 7 ? "Past week" : "Past month") { model.days = nil } }
-                    if let project = model.project { FilterToken(text: URL(fileURLWithPath: project).lastPathComponent, icon: "folder") { model.project = nil } }
-                    if model.showArchived { FilterToken(text: "Archived", icon: "archivebox") { model.showArchived = false } }
-                    if model.includeAutomated { FilterToken(text: "With automated runs") { model.includeAutomated = false } }
-                }
-            }
-            Button("Clear") {
-                withAnimation(Ink.glide) { model.agent = nil; model.days = nil; model.project = nil; model.showArchived = false; model.includeAutomated = false }
-            }
-            .buttonStyle(.plain).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
-        }
-    }
-}
-
-struct FilterToken: View {
-    let text: String
-    var icon: String?
-    let remove: () -> Void
-    @State private var hovering = false
-    var body: some View {
-        HStack(spacing: 4) {
-            if let icon { Image(systemName: icon).font(.system(size: 9.5)).foregroundStyle(.secondary) }
-            Text(text).font(.subheadline.weight(.medium)).lineLimit(1)
-            Button { withAnimation(Ink.glide) { remove() } } label: {
-                Image(systemName: "xmark").font(.system(size: 8, weight: .bold)).foregroundStyle(hovering ? .primary : .tertiary)
-            }
-            .buttonStyle(.plain).help("Remove filter")
-        }
-        .padding(.leading, 8).padding(.trailing, 6).frame(height: 22)
-        .background(Ink.field, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Ink.line))
-        .onHover { inside in withAnimation(Ink.glide) { hovering = inside } }
-    }
-}
-
-/// Each row keeps its own hover, so the pointer crossing the list redraws only the rows it enters and leaves.
-/// `rested` runs once the pointer stays a moment, to load the conversation before the click.
-struct RowPlate: ViewModifier {
-    let selected: Bool
-    @Binding var hovering: Bool
-    var radius: CGFloat = 8
-    let rested: () -> Void
-    func body(content: Content) -> some View {
-        content
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Ink.selected)
-                } else {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous).fill(Ink.hover)
-                        .opacity(hovering ? 1 : 0)
-                        .animation(.easeOut(duration: 0.1), value: hovering)
-                }
-            }
-            .contentShape(Rectangle())
-            .onHover { inside in
-                hovering = inside
-                guard inside else { return }
-                Task {
-                    try? await Task.sleep(for: .milliseconds(120))
-                    if hovering { rested() }
-                }
-            }
-    }
-}
-
-struct HoverPlate: ViewModifier {
-    var size: CGFloat = 28
-    var radius: CGFloat = 8
-    @State private var hovering = false
-    func body(content: Content) -> some View {
-        content
-            .frame(width: size, height: size)
-            .background(hovering ? Ink.hover2 : .clear, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .contentShape(Rectangle())
-            .onHover { inside in withAnimation(Ink.glide) { hovering = inside } }
-    }
-}
-
-struct Press: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    func makeBody(configuration: ButtonStyleConfiguration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(Ink.glide, value: configuration.isPressed)
-    }
-}
-
 struct SessionList: View {
     @Bindable var model: SessionStore
     @State private var collapsed: Set<String> = []
     @State private var expanded: Set<String> = []
     @FocusState private var focused: Bool
     var body: some View {
-        let groups = model.groups
-        let shown = model.shown
+        let history = model.history()
+        let groups = history.recent
+        let shown = model.sidebar
         let listed = model.showsSections ? shown.listed : .init()
+        let asleep = model.showsSections ? shown.asleep : []
         let finishedIDs = Set(listed.finished.compactMap(\.finish.sessionID))
         let pins = model.showsSections ? model.visiblePins : []
         ScrollViewReader { proxy in
@@ -328,25 +134,27 @@ struct SessionList: View {
                         if !listed.waiting.isEmpty {
                             SectionLabel(text: "Needs you")
                             ForEach(listed.waiting) { session in
-                                WaitingRow(model: model, session: session)
+                                WaitingRow(model: model, session: session).modifier(NumberHint(model: model, id: session.sessionID))
                                     .transition(Ink.rise(-4))
                             }
                         }
                         if !listed.finished.isEmpty {
                             SectionLabel(text: "Ready")
                             ForEach(listed.finished) { item in
-                                FinishedRow(model: model, item: item)
+                                FinishedRow(model: model, item: item).modifier(NumberHint(model: model, id: item.finish.sessionID))
                                     .transition(Ink.rise(-4))
                             }
                         }
-                        if !listed.working.isEmpty || !listed.idle.isEmpty {
-                            RunningHeader(model: model, title: listed.working.isEmpty ? "Idle" : "Working",
-                                          count: listed.working.isEmpty ? listed.idle.count : listed.working.count)
+                        let launches = model.desk.shownLaunches(live: model.live)
+                        if !listed.working.isEmpty || !listed.idle.isEmpty || !launches.isEmpty {
+                            let active = listed.working.count + launches.count
+                            RunningHeader(model: model, title: active == 0 ? "Idle" : "Working", count: active == 0 ? listed.idle.count : active)
+                            ForEach(launches) { launch in LaunchRow(model: model, launch: launch).transition(Ink.rise(-4)) }
                             let captions = Set((listed.working + listed.idle).map { model.project(of: $0.cwd) }).count > 1
                             ForEach(model.byProject(listed.working)) { group in
                                 if captions { ProjectCaption(name: group.project) }
                                 ForEach(group.sessions) { session in
-                                    RunningRow(model: model, session: session)
+                                    RunningRow(model: model, session: session).modifier(NumberHint(model: model, id: session.sessionID))
                                         .transition(Ink.rise(-4))
                                 }
                             }
@@ -356,10 +164,19 @@ struct SessionList: View {
                                     ForEach(model.byProject(listed.idle)) { group in
                                         if captions { ProjectCaption(name: group.project) }
                                         ForEach(group.sessions) { session in
-                                            RunningRow(model: model, session: session)
+                                            RunningRow(model: model, session: session).modifier(NumberHint(model: model, id: session.sessionID))
                                                 .transition(Ink.rise(-4))
                                         }
                                     }
+                                }
+                            }
+                        }
+                        if !asleep.isEmpty {
+                            SnoozedFold(model: model, sessions: asleep)
+                            if model.desk.snoozedOpen {
+                                ForEach(asleep) { session in
+                                    RunningRow(model: model, session: session).modifier(NumberHint(model: model, id: session.sessionID))
+                                        .transition(Ink.rise(-4))
                                 }
                             }
                         }
@@ -370,22 +187,10 @@ struct SessionList: View {
                                     .transition(Ink.rise(-4))
                             }
                         }
-                        ForEach(groups, id: \.path) { group in
-                            let folded = collapsed.contains(group.path)
-                            let rows = group.rows.filter { !finishedIDs.contains($0.session.id) }
-                            ProjectHeader(name: group.name, count: rows.count, collapsed: folded) {
-                                withAnimation(Ink.ease) { collapsed.formSymmetricDifference([group.path]) }
-                            }
-                            if !folded {
-                                let limit = expanded.contains(group.path) ? rows.count : 5
-                                ForEach(rows.prefix(limit), id: \.session.id) { row in
-                                    SessionRow(model: model, session: row.session, depth: row.depth)
-                                        .transition(Ink.rise(-4))
-                                }
-                                if rows.count > limit {
-                                    MoreButton(count: rows.count - limit) { withAnimation(Ink.ease) { _ = expanded.insert(group.path) } }
-                                }
-                            }
+                        projects(groups, finishedIDs)
+                        if !history.earlier.isEmpty {
+                            EarlierFold(model: model, count: history.earlier.reduce(0) { $0 + $1.rows.count })
+                            if model.desk.earlierOpen { projects(history.earlier, finishedIDs) }
                         }
                     }
                     if model.results.isEmpty { EmptyList(model: model) }
@@ -415,16 +220,40 @@ struct SessionList: View {
             .onKeyPress(.downArrow) { model.step(1); return .handled }
             .onKeyPress(.upArrow) { model.step(-1); return .handled }
             .onKeyPress(.escape) { model.focusSearch += 1; return .handled }
+            .onKeyPress(.return) { model.desk.composerFocus += 1; return .handled }
+            .onChange(of: model.desk.listFocus) { focused = true }
             .onChange(of: model.selectedID) { _, id in
                 if id != nil && !model.searching { focused = true }
                 if let id, !model.idleOpen, listed.idle.contains(where: { $0.sessionID == id }) { model.idleOpen = true }
-                guard let id, !model.searching, let group = groups.first(where: { $0.rows.contains { $0.session.id == id } }) else {
+                if let id, history.earlier.contains(where: { $0.rows.contains { $0.session.id == id } }) { model.desk.earlierOpen = true }
+                if let id, asleep.contains(where: { $0.sessionID == id }) { model.desk.snoozedOpen = true }
+                guard let id, !model.searching, let group = (groups + history.earlier).first(where: { $0.rows.contains { $0.session.id == id } }) else {
                     if let id { proxy.scrollTo(id) }
                     return
                 }
                 collapsed.remove(group.path)
                 if let index = group.rows.firstIndex(where: { $0.session.id == id }), index >= 5 { expanded.insert(group.path) }
                 proxy.scrollTo(id)
+            }
+        }
+    }
+
+    @ViewBuilder private func projects(_ groups: [ProjectGroup], _ finishedIDs: Set<String>) -> some View {
+        ForEach(groups, id: \.path) { group in
+            let folded = collapsed.contains(group.path)
+            let rows = group.rows.filter { !finishedIDs.contains($0.session.id) }
+            ProjectHeader(name: group.name, count: rows.count, collapsed: folded) {
+                withAnimation(Ink.ease) { collapsed.formSymmetricDifference([group.path]) }
+            }
+            if !folded {
+                let limit = expanded.contains(group.path) ? rows.count : 5
+                ForEach(rows.prefix(limit), id: \.session.id) { row in
+                    SessionRow(model: model, session: row.session, depth: row.depth)
+                        .transition(Ink.rise(-4))
+                }
+                if rows.count > limit {
+                    MoreButton(count: rows.count - limit) { withAnimation(Ink.ease) { _ = expanded.insert(group.path) } }
+                }
             }
         }
     }
@@ -556,8 +385,8 @@ struct SessionRow: View {
     let depth: Int
     @State private var hovering = false
     var body: some View {
-        let selected = model.selectedID == session.id
-        Button { model.open(session.id) } label: {
+        let selected = model.shows(session.id)
+        Button { model.click(session.id) } label: {
             HStack(spacing: 7) {
                 Group {
                     if depth > 0 {
@@ -591,7 +420,7 @@ struct WaitingRow: View {
     @State private var hovering = false
     var body: some View {
         let id = session.sessionID ?? ""
-        Button { model.open(id) } label: {
+        Button { model.click(id) } label: {
             HStack(spacing: 7) {
                 Beacon(tint: Ink.amber).frame(width: 12)
                 VStack(alignment: .leading, spacing: 1) {
@@ -605,9 +434,13 @@ struct WaitingRow: View {
                 Spacer(minLength: 8)
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 40)
-            .modifier(RowPlate(selected: model.selectedID == id, hovering: $hovering) { model.prefetch(id) })
+            .modifier(RowPlate(selected: model.shows(id), hovering: $hovering) { model.prefetch(id) })
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Show in Terminal") { model.show(session) }
+            if !id.isEmpty { Button(model.isPinned(id) ? "Unpin" : "Pin") { model.pin(id) } }
+        }
     }
 }
 
@@ -683,7 +516,7 @@ struct FinishedRow: View {
     @State private var hovering = false
     var body: some View {
         let id = item.finish.sessionID ?? ""
-        Button { model.open(id) } label: {
+        Button { model.click(id) } label: {
             HStack(spacing: 7) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 10)).foregroundStyle(.green).frame(width: 12)
                 VStack(alignment: .leading, spacing: 1) {
@@ -695,7 +528,7 @@ struct FinishedRow: View {
                 Text(When.compact(item.at.timeIntervalSince1970)).font(.subheadline).foregroundStyle(.tertiary).monospacedDigit()
             }
             .padding(.leading, 4).padding(.trailing, 9).frame(height: 40)
-            .modifier(RowPlate(selected: model.selectedID == id, hovering: $hovering) { model.prefetch(id) })
+            .modifier(RowPlate(selected: model.shows(id), hovering: $hovering) { model.prefetch(id) })
         }
         .buttonStyle(.plain)
         .contextMenu { Button("Show in Terminal") { model.store.island.go(item) } }
@@ -719,7 +552,7 @@ struct RunningRow: View {
         let interactive = session.kind.map { $0 == "interactive" } ?? true
         let forks = interactive && session.provider == .claude && session.cwd != nil
         let restarts = interactive && session.cwd != nil && model.store.hostingWanted && model.store.hosted.available
-        Button { model.open(id) } label: {
+        Button { model.click(id) } label: {
             HStack(spacing: 7) {
                 Group {
                     if busy { WorkingMark() } else { Circle().fill(Color.secondary.opacity(0.5)).frame(width: 5, height: 5) }
@@ -735,12 +568,12 @@ struct RunningRow: View {
                         HStack(spacing: 4) { titleSlot(title); memory }
                         title
                     }
-                    detail.font(.subheadline).lineLimit(1).truncationMode(.middle)
+                    MoveWaitingDetail(store: model.store, session: session) { detail }.font(.subheadline).lineLimit(1).truncationMode(.middle)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.leading, 4).padding(.trailing, 6).frame(height: 40)
-            .modifier(RowPlate(selected: model.selectedID == id, hovering: $hovering) { model.prefetch(id) })
+            .modifier(RowPlate(selected: model.shows(id), hovering: $hovering) { model.prefetch(id) })
         }
         .buttonStyle(.plain)
         .help(session.memory.map { "\(Megabytes.text($0)) in \(session.processes ?? 1) processes" } ?? "")
@@ -753,7 +586,7 @@ struct RunningRow: View {
                     } else if stopping {
                         RowAction(symbol: "stop.circle", help: "Stop before its next step") { model.stop(session, now: false) }
                     }
-                    RowAction(symbol: "macwindow", help: "Show in its terminal") { model.show(session) }
+                    MoveCancelAction(store: model.store, session: session); RowAction(symbol: "macwindow", help: "Show in its terminal") { model.show(session) }
                 }
                 .padding(.leading, 18)
                 .background {
@@ -786,9 +619,10 @@ struct RunningRow: View {
             }
             Button("Show in Terminal") { model.show(session) }
             if !id.isEmpty {
-                Button(model.isPinned(id) ? "Unpin" : "Pin") { model.togglePin(id) }
+                Button(model.isPinned(id) ? "Unpin" : "Pin") { model.pin(id) }
+                SnoozeItems(model: model, session: session); LimitItems(model: model, session: session)
                 if forks { Button("Fork") { model.fork(session) } }
-                if restarts { Button("Restart Fresh…") { model.restarting = session } }
+                if restarts { Button("Restart Fresh…") { model.restarting = session }; MoveMenu(store: model.store, session: session) }
             }
             if let ports = session.ports, !ports.isEmpty {
                 Divider()
@@ -801,7 +635,7 @@ struct RunningRow: View {
             }
             if interactive {
                 Divider()
-                Button("Quit Session…") { model.quitting = session }
+                Button(SessionStore.quitsQuietly(session) ? "Quit Session" : "Quit Session…") { model.requestQuit(session) }
             }
         }
         .accessibilityElement(children: .combine)
@@ -809,7 +643,7 @@ struct RunningRow: View {
             if noting { Button("Send a Note…") { model.noting = session } }
             if escape { Button("Stop Now") { model.stop(session, now: true) } }
             if stopping { Button("Stop Before Its Next Step") { model.stop(session, now: false) } }
-            Button("Show in Terminal") { model.show(session) }
+            Button("Show in Terminal") { model.show(session) }; if let move = model.store.remote.moves.waitingMove(for: session.sessionID), !model.store.remote.moves.firing.contains(move.id) { Button("Cancel Move to \(move.computerName)") { model.store.remote.moves.cancel(move.id) } }
             if let port = session.ports?.first {
                 Button("Open its server") { NSWorkspace.shared.open(URL(string: "http://localhost:\(port.port)")!) }
             }
@@ -840,7 +674,7 @@ struct RunningRow: View {
         case "note": Text("Note waits for its next step").foregroundStyle(Color.accentColor)
         case "stop": Text("Stops before its next step").foregroundStyle(Color.accentColor)
         default:
-            if let flag = session.flag, flag.kind != "bloated" {
+            if let flag = session.flag, flag.kind != .bloated {
                 Label(flag.text, systemImage: Self.symbol(flag.kind)).labelStyle(.titleAndIcon).foregroundStyle(Self.tint(flag.kind))
                     .help(Self.advice(flag.kind))
             } else if session.status == "busy" {
@@ -848,9 +682,9 @@ struct RunningRow: View {
             } else if session.status == "unknown" {
                 Text("Status unknown").foregroundStyle(.secondary)
                     .help("Codex hasn't written a turn Side A can read yet, so it may be working or idle.")
-            } else if session.flag?.kind == "bloated", let context = session.context {
+            } else if session.flag?.kind == .bloated, let context = session.context {
                 (Text(idle) + Text(" · \(context / 1000)k context").foregroundStyle(.tertiary)).foregroundStyle(.secondary)
-                    .help(Self.advice("bloated"))
+                    .help(Self.advice(.bloated))
             } else {
                 Text(idle).foregroundStyle(.secondary)
             }
@@ -858,21 +692,21 @@ struct RunningRow: View {
     }
 
     private var idle: String {
-        guard let since = session.since, session.stale else { return "Idle" }
-        return "Idle \(Date(timeIntervalSince1970: since).formatted(.relative(presentation: .named)))"
+        if let limited = model.limitText(session) { return limited }
+        return session.since.flatMap { session.stale ? "Idle \(Date(timeIntervalSince1970: $0).formatted(.relative(presentation: .named)))" : nil } ?? "Idle"
     }
 
-    static func symbol(_ kind: String) -> String {
-        ["stuck": "hourglass", "loop": "arrow.triangle.2.circlepath", "failing": "exclamationmark.triangle", "bloated": "square.stack.3d.up"][kind] ?? "info.circle"
+    static func symbol(_ kind: SessionFlag.Kind) -> String {
+        [.stuck: "hourglass", .loop: "arrow.triangle.2.circlepath", .failing: "exclamationmark.triangle", .bloated: "square.stack.3d.up"][kind] ?? "info.circle"
     }
 
-    static func tint(_ kind: String) -> Color { kind == "bloated" ? .secondary : kind == "stuck" ? .orange : .red }
+    static func tint(_ kind: SessionFlag.Kind) -> Color { kind == .bloated ? .secondary : kind == .stuck ? .orange : .red }
 
-    static func advice(_ kind: String) -> String {
+    static func advice(_ kind: SessionFlag.Kind) -> String {
         switch kind {
-        case "stuck": "Its transcript hasn't moved in a while. A long command may still be running; show it in its terminal to check."
-        case "loop": "It keeps making the same call. A note with a different approach often breaks the loop."
-        case "failing": "Its last steps failed. Send a note or stop it and steer it yourself."
+        case .stuck: "Its transcript hasn't moved in a while. A long command may still be running; show it in its terminal to check."
+        case .loop: "It keeps making the same call. A note with a different approach often breaks the loop."
+        case .failing: "Its last steps failed. Send a note or stop it and steer it yourself."
         default: "Every step re-reads this context. /compact or a fresh session costs less and keeps it sharp."
         }
     }
@@ -908,9 +742,11 @@ struct SessionMenuItems: View {
     let model: SessionStore
     let session: SessionInfo
     var body: some View {
-        Button(model.isPinned(session.id) ? "Unpin" : "Pin") { model.togglePin(session.id) }
+        if model.liveByID[session.id] == nil { Button("Resume") { model.showOrResume(session) } }
+        if model.liveByID[session.id] == nil, let ended = model.store.remote.moves.ended(session.id, running: model.live) { MoveMenu(store: model.store, session: ended) }
+        Button(model.isPinned(session.id) ? "Unpin" : "Pin") { model.pin(session.id) }
         Button("Rename…") { model.renaming = session }
-        Button(model.isArchived(session.id) ? "Unarchive" : "Archive") { model.toggleArchive(session.id) }
+        Button(model.isArchived(session.id) ? "Unarchive" : "Archive") { model.archive(session.id) }
         Divider()
         Button("Copy Resume Command") { SessionStore.copy(SessionStore.command(session, fork: false)) }
         Button("Copy Session ID") { SessionStore.copy(session.id) }

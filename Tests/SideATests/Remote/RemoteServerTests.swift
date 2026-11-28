@@ -127,10 +127,9 @@ private func ready(_ server: RemoteServer) async {
     let identity = try #require(try keychain.store.identity())
     let second = RemoteServer(identity: identity, epoch: "e2") { _, _ in HTTPResponse(status: 204) }
     defer { second.stop() }
-    // The controller moves to the next port on exactly this text.
     second.serve(addresses: ["127.0.0.1", "192.0.2.1"], port: port)
     let states = second.listenerStates
-    #expect(states["127.0.0.1"] == .failed(RemoteServer.portInUse))
+    #expect(states["127.0.0.1"] == .portInUse)
     #expect(states["192.0.2.1"] == .failed("The address isn't on this Mac any more"))
 }
 

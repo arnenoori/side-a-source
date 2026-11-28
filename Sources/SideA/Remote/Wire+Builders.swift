@@ -207,14 +207,3 @@ enum WireBuilders {
         return Worth(days7: APIPrice.dollars(week), days30: APIPrice.dollars(rows))
     }
 }
-
-private extension RemoteSuggestion {
-    init(_ suggestion: IslandSuggestion) {
-        let scope: SuggestionScope? = switch suggestion.destination {
-        case "session": .session
-        case .some: .saved
-        case nil: nil
-        }
-        self.init(id: RemoteAnswers.suggestionID(suggestion), title: suggestion.title, scope: scope)
-    }
-}

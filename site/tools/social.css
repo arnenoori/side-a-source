@@ -1,0 +1,11 @@
+/* Share images for the Linux and Windows pages (1200 x 630). See README.md for how they are baked. */
+html, body { width: 1200px; height: 630px; margin: 0; overflow: hidden; background: #f4f4f2; }
+.card { position: relative; width: 1200px; height: 630px; }
+.words { position: absolute; left: 84px; top: 0; bottom: 0; width: 520px; display: flex; flex-direction: column; justify-content: center; }
+.words h1 { margin: 0 0 34px; font-size: 80px; line-height: 1; letter-spacing: -.045em; font-weight: 700; color: #242b29; }
+.words p { display: flex; align-items: center; gap: 12px; margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.01em; color: #5b655f; }
+.words .disc-mark { width: 26px; height: 26px; }
+.landing .demo { position: absolute; left: 640px; top: 96px; width: 720px; margin: 0; padding: 0; }
+.landing .terminal { width: 100%; }
+.landing .terminal-body { font-size: 15px; padding-bottom: 120px; }
+.landing .handset { right: auto; left: 296px; bottom: -150px; width: 250px; }

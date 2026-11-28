@@ -43,7 +43,6 @@ extension RemoteRoutes {
 
     static let pageSize = 50
 
-    /// Any interactive session: hosted ones end with their tmux session, others get SIGTERM (Claude Code saves on it).
     @Sendable static func quit(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         if let refused = await refusal(context, .quit, target: id) { return refused }
@@ -155,7 +154,6 @@ extension RemoteRoutes {
         return await command(context) { commands throws(SessionCommands.Failure) in try await commands.handoff(id) }
     }
 
-    /// Starts the new hosted session first and ends the old one only once it's up, so a failed start loses nothing.
     @Sendable static func restart(_ context: Context) async -> HTTPResponse {
         let id = context.params["id"] ?? ""
         guard let body = context.body(RestartRequest.self) else { return badJSON }

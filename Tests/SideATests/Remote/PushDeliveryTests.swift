@@ -9,8 +9,7 @@ private let start = Date(timeIntervalSince1970: 1_800_000_000)
 private let away = UserPresence(idle: 120, locked: false)
 private let atMac = UserPresence(idle: 5, locked: false)
 
-/// A stand-in relay: records every send, can hold them, and fails on cue.
-@MainActor private final class Wire {
+@MainActor private final class FakeRelay {
     private(set) var sends: [RelayClient.Send] = []
     var failures: [Error] = []
     var reply: (RelayClient.Send) -> [RelayClient.Result] = { body in body.devices.map { RelayClient.Result(device: $0, result: "ok") } }
@@ -35,7 +34,7 @@ private let atMac = UserPresence(idle: 5, locked: false)
 
 @MainActor private final class Rig {
     let remote = RemoteController(store: AccountStore(demo: true), keychain: .inMemory(), addresses: ["127.0.0.1"], port: 1_025)
-    let wire = Wire()
+    let relay = FakeRelay()
     var lines: [String] = []
     var now = start
     var presence = away
@@ -53,7 +52,7 @@ private let atMac = UserPresence(idle: 5, locked: false)
         }
         let push = remote.push
         push.outstandingURL = file
-        push.delivery.transmit = { [wire] body in try await wire.call(body) }
+        push.delivery.transmit = { [relay] body in try await relay.call(body) }
         push.delivery.delays = Array(repeating: .milliseconds(1), count: 3)
         push.delivery.log = { [weak self] in self?.lines.append($0) }
         push.presence = { [weak self] in self?.presence ?? away }
@@ -111,20 +110,20 @@ struct PushWatchingRuleTests {
         rig.watching(sessionOfTheFixture)
         let request = try rig.request()
         await settle()
-        #expect(rig.wire.sends.isEmpty)
+        #expect(rig.relay.sends.isEmpty)
         #expect(rig.logged("kind=request", "device=p1", "decision=suppressed", "reason=watching"))
 
         rig.watching(sessionOfTheFixture, foreground: false)
         rig.remote.push.watchingChanged()
-        #expect(await eventually { rig.wire.sends.count == 1 })
-        #expect(rig.wire.sends.first?.devices == ["p1"] && rig.wire.sends.first?.kind == "alert")
+        #expect(await eventually { rig.relay.sends.count == 1 })
+        #expect(rig.relay.sends.first?.devices == ["p1"] && rig.relay.sends.first?.kind == "alert")
         #expect(await eventually { rig.logged("decision=sent", "reason=stopped-watching", "relay=ok") })
 
         rig.remote.push.watchingChanged()
         await settle()
-        #expect(rig.wire.sends.count == 1, "once")
+        #expect(rig.relay.sends.count == 1, "once")
         rig.remote.push.dismiss(request.id)
-        #expect(await eventually { rig.wire.kinds == ["alert", "dismiss"] })
+        #expect(await eventually { rig.relay.kinds == ["alert", "dismiss"] })
     }
 
     @Test func aRequestAnsweredWhileWatchedIsNeverPushed() async throws {
@@ -135,19 +134,19 @@ struct PushWatchingRuleTests {
         rig.watching(nil, foreground: false)
         rig.remote.push.watchingChanged()
         await settle()
-        #expect(rig.wire.sends.isEmpty)
+        #expect(rig.relay.sends.isEmpty)
     }
 
     @Test func aPhoneOnAnotherSessionOrWithTheSettingOffGetsItAtOnce() async throws {
         let other = try Rig()
         other.watching("some-other-session")
         _ = try other.request()
-        #expect(await eventually { other.wire.sends.count == 1 })
+        #expect(await eventually { other.relay.sends.count == 1 })
 
         let off = try Rig(prefs: NotificationPrefs(suppressWhileWatching: false))
         off.watching(sessionOfTheFixture)
         _ = try off.request()
-        #expect(await eventually { off.wire.sends.count == 1 })
+        #expect(await eventually { off.relay.sends.count == 1 })
     }
 
     @Test func onlyTheWatchingPhoneWaits() async throws {
@@ -156,41 +155,41 @@ struct PushWatchingRuleTests {
             device == "p1" ? EventHub.Presence(foreground: true, viewing: sessionOfTheFixture, at: rig?.now ?? start) : nil
         }
         _ = try rig.request()
-        #expect(await eventually { rig.wire.sends.count == 1 })
-        #expect(rig.wire.sends.first?.devices == ["p2"])
+        #expect(await eventually { rig.relay.sends.count == 1 })
+        #expect(rig.relay.sends.first?.devices == ["p2"])
         rig.remote.push.presenceOf = { _ in nil }
         rig.remote.push.watchingChanged()
-        #expect(await eventually { rig.wire.sends.count == 2 })
-        #expect(rig.wire.sends.last?.devices == ["p1"])
+        #expect(await eventually { rig.relay.sends.count == 2 })
+        #expect(rig.relay.sends.last?.devices == ["p1"])
     }
 }
 
 @MainActor struct PushOrderAndRetryTests {
     @Test func aDismissNeverOvertakesItsAlert() async throws {
         let rig = try Rig()
-        rig.wire.held = true
+        rig.relay.held = true
         let request = try rig.request()
-        #expect(await eventually { rig.wire.sends.count == 1 })
+        #expect(await eventually { rig.relay.sends.count == 1 })
         rig.remote.push.dismiss(request.id, answeredBy: nil)
         await settle()
-        #expect(rig.wire.kinds == ["alert"], "the dismiss waits behind the alert still in flight")
-        rig.wire.release()
-        #expect(await eventually { rig.wire.kinds == ["alert", "dismiss"] })
+        #expect(rig.relay.kinds == ["alert"], "the dismiss waits behind the alert still in flight")
+        rig.relay.release()
+        #expect(await eventually { rig.relay.kinds == ["alert", "dismiss"] })
     }
 
     @Test func aFailedSendIsTriedAgainUntilItTakes() async throws {
         let rig = try Rig()
-        rig.wire.failures = [RelayClient.Failure.unreachable, RelayClient.Failure(status: 503, code: "x", message: ""),
+        rig.relay.failures = [RelayClient.Failure.unreachable, RelayClient.Failure(status: 503, code: "x", message: ""),
                              RelayClient.Failure(status: 429, code: "rate_limited", message: "", retryAfter: 0)]
         _ = try rig.request()
         #expect(await eventually { rig.logged("decision=sent", "relay=ok", "attempts=4") })
-        #expect(rig.wire.sends.count == 4)
+        #expect(rig.relay.sends.count == 4)
     }
 
     @Test func aPhoneAPNsAskedToRetryIsTriedAgainAloneButOneThatIsGoneIsNot() async throws {
         let rig = try Rig(phones: ["p1", "p2", "p3"])
         var calls = 0
-        rig.wire.reply = { body in
+        rig.relay.reply = { body in
             calls += 1
             return body.devices.map { device in
                 switch device {
@@ -201,35 +200,35 @@ struct PushWatchingRuleTests {
             }
         }
         _ = try rig.request()
-        #expect(await eventually { rig.wire.sends.count == 2 })
-        #expect(rig.wire.sends.last?.devices == ["p1"])
+        #expect(await eventually { rig.relay.sends.count == 2 })
+        #expect(rig.relay.sends.last?.devices == ["p1"])
         #expect(await eventually { rig.logged("device=p2", "decision=failed", "relay=gone") && rig.logged("device=p1", "decision=sent", "attempts=2") })
     }
 
     @Test func aRefusalTheRelayMeansIsNotRetriedAndTheTriesAreBounded() async throws {
         let refused = try Rig()
-        refused.wire.failures = [RelayClient.Failure(status: 400, code: "bad_request", message: "")]
+        refused.relay.failures = [RelayClient.Failure(status: 400, code: "bad_request", message: "")]
         _ = try refused.request()
         #expect(await eventually { refused.logged("decision=failed") })
-        #expect(refused.wire.sends.count == 1)
+        #expect(refused.relay.sends.count == 1)
 
         let down = try Rig()
-        down.wire.failures = Array(repeating: RelayClient.Failure.unreachable, count: 20)
+        down.relay.failures = Array(repeating: RelayClient.Failure.unreachable, count: 20)
         _ = try down.request()
         #expect(await eventually { down.logged("decision=failed", "relay=gave-up") })
-        #expect(down.wire.sends.count == 4, "the first try and three retries")
+        #expect(down.relay.sends.count == 4, "the first try and three retries")
     }
 
     @Test func aRequestAnsweredBetweenTriesIsNotSentAgain() async throws {
         let rig = try Rig()
         let id = try JSONDecoder().decode(RemoteRequest.self, from: Fixtures.data("RemoteRequest.bash")).id
-        rig.wire.failures = Array(repeating: RelayClient.Failure.unreachable, count: 20)
+        rig.relay.failures = Array(repeating: RelayClient.Failure.unreachable, count: 20)
         rig.delivery(retryAfter: .milliseconds(200))
         _ = try rig.request()
-        #expect(await eventually { rig.wire.sends.count == 1 })
+        #expect(await eventually { rig.relay.sends.count == 1 })
         rig.remote.push.dismiss(id, answeredBy: "p1")
         #expect(await eventually { rig.logged("decision=dropped") })
-        #expect(rig.wire.sends.count == 1, "no second alert, and no dismiss for a notification that never showed")
+        #expect(rig.relay.sends.count == 1, "no second alert, and no dismiss for a notification that never showed")
     }
 }
 
@@ -246,9 +245,9 @@ private extension Rig {
         #expect(RemotePush.unanswered(.mac) == nil && RemotePush.unanswered(.terminal) == nil && RemotePush.unanswered(.remote(device: "p1", name: "x")) == nil)
 
         rig.remote.push.withdrawn(request, why: RemotePush.unanswered(.handedBack) ?? "")
-        #expect(await eventually { rig.wire.sends.count == 2 })
-        #expect(rig.wire.kinds == ["alert", "alert"], "no relay dismiss: it would say Answered")
-        #expect(rig.wire.sends[1].category == PushCategory.health.rawValue && rig.wire.sends[1].collapseId == rig.wire.sends[0].collapseId)
+        #expect(await eventually { rig.relay.sends.count == 2 })
+        #expect(rig.relay.kinds == ["alert", "alert"], "no relay dismiss: it would say Answered")
+        #expect(rig.relay.sends[1].category == PushCategory.health.rawValue && rig.relay.sends[1].collapseId == rig.relay.sends[0].collapseId)
         #expect(rig.sealed.last?.payload.body == "Handed back to the terminal" && rig.sealed.last?.category == .health)
     }
 
@@ -256,17 +255,17 @@ private extension Rig {
         let rig = try Rig()
         let turn = FinishedSession(sessionID: "a", turnID: "turn-a", title: "a", summary: "Done.", at: 0, canFollowUp: true)
         rig.remote.push.finished(turn, ran: 300)
-        #expect(await eventually { rig.wire.sends.count == 1 })
+        #expect(await eventually { rig.relay.sends.count == 1 })
         rig.remote.push.finishedResolved("turn-a", reason: .expired)
         await settle()
-        #expect(rig.wire.kinds == ["alert"])
+        #expect(rig.relay.kinds == ["alert"])
         #expect(rig.logged("decision=skipped", "reason=nobody-answered"))
 
         let again = try Rig()
         again.remote.push.finished(turn, ran: 300)
-        #expect(await eventually { again.wire.sends.count == 1 })
+        #expect(await eventually { again.relay.sends.count == 1 })
         again.remote.push.finishedResolved("turn-a", reason: .replied)
-        #expect(await eventually { again.wire.kinds == ["alert", "dismiss"] })
+        #expect(await eventually { again.relay.kinds == ["alert", "dismiss"] })
     }
 
     @Test func theLimitPushNamesThePercentage() throws {
@@ -279,8 +278,8 @@ private extension Rig {
     @Test func aDroppedReplyAsksForActiveSoTheRelayIsWhatMakesItQuiet() async throws {
         let rig = try Rig()
         rig.remote.push.queuedDropped(session: "s1", title: "app", text: "go on")
-        #expect(await eventually { rig.wire.sends.count == 1 })
-        #expect(rig.wire.sends.first?.level == "active" && rig.wire.sends.first?.category == PushCategory.health.rawValue)
+        #expect(await eventually { rig.relay.sends.count == 1 })
+        #expect(rig.relay.sends.first?.level == "active" && rig.relay.sends.first?.category == PushCategory.health.rawValue)
     }
 }
 
@@ -296,13 +295,13 @@ private extension Rig {
 
         let after = try Rig(file: url)
         after.remote.push.sweepStaleAlerts()
-        #expect(await eventually { after.wire.sends.count == 1 })
-        #expect(after.wire.sends.first?.category == PushCategory.health.rawValue && after.wire.sends.first?.devices == ["p1"])
-        #expect(after.wire.sends.first?.collapseId == RemotePush.collapse(request.id))
+        #expect(await eventually { after.relay.sends.count == 1 })
+        #expect(after.relay.sends.first?.category == PushCategory.health.rawValue && after.relay.sends.first?.devices == ["p1"])
+        #expect(after.relay.sends.first?.collapseId == RemotePush.collapse(request.id))
         #expect(!FileManager.default.fileExists(atPath: url.path))
         after.remote.push.sweepStaleAlerts()
         await settle()
-        #expect(after.wire.sends.count == 1, "once per launch")
+        #expect(after.relay.sends.count == 1, "once per launch")
 
         let answered = try Rig(file: url)
         let second = try answered.request()
@@ -320,7 +319,7 @@ private extension Rig {
         rig.remote.push.swept = false
         rig.remote.push.sweepStaleAlerts()
         await settle()
-        #expect(rig.wire.sends.count == 1 && rig.wire.sends.first?.collapseId == RemotePush.collapse(request.id))
+        #expect(rig.relay.sends.count == 1 && rig.relay.sends.first?.collapseId == RemotePush.collapse(request.id))
     }
 }
 

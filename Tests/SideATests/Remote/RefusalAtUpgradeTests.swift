@@ -29,6 +29,5 @@ import Testing
     let text = String(decoding: received, as: UTF8.self)
     #expect(text.hasPrefix("HTTP/1.1 101 Switching Protocols"))
     #expect(text.contains(#""reason":"off""#))
-    // The refusal's text comes before the close frame, 4403 and its reason.
     #expect(try #require(received.range(of: Data(#""reason":"off""#.utf8))).lowerBound < #require(received.range(of: closeFrame)).lowerBound)
 }

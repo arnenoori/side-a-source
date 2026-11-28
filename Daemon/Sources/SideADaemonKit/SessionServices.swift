@@ -15,15 +15,22 @@ public final class SessionServices: DaemonServices {
         public var poll: Duration = .seconds(2)
         /// The variables a session for an account starts with; nil when the account isn't known.
         public var accountEnvironment: (@Sendable (String) async -> [String: String]?)?
+        /// What sending sessions to other computers adds: the `move` ability, and the refusal to resume a conversation
+        /// that is on another computer now.
+        public var moves: MoveHooks?
         public init(root: URL, projects: [String]) { self.root = root; self.projects = projects }
     }
 
     let engine: SessionEngine
 
-    public init?(settings: Settings, location: BridgeLocation? = BridgeLocation.find()) {
+    init?(settings: Settings, location: BridgeLocation?, approvals: Approvals?) {
         guard let location else { return nil }
         engine = SessionEngine(settings: settings, bridge: SessionBridge(location: location, root: settings.root, environment: settings.environment),
-                               tmux: HostedTmux(root: settings.root, environment: settings.environment, agents: settings.agents))
+                               tmux: HostedTmux(root: settings.root, environment: settings.environment, agents: settings.agents), approvals: approvals)
+    }
+
+    public convenience init?(settings: Settings, location: BridgeLocation? = BridgeLocation.find()) {
+        self.init(settings: settings, location: location, approvals: nil)
     }
 
     public var capabilities: Set<Capability> { [.transcriptStream, .hosted, .interrupt, .confirmSigned, .confirmActions] }
@@ -66,11 +73,12 @@ extension HTTPResponse {
 }
 
 actor SessionEngine {
-    private let settings: SessionServices.Settings
+    let settings: SessionServices.Settings
     private let bridge: SessionBridge
-    private let tmux: HostedTmux
+    let tmux: HostedTmux
+    private let approvals: Approvals?
     private weak var daemon: SideADaemon?
-    private var rows: [LiveRow] = []
+    private(set) var rows: [LiveRow] = []
     private var sessions: [SessionKey: RemoteSession] = [:]
     private var hosted: [String: HostedSession] = [:]
     private var refreshedAt = Date.distantPast
@@ -83,8 +91,8 @@ actor SessionEngine {
     static let maxCatchUp = 200
     static let packBytes = 900 * 1024
 
-    init(settings: SessionServices.Settings, bridge: SessionBridge, tmux: HostedTmux) {
-        self.settings = settings; self.bridge = bridge; self.tmux = tmux
+    init(settings: SessionServices.Settings, bridge: SessionBridge, tmux: HostedTmux, approvals: Approvals? = nil) {
+        self.settings = settings; self.bridge = bridge; self.tmux = tmux; self.approvals = approvals
     }
 
     // MARK: Lifecycle
@@ -93,6 +101,8 @@ actor SessionEngine {
         self.daemon = daemon
         _ = try? await bridge.once(["hosting", "install"], timeout: 30)
         _ = await tmux.prepare()
+        // A request that came or went: the rows that name it change now, not at the next look.
+        await approvals?.setChanged { [weak self] in await self?.refresh(force: true) }
         ready = true
         await refresh(force: true)
         await daemon.hub.observe(greeted: nil, subscribed: { [weak self] _, _, requested in
@@ -136,10 +146,16 @@ actor SessionEngine {
         let panes = await tmux.list()
         guard let live else { return }
         rows = live
+        // Before the rows are built: a request answered in the terminal is closed, so no row names it.
+        await approvals?.sync(live)
+        let open = await approvals?.open(for: live) ?? [:]
+        let movable = await settings.moves?.movable() ?? false
         var next: [SessionKey: RemoteSession] = [:]
         var named: [String: SessionKey] = [:]
         for row in live {
-            let session = LiveBuilder.session(row)
+            var session = LiveBuilder.session(row)
+            session.openRequests = open[row.key] ?? []
+            if movable { LiveBuilder.offerMove(&session) }
             next[session.id] = session
             if let name = row.hosted { named[name] = session.id }
         }
@@ -156,7 +172,6 @@ actor SessionEngine {
         hosted = nextHosted
         for (id, session) in next where before[id] != session { await hub.record(.sessionUpsert(session)) }
         for id in before.keys where next[id] == nil {
-            // A starting row is replaced by the session that registered in its pane.
             let replacement = before[id]?.hosted.flatMap { named[$0] }
             await hub.record(.sessionRemove(id: id, replacedBy: replacement))
         }
@@ -168,6 +183,7 @@ actor SessionEngine {
             told.insert(turn)
             let finished = FinishedSession(sessionID: id, turnID: turn, title: session.title, summary: "Ready for your next message.",
                                            at: Date().timeIntervalSince1970, canFollowUp: session.hosted != nil)
+            if session.hosted != nil { settings.moves?.turnEnded(session.conversationID) }
             if let daemon { await daemon.sessionFinished(finished) }
         }
         if told.count > 200 { told = Set(told.suffix(100)) }
@@ -399,6 +415,7 @@ actor SessionEngine {
             return .apiError(422, .badRequest, "Photos, worktrees, forks and Show on Mac aren't available on this computer yet.")
         }
         if let resume = body.resume, !Self.safe(resume) { return .noSession }
+        if let resume = body.resume, let away = await settings.moves?.elsewhere(resume) { return .moved(to: away) }
         guard Hosting.safeOption(body.model), Hosting.safeOption(body.effort) else { return .apiError(422, .badRequest, "That model or effort isn't one this computer can start with.") }
         guard (body.prompt ?? "").utf8.count <= Hosting.promptArgumentLimit else { return refusal(.invalidReply, "That prompt is too long.", 422) }
         let agent: Hosting.Agent = body.agent == .codex ? .codex : .claude
@@ -461,7 +478,7 @@ extension SideADaemon {
         let keys = await devices.confirmKeys[device] ?? ConfirmGate.Keys(confirm: nil, unlock: nil)
         var details = APIError.confirmDetails(level: needs.level ?? .unlock, pairAgain: keys.isEmpty)
         let what = needs == .biometric ? "Confirm with Face ID or Touch ID." : "Unlock this device to do this."
-        switch ConfirmGate.verify(request.headers[ConfirmSignature.header], macID: HostInfo.machineID(), deviceID: device, purpose: purpose, subject: subject, keys: keys, replay: replay) {
+        switch ConfirmGate.verify(request.headers[ConfirmSignature.header], macID: config.hostID, deviceID: device, purpose: purpose, subject: subject, keys: keys, replay: replay) {
         case .success(let level) where level >= needs: return nil
         case .success, .failure(.missing):
             return .apiError(401, .confirmRequired, keys.isEmpty ? "Pair this device again to do this from it." : what, details: details)

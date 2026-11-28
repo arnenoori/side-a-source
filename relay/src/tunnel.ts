@@ -3,6 +3,7 @@
 // forwards frames and keeps no state per stream: the phone socket's slot is in the stream id.
 import { CLOCK_SKEW, ID, NONCE_WINDOW, parseDeviceBearer, parseSignature, signedString, verifyEd25519 } from './auth';
 import { b64url, equalBytes, fromB64url, sha256, utf8 } from './bytes';
+import { isObject } from './send';
 
 export const FRAME = { open: 1, data: 2, fin: 3, reset: 4, credit: 5 } as const;
 export const HEADER = 5;
@@ -55,7 +56,6 @@ interface PhoneAttachment {
 }
 type Attachment = MacAttachment | PhoneAttachment;
 
-// The ingress refuses before any socket opens; the Worker turns this into an error response.
 // The Mac's liveness, one row once it has connected and said it can be watched. `up`: a socket is open. `since`: when it
 // connected, or when it was last heard before it went. `watch`: it announced itself for watching on this connection (an older
 // Mac doesn't, and is never alerted about). `goodbye`: what it said on the way out. `alerted`: the push for this outage is made.
@@ -308,10 +308,10 @@ export class Tunnel {
   }
 
   private async control(text: string, now: number) {
-    // oxlint-disable-next-line typescript/no-explicit-any -- the Mac's JSON, checked field by field below.
-    let value: any;
+    let value: unknown;
     try { value = JSON.parse(text); } catch { return; }
-    if (value?.type === 'devices' && Array.isArray(value.devices)) {
+    if (!isObject(value)) return;
+    if (value.type === 'devices' && Array.isArray(value.devices)) {
       const devices: { id: string; hash: Uint8Array }[] = [];
       for (const device of value.devices.slice(0, 64)) {
         const hash = typeof device?.secretHash === 'string' ? fromB64url(device.secretHash) : null;
@@ -328,11 +328,11 @@ export class Tunnel {
         if (!expected) phone.close(CLOSE.revoked, 'revoked');
         else if (secret !== undefined && b64url(expected) !== secret) phone.close(CLOSE.replaced, 'replaced');
       }
-    } else if (value?.type === 'watch') {
+    } else if (value.type === 'watch') {
       this.sql.exec('UPDATE tunnel_mac SET watch = 1 WHERE id = 1');
-    } else if (value?.type === 'goodbye' && GOODBYES.includes(value.reason)) {
+    } else if (value.type === 'goodbye' && GOODBYES.some(reason => reason === value.reason)) {
       this.sql.exec('UPDATE tunnel_mac SET goodbye = ?, goodbye_at = ? WHERE id = 1', value.reason, now);
-    } else if (value?.type === 'pairing') {
+    } else if (value.type === 'pairing') {
       const hash = typeof value.ticketHash === 'string' ? fromB64url(value.ticketHash) : null;
       const expires = typeof value.expiresAt === 'number' ? Math.min(value.expiresAt * 1000, now + TUNNEL.ticketLifetime) : 0;
       this.row();
@@ -443,10 +443,9 @@ export class Tunnel {
     if (parsed.type === FRAME.open) {
       if (pairing && attachment.streams >= TUNNEL.pairStreams) return ws.send(frame(FRAME.reset, parsed.stream, utf8('too_many_streams')));
       if (pairing) {
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- pairing sockets are accepted with `live: []`.
-        attachment.live!.push([parsed.stream, 0]);
-        // oxlint-disable-next-line typescript/no-non-null-assertion -- as above.
-        attachment.streams = attachment.live!.length;
+        const live = attachment.live ??= [];
+        live.push([parsed.stream, 0]);
+        attachment.streams = live.length;
         ws.serializeAttachment(attachment);
       }
       if (!mac) {

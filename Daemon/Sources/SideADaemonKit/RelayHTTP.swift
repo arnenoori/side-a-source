@@ -52,6 +52,7 @@ final class RelayHTTP: @unchecked Sendable {
         let secretHash: String
         let pushToStartToken: String?
         let appVersion: String
+        // swiftlint:disable:next discouraged_optional_boolean -- the relay's wire: absent leaves the setting it holds.
         var notifyQuiet: Bool?
     }
 
@@ -62,6 +63,7 @@ final class RelayHTTP: @unchecked Sendable {
         let collapseId: String
         var priority: Int?
         var expiresIn: Int?
+        // swiftlint:disable:next discouraged_optional_boolean -- the relay's wire: absent plays the default sound.
         var sound: Bool?
         var level: String?
         var sealed: [String: String]?

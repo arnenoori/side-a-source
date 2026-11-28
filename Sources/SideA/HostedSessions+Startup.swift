@@ -39,4 +39,10 @@ extension HostedSessions {
 extension HostedSessions {
     var runtime: URL { root.appendingPathComponent("runtime") }
     var launcher: URL { runtime.appendingPathComponent("sidea-tmux") }
+
+    /// Starts Side A's tmux server ahead of the first session, which otherwise waits for it. Nothing depends on
+    /// this having worked: the launcher starts the server itself when it has to.
+    func warm() {
+        Task { [launcher, environment] in _ = await Self.process(launcher.path, ["warm"], environment: environment, timeout: 15) }
+    }
 }

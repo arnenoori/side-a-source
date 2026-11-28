@@ -36,7 +36,6 @@ fi
 swift --version
 step() { printf '\n== %s\n' "$*"; }
 # In Docker the build products live in the volume, one directory per package, so they survive the tree being copied again.
-# `sw NAME PACKAGE_DIR ARGS...` runs swift in that package with its own scratch directory.
 sw() {
   local name="$1" dir="$2"; shift 2
   if [[ -n "${SIDEA_LINUX_SCRATCH:-}" ]]; then swift "$1" --package-path "$dir" --scratch-path "$SIDEA_LINUX_SCRATCH/$name" "${@:2}"

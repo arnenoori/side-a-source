@@ -29,6 +29,23 @@ enum Perf {
         return try await timed("route \(name)", body)
     }
 
+    /// A step of starting a session: the launcher, the wait for the Mac to list it.
+    static func start<T, Failure: Error>(_ step: String, isolation: isolated (any Actor)? = #isolation, _ body: () async throws(Failure) -> T) async throws(Failure) -> T {
+        let id = signposter.makeSignpostID()
+        let state = signposter.beginInterval("start", id: id, "\(step, privacy: .public)")
+        let began = SuspendingClock.now
+        defer {
+            signposter.endInterval("start", state)
+            took("start", step, began.duration(to: .now))
+        }
+        return try await body()
+    }
+
+    /// One persisted line for an interval that is worth having every time, however short: `perf-summary.py` reads it.
+    static func took(_ kind: String, _ name: String, _ duration: Duration) {
+        log.notice("took: \(kind, privacy: .public) \(name, privacy: .public) \(milliseconds(duration), privacy: .public) ms")
+    }
+
     private static func timed<T>(_ name: String, isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
         let key = counter.withLock { $0 += 1; return $0 }
         open.withLock { $0[key] = name }

@@ -1,3 +1,4 @@
+import SideASessionKit
 import SwiftUI
 
 struct StreamingMarkdown: View {
@@ -24,7 +25,7 @@ struct StreamingMarkdown: View {
 
     var body: some View {
         let visible = String(text.prefix(reduceMotion ? text.count : shown))
-        let split = Self.frozenEnd(of: visible)
+        let split = StreamingText.frozenEnd(of: visible)
         VStack(alignment: .leading, spacing: Space.s) {
             if split > 0 {
                 FrozenMarkdown(text: String(visible.prefix(split)), sourceID: sourceID).equatable()
@@ -59,35 +60,11 @@ struct StreamingMarkdown: View {
         let backlog = text.count - shown
         let rate = max(Self.minimumRate, Double(backlog) / Self.maximumLag)
         let target = min(text.count, shown + max(1, Int((rate * now.timeIntervalSince(last)).rounded())))
-        let next = Self.wordBoundary(in: text, atOrAfter: target)
+        let next = StreamingText.wordBoundary(in: text, atOrAfter: target)
         if next > shown {
             reveals.append((shown, next, now))
             shown = next
         }
-    }
-
-    static func wordBoundary(in text: String, atOrAfter offset: Int) -> Int {
-        guard offset < text.count else { return text.count }
-        var index = text.index(text.startIndex, offsetBy: offset)
-        var count = offset
-        while index < text.endIndex, !text[index].isWhitespace {
-            index = text.index(after: index)
-            count += 1
-        }
-        return count
-    }
-
-    static func frozenEnd(of text: String) -> Int {
-        var end = 0, offset = 0, inFence = false, previousBlank = false
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            let blank = trimmed.isEmpty
-            if !inFence, previousBlank, !blank { end = offset }
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { inFence.toggle() }
-            previousBlank = blank && !inFence
-            offset += line.count + 1
-        }
-        return end
     }
 }
 

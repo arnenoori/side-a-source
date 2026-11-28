@@ -15,7 +15,6 @@ final class HeavySession {
     let session: String
     let fileBytes: Int
 
-    /// `turns` turns of a user prompt, a reply and three tool calls whose results run 40 KB each.
     init(turns: Int) throws {
         let session = "heavy1", home = folder.appendingPathComponent("home")
         self.session = session
@@ -78,7 +77,6 @@ enum Measure {
     #expect(heavy.fileBytes > 15 << 20)
     let route = "v1/sessions/\(heavy.session)/transcript"
 
-    // What a phone got before the page had a byte budget: the newest fifty rows as the bridge returns them.
     let old = try await heavy.store.sessions.remoteReply(["show", "--format", "remote", "--limit", "50", "--", heavy.session])
     let before = try JSONEncoder().encode(try RemoteTranscript.page(old)).count
 
@@ -92,16 +90,13 @@ enum Measure {
     #expect(open.body.count < 48 << 10)
     #expect(page.before != nil && !page.messages.isEmpty && newest.seq == page.count - 1)
 
-    // Reading on: the next earlier page is as small.
     let earlier = await heavy.get("\(route)?before=\(try #require(page.before).raw)")
     #expect(earlier.status == 200 && earlier.body.count < 48 << 10)
 
-    // A resume with nothing new, as a reopen or a poll sends it.
     let idle = await heavy.get("\(route)?after=\(page.after.raw)")
     Measure.record("resume from a cursor, nothing new", before: before, after: idle.body.count)
     #expect(idle.body.count < 600)
 
-    // The same page asked again by tag: no body at all.
     let tag = try #require(open.headers["ETag"])
     let again = await heavy.get(route, etag: tag)
     #expect(again.status == 304 && again.body.isEmpty)
@@ -118,7 +113,6 @@ private actor Heard {
     }
 }
 
-/// A phone's first connect, with forty sessions on the Mac: the snapshot it is sent, with and without `gzip` in its hello.
 @MainActor @Test func aSnapshotOfFortySessionsIsAFewKilobytesToAPhoneThatTakesGzip() async throws {
     let keychain = try TestKeychain()
     let identity = try #require(try keychain.store.identity())

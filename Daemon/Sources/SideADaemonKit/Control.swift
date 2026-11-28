@@ -152,7 +152,12 @@ final class ControlConnection: ChannelInboundHandler {
             default: await daemon.pairing.decide(.cancel)
             }
         default:
-            send(channel, ["ok": false, "error": "Unknown command."])
+            let arguments = object.compactMapValues { $0 as? String }
+            guard let answer = await daemon.control(command, arguments),
+                  let reply = (try? JSONSerialization.jsonObject(with: answer)) as? [String: Any] else {
+                return send(channel, ["ok": false, "error": "Unknown command."])
+            }
+            send(channel, reply)
         }
     }
 }

@@ -41,7 +41,6 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     func mode(_ url: URL) throws -> Int? { (try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue }
     #expect(try mode(key) == 0o600)
     #expect(try mode(runtime) == 0o700)
-    // A folder this call creates starts closed as well.
     let fresh = directory.appendingPathComponent("fresh/pool-key")
     try PrivateFile.write(text: "x", to: fresh)
     #expect(try mode(fresh.deletingLastPathComponent()) == 0o700)
@@ -78,18 +77,26 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     #expect(migrated.selectedID == legacy.selectedID && migrated.smartMode)
 }
 
-@Test func plannerBurnsExpiringQuotaFirstAndPrimesIdleWindows() {
-    let now = 1_000_000.0, hour = 3600.0
-    let soon = Account(name: "Soon", ready: true, allowAuto: true)
-    let later = Account(name: "Later", ready: true, allowAuto: true)
-    let full = Account(name: "Full", ready: true, allowAuto: true)
-    func usage(_ five: Double?, _ fiveReset: Double?, _ week: Double, _ weekReset: Double) -> AccountUsage {
+private enum PlannerCase {
+    static let now = 1_000_000.0, hour = 3600.0
+    static let soon = Account(name: "Soon", ready: true, allowAuto: true)
+    static let later = Account(name: "Later", ready: true, allowAuto: true)
+    static let full = Account(name: "Full", ready: true, allowAuto: true)
+    static func usage(_ five: Double?, _ fiveReset: Double?, _ week: Double, _ weekReset: Double) -> AccountUsage {
         AccountUsage(windows: [five.map { UsageWindow(id: "five_hour", label: "5-hour", percent: $0, resetsAt: fiveReset) },
                                UsageWindow(id: "seven_day", label: "Weekly", percent: week, resetsAt: weekReset)].compactMap { $0 })
     }
-    var table = [soon.id: usage(10, now + 2 * hour, 40, now + 24 * hour),
-                 later.id: usage(0, nil, 10, now + 6 * 24 * hour),
-                 full.id: usage(99, now + hour, 50, now + 24 * hour)]
+    static var table: [Account.ID: AccountUsage] {
+        [soon.id: usage(10, now + 2 * hour, 40, now + 24 * hour),
+         later.id: usage(0, nil, 10, now + 6 * 24 * hour),
+         full.id: usage(99, now + hour, 50, now + 24 * hour)]
+    }
+}
+
+@Test func plannerBurnsExpiringQuotaFirst() {
+    let now = PlannerCase.now, hour = PlannerCase.hour, soon = PlannerCase.soon, later = PlannerCase.later, full = PlannerCase.full
+    let usage = PlannerCase.usage
+    var table = PlannerCase.table
     let accounts = [later, soon, full]
     #expect(Planner.best(accounts, usage: table, active: full.id, full: 97, now: now) == soon.id)
     #expect(Planner.best(accounts, usage: table, active: later.id, full: 97, now: now) == soon.id)
@@ -98,11 +105,24 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     table[soon.id] = usage(93, now + 2 * hour, 40, now + 24 * hour)
     #expect(Planner.best([soon, full], usage: table, active: full.id, full: 97, now: now) == nil)
     #expect(Planner.best([soon, full], usage: table, active: soon.id, full: 97, now: now) == soon.id)
+}
+
+@Test func aTargetNearlyOutOfWeeklyQuotaLosesToOneWithRoom() {
+    let now = PlannerCase.now, hour = PlannerCase.hour, soon = PlannerCase.soon, later = PlannerCase.later, full = PlannerCase.full
+    let usage = PlannerCase.usage
+    var table = PlannerCase.table
+    let accounts = [later, soon, full]
     // From brandedDaniel's fork: a target nearly out of weekly quota would be left again minutes
     // later, so an account with room on every limit wins; one is still used when it is all there is.
     table[soon.id] = usage(10, now + 2 * hour, 93, now + 2 * hour)
     #expect(Planner.best(accounts, usage: table, active: full.id, full: 97, now: now) == later.id)
     #expect(Planner.best([soon, full], usage: table, active: full.id, full: 97, now: now) == soon.id)
+}
+
+@Test func plannerPrimesIdleWindows() {
+    let now = PlannerCase.now, hour = PlannerCase.hour, soon = PlannerCase.soon, later = PlannerCase.later, full = PlannerCase.full
+    let usage = PlannerCase.usage
+    var table = PlannerCase.table
     table[soon.id] = usage(10, now + 2 * hour, 40, now + 6 * 24 * hour)
     #expect(Planner.shouldPrime(later, usage: table[later.id], full: 97, now: now))
     #expect(Planner.shouldPrime(soon, usage: usage(80, now - 1, 40, now + hour), full: 97, now: now))
@@ -113,10 +133,21 @@ func anInvalidConfigurationIsRejected(_ name: String, _ change: @Sendable (inout
     var ultra = usage(nil, nil, 10, now + hour); ultra.capacity = 20
     #expect(Planner.shouldPrime(Account(name: "Claude", ready: true, allowAuto: true), usage: ultra, full: 97, now: now))
     #expect(!Planner.shouldPrime(Account(name: "Reserve", ready: true, allowAuto: true, priority: .last), usage: ultra, full: 97, now: now))
+}
+
+@Test func aMoveToAHigherPriorityAccountWaitsOutARecentMove() {
+    let now = PlannerCase.now, hour = PlannerCase.hour
+    let usage = PlannerCase.usage(10, now + 2 * hour, 40, now + 6 * 24 * hour)
     let top = Account(name: "Top", ready: true, allowAuto: true, priority: .first), low = Account(name: "Low", ready: true, allowAuto: true, priority: .last)
-    #expect(Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 60, full: 97, now: now))
-    #expect(!Planner.priorityMoveWaits(from: low, to: top, usage: table[soon.id], movedAt: now - 2 * hour, full: 97, now: now))
-    #expect(!Planner.priorityMoveWaits(from: top, to: low, usage: table[soon.id], movedAt: now - 60, full: 97, now: now))
+    #expect(Planner.priorityMoveWaits(from: low, to: top, usage: usage, movedAt: now - 60, full: 97, now: now))
+    #expect(!Planner.priorityMoveWaits(from: low, to: top, usage: usage, movedAt: now - 2 * hour, full: 97, now: now))
+    #expect(!Planner.priorityMoveWaits(from: top, to: low, usage: usage, movedAt: now - 60, full: 97, now: now))
+}
+
+@Test func plannerRanksUrgencyAndEstimatesTheTimeToALimit() {
+    let now = PlannerCase.now, hour = PlannerCase.hour, soon = PlannerCase.soon, later = PlannerCase.later, full = PlannerCase.full
+    let usage = PlannerCase.usage
+    let table = PlannerCase.table
     var big = table[later.id]!; big.capacity = 20
     #expect(Planner.urgency(big, now: now) > Planner.urgency(table[soon.id]!, now: now))
     #expect(Planner.minutesToLimit([(0, 50), (600, 60)], full: 97) == 37)

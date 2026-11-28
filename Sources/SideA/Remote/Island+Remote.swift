@@ -84,19 +84,7 @@ extension Island {
         }
     }
 
-    static func projects(_ cwd: String?) -> [String] {
-        guard let cwd, !cwd.isEmpty else { return [] }
-        var url = URL(fileURLWithPath: cwd).standardizedFileURL
-        var roots = [url.path]
-        while url.path != "/" {
-            if FileManager.default.fileExists(atPath: url.appendingPathComponent(".git").path) {
-                if url.path != cwd { roots.append(url.path) }
-                break
-            }
-            url.deleteLastPathComponent()
-        }
-        return roots
-    }
+    static func projects(_ cwd: String?) -> [String] { AllowGate.projectRoots(of: cwd) }
 }
 
 /// The gate each request was last sent to a phone with, so an answer signed for a lower one gets 409 `gate_changed`

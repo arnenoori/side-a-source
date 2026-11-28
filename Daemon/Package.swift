@@ -27,6 +27,8 @@ let package = Package(
             .product(name: "NIOCore", package: "swift-nio"),
             .product(name: "NIOPosix", package: "swift-nio"),
             .product(name: "NIOSSL", package: "swift-nio-ssl"),
+            // The TLS handshake's own event, so a request to another computer is written only once its key is the pinned one.
+            .product(name: "NIOTLS", package: "swift-nio"),
             .product(name: "X509", package: "swift-certificates"),
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "SwiftASN1", package: "swift-asn1"),

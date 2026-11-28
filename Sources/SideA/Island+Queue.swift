@@ -2,7 +2,10 @@ import Foundation
 import SideAProtocol
 
 extension Island {
-    func queuedChanged() { (watcher as? RemoteEvents)?.liveChanged() }
+    func queuedChanged() {
+        (watcher as? RemoteEvents)?.liveChanged()
+        store?.sessions.desk.queueTick += 1
+    }
 
     /// Its id is its text's hash and which of the replies with that text it is, so it survives other replies going
     /// ahead of it. Of two alike, the later takes the earlier's id once that one goes: either way the id names those words.

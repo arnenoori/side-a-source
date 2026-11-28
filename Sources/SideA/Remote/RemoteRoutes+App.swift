@@ -24,7 +24,7 @@ extension RemoteRoutes {
         Route(QueuedRoutes.answer.method, QueuedRoutes.answer.pattern, answer),
         Route("GET", "v1/accounts", accounts),
         Route("POST", "v1/uploads", upload),
-    ] + transcriptRoutes + hostedRoutes + setupRoutes + pushRoutes + previewRoutes + extraRoutes + transcribeRoutes + snoozeRoutes
+    ] + transcriptRoutes + hostedRoutes + setupRoutes + pushRoutes + previewRoutes + extraRoutes + transcribeRoutes + snoozeRoutes + moveRoutes + computerRoutes
 
     static let notReady = response(.notReady)
     static let noSession = response(.noSession)

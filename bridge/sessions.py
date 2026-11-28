@@ -23,6 +23,7 @@ import secrets
 import sqlite3
 import sys
 import time
+from uuid import uuid4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, session TEXT, offset INTEGER, size INTEGER, mtime REAL, state TEXT);
@@ -1127,6 +1128,49 @@ def transcript_path(root, session_id):
         for path in (home / "sessions").glob(f"**/rollout-*{session_id}.jsonl") if (home / "sessions").is_dir() else ():
             return path, "codex"
     return None, None
+
+
+def cut(root, session_id, at):
+    """Files a copy of a Claude conversation that ends just before one of its messages, beside it and under a new id,
+    and returns that id. Claude Code forks only from the end, and resumes a copy made this way as it would its own."""
+    path, agent = transcript_path(root, session_id)
+    if not path or agent != "claude":
+        raise ValueError("Only a Claude conversation can be continued from an earlier message")
+    if not AGENT_ID.fullmatch(at or ""):
+        raise ValueError("That message can't be continued from")
+    new = str(uuid4())
+    target = path.with_name(f"{new}.jsonl")
+    temporary = path.with_name(f".{new}.sidea-{os.getpid()}")
+    found = False
+    try:
+        with open(path, "rb") as source, open(os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as copy:
+            for line in source:
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("uuid") == at:
+                    found = True
+                    break
+                for key in ("sessionId", "session_id"):
+                    if key in entry:
+                        entry[key] = new
+                # What Claude Code's own fork writes on each entry it copies; the index reads the lineage from it.
+                if isinstance(entry.get("uuid"), str):
+                    entry["forkedFrom"] = {"sessionId": session_id, "messageUuid": entry["uuid"]}
+                # The parent's running cost isn't the copy's: the index would count it twice.
+                if entry.get("type") == "cost-state":
+                    continue
+                copy.write(json.dumps(entry, separators=(",", ":")).encode() + b"\n")
+        if not found:
+            raise ValueError("That message is no longer in the conversation")
+        os.replace(temporary, target)
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+    return {"id": new}
 
 
 def head_of(path):
@@ -2844,7 +2888,8 @@ def is_claude_path(path):
 
 def running_claude():
     """Each record in Claude Code's session registry whose process is alive, with its pid. pid 0 and 1 never are:
-    kill(0, 0) reaches this process's own group and always succeeds, and 1 is launchd."""
+    kill(0, 0) reaches this process's own group and always succeeds, and 1 is launchd. Nor is one that ended and
+    was never reaped: an agent killed outright leaves its record behind."""
     for path in (entry for folder in hostos.claude_dirs() for entry in (folder / "sessions").glob("*.json")):
         try:
             data = json.loads(path.read_text())
@@ -2854,6 +2899,8 @@ def running_claude():
             os.kill(pid, 0)
         except (OSError, ValueError, KeyError, TypeError):
             continue  # not running, or a half-written file
+        if hostos.exited(pid):
+            continue
         yield data, pid
 
 

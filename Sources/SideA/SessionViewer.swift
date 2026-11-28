@@ -5,6 +5,7 @@ import SwiftUI
 struct SessionViewer: View {
     @Bindable var model: SessionStore
     @AppStorage(SessionStore.resumeTerminalKey) private var terminal = ""
+    @AppStorage(SessionPrefs.classicKey) private var classic = false
     @State private var showInherited = false
     @State private var flash: String?
     @State private var showDetails = false
@@ -13,11 +14,19 @@ struct SessionViewer: View {
     @State private var matchIndex = 0
     var body: some View {
         ZStack {
-            if let detail = model.detail, detail.session.id == model.selectedID || model.loading {
+            if let launch = model.desk.selected {
+                LaunchPane(model: model, launch: launch).id(launch.id).transition(.opacity)
+            } else if let detail = model.detail, detail.session.id == model.selectedID || model.loading {
                 VStack(spacing: 0) {
                     header(detail)
                     Rectangle().fill(Ink.line).frame(height: 1)
-                    conversation(detail)
+                    // Find, a page opened at a search hit and a fork's copied history are still the old view's.
+                    if !classic, !model.finding, model.focus == nil, detail.later == nil, let window = model.desk.wire[detail.session.id], !window.messages.isEmpty {
+                        WireConversation(model: model, session: detail.session, window: window, working: model.liveByID[detail.session.id]?.status == "busy",
+                                         forks: Dictionary(grouping: detail.forks, by: { $0.forkPoint ?? "" }), onResend: resend)
+                    } else {
+                        conversation(detail)
+                    }
                     SessionActions(model: model, sessionID: detail.session.id)
                 }
                 .id(detail.session.id)
@@ -91,7 +100,7 @@ struct SessionViewer: View {
                         }
                         if !abilities.isDisjoint(with: [.review, .compact]) { Divider() }
                     }
-                    if !session.isCodex {
+                    if !session.isCodex || !running {
                         Button { model.resume(session, fork: true, in: app) } label: { Label("Branch into a New Session", systemImage: "arrow.triangle.branch") }
                     }
                     Button { model.renaming = session } label: { Label("Rename…", systemImage: "pencil") }
@@ -104,6 +113,7 @@ struct SessionViewer: View {
                         Button { NSWorkspace.shared.open(url) } label: { Label("Open Pull Request", systemImage: "arrow.up.forward.square") }
                     }
                     Divider()
+                    Toggle("Show Steps in Detail", isOn: Binding(get: { !classic }, set: { classic = !$0 }))
                     Picker("Resume In", selection: $terminal) {
                         Text("Automatic (\(model.usualTerminal.title))").tag("")
                         ForEach(TerminalApp.allCases.filter(\.installed)) { Text($0.title).tag($0.rawValue) }
@@ -112,7 +122,7 @@ struct SessionViewer: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .modifier(HoverPlate())
                 Button {
-                    if let live, host != nil { model.show(live) } else { model.resume(session, fork: running, in: app) }
+                    model.showOrResume(session)
                 } label: {
                     Label(host.map { "Show in \($0)" } ?? (running ? "Branch" : "Resume"),
                           systemImage: host != nil ? "macwindow" : running ? "arrow.triangle.branch" : "arrow.uturn.forward")
@@ -122,16 +132,16 @@ struct SessionViewer: View {
                         .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
                 .buttonStyle(Press())
-                .keyboardShortcut(.return, modifiers: .command)
-                .help(host != nil ? "Go to the tab it's running in (⌘↩)"
-                      : running ? "It's running where Side A can't reach it (tmux or a background job), so this starts a copy in \(app.title) (⌘↩)"
-                      : "Continue it in \(app.title) with \(session.isCodex ? "codex resume" : "claude --resume") (⌘↩)")
+                .help(host != nil ? "Go to the tab it's running in (⌘T)"
+                      : running ? "It's running where Side A can't reach it (tmux or a background job), so this starts a copy in \(app.title) (⌘T)"
+                      : "Continue it in \(app.title) with \(session.isCodex ? "codex resume" : "claude --resume") (⌘T)")
             }
             .disabled(stale)
             if let live {
                 HStack(spacing: 6) {
                     SettingsChip(model: model, live: live)
                     ChangesChip(model: model, live: live)
+                    RunChip(model: model)
                 }
             }
             if detail.parent != nil || !detail.forks.isEmpty { Lineage(model: model, detail: detail) }
@@ -179,7 +189,8 @@ struct SessionViewer: View {
                         if let gap = dayBreak(detail.messages, index) { Divided(text: gap).padding(.vertical, 6) }
                         if startsTurn(detail.messages, index) { AgentHeader(codex: detail.session.isCodex).padding(.top, 4) }
                         MessageView(message: message, flashing: flash != nil && flash == message.uuid,
-                                    highlight: model.finding && matches.contains(index) ? findText : nil, onResend: resend)
+                                    highlight: model.finding && matches.contains(index) ? findText : nil, onResend: resend,
+                                    onRewind: model.canRewind(detail.session, message) ? { model.rewind(detail.session, at: message) } : nil)
                             .id(message.key)
                             .opacity(message.inherited ? 0.6 : 1)
                             .transition(.opacity)
@@ -447,6 +458,8 @@ struct MessageView: View {
     var highlight: String?
     /// Edit & Resend: the words go back into the composer as a new message; agents can't rewrite what was said.
     var onResend: ((String) -> Void)?
+    /// Edit from Here: a copy of the conversation that ends before this message, with its words in the composer.
+    var onRewind: (() -> Void)?
     @State private var hovering = false
     @State private var more = false
     var body: some View {
@@ -462,6 +475,7 @@ struct MessageView: View {
                         .contextMenu {
                             Button("Copy") { SessionStore.copy(message.text) }
                             if let onResend { Button("Edit & Resend") { onResend(message.text) } }
+                            if let onRewind { Button("Edit from Here") { onRewind() } }
                         }
                     if long {
                         Button(more ? "Show less" : "Show more") { withAnimation(Ink.ease) { more.toggle() } }
@@ -531,6 +545,14 @@ struct MessageView: View {
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help("Edit & Resend")
                 .accessibilityLabel("Edit and resend")
+            }
+            if let onRewind, message.role == "user" {
+                Button { onRewind() } label: {
+                    Image(systemName: "arrow.uturn.backward").font(.subheadline).frame(width: 24, height: 22).contentShape(.rect)
+                }
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                .help("Edit from Here")
+                .accessibilityLabel("Edit from here")
             }
         }
         .padding(2)

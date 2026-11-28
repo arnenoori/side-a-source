@@ -35,6 +35,10 @@ public struct ConfirmPurpose: OpenEnum {
 public enum ConfirmAction: String, Sendable, CaseIterable {
     case reply, restart, `continue`, quit, quitIdle, endHosted, stopServer, compact, review, preview
     case macSettings, archive, restore, removeWorktree, moveNow, rekey
+    /// `POST /v1/sessions/{id}/move`: target is the session id, the body is the `MoveRequest`. Face ID only.
+    case moveSession
+    /// `POST /v1/standby/{conversationID}/copy`: target is the conversation id. Face ID only.
+    case copyStandby
 }
 
 /// What each signed call must prove, read the same way on the Mac (which enforces it) and the phone (which picks the

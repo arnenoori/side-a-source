@@ -52,7 +52,6 @@ function upgradeStatus(path, authorization) {
   });
 }
 
-// A socket whose messages queue up for `next`, so each step can wait for what it expects.
 function open(path, authorization) {
   const ws = new WebSocket(socketBase + path, { headers: { authorization } });
   ws.binaryType = 'arraybuffer';

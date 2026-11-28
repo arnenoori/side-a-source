@@ -23,12 +23,17 @@ private var reading: [String: Any] { [
     "spend": ["enabled": true, "used": ["amount_minor": 1250, "exponent": 2, "currency": "USD"], "limit": ["amount_minor": 5000, "exponent": 2]],
 ] }
 
+private func answer(to request: URLRequest, _ status: Int) throws -> HTTPURLResponse {
+    let url = try #require(request.url)
+    return try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
+}
+
 private func answering(_ object: [String: Any], status: Int = 200, seen: LockedBox<[URLRequest]> = LockedBox([])) -> UsageReader {
     var reader = UsageReader(url: URL(string: "https://usage.test/api/oauth/usage")!)
     let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
     reader.fetch = { request in
         seen.update { $0.append(request) }
-        return (data, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        return (data, try answer(to: request, status))
     }
     return reader
 }
@@ -113,7 +118,7 @@ final class LockedBox<T>: @unchecked Sendable {
         let status = mode.current
         if status == 0 { throw URLError(.notConnectedToInternet) }
         let body = status == 200 ? good : Data("{}".utf8)
-        return (body, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        return (body, try answer(to: request, status))
     }
     let service = AccountsService(book: book, reader: reader, every: 0)
     #expect(await service.list(now: now).first?.usage?.stale == false)

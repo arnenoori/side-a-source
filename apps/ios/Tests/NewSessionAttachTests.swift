@@ -32,10 +32,14 @@ final class NewSessionAttachTests: XCTestCase {
         XCTAssertEqual(DrawerRows.make(canUpload: false, room: 4, hasCamera: true, clipboardHasImage: true).count, 0)
     }
 
-    func testAMacThatCantTakeUploadsGetsNoPlusAndAMacNotPickedYetGetsNone() {
-        XCTAssertTrue(NewSessionSheet.offersPhotos(canUpload: true, macPicked: true))
-        XCTAssertFalse(NewSessionSheet.offersPhotos(canUpload: false, macPicked: true))
-        XCTAssertFalse(NewSessionSheet.offersPhotos(canUpload: true, macPicked: false))
+    func testANewSessionStartsOnTheComputerTheListShowsThenTheLastOneUsedAndNeverOneThatCantHost() {
+        let hosts = ["studio", "laptop"]
+        XCTAssertEqual(NewSessionSheet.target(picked: nil, shown: "laptop", last: "studio", hosts: hosts), "laptop")
+        XCTAssertEqual(NewSessionSheet.target(picked: nil, shown: nil, last: "laptop", hosts: hosts), "laptop")
+        XCTAssertEqual(NewSessionSheet.target(picked: nil, shown: nil, last: nil, hosts: hosts), "studio")
+        XCTAssertEqual(NewSessionSheet.target(picked: "studio", shown: "laptop", last: "laptop", hosts: hosts), "studio")
+        XCTAssertEqual(NewSessionSheet.target(picked: nil, shown: "asleep", last: "gone", hosts: hosts), "studio")
+        XCTAssertNil(NewSessionSheet.target(picked: nil, shown: "asleep", last: nil, hosts: []))
     }
 
     func testStartWaitsForAPhotoOnItsWayAndNeverLeavesAFailedOneOut() async throws {

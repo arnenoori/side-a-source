@@ -313,6 +313,22 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(bridge.read_json(home/'.codex/hooks.json'),{})
             (home/'.codex/hooks.json').unlink(); bridge.island_state(self.root,['codex'],'off')
             self.assertFalse((home/'.codex/hooks.json').exists())
+    def test_a_headless_host_adds_the_permission_hook_alone_to_the_folder_it_names_and_off_removes_all_of_it(self):
+        home=self.root/'home'; account=self.root/'account'; account.mkdir(); (home/'.claude').mkdir(parents=True)
+        mine={'matcher':'Bash','hooks':[{'type':'command','command':'my-guard'}]}
+        bridge.atomic_json(account/'settings.json',{'hooks':{'PermissionRequest':[mine]}})
+        with patch.object(Path,'home',return_value=home), patch.dict(os.environ,{bridge.CLAUDE_DIR_VARIABLE:str(account)}):
+            self.assertEqual(bridge.island_state(self.root,['claude'],'on',permission_only=True),{'claude':True,'codex':False})
+            hooks=bridge.read_json(account/'settings.json')['hooks']
+            self.assertEqual(sorted(hooks),['PermissionRequest'])
+            self.assertEqual(hooks['PermissionRequest'][0],mine); self.assertIn(bridge.ISLAND_MARK,hooks['PermissionRequest'][1]['hooks'][0]['command'])
+            self.assertFalse((home/'.claude/settings.json').exists())
+            bridge.island_state(self.root,['claude'],'on')
+            self.assertIn('Stop',bridge.read_json(account/'settings.json')['hooks'])
+            bridge.island_state(self.root,['claude'],'on',permission_only=True)
+            self.assertIn('Stop',bridge.read_json(account/'settings.json')['hooks'])
+            self.assertEqual(bridge.island_state(self.root,['claude'],'off',permission_only=True),{'claude':False,'codex':False})
+            self.assertEqual(bridge.read_json(account/'settings.json'),{'hooks':{'PermissionRequest':[mine]}})
     def paused_stop(self,command,payload,pid='4242'):
         """A Stop paused on background work waits for a note; this lets it start, then sends it away as the next Stop would."""
         waiter=bridge.island_mail(self.root)/f'{pid}.waiter'

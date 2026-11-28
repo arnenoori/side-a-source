@@ -398,14 +398,17 @@ public enum Hosting {
     }
 
     /// A re-press happens only while the composer shows exactly what was recorded after the paste
-    /// and no selection is open. Empty means the prompt went in. Anything else is ambiguous.
-    public static func verdict(_ agent: Agent, expected: String, screen: String) -> Verdict {
+    /// and no selection is open. Empty means the prompt went in, and so does `aside`: a draft Claude Code stashed for the
+    /// message and puts back the moment it is taken. Anything else is ambiguous.
+    public static func verdict(_ agent: Agent, expected: String, aside: String? = nil, screen: String) -> Verdict {
         // An update or permission prompt can sit below an empty-looking composer (Codex 0.156).
         if dialog(agent, screen: screen) { return .unsent }
         switch composer(agent, screen: screen) {
         case .none: return .stop
         case .empty: return .taken
-        case .text(let text): return text == expected || withoutAttachments(text) == withoutAttachments(expected) ? .pressEnter : .unsent
+        case .text(let text):
+            if text == expected || withoutAttachments(text) == withoutAttachments(expected) { return .pressEnter }
+            return text == aside ? .taken : .unsent
         }
     }
 

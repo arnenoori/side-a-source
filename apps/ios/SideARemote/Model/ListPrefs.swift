@@ -94,10 +94,17 @@ enum ListPrefsStore {
         defaults.set(data, forKey: newSessionKey(mac: mac))
     }
 
+    static let lastHostKey = "newSession.lastHost"
+
+    static func lastHost(in defaults: UserDefaults = .standard) -> String? { defaults.string(forKey: lastHostKey) }
+
+    static func setLastHost(_ macID: String, in defaults: UserDefaults = .standard) { defaults.set(macID, forKey: lastHostKey) }
+
     static func forget(mac: String, in defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: key(mac: mac))
         defaults.removeObject(forKey: newSessionKey(mac: mac))
         if shown(in: defaults) == mac { setShown(nil, in: defaults) }
+        if lastHost(in: defaults) == mac { defaults.removeObject(forKey: lastHostKey) }
         if open(in: defaults)?.mac == mac { setOpen(nil, in: defaults) }
     }
 }

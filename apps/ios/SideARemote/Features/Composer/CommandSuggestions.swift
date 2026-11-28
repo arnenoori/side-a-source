@@ -1,23 +1,7 @@
 import Foundation
 import SideAProtocol
+import SideASessionKit
 import SwiftUI
-
-enum CommandSuggestions {
-    typealias Option = AgentOptions.Option
-
-    static let limit = 8
-    static let visibleRows = 5
-
-    static func word(in text: String, caret: Int, agent: AgentProvider) -> (range: NSRange, word: String)? {
-        CaretWord.command(in: text, caret: caret, codex: agent == .codex)
-    }
-
-    static func matches(_ word: String, in options: [Option]) -> [Option] { CaretWord.matches(word, in: options, limit: limit) }
-
-    static func apply(_ option: Option, to text: String, at range: NSRange) -> (text: String, caret: Int) {
-        CaretWord.replace(range, in: text, with: option.id)
-    }
-}
 
 struct CommandSuggestionList: View {
     let options: [AgentOptions.Option]

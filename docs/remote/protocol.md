@@ -989,7 +989,8 @@ public struct Capability: OpenEnum { public let rawValue: String }
 //      "terminal", "continueOnPhone", "push", "liveActivity", "search", "options",
 //      "history", "restart", "restart.agent", "restart.agent.images", "ports", "quit", "mac", "cleanup", "autopilot", "worth", "incidents",
 //      "autopilot.toggle", "autopilot.answers", "accounts.use", "rotation", "update.check", "lan", "setup", "reply.terminal",
-//      "reply.inbox", "screen", "screen.on", "transcribe"
+//      "reply.inbox", "screen", "screen.on", "transcribe", "moves"
+// Another computer running Side A pairs like a phone and names itself with "computer".
 // Phone: the same names for what it can render or use.
 // With "reply.terminal", a Codex session that isn't hosted and lacks .replyTerminal was started
 // outside Codex's shared server (--no-daemon, --profile, -c); the phone says "Started outside
@@ -2062,6 +2063,108 @@ The client reconnects with backoff (0.5 s doubling to 10 s, with a fresh signatu
 on 1001, 1006 and any code not listed here, and stops with a state of its own on the rest, 4408 included, whether
 or not the `refused` before it arrived. The table is `ScreenClose` in the protocol package, with each refusal's
 code and words on `ScreenRefusal`, which the Mac and the phone both read.
+
+## Moves: a session goes to another computer
+
+Design and reasons: [moving-sessions-prd.md](../moving-sessions-prd.md). The sender is another computer running
+Side A, paired like a phone and carrying the `computer` capability; the receiver advertises `moves`. Every route
+needs the sender's token. The receiver starts the conversation only on `commit`, at most once, and never after
+`abort`; the sender starts it again only when the receiver says it did not.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /v1/moves` | `MoveOffer` | 200 `MoveAnswer`; 409 `move_refused` with the sentence to show |
+| `POST /v1/moves/{id}/parts/{name}/{index}` | raw bytes, at most 512 KiB, in order from 0 | 204; 409 `move_refused` when `index` is not the next one |
+| `POST /v1/moves/{id}/stage` | `MoveStage` | 200 `MoveState` (`staged`); 409 `move_refused` and nothing kept |
+| `POST /v1/moves/{id}/commit` | `MoveCommit`, or none | 200 `MoveState` (`live`); 409 `move_refused` |
+| `POST /v1/moves/{id}/abort` | none | 200 `MoveState` (`discarded`, `none`, or `live` when it already started) |
+| `GET /v1/moves/{id}` | | 200 `MoveState` |
+
+Part names are `manifest.json`, `conversation.json`, `workspace.bundle`, `conversation.tar` and `extras.tar`. The
+two JSON parts are the sending bridge's own description of the others (`bridge/move.py`), checked by the receiving
+bridge; they are not wire types. A repeated part with the index just written is accepted and ignored, so a
+retried request is safe.
+
+Only a linked computer may call these: a token that belongs to a phone gets 403 `not_computer`.
+
+`MoveState.status` is `live` only once the session has started. Between the commit request and that, it is
+`starting`: the sender waits and asks again, and neither restarts the session nor deletes its login on it. A second
+commit request in that time gets 503 `in_progress`. A session that started and later left the receiver for a third
+computer still answers `live`. Move ids are `mv-` and lowercase hex, and anything else is refused; an offer whose
+`from.id` is not the computer the token is linked as is refused.
+
+**The account.** `MoveOffer.account` names the account the session runs on by the email its login belongs to. The
+answer's `account` is `here` (signed in to it: nothing is sent), `wanted` (not signed in to it; another account
+here can run the session) or `missing` (nothing here can run it). For `wanted` and `missing` the sender may put the
+login in `MoveCommit.login`. It has taken the login out of use first, and deletes its copy only when the answer's
+`MoveState.account` is that email; on a refusal it puts the login back, and while the outcome is unknown it keeps
+the copy unused. A receiver that stored a login and then could not start the session deletes it again before it
+answers. A computer's own login (the one its terminals use) is never sent.
+
+### Linking two computers
+
+Computer A pairs with computer B as a phone does (`POST /v1/pair`), with the `computer` capability in its
+`DeviceInfo` and software signing keys as `confirmKey` and `unlockKey`. That lets A reach B. A then makes B a
+device of its own and sends it the other half:
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /v1/computers` | `ComputerLink` | 200 `ComputerLinked`; 403 `not_computer` unless the caller paired as a computer and `mac.id` is not this host |
+| `DELETE /v1/computers/{id}` | | 204: the caller (host id `{id}`) unlinked; this host forgets its link to it and the caller's own device |
+| `GET /v1/computers` | | 200 `ComputerList`: the computers this host can send a session to |
+
+### Moving a session from the phone
+
+A session with the `move` ability can be sent to a computer in `GET /v1/computers`. The phone is paired with each
+computer separately, so after a move it opens the session on the destination, whose host id is the computer's id.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /v1/sessions/{id}/move/preview` | `MoveRequest` | 200 `MovePreview`; 409 `move_refused` with the reason. Nothing is stopped |
+| `POST /v1/sessions/{id}/move` | `MoveRequest`, signed `action` `moveSession` (target the session id, the body), Face ID key only | 202 `MoveRecord` (`moving`, or `waiting` for `afterTurn`); the move runs on |
+| `GET /v1/moves` | | 200 `MoveList`: sessions this host is sending, has sent and not got back, or lost track of, newest first, moves waiting for a turn to end, and moves that failed in the last ten minutes |
+| `POST /v1/moves/{id}/check` | | 200 `MoveRecord` after asking the other computer again |
+| `DELETE /v1/moves/{id}` | none (`moves.when`) | 204: the waiting move is cancelled and the session stays; 409 `move_refused` once it has started; 404 `no_move` when there is none |
+
+`GET /v1/moves/{id}` stays the receiver's `MoveState`, for the sending computer.
+
+In `POST /v1/sessions/{id}/move` and its preview, `{id}` may also be the conversation of a session that arrived on this
+host by a move and whose agent has exited since (quit, or crashed). It is still this host's, so it moves from the folder it landed in, with nothing to stop, and the
+login that came with it goes on by the same rules; a move of it that is undone starts nothing. This is how Bring Back
+reaches it. When that folder is gone, 409 `move_refused` says so.
+
+**When it goes** (capability `moves.when`). `MoveRequest.when` is an open enum, absent meaning `idle`: the session moves
+only if it is idle now, and a working one is refused, which is all a host without the capability does. On a host
+with it, a working hosted session has the `move` ability too, and `when` says how it goes:
+
+- `afterTurn`: both computers are asked at once (preview and move alike), and a refusal comes back with nothing
+  stopped. The host then remembers the request, across a restart, and answers `MoveRecord` `waiting`. When the
+  session's turn ends it moves by itself under the same id, every check asked again; a refusal then leaves it running
+  and the record `failed` with the reason. One request per session; it is dropped, as `failed`, when the session
+  ends, the computer is unlinked, or two hours pass. `DELETE /v1/moves/{id}` cancels it until it starts.
+- `now`: after the same checks, the host interrupts the turn as a hosted Stop does, cutting off the tool call in
+  progress, and moves the session once it is idle; the record is `moving` from the start. If the session does not go
+  idle within 30 seconds, nothing moves and the record is `failed`.
+
+A session that is waiting for an answer can go `afterTurn` but not `now`. The signature covers `when`, so a host that
+does not know the field computes another subject and refuses the move rather than moving it as `idle`.
+
+### Standby: checkpoints kept on another computer
+
+A computer with a standby sends it a checkpoint of each hosted session when the session's turn ends, at most once
+a minute and only when something changed. A checkpoint is one consistent point: the workspace and the conversation
+as they were with the agent idle. The standby (capability `standby`) keeps the newest per conversation and runs
+nothing. If the first computer disappears, the phone can continue a checkpoint on the standby **as a copy**: a fork
+with a new conversation id, since the first computer cannot be told and may still be running the original.
+
+| Route | Body | Answer |
+| --- | --- | --- |
+| `POST /v1/standby` | `StandbyOffer` | 200 `MoveAnswer` (`have`); 409 `move_refused`. Linked computers only |
+| `POST /v1/standby/{id}/parts/{name}/{index}` | raw bytes, as a move's parts | 204 |
+| `POST /v1/standby/{id}/keep` | `MoveStage` | 204 once checked and kept; the older checkpoint of that conversation is deleted |
+| `DELETE /v1/standby/{conversationID}` | | 204: the sender's checkpoints of that conversation are deleted (`all` for every one it sent) |
+| `GET /v1/standby` | | 200 `StandbyList` |
+| `POST /v1/standby/{conversationID}/copy` | none, signed `action` `copyStandby` (target the conversation id), Face ID key only | 201 `MoveState` (`live`, the hosted session and its folder) |
 
 ## Push payloads
 

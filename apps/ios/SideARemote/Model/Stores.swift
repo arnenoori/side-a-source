@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SideAProtocol
+import SideASessionKit
 import SideARemoteKit
 
 enum SessionPhase: Int, CaseIterable, Comparable {
@@ -72,6 +73,8 @@ final class SessionsStore {
 
     func replace(_ sessions: [RemoteSession], finished: [SessionKey: FinishedSession], now: Date = .now) {
         let sessions = launched(sessions, now: now)
+        // Gone from the list, a quit session is done being quit: resumed later under the same id, it opens again.
+        ended.formIntersection(sessions.map(\.id))
         var started = false
         for session in sessions where extras[session.id] == nil {
             extras[session.id] = SessionExtras(startedAt: session.statusAt.map { Date(timeIntervalSince1970: $0) } ?? now)
@@ -142,10 +145,7 @@ final class SessionsStore {
     }
 
     func matches(_ session: RemoteSession, _ query: String) -> Bool {
-        let words = query.split(whereSeparator: \.isWhitespace)
-        guard !words.isEmpty else { return true }
-        let fields = [title(session), session.title, session.project, session.branch, session.accountName, session.model].compactMap { $0 }
-        return words.allSatisfy { word in fields.contains { $0.localizedStandardContains(word) } }
+        SessionSearch.matches(query, fields: [title(session), session.title, session.project, session.branch, session.accountName, session.model])
     }
 
     func setMail(_ mail: MailState?, for id: SessionKey) {

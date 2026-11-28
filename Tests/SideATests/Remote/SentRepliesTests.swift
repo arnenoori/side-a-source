@@ -16,7 +16,6 @@ private func row(_ seq: Int, _ text: String, at: Double, role: TranscriptRole = 
 
     let first = sent.annotate([row(0, "hello", at: 900), row(1, "yes", at: 1_005), row(2, "yes", at: 1_020), row(3, "yes", at: 1_030)], conversation: "c")
     #expect(first.map(\.replyID) == [nil, "k1", "k2", nil], "oldest reply to the oldest row, a retry is its first attempt, a third look-alike is nobody's")
-    // The same rows asked for again, on another page or by the stream, keep their names.
     let again = sent.annotate([row(2, "yes", at: 1_020), row(1, "yes", at: 1_005)], conversation: "c")
     #expect(again.map(\.replyID) == ["k2", "k1"])
 }

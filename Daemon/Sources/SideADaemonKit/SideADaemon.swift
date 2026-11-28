@@ -14,6 +14,8 @@ public struct DaemonConfig: Sendable {
     public var port = 47800
     public var version = SideADaemon.version
     public var name: String = HostInfo.hostName()
+    /// The id phones and linked computers know this host by. Two daemons in one test need two.
+    public var hostID: String = HostInfo.machineID()
     public var os: HostOS = HostInfo.detectOS()
     /// Looks at `tailscale status` and the interfaces. Tests turn it off.
     public var discover = true
@@ -34,11 +36,15 @@ public protocol DaemonServices: Sendable {
     /// Called once the daemon is listening, and again with `stop` when it goes down.
     func start(_ daemon: SideADaemon) async
     func stop() async
+    /// A command from the control socket that the core does not know (`sidead move`, `computers`, `unlink`): the JSON
+    /// object to answer with, or nil when this service doesn't serve it either.
+    func control(_ command: String, _ arguments: [String: String]) async -> Data?
 }
 
 public extension DaemonServices {
     func start(_ daemon: SideADaemon) async {}
     func stop() async {}
+    func control(_ command: String, _ arguments: [String: String]) async -> Data? { nil }
 }
 
 public struct StateParts: Sendable {
@@ -79,7 +85,7 @@ public struct RouteContext: Sendable {
 
 /// The daemon: the paired devices, the pairing, the events hub and the REST routes, over one TLS listener.
 public final class SideADaemon: Sendable {
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
 
     public let config: DaemonConfig
     public let store: any SecretStore
@@ -158,6 +164,11 @@ public final class SideADaemon: Sendable {
 
     func servicesSnapshot() async -> StateParts { await services.snapshot(into: StateParts()) }
 
+    func control(_ command: String, _ arguments: [String: String]) async -> Data? { await services.control(command, arguments) }
+
+    /// What this host says it is, to phones and to the computers linked to it.
+    public var me: MacInfo { MacInfo(id: config.hostID, name: config.name, os: config.os, headless: true) }
+
     // MARK: Lifecycle
 
     /// Binds and starts answering. With `config.discover`, the tailnet and LAN addresses are looked up first.
@@ -168,7 +179,10 @@ public final class SideADaemon: Sendable {
             response.headers.add("X-SideA-Protocol", "1")
             response.headers.add("X-SideA-Epoch", epoch)
             response.headers.add("Cache-Control", response.headers["Cache-Control"] ?? "no-store")
-        }, handler: { [unowned self] request, connection in await handle(request, connection) })
+        }, handler: { [weak self] request, connection in
+            guard let self else { return .response(.apiError(503, .notReady, "Side A is stopping.", retryAfter: 5)) }
+            return await handle(request, connection)
+        })
         state.set(server: server, hosts: hosts, addresses: addresses, tailnetName: tailnetName)
         await services.start(self)
         await relay?.start(self)
@@ -207,6 +221,13 @@ public final class SideADaemon: Sendable {
             hosts.insert(HostInfo.hostName().lowercased())
         }
         listen = listen.filter { !$0.contains(":") || $0 == "::1" }
+        // Nothing was looked up, so a phone or a Mac is told the addresses named with `--listen`: telling it loopback
+        // would send it to itself. Loopback only when that, or every address, is all there is to say.
+        if !config.discover {
+            for address in listen where !["0.0.0.0", "127.0.0.1", "::1", "localhost"].contains(address) && !address.hasPrefix("127.") {
+                if RemoteAddresses.isTailnet(address) { addresses.tailnet.append(address) } else { addresses.lan.append(address) }
+            }
+        }
         // The tunnel reaches this listener on loopback, so with a relay it is always there.
         let covered = listen.contains("0.0.0.0") || listen.contains("127.0.0.1")
         if !covered && (config.listen.isEmpty || config.relay?.tunnel == true) { listen.append("127.0.0.1") }
@@ -218,10 +239,11 @@ public final class SideADaemon: Sendable {
 
     // MARK: What the phone is told
 
+    // swiftlint:disable:next discouraged_optional_boolean -- nil: the caller showed no token, so it is neither paired nor refused.
     static func makeHello(config: DaemonConfig, identity: DaemonIdentity, epoch: String, capabilities: Set<Capability>, state: State?, paired: Bool?,
                           port: Int = 0) -> Hello {
         let known = paired == true
-        let mac = MacInfo(id: HostInfo.machineID(), name: config.name, os: config.os, headless: true)
+        let mac = MacInfo(id: config.hostID, name: config.name, os: config.os, headless: true)
         return Hello(app: config.version, build: 0, mac: known ? mac : MacInfo(id: "", name: ""), capabilities: known ? capabilities : [],
                      minClientBuild: RemotePolicy.minClientBuild, epoch: epoch, serverTime: Date().timeIntervalSince1970, paired: paired, remoteOn: true,
                      endpoints: known ? endpoints(state: state, port: port) : Endpoints(tailnet: ""), keyID: known ? identity.keyID : "")
@@ -243,13 +265,14 @@ public final class SideADaemon: Sendable {
 
     static func hostPort(_ address: String, _ port: Int) -> String { address.contains(":") ? "[\(address)]:\(port)" : "\(address):\(port)" }
 
+    // swiftlint:disable:next discouraged_optional_boolean -- as makeHello.
     public func hello(paired: Bool?) -> Hello {
         Self.makeHello(config: config, identity: identity, epoch: epoch, capabilities: Self.capabilities(services, relay: relay != nil), state: state, paired: paired, port: port)
     }
 
     public func link(code: String) -> String {
         let addresses = state.addresses_
-        let mac = MacInfo(id: HostInfo.machineID(), name: config.name, os: config.os, headless: true)
+        let mac = me
         let lans = addresses.lan.map { Self.hostPort($0, port) }
         let primary = addresses.tailnet.first.map { Self.hostPort($0, port) } ?? lans.first ?? Self.hostPort("127.0.0.1", port)
         let viaRelay = relay.flatMap { link in link.ticket.map { (url: link.url, installID: link.installID, ticket: $0) } }
@@ -294,7 +317,8 @@ public final class SideADaemon: Sendable {
     }
 
     func route(_ request: HTTPRequest, _ connection: DaemonServer.Connection, device: String?, rejected: Bool) async -> HTTPResponse {
-        if request.method == "POST" || request.method == "DELETE", !RequestGate.open(request), !RequestGate.unrecorded(request), let device {
+        if request.method == "POST" || request.method == "DELETE", !RequestGate.open(request), !RequestGate.unrecorded(request),
+           !Self.idempotentByItself(request), let device {
             guard let key = request.headers["Idempotency-Key"], !key.isEmpty, key.count <= IdempotencyLedger.maxKey else {
                 return .apiError(400, .missingIdempotencyKey, "Send an Idempotency-Key.")
             }
@@ -302,6 +326,8 @@ public final class SideADaemon: Sendable {
         }
         return await dispatch(request, connection, device: device, rejected: rejected)
     }
+
+    private static let replayWait: Duration = .seconds(60)
 
     private func idempotent(_ request: HTTPRequest, _ connection: DaemonServer.Connection, device: String, key: String) async -> HTTPResponse {
         let now = Date().timeIntervalSince1970
@@ -315,19 +341,10 @@ public final class SideADaemon: Sendable {
         case .unknown: return .apiError(409, .outcomeUnknown, "Side A quit before it could say whether this reached the computer.")
         case .unavailable: return .apiError(503, .notReady, "Side A couldn't record this request, so it didn't run.")
         case .running:
-            // The first is still running here; wait for it and replay what it recorded.
-            for _ in 0..<600 {
-                try? await Task.sleep(for: .milliseconds(100))
-                let again = await ledger.begin(device: device, key: key, method: request.method, path: request.target, body: request.body, now: now)
-                if case .replay(let status, let contentType, let body) = again {
-                    var response = HTTPResponse(status: status, body: body)
-                    if let contentType { response.headers.add("Content-Type", contentType) }
-                    response.headers.add("Idempotent-Replay", "true")
-                    return response
-                }
-                if again != .running { break }
+            guard await ledger.settled(device: device, key: key, within: Self.replayWait) else {
+                return .apiError(409, .inProgress, "The first of these is still running.")
             }
-            return .apiError(409, .inProgress, "The first of these is still running.")
+            return await idempotent(request, connection, device: device, key: key)
         case .run:
             let response = await dispatch(request, connection, device: device, rejected: false)
             await ledger.finish(device: device, key: key, status: response.status, contentType: response.headers["Content-Type"], body: response.body)
@@ -375,7 +392,7 @@ public final class SideADaemon: Sendable {
     // MARK: Devices
 
     public func revoke(_ id: String) async {
-        try? await devices.remove(id)
+        do { try await devices.remove(id) } catch { DaemonLog.line("couldn't save the device list after a removal: \(error.localizedDescription)") }
         await hub.close(device: id, reason: "revoked")
         await ledger.forget(device: id)
         await gate.forget(id)
@@ -402,7 +419,7 @@ public final class SideADaemon: Sendable {
         relay?.devicesChanged(await devices.devices)
         if let old = request.replaces, old != device.id { await revoke(old) }
         if sameID { await hub.close(device: device.id, reason: "replaced") }
-        return PairResponse(token: token, deviceID: device.id, mac: MacInfo(id: HostInfo.machineID(), name: config.name, os: config.os, headless: true),
+        return PairResponse(token: token, deviceID: device.id, mac: me,
                             relay: relay.flatMap { link in key.map { RelayInfo(url: link.url.absoluteString, installID: link.installID, keyID: $0.keyID.base64URL) } },
                             hello: hello(paired: true))
     }
